@@ -1,0 +1,210 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "compile",
+			"type": "shell",
+			"command": "mvn",
+			"args": ["clean", "compile"],
+			"group": "build",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "package",
+			"type": "shell",
+			"command": "mvn",
+			"args": ["clean", "package"],
+			"group": "build",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "test",
+			"type": "shell",
+			"command": "mvn",
+			"args": ["test"],
+			"group": "test",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "start-xvfb",
+			"type": "shell",
+			"command": "Xvfb",
+			"args": [
+				":99",
+				"-screen",
+				"0",
+				"1024x768x24",
+				"-ac",
+				"+extension",
+				"GLX",
+				"+render",
+				"-noreset"
+			],
+			"isBackground": true,
+			"presentation": {
+				"echo": false,
+				"reveal": "never",
+				"focus": false,
+				"panel": "shared"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "docker-build",
+			"type": "shell",
+			"command": "./docker-build.sh",
+			"args": ["build"],
+			"group": "build",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			}
+		},
+		{
+			"label": "docker-run-debug",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"run",
+				"--rm",
+				"-v",
+				"${workspaceFolder}:/app",
+				"-v",
+				"${env:HOME}/.m2:/home/developer/.m2",
+				"-e",
+				"DISPLAY=:99",
+				"-v",
+				"/tmp/.X11-unix:/tmp/.X11-unix:rw",
+				"-p",
+				"5005:5005",
+				"odm-dev",
+				"bash",
+				"-c",
+				"Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 & sleep 2 && DISPLAY=:99 mvn exec:java -Dexec.args='-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=0.0.0.0:5005'"
+			],
+			"group": "build",
+			"isBackground": true,
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			},
+			"dependsOn": "docker-build"
+		},
+		{
+			"label": "make build",
+			"type": "shell",
+			"command": "make",
+			"args": ["build"],
+			"group": "build"
+		},
+		{
+			"label": "make dev",
+			"type": "shell",
+			"command": "make",
+			"args": ["dev"],
+			"group": "build"
+		},
+		{
+			"label": "make test",
+			"type": "shell",
+			"command": "make",
+			"args": ["test"],
+			"group": "test"
+		},
+		{
+			"label": "make compile",
+			"type": "shell",
+			"command": "make",
+			"args": ["compile"],
+			"group": "build"
+		},
+		{
+			"label": "make run",
+			"type": "shell",
+			"command": "make",
+			"args": ["run"],
+			"group": "build"
+		},
+		{
+			"label": "make debug",
+			"type": "shell",
+			"command": "make",
+			"args": ["debug"],
+			"group": "build"
+		},
+		{
+			"label": "make package",
+			"type": "shell",
+			"command": "make",
+			"args": ["package"],
+			"group": "build"
+		},
+		{
+			"label": "make clean",
+			"type": "shell",
+			"command": "make",
+			"args": ["clean"],
+			"group": "build"
+		},
+		{
+			"label": "mvn compile",
+			"type": "shell",
+			"command": "mvn",
+			"args": ["compile"],
+			"group": "build"
+		},
+		{
+			"label": "mvn clean install",
+			"type": "shell",
+			"command": "mvn",
+			"args": ["clean", "install"],
+			"group": "build"
+		},
+		{
+			"label": "mvn test",
+			"type": "shell",
+			"command": "mvn",
+			"args": ["test"],
+			"group": "test"
+		},
+		{
+			"label": "mvn exec:java",
+			"type": "shell",
+			"command": "mvn",
+			"args": ["exec:java"],
+			"group": "build"
+		}
+	]
+}

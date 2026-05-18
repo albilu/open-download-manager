@@ -1,0 +1,200 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.odm</groupId>
+        <artifactId>odm</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>odm-gtk</artifactId>
+    <packaging>jar</packaging>
+    <name>odm-gtk</name>
+    <description>The GTK UI module of the Open Download Manager</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
+        <maven.assembly.plugin.version>3.6.0</maven.assembly.plugin.version>
+        <maven.source.plugin.version>3.3.0</maven.source.plugin.version>
+        <maven.javadoc.plugin.version>3.5.0</maven.javadoc.plugin.version>
+        <jdeb.plugin.version>1.10</jdeb.plugin.version>
+        <rpm.maven.plugin.version>2.2.0</rpm.maven.plugin.version>
+        <exec.maven.plugin.version>3.1.0</exec.maven.plugin.version>
+        <native.maven.plugin.version>0.9.23</native.maven.plugin.version>
+
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.jgtk</groupId>
+            <artifactId>jgtk</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <type>jar</type>
+        </dependency>
+        <dependency>
+            <groupId>org.odm</groupId>
+            <artifactId>odm-core</artifactId>
+            <version>${project.version}</version>
+            <type>jar</type>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven.compiler.plugin.version}</version>
+                    <configuration>
+                        <source>${maven.compiler.source}</source>
+                        <target>${maven.compiler.target}</target>
+                    </configuration>
+                </plugin>
+
+                <!-- Exec plugin for Linux packaging -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>${exec.maven.plugin.version}</version>
+                </plugin>
+
+                <!-- Debian packaging -->
+                <plugin>
+                    <groupId>org.vafer</groupId>
+                    <artifactId>jdeb</artifactId>
+                    <version>${jdeb.plugin.version}</version>
+                </plugin>
+
+                <!-- RPM packaging -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>rpm-maven-plugin</artifactId>
+                    <version>${rpm.maven.plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <archive>
+                                <manifest>
+                                    <mainClass>org.odm.OpenDownloadManager</mainClass>
+                                    <addClasspath>true</addClasspath>
+                                    <classpathPrefix>lib/</classpathPrefix>
+                                </manifest>
+                                <manifestEntries>
+                                    <Implementation-Title>${project.name}</Implementation-Title>
+                                    <Implementation-Version>${project.version}</Implementation-Version>
+                                    <Implementation-Vendor>Open Download Manager</Implementation-Vendor>
+                                </manifestEntries>
+                            </archive>
+                            <descriptorRefs>
+                                <descriptorRef>jar-with-dependencies</descriptorRef>
+                            </descriptorRefs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- Linux packaging using exec plugin -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec.maven.plugin.version}</version>
+                <inherited>false</inherited>
+                <executions>
+                    <!-- Debian .deb packaging -->
+                    <execution>
+                        <id>build-deb</id>
+                        <phase>install</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>bash</executable>
+                            <workingDirectory>${project.basedir}</workingDirectory>
+                            <arguments>
+                                <argument>-c</argument>
+                                <argument>
+                                    mkdir -p target/deb/usr/share/java target/deb/DEBIAN
+                                    cp target/odm-gtk-*-jar-with-dependencies.jar target/deb/usr/share/java/open-download-manager.jar
+                                    cp packaging/debian/control target/deb/DEBIAN/control
+                                    cp packaging/debian/postinst target/deb/DEBIAN/postinst
+                                    cp packaging/debian/prerm target/deb/DEBIAN/prerm
+                                    chmod +x target/deb/DEBIAN/postinst target/deb/DEBIAN/prerm
+                                    DEB_VERSION=$(echo "${project.version}" | sed 's/-SNAPSHOT/~snapshot/')
+                                    sed -i "/^Package: open-download-manager$/a Version: $DEB_VERSION" target/deb/DEBIAN/control
+                                    dpkg-deb --build target/deb target/open-download-manager_${DEB_VERSION}_all.deb 2&gt;/dev/null || echo "dpkg-deb not available"
+                                </argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <!-- Red Hat .rpm packaging -->
+                    <execution>
+                        <id>build-rpm</id>
+                        <phase>install</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>bash</executable>
+                            <workingDirectory>${project.basedir}</workingDirectory>
+                            <arguments>
+                                <argument>-c</argument>
+                                <argument>
+                                    test -f packaging/rpm/open-download-manager.spec || exit 0
+                                    mkdir -p target/rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+                                    cp target/odm-gtk-*-jar-with-dependencies.jar target/rpm/SOURCES/open-download-manager.jar
+                                    cp packaging/rpm/open-download-manager.spec target/rpm/SPECS/
+                                    RPM_VERSION=$(echo "${project.version}" | sed 's/-SNAPSHOT/.snapshot/')
+                                    sed -i "s/Version:.*/Version: $RPM_VERSION/" target/rpm/SPECS/open-download-manager.spec
+                                    rpmbuild --define "_topdir $(pwd)/target/rpm" --define "_javadir /usr/share/java" --nodeps --nocheck -bb target/rpm/SPECS/open-download-manager.spec 2&gt;/dev/null || echo "rpmbuild not available"
+                                    find target/rpm/RPMS -name "*.rpm" -exec cp {} target/ \; 2&gt;/dev/null || true
+                                </argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <!-- Arch Linux .pkg packaging -->
+                    <execution>
+                        <id>build-arch-pkg</id>
+                        <phase>install</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <executable>bash</executable>
+                            <workingDirectory>${project.basedir}</workingDirectory>
+                            <arguments>
+                                <argument>-c</argument>
+                                <argument>
+                                    test -f packaging/arch/PKGBUILD || exit 0
+                                    mkdir -p target/arch
+                                    cp target/odm-gtk-*-jar-with-dependencies.jar target/arch/open-download-manager.jar
+                                    cp packaging/arch/PKGBUILD target/arch/
+                                    sed -i "s/pkgver=.*/pkgver=${project.version}/" target/arch/PKGBUILD
+                                    cd target/arch
+                                    makepkg -f 2&gt;/dev/null || (mkdir -p pkg/usr/share/java pkg/usr/bin &amp;&amp; cp open-download-manager.jar pkg/usr/share/java/ &amp;&amp; echo '#!/bin/sh' &gt; pkg/usr/bin/open-download-manager &amp;&amp; echo 'exec java -jar /usr/share/java/open-download-manager.jar "$@"' &gt;&gt; pkg/usr/bin/open-download-manager &amp;&amp; chmod +x pkg/usr/bin/open-download-manager &amp;&amp; tar -cJf open-download-manager-${project.version}-1-any.pkg.tar.xz -C pkg .)
+                                    find . -name "*.pkg.tar.xz" -exec cp {} ../ \; 2&gt;/dev/null || true
+                                </argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

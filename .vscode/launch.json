@@ -1,0 +1,34 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "java",
+			"name": "Debug ODM Application (local)",
+			"request": "launch",
+			"mainClass": "org.odm.OpenDownloadManager",
+			"projectName": "odm-gtk",
+			"cwd": "${workspaceFolder}",
+			"env": {
+				"DISPLAY": ":0"
+			},
+			"vmArgs": ["-Djava.awt.headless=false", "-Dfile.encoding=UTF-8"],
+			"args": [],
+			"console": "integratedTerminal"
+		},
+		{
+			"type": "java",
+			"name": "Attach to Docker Debug",
+			"request": "attach",
+			"hostName": "localhost",
+			"port": 5005,
+			"timeout": 30000
+		},
+		{
+			"type": "java",
+			"name": "Debug Current File",
+			"request": "launch",
+			"mainClass": "${file}",
+			"projectName": "open-download-manager"
+		}
+	]
+}

@@ -1,0 +1,61 @@
+# .dockerignore - Simple Docker build optimization
+
+# Git files
+.git
+.gitignore
+.github
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build artifacts
+target/
+*.class
+*.jar
+*.war
+
+# Logs
+*.log
+logs/
+
+# Documentation
+*.md
+docs/
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Build scripts
+docker-build.sh
+Makefile
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+
+# Local configuration
+.env
+local.properties
+
+# Maven local repository
+.m2/
+
+# Test artifacts
+test-results/
+coverage/
+
+# Downloads directory
+downloads/

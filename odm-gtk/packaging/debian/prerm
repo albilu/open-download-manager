@@ -1,0 +1,173 @@
+#!/bin/bash
+# Pre-removal script for open-download-manager
+# This script handles clean uninstallation
+
+set -e
+
+# Configuration
+PACKAGE_NAME="open-download-manager"
+LOG_FILE="/var/log/odm-install.log"
+
+# Logging function
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE" 2>/dev/null || true
+}
+
+# Stop any running instances
+stop_application() {
+    log "Stopping any running instances of Open Download Manager..."
+
+    # Try to stop gracefully first
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -f "open-download-manager.jar" || true
+        sleep 2
+
+        # Force kill if still running
+        pkill -9 -f "open-download-manager.jar" || true
+    fi
+
+    # Also check for Java processes running our JAR
+    if command -v pgrep >/dev/null 2>&1; then
+        local pids
+        pids=$(pgrep -f "java.*open-download-manager.jar" || true)
+        if [[ -n "$pids" ]]; then
+            log "Force stopping remaining processes: $pids"
+            kill -9 $pids 2>/dev/null || true
+        fi
+    fi
+
+    log "✅ Application processes stopped"
+}
+
+# Remove desktop integration
+remove_desktop_integration() {
+    log "Removing desktop integration..."
+
+    # Remove desktop entry
+    if [[ -f "/usr/share/applications/open-download-manager.desktop" ]]; then
+        rm -f "/usr/share/applications/open-download-manager.desktop"
+        log "  Removed desktop entry"
+    fi
+
+    # Update desktop database
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database /usr/share/applications 2>/dev/null || true
+    fi
+
+    # Update MIME database
+    if command -v update-mime-database >/dev/null 2>&1; then
+        update-mime-database /usr/share/mime 2>/dev/null || true
+    fi
+
+    log "✅ Desktop integration removed"
+}
+
+# Remove launcher script
+remove_launcher() {
+    log "Removing launcher script..."
+
+    if [[ -f "/usr/bin/open-download-manager" ]]; then
+        rm -f "/usr/bin/open-download-manager"
+        log "  Removed /usr/bin/open-download-manager"
+    fi
+
+    log "✅ Launcher script removed"
+}
+
+# Clean temporary files
+clean_temporary_files() {
+    log "Cleaning temporary files..."
+
+    # Clean temporary download files if they exist
+    if [[ -d "/tmp/odm" ]]; then
+        rm -rf "/tmp/odm" || true
+    fi
+
+    # Clean any lock files
+    rm -f "/var/lock/odm"* 2>/dev/null || true
+    rm -f "/tmp/odm"* 2>/dev/null || true
+
+    log "✅ Temporary files cleaned"
+}
+
+# Handle configuration and data based on removal type
+handle_data_cleanup() {
+    local action="$1"
+
+    case "$action" in
+        "remove")
+            log "Package removal: preserving configuration and user data"
+            # Keep configuration files and user data
+            ;;
+        "purge")
+            log "Package purge: removing all configuration and system data"
+
+            # Remove system configuration
+            if [[ -d "/etc/odm" ]]; then
+                rm -rf "/etc/odm"
+                log "  Removed system configuration: /etc/odm"
+            fi
+
+            # Remove system data directory
+            if [[ -d "/var/lib/odm" ]]; then
+                rm -rf "/var/lib/odm"
+                log "  Removed system data: /var/lib/odm"
+            fi
+
+            # Remove log directory
+            if [[ -d "/var/log/odm" ]]; then
+                rm -rf "/var/log/odm"
+                log "  Removed log directory: /var/log/odm"
+            fi
+
+            # Note about user data
+            log "  Note: User configuration in ~/.config/odm and ~/.local/share/odm preserved"
+            log "  Users can manually remove these directories if desired"
+            ;;
+        *)
+            log "Unknown removal action: $action, performing standard cleanup"
+            ;;
+    esac
+}
+
+# Main removal logic
+main() {
+    local action="${1:-remove}"
+
+    log "=== Open Download Manager Pre-Removal ==="
+    log "Starting removal process for $PACKAGE_NAME (action: $action)"
+
+    # Always stop the application
+    stop_application
+
+    # Always remove desktop integration and launcher
+    remove_desktop_integration
+    remove_launcher
+
+    # Clean temporary files
+    clean_temporary_files
+
+    # Handle configuration and data based on removal type
+    handle_data_cleanup "$action"
+
+    log "✅ Pre-removal cleanup completed"
+    log "=== Pre-removal process finished ==="
+}
+
+# Handle different dpkg actions
+case "$1" in
+    remove|purge)
+        main "$1"
+        ;;
+    upgrade|failed-upgrade|deconfigure)
+        log "Package $1: minimal cleanup only"
+        stop_application
+        ;;
+    *)
+        log "Unknown prerm action: $1"
+        # Default to safe cleanup
+        stop_application
+        ;;
+esac
+
+exit 0

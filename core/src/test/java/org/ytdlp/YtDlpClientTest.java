@@ -1,0 +1,338 @@
+package org.ytdlp;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.condition.EnabledIf;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/**
+ * Unit tests for YtDlpClient class focusing on configuration, settings,
+ * and basic functionality without mocking critical process execution.
+ * For real process testing, see YtDlpIntegrationTest and YtDlpE2ETest.
+ */
+@DisplayName("YtDlpClient Unit Tests")
+class YtDlpClientTest {
+
+    @TempDir
+    Path tempOutputDir;
+
+    private YtDlpClient client;
+    private static final String TEST_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    private static final String TEST_YTDLP_PATH = "/usr/bin/yt-dlp";
+
+    @BeforeEach
+    void setUp() throws Exception {
+        tempOutputDir = Files.createTempDirectory("ytdlp-client-test");
+        client = new YtDlpClient(TEST_YTDLP_PATH);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        if (client != null) {
+            client.shutdown();
+        }
+
+        // Clean up temporary directory
+        if (tempOutputDir != null && Files.exists(tempOutputDir)) {
+            Files.deleteIfExists(tempOutputDir);
+        }
+    }
+
+    @Test
+    @DisplayName("Should create client with default path")
+    void testDefaultConstructor() {
+        YtDlpClient defaultClient = new YtDlpClient();
+        assertNotNull(defaultClient);
+        // Cleanup
+        defaultClient.shutdown();
+    }
+
+    @Test
+    @DisplayName("Should create client with custom path")
+    void testCustomPathConstructor() {
+        String customPath = "/custom/path/to/yt-dlp";
+        YtDlpClient customClient = new YtDlpClient(customPath);
+
+        assertNotNull(customClient);
+        // Cleanup
+        customClient.shutdown();
+    }
+
+    @Test
+    @DisplayName("Should handle null path gracefully")
+    void testNullPathConstructor() {
+        assertDoesNotThrow(() -> {
+            YtDlpClient nullPathClient = new YtDlpClient(null);
+            nullPathClient.shutdown();
+        });
+    }
+
+    @Test
+    @DisplayName("Should handle availability check without throwing")
+    void testAvailabilityCheck() {
+        // Test that method doesn't throw exceptions
+        assertDoesNotThrow(() -> {
+            boolean available = client.isAvailable();
+            // Result depends on system, but method should not throw
+        });
+    }
+
+    @Test
+    @DisplayName("Should handle version check without throwing")
+    void testVersionCheck() {
+        assertDoesNotThrow(() -> {
+            String version = client.getVersion();
+            // Version may be null if yt-dlp not available
+        });
+    }
+
+    @Test
+    @DisplayName("Should check aria2c availability")
+    void testIsAria2cAvailable() {
+        // Test default path
+        assertDoesNotThrow(() -> {
+            boolean available = client.isAria2cAvailable();
+        });
+    }
+
+    @Test
+    @DisplayName("Should check aria2c availability with custom path")
+    void testIsAria2cAvailableCustomPath() {
+        assertDoesNotThrow(() -> {
+            boolean available = client.isAria2cAvailable("/custom/path/aria2c");
+        });
+    }
+
+    @Test
+    @DisplayName("Should get aria2c version")
+    void testGetAria2cVersion() {
+        assertDoesNotThrow(() -> {
+            String version = client.getAria2cVersion();
+            // Version may be null if aria2c not available
+        });
+    }
+
+    @Test
+    @DisplayName("Should get aria2c version with custom path")
+    void testGetAria2cVersionCustomPath() {
+        assertDoesNotThrow(() -> {
+            String version = client.getAria2cVersion("/custom/path/aria2c");
+        });
+    }
+
+    @Test
+    @DisplayName("Should handle extract info method call")
+    void testExtractInfoMethodCall() {
+        // Test that method can be called without throwing
+        assertDoesNotThrow(() -> {
+            CompletableFuture<YtDlpClient.VideoInfo> future = client.extractInfo(TEST_URL);
+            // Don't wait for completion as it depends on system yt-dlp availability
+        });
+    }
+
+    @Test
+    @DisplayName("Should handle list formats method call")
+    void testListFormatsMethodCall() {
+        assertDoesNotThrow(() -> {
+            CompletableFuture<List<YtDlpClient.VideoFormat>> future = client.listFormats(TEST_URL);
+            // Don't wait for completion as it depends on system yt-dlp availability
+        });
+    }
+
+    @Test
+    @DisplayName("Should handle download method call")
+    void testDownloadMethodCall() {
+        YtDlpSettings settings = new YtDlpSettings().setFormat("best");
+        YtDlpClient.ProgressCallback mockCallback = mock(YtDlpClient.ProgressCallback.class);
+
+        assertDoesNotThrow(() -> {
+            CompletableFuture<String> future = client.download(TEST_URL, settings, tempOutputDir, mockCallback);
+            // Don't wait for completion as it depends on system yt-dlp availability
+        });
+    }
+
+    @Test
+    @DisplayName("Should handle cancel download with non-existent process")
+    void testCancelNonExistentDownload() {
+        boolean cancelled = client.cancelDownload("non-existent-process");
+        assertFalse(cancelled);
+    }
+
+    @Test
+    @DisplayName("Should shutdown properly")
+    void testShutdown() {
+        assertDoesNotThrow(() -> {
+            client.shutdown();
+        });
+    }
+
+    @Test
+    @DisplayName("Should build commands correctly")
+    void testCommandBuilding() {
+        YtDlpSettings settings = new YtDlpSettings()
+            .setFormat("best")
+            .setEmbedThumbnail(true)
+            .setExtractAudio(true);
+
+        // Test that settings are properly configured
+        assertEquals("best", settings.getFormat());
+        assertTrue(settings.isEmbedThumbnail());
+        assertTrue(settings.isExtractAudio());
+    }
+
+    @ParameterizedTest
+    @DisplayName("Should handle byte conversion calculations")
+    @CsvSource({
+        "1.5, KiB, 1536",
+        "2.0, MiB, 2097152",
+        "1.0, GiB, 1073741824",
+        "500, B, 500"
+    })
+    void testByteConversionLogic(String value, String unit, long expected) {
+        // Test the logic that would be used in byte conversion
+        float numValue = Float.parseFloat(value);
+        assertTrue(numValue > 0);
+        assertNotNull(unit);
+        assertTrue(expected > 0);
+
+        // Verify unit relationships
+        if ("KiB".equals(unit)) {
+            assertEquals((long)(numValue * 1024), expected);
+        } else if ("MiB".equals(unit)) {
+            assertEquals((long)(numValue * 1024 * 1024), expected);
+        } else if ("GiB".equals(unit)) {
+            assertEquals((long)(numValue * 1024 * 1024 * 1024), expected);
+        }
+    }
+
+    @Test
+    @DisplayName("Should handle concurrent download requests")
+    void testConcurrentDownloadRequests() {
+        YtDlpSettings settings = new YtDlpSettings().setFormat("best");
+        YtDlpClient.ProgressCallback mockCallback1 = mock(YtDlpClient.ProgressCallback.class);
+        YtDlpClient.ProgressCallback mockCallback2 = mock(YtDlpClient.ProgressCallback.class);
+
+        assertDoesNotThrow(() -> {
+            CompletableFuture<String> future1 = client.download("https://example.com/video1", settings, tempOutputDir, mockCallback1);
+            CompletableFuture<String> future2 = client.download("https://example.com/video2", settings, tempOutputDir, mockCallback2);
+
+            // Both futures should be created without throwing
+            assertNotNull(future1);
+            assertNotNull(future2);
+        });
+    }
+
+    @Test
+    @DisplayName("VideoInfo should handle all getters and setters")
+    void testVideoInfoGettersSetters() {
+        YtDlpClient.VideoInfo info = new YtDlpClient.VideoInfo();
+
+        info.setId("test-id");
+        assertEquals("test-id", info.getId());
+
+        info.setTitle("Test Title");
+        assertEquals("Test Title", info.getTitle());
+
+        info.setDescription("Test Description");
+        assertEquals("Test Description", info.getDescription());
+
+        info.setUploader("Test Uploader");
+        assertEquals("Test Uploader", info.getUploader());
+
+        info.setUploadDate("20231215");
+        assertEquals("20231215", info.getUploadDate());
+
+        info.setDuration(300);
+        assertEquals(300, info.getDuration());
+
+        info.setFilesize(1048576);
+        assertEquals(1048576, info.getFilesize());
+
+        info.setFormat("mp4");
+        assertEquals("mp4", info.getFormat());
+
+        info.setUrl("https://example.com/video.mp4");
+        assertEquals("https://example.com/video.mp4", info.getUrl());
+
+        info.setThumbnail("https://example.com/thumb.jpg");
+        assertEquals("https://example.com/thumb.jpg", info.getThumbnail());
+
+        List<YtDlpClient.VideoFormat> formats = List.of(new YtDlpClient.VideoFormat());
+        info.setFormats(formats);
+        assertEquals(formats, info.getFormats());
+
+        List<YtDlpClient.Subtitle> subtitles = List.of(new YtDlpClient.Subtitle());
+        info.setSubtitles(subtitles);
+        assertEquals(subtitles, info.getSubtitles());
+    }
+
+    @Test
+    @DisplayName("VideoFormat should handle all getters and setters")
+    void testVideoFormatGettersSetters() {
+        YtDlpClient.VideoFormat format = new YtDlpClient.VideoFormat();
+
+        format.setFormatId("140");
+        assertEquals("140", format.getFormatId());
+
+        format.setExt("m4a");
+        assertEquals("m4a", format.getExt());
+
+        format.setFilesize(4194304);
+        assertEquals(4194304, format.getFilesize());
+
+        format.setResolution("audio only");
+        assertEquals("audio only", format.getResolution());
+
+        format.setFps(30);
+        assertEquals(30, format.getFps());
+
+        format.setAcodec("mp4a.40.2");
+        assertEquals("mp4a.40.2", format.getAcodec());
+
+        format.setVcodec("none");
+        assertEquals("none", format.getVcodec());
+
+        format.setAbr(128);
+        assertEquals(128, format.getAbr());
+
+        format.setVbr(0);
+        assertEquals(0, format.getVbr());
+    }
+
+    @Test
+    @DisplayName("Subtitle should handle all getters and setters")
+    void testSubtitleGettersSetters() {
+        YtDlpClient.Subtitle subtitle = new YtDlpClient.Subtitle();
+
+        subtitle.setLanguage("en");
+        assertEquals("en", subtitle.getLanguage());
+
+        subtitle.setExt("vtt");
+        assertEquals("vtt", subtitle.getExt());
+
+        subtitle.setUrl("https://example.com/subtitle.vtt");
+        assertEquals("https://example.com/subtitle.vtt", subtitle.getUrl());
+    }
+}

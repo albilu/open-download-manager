@@ -1,0 +1,547 @@
+package org.curl;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.manager.ApplicationContext;
+import org.manager.download.Download;
+import org.manager.download.DownloadListener;
+import org.manager.tools.ToolManagerFactory;
+
+/**
+ * A client for managing downloads using curl command-line tool. This is used as
+ * a fallback when proxychains fails, or for specific protocols.
+ */
+public class CurlClient {
+
+    private static final Logger LOGGER = Logger.getLogger(CurlClient.class.getName());
+
+    private static final Pattern PROGRESS_PATTERN = Pattern.compile(
+            "\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([\\d.]+[kmgtKMGT]?)\\s+.*");
+
+    private static final Pattern TOTAL_SIZE_PATTERN = Pattern.compile(
+            "Content-Length:\\s*(\\d+)");
+
+    private final String curlPath;
+    private final ExecutorService executorService;
+    private final Map<String, Process> activeProcesses;
+    private final Map<String, Download> activeDownloads;
+
+    /**
+     * Creates a new CurlClient with default curl path from ToolManagerFactory.
+     */
+    public CurlClient() {
+        this(getCurlPath());
+    }
+
+    /**
+     * Gets the curl path using the ToolManagerFactory.
+     */
+    private static String getCurlPath() {
+        try {
+            ToolManagerFactory factory = ApplicationContext.getToolManagerFactory();
+            if (factory != null) {
+                CurlToolManager curlManager = factory.getCurlManager();
+                if (curlManager != null) {
+                    return curlManager.getToolPath();
+                }
+            }
+
+            // Final fallback - try system curl
+            return "curl";
+        } catch (Exception e) {
+            // Final fallback - try system curl
+            return "curl";
+        }
+    }
+
+    /**
+     * Creates a new CurlClient with the specified curl command path.
+     *
+     * @param curlPath Path to the curl executable
+     */
+    public CurlClient(String curlPath) {
+        this.curlPath = curlPath;
+        this.executorService = Executors.newCachedThreadPool();
+        this.activeProcesses = new ConcurrentHashMap<>();
+        this.activeDownloads = new ConcurrentHashMap<>();
+
+        // Validate that curl is available
+        validateCurlInstallation();
+    }
+
+    /**
+     * Validates that curl is installed and available.
+     *
+     * @throws RuntimeException if curl is not available
+     */
+    private void validateCurlInstallation() {
+        try {
+            ProcessBuilder processBuilder = new ProcessBuilder(curlPath, "--version");
+            processBuilder.redirectErrorStream(true);
+            Process process = processBuilder.start();
+            int exitCode = process.waitFor();
+
+            if (exitCode != 0) {
+                throw new RuntimeException("curl command failed with exit code: " + exitCode);
+            }
+        } catch (IOException | InterruptedException e) {
+            throw new RuntimeException("Failed to execute curl at path: " + curlPath
+                    + ". Make sure it's installed and the path is correct.", e);
+        }
+    }
+
+    /**
+     * Starts a download using curl.
+     *
+     * @param download The download to start
+     * @param listener Listener for download events
+     */
+    public void startDownload(Download download, DownloadListener listener) {
+        if (download == null || download.getUri() == null) {
+            if (listener != null) {
+                listener.onDownloadError(download, "Invalid download or URI is null");
+            }
+            return;
+        }
+
+        // Set download status to connecting
+        download.setStatus(Download.Status.CONNECTING);
+
+        // Add to active downloads
+        activeDownloads.put(download.getId(), download);
+
+        // Start download in a separate thread
+        executorService.submit(() -> {
+            try {
+                // Create destination directory if it doesn't exist
+                Path destinationDir = download.getDestination();
+                if (destinationDir != null) {
+                    Files.createDirectories(destinationDir);
+                } else {
+                    // Use current directory as default
+                    destinationDir = Paths.get(".");
+                }
+
+                // Prepare the output file path
+                Path outputFile = destinationDir.resolve(download.getName());
+
+                // Build curl command
+                List<String> command = buildCurlCommand(download, outputFile);
+
+                // Start the process
+                ProcessBuilder processBuilder = new ProcessBuilder(command);
+                // Don't redirect error stream - we need to read stderr separately for progress
+                // processBuilder.redirectErrorStream(true);
+
+                Process process = processBuilder.start();
+                activeProcesses.put(download.getId(), process);
+
+                // Update download status
+                download.setStatus(Download.Status.DOWNLOADING);
+                if (listener != null) {
+                    listener.onDownloadStart(download);
+                }
+
+                // Read process error stream (stderr) to track progress
+                // curl sends progress information to stderr
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                    String line;
+                    long lastUpdateTime = System.currentTimeMillis();
+                    long lastDownloaded = 0;
+                    boolean firstProgressUpdate = true;
+
+                    while ((line = reader.readLine()) != null) {
+                        // Check for content length
+                        Matcher sizeMatcher = TOTAL_SIZE_PATTERN.matcher(line);
+                        if (sizeMatcher.find()) {
+                            long totalSize = Long.parseLong(sizeMatcher.group(1));
+                            download.setSize(totalSize);
+                        }
+
+                        // Parse progress
+                        Matcher matcher = PROGRESS_PATTERN.matcher(line);
+                        if (matcher.matches()) {
+                            long totalBytes = Long.parseLong(matcher.group(2));
+                            long downloadedBytes = Long.parseLong(matcher.group(4));
+                            String speedStr = matcher.group(7);
+
+                            // Convert speed from curl format (with k/m/g suffix) to bytes per second
+                            float speedBps = parseSpeed(speedStr);
+
+                            // Set total size if not already set
+                            if (download.getSize() == 0 && totalBytes > 0) {
+                                download.setSize(totalBytes);
+                            }
+
+                            // Update download stats
+                            download.setDownloaded(downloadedBytes);
+                            download.setSpeed(speedBps);
+
+                            // Calculate progress
+                            float progress = 0;
+                            if (download.getSize() > 0) {
+                                progress = (float) downloadedBytes / download.getSize() * 100;
+                            }
+
+                            // Throttle progress updates to avoid UI flooding
+                            long currentTime = System.currentTimeMillis();
+                            long timeDiff = currentTime - lastUpdateTime;
+                            long byteDiff = downloadedBytes - lastDownloaded;
+
+                            // Always send progress callback for the first update or when significant
+                            // progress is made
+                            // or when download is complete
+                            boolean shouldUpdate = firstProgressUpdate
+                                    || // First update
+                                    (timeDiff > 1000)
+                                    || // Time-based throttling
+                                    (byteDiff > 1024 * 1024)
+                                    || // Byte-based throttling
+                                    (downloadedBytes == download.getSize() && download.getSize() > 0); // Download
+                            // complete
+
+                            if (shouldUpdate) {
+                                if (listener != null) {
+                                    listener.onDownloadProgress(download, progress,
+                                            downloadedBytes, download.getSize(), speedBps);
+                                }
+                                lastUpdateTime = currentTime;
+                                lastDownloaded = downloadedBytes;
+                                firstProgressUpdate = false; // Mark that we've sent the first update
+                            }
+                        }
+                    }
+                }
+
+                // Wait for process to complete
+                int exitCode = process.waitFor();
+
+                // Handle process completion
+                if (exitCode == 0) {
+                    download.setStatus(Download.Status.COMPLETED);
+                    if (listener != null) {
+                        listener.onDownloadComplete(download);
+                    }
+                } else {
+                    // Only set error status if the download wasn't paused
+                    if (download.getStatus() != Download.Status.PAUSED) {
+                        download.setStatus(Download.Status.ERROR);
+                        download.setErrorMessage("curl process exited with code: " + exitCode);
+                        if (listener != null) {
+                            listener.onDownloadError(download, download.getErrorMessage());
+                        }
+                    }
+                }
+            } catch (IOException | InterruptedException e) {
+                // Handle errors - only set error status if the download wasn't paused
+                if (download.getStatus() != Download.Status.PAUSED) {
+                    download.setStatus(Download.Status.ERROR);
+                    download.setErrorMessage("Error during download: " + e.getMessage());
+                    if (listener != null) {
+                        listener.onDownloadError(download, download.getErrorMessage());
+                    }
+                }
+            } finally {
+                // Clean up
+                activeProcesses.remove(download.getId());
+                activeDownloads.remove(download.getId());
+            }
+        });
+    }
+
+    /**
+     * Builds the curl command with appropriate options.
+     *
+     * @param download   The download to create a command for
+     * @param outputFile The output file path
+     * @return List of command arguments
+     */
+    private List<String> buildCurlCommand(Download download, Path outputFile) {
+        List<String> command = new ArrayList<>();
+
+        // Add curl executable
+        command.add(curlPath);
+
+        // Get settings (use existing or default)
+        CurlSettings settings = switch (download.getSettings()) {
+            case CurlSettings curlSettings ->
+                curlSettings;
+            case null, default ->
+                new CurlSettings();
+        };
+
+        // Basic options
+        if (settings.isFollowRedirects()) {
+            command.add("-L"); // Follow redirects
+        }
+
+        if (settings.isResumeDownloads()) {
+            command.add("-C");
+            command.add("-"); // Resume downloads
+        }
+
+        // Enable progress reporting - curl's default numerical progress format
+        // This provides parseable progress information in the stderr output
+        // Format: % Total % Received % Xferd Average Speed Time Time Time Current
+        // Dload Upload Total Spent Left Speed
+        // 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0
+        if (settings.isCreateDirs()) {
+            command.add("--create-dirs"); // Create directories in output path if needed
+        }
+
+        // Add proxy if specified
+        if (settings.isUseProxy() && settings.getProxyAddress() != null) {
+            command.add("-x");
+            command.add(settings.getProxyAddress());
+        }
+
+        // Add output file
+        command.add("-o");
+        command.add(outputFile.toString());
+
+        // Add connection options
+        command.add("--connect-timeout");
+        command.add(String.valueOf(settings.getConnectTimeout()));
+
+        // Add retry options
+        command.add("--retry");
+        command.add(String.valueOf(settings.getRetryCount()));
+
+        // Add user agent if specified
+        if (settings.getUserAgent() != null) {
+            command.add("--user-agent");
+            command.add(settings.getUserAgent());
+        }
+
+        // Add referer if specified
+        if (settings.getReferer() != null) {
+            command.add("--referer");
+            command.add(settings.getReferer());
+        }
+
+        // Add low speed limit options
+        command.add("--speed-limit");
+        command.add(String.valueOf(settings.getLowSpeedLimit()));
+        command.add("--speed-time");
+        command.add(String.valueOf(settings.getLowSpeedTime()));
+
+        // Add max redirects if following redirects
+        if (settings.isFollowRedirects()) {
+            command.add("--max-redirs");
+            command.add(String.valueOf(settings.getMaxRedirects()));
+        }
+
+        // Add fail flag to treat HTTP error status codes as errors
+        if (settings.isFailOnHttpError()) {
+            command.add("--fail");
+        }
+
+        // Add insecure mode if enabled
+        if (settings.isInsecureMode()) {
+            command.add("--insecure");
+        }
+
+        // For backward compatibility, also check legacy options
+        // But skip if we already have CurlSettings to avoid duplicates
+        if (!(download.getSettings() instanceof CurlSettings)) {
+            Map<String, String> options = download.getOptions();
+            if (options != null) {
+                for (Map.Entry<String, String> entry : options.entrySet()) {
+                    if (entry.getKey().startsWith("curl.")) {
+                        String option = entry.getKey().substring(5); // Remove "curl." prefix
+
+                        // Skip progress-bar option since we need numerical progress output for parsing
+                        if ("progress-bar".equals(option)) {
+                            continue;
+                        }
+
+                        command.add("--" + option);
+                        if (entry.getValue() != null && !entry.getValue().isEmpty()) {
+                            command.add(entry.getValue());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add the URL
+        command.add(download.getUri().toString());
+
+        return command;
+    }
+
+    /**
+     * Pauses a download by stopping the curl process.
+     *
+     * @param download The download to pause
+     * @param listener Listener for download events
+     */
+    public void pauseDownload(Download download, DownloadListener listener) {
+        Process process = activeProcesses.get(download.getId());
+        if (process != null) {
+            process.destroy();
+            activeProcesses.remove(download.getId());
+
+            download.setStatus(Download.Status.PAUSED);
+            if (listener != null) {
+                listener.onDownloadPause(download);
+            }
+        }
+    }
+
+    /**
+     * Resumes a paused download.
+     *
+     * @param download The download to resume
+     * @param listener Listener for download events
+     */
+    public void resumeDownload(Download download, DownloadListener listener) {
+        if (download.getStatus() == Download.Status.PAUSED) {
+            startDownload(download, listener);
+
+            if (listener != null) {
+                listener.onDownloadResume(download);
+            }
+        }
+    }
+
+    /**
+     * Cancels a download by stopping the curl process and deleting the partial
+     * file.
+     *
+     * @param download   The download to cancel
+     * @param listener   Listener for download events
+     * @param deleteFile Whether to delete the partial file
+     */
+    public void cancelDownload(Download download, DownloadListener listener, boolean deleteFile) {
+        Process process = activeProcesses.get(download.getId());
+        if (process != null) {
+            process.destroy();
+            activeProcesses.remove(download.getId());
+        }
+
+        // Delete partial file if requested
+        if (deleteFile && download.getDestination() != null) {
+            Path outputFile = download.getDestination().resolve(download.getName());
+            try {
+                Files.deleteIfExists(outputFile);
+            } catch (IOException e) {
+                // Log error but continue
+                LOGGER.severe("Failed to delete partial file: " + e.getMessage());
+            }
+        }
+
+        download.setStatus(Download.Status.CANCELED);
+        if (listener != null) {
+            listener.onDownloadCanceled(download);
+        }
+
+        activeDownloads.remove(download.getId());
+    }
+
+    /**
+     * Shuts down the client and cancels all active downloads.
+     */
+    public void shutdown() {
+        // Stop all active processes
+        for (Process process : activeProcesses.values()) {
+            process.destroy();
+        }
+
+        // Clear maps
+        activeProcesses.clear();
+        activeDownloads.clear();
+
+        // Shutdown executor
+        executorService.shutdownNow();
+    }
+
+    /**
+     * Checks if the client has been shut down.
+     *
+     * @return true if the client has been shut down, false otherwise
+     */
+    public boolean isShutdown() {
+        return executorService.isShutdown();
+    }
+
+    /**
+     * Checks if curl is installed and available.
+     *
+     * @return true if curl is available, false otherwise
+     */
+    public static boolean isCurlAvailable() {
+        try {
+            // Use the ToolManagerFactory to check if curl is available
+            return ApplicationContext.isToolAvailable("curl");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Checks if curl is available at the specified path.
+     *
+     * @param path The path to the curl executable
+     * @return true if curl is available at the specified path, false otherwise
+     */
+    public static boolean isCurlAvailable(String path) {
+        try {
+            ProcessBuilder processBuilder = new ProcessBuilder(path, "--version");
+            processBuilder.redirectErrorStream(true);
+            Process process = processBuilder.start();
+            int exitCode = process.waitFor();
+            return exitCode == 0;
+        } catch (IOException | InterruptedException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Parses curl speed format (e.g., "2215k", "1.5M", "100") to bytes per
+     * second
+     *
+     * @param speedStr Speed string from curl output
+     * @return Speed in bytes per second
+     */
+    private float parseSpeed(String speedStr) {
+        if (speedStr == null || speedStr.trim().isEmpty()) {
+            return 0.0f;
+        }
+
+        speedStr = speedStr.trim();
+        float multiplier = 1.0f;
+
+        // Check for unit suffix
+        if (speedStr.endsWith("k") || speedStr.endsWith("K")) {
+            multiplier = 1024.0f;
+            speedStr = speedStr.substring(0, speedStr.length() - 1);
+        } else if (speedStr.endsWith("m") || speedStr.endsWith("M")) {
+            multiplier = 1024.0f * 1024.0f;
+            speedStr = speedStr.substring(0, speedStr.length() - 1);
+        } else if (speedStr.endsWith("g") || speedStr.endsWith("G")) {
+            multiplier = 1024.0f * 1024.0f * 1024.0f;
+            speedStr = speedStr.substring(0, speedStr.length() - 1);
+        }
+
+        try {
+            float speed = Float.parseFloat(speedStr);
+            return speed * multiplier;
+        } catch (NumberFormatException e) {
+            return 0.0f;
+        }
+    }
+}

@@ -1,0 +1,51 @@
+name: Build and Package for Linux
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - name: Set up JDK 21
+              uses: actions/setup-java@v4
+              with:
+                  java-version: "21"
+                  distribution: "temurin"
+            - name: Build with Maven
+              run: mvn clean package
+            - name: Package as .deb
+              uses: jiro4989/build-deb-action@v2
+              with:
+                  package: odm
+                  package_root: target
+                  maintainer: ${{ github.actor }}
+                  version: 0.1.0
+                  arch: amd64
+                  desc: "A full featured native download manager for Linux based on aria2, yt-dlp and httrack."
+            - name: Package as .rpm
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y rpm
+                  mkdir -p rpmroot/opt/odm
+                  cp target/*.jar rpmroot/opt/odm/
+                  fpm -s dir -t rpm -n odm -v 0.1.0 --architecture amd64 --description "A full featured native download manager for Linux based on aria2, yt-dlp and httrack." -C rpmroot .
+              shell: bash
+            - name: Package as .pkg.tar.gz (Arch Linux)
+              run: |
+                  mkdir -p pkgbuild
+                  cp target/*.jar pkgbuild/
+                  tar -czvf odm-0.1.0.pkg.tar.gz -C pkgbuild .
+              shell: bash
+            - name: Upload Artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: linux-packages
+                  path: |
+                      odm_0.1.0_amd64.deb
+                      odm-0.1.0-1.x86_64.rpm
+                      odm-0.1.0.pkg.tar.gz

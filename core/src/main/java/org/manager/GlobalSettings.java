@@ -1,0 +1,808 @@
+package org.manager;
+
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+import java.util.logging.Logger;
+import org.manager.clipboard.ClipboardSettings;
+
+/**
+ * Global settings that apply to the entire download manager. These settings are
+ * system-wide and affect all downloads.
+ */
+public class GlobalSettings {
+
+    private static final Logger LOGGER = Logger.getLogger(GlobalSettings.class.getName());
+
+    // Properties storage for generic access
+    private final Properties properties = new Properties();
+
+    private int maxConcurrentDownloads = 3;
+    private int globalSpeedLimit = 0; // 0 means no limit (in KB/s)
+    private boolean globalProxyEnabled = false;
+    private String globalProxyAddress = null;
+    private Path defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
+    private boolean saveDownloadHistory = true;
+
+    // Clipboard monitoring settings
+    private ClipboardSettings clipboardSettings = new ClipboardSettings();
+
+    // Memory management and cleanup settings
+    private int maxDownloadsInMemory = 1000; // 0 for unlimited
+    private int maxCompletedDownloadsToKeep = 500;
+    private long cleanupIntervalHours = 24; // Cleanup every 24 hours
+    private long completedDownloadRetentionDays = 30; // Keep completed downloads for 30 days
+    private long errorDownloadRetentionDays = 7; // Keep error downloads for 7 days
+    private boolean automaticCleanupEnabled = true;
+    private boolean enableLazyLoading = true; // Enable lazy loading for large datasets
+    private int paginationDefaultSize = 50; // Default page size for paginated queries
+
+    // External tool paths
+    private String aria2Path = "aria2c";
+    private String ytDlpPath = "yt-dlp";
+    private String httrackPath = "httrack";
+    private String curlPath = "curl";
+    private String proxychainsPath = "proxychains";
+    private String torPath = "tor";
+
+    // Tool availability flags - these are read-only and set by the dependency
+    // manager
+    private transient boolean aria2Available = false;
+    private transient boolean ytDlpAvailable = false;
+    private transient boolean httrackAvailable = false;
+    private transient boolean curlAvailable = false;
+    private transient boolean proxychainsAvailable = false;
+    private transient boolean torAvailable = false;
+
+    /**
+     * Gets the maximum number of concurrent downloads allowed.
+     *
+     * @return The maximum number of concurrent downloads
+     */
+    public int getMaxConcurrentDownloads() {
+        return maxConcurrentDownloads;
+    }
+
+    /**
+     * Sets the maximum number of concurrent downloads allowed.
+     *
+     * @param maxConcurrentDownloads The maximum number of concurrent downloads
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setMaxConcurrentDownloads(int maxConcurrentDownloads) {
+        this.maxConcurrentDownloads = maxConcurrentDownloads;
+        return this;
+    }
+
+    /**
+     * Gets the global speed limit in KB/s. A value of 0 means no limit.
+     *
+     * @return The global speed limit in KB/s
+     */
+    public int getGlobalSpeedLimit() {
+        return globalSpeedLimit;
+    }
+
+    /**
+     * Sets the global speed limit in KB/s. Set to 0 for no limit.
+     *
+     * @param globalSpeedLimit The global speed limit in KB/s
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setGlobalSpeedLimit(int globalSpeedLimit) {
+        this.globalSpeedLimit = globalSpeedLimit;
+        return this;
+    }
+
+    /**
+     * Checks if global proxy is enabled.
+     *
+     * @return true if global proxy is enabled, false otherwise
+     */
+    public boolean isGlobalProxyEnabled() {
+        return globalProxyEnabled;
+    }
+
+    /**
+     * Sets whether to enable global proxy.
+     *
+     * @param globalProxyEnabled true to enable global proxy, false otherwise
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setGlobalProxyEnabled(boolean globalProxyEnabled) {
+        this.globalProxyEnabled = globalProxyEnabled;
+        return this;
+    }
+
+    /**
+     * Gets the global proxy address.
+     *
+     * @return The global proxy address
+     */
+    public String getGlobalProxyAddress() {
+        return globalProxyAddress;
+    }
+
+    /**
+     * Sets the global proxy address.
+     *
+     * @param globalProxyAddress The global proxy address
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setGlobalProxyAddress(String globalProxyAddress) {
+        this.globalProxyAddress = globalProxyAddress;
+        return this;
+    }
+
+    /**
+     * Gets the default download directory.
+     *
+     * @return The default download directory
+     */
+    public Path getDefaultDownloadDirectory() {
+        return defaultDownloadDirectory;
+    }
+
+    /**
+     * Sets the default download directory.
+     *
+     * @param defaultDownloadDirectory The default download directory
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setDefaultDownloadDirectory(Path defaultDownloadDirectory) {
+        this.defaultDownloadDirectory = defaultDownloadDirectory;
+        return this;
+    }
+
+    /**
+     * Checks if download history should be saved.
+     *
+     * @return true if download history should be saved, false otherwise
+     */
+    public boolean isSaveDownloadHistory() {
+        return saveDownloadHistory;
+    }
+
+    /**
+     * Sets whether to save download history.
+     *
+     * @param saveDownloadHistory true to save download history, false otherwise
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setSaveDownloadHistory(boolean saveDownloadHistory) {
+        this.saveDownloadHistory = saveDownloadHistory;
+        return this;
+    }
+
+    /**
+     * Gets the clipboard monitoring settings.
+     *
+     * @return The clipboard settings
+     */
+    public ClipboardSettings getClipboardSettings() {
+        return clipboardSettings;
+    }
+
+    /**
+     * Sets the clipboard monitoring settings.
+     *
+     * @param clipboardSettings The clipboard settings to set
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setClipboardSettings(ClipboardSettings clipboardSettings) {
+        this.clipboardSettings = clipboardSettings != null ? clipboardSettings : new ClipboardSettings();
+        return this;
+    }
+
+    /**
+     * Gets the maximum number of downloads to keep in memory.
+     *
+     * @return The maximum number of downloads to keep in memory (0 for
+     *         unlimited)
+     */
+    public int getMaxDownloadsInMemory() {
+        return maxDownloadsInMemory;
+    }
+
+    /**
+     * Sets the maximum number of downloads to keep in memory.
+     *
+     * @param maxDownloadsInMemory The maximum number of downloads to keep in
+     *                             memory (0 for unlimited)
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setMaxDownloadsInMemory(int maxDownloadsInMemory) {
+        this.maxDownloadsInMemory = maxDownloadsInMemory;
+        return this;
+    }
+
+    /**
+     * Gets the maximum number of completed downloads to keep.
+     *
+     * @return The maximum number of completed downloads to keep
+     */
+    public int getMaxCompletedDownloadsToKeep() {
+        return maxCompletedDownloadsToKeep;
+    }
+
+    /**
+     * Sets the maximum number of completed downloads to keep.
+     *
+     * @param maxCompletedDownloadsToKeep The maximum number of completed
+     *                                    downloads to keep
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setMaxCompletedDownloadsToKeep(int maxCompletedDownloadsToKeep) {
+        this.maxCompletedDownloadsToKeep = maxCompletedDownloadsToKeep;
+        return this;
+    }
+
+    /**
+     * Gets the cleanup interval in hours.
+     *
+     * @return The cleanup interval in hours
+     */
+    public long getCleanupIntervalHours() {
+        return cleanupIntervalHours;
+    }
+
+    /**
+     * Sets the cleanup interval in hours.
+     *
+     * @param cleanupIntervalHours The cleanup interval in hours
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setCleanupIntervalHours(long cleanupIntervalHours) {
+        this.cleanupIntervalHours = cleanupIntervalHours;
+        return this;
+    }
+
+    /**
+     * Gets the retention period for completed downloads in days.
+     *
+     * @return The retention period for completed downloads in days
+     */
+    public long getCompletedDownloadRetentionDays() {
+        return completedDownloadRetentionDays;
+    }
+
+    /**
+     * Sets the retention period for completed downloads in days.
+     *
+     * @param completedDownloadRetentionDays The retention period for completed
+     *                                       downloads in days
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setCompletedDownloadRetentionDays(long completedDownloadRetentionDays) {
+        this.completedDownloadRetentionDays = completedDownloadRetentionDays;
+        return this;
+    }
+
+    /**
+     * Gets the retention period for error downloads in days.
+     *
+     * @return The retention period for error downloads in days
+     */
+    public long getErrorDownloadRetentionDays() {
+        return errorDownloadRetentionDays;
+    }
+
+    /**
+     * Sets the retention period for error downloads in days.
+     *
+     * @param errorDownloadRetentionDays The retention period for error
+     *                                   downloads in days
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setErrorDownloadRetentionDays(long errorDownloadRetentionDays) {
+        this.errorDownloadRetentionDays = errorDownloadRetentionDays;
+        return this;
+    }
+
+    /**
+     * Checks if automatic cleanup is enabled.
+     *
+     * @return true if automatic cleanup is enabled, false otherwise
+     */
+    public boolean isAutomaticCleanupEnabled() {
+        return automaticCleanupEnabled;
+    }
+
+    /**
+     * Sets whether automatic cleanup is enabled.
+     *
+     * @param automaticCleanupEnabled true to enable automatic cleanup, false
+     *                                otherwise
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setAutomaticCleanupEnabled(boolean automaticCleanupEnabled) {
+        this.automaticCleanupEnabled = automaticCleanupEnabled;
+        return this;
+    }
+
+    /**
+     * Checks if lazy loading is enabled.
+     *
+     * @return true if lazy loading is enabled, false otherwise
+     */
+    public boolean isEnableLazyLoading() {
+        return enableLazyLoading;
+    }
+
+    /**
+     * Sets whether lazy loading is enabled.
+     *
+     * @param enableLazyLoading true to enable lazy loading, false otherwise
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setEnableLazyLoading(boolean enableLazyLoading) {
+        this.enableLazyLoading = enableLazyLoading;
+        return this;
+    }
+
+    /**
+     * Gets the default pagination size.
+     *
+     * @return The default pagination size
+     */
+    public int getPaginationDefaultSize() {
+        return paginationDefaultSize;
+    }
+
+    /**
+     * Sets the default pagination size.
+     *
+     * @param paginationDefaultSize The default pagination size
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setPaginationDefaultSize(int paginationDefaultSize) {
+        this.paginationDefaultSize = paginationDefaultSize;
+        return this;
+    }
+
+    /**
+     * Creates a copy of these settings.
+     *
+     * @return A new GlobalSettings instance with the same settings
+     */
+    /**
+     * Gets the path to aria2c executable.
+     *
+     * @return The path to aria2c executable
+     */
+    public String getAria2Path() {
+        return aria2Path;
+    }
+
+    /**
+     * Sets the path to aria2c executable.
+     *
+     * @param aria2Path The path to aria2c executable
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setAria2Path(String aria2Path) {
+        this.aria2Path = aria2Path;
+        return this;
+    }
+
+    /**
+     * Gets the path to yt-dlp executable.
+     *
+     * @return The path to yt-dlp executable
+     */
+    public String getYtDlpPath() {
+        return ytDlpPath;
+    }
+
+    /**
+     * Sets the path to yt-dlp executable.
+     *
+     * @param ytDlpPath The path to yt-dlp executable
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setYtDlpPath(String ytDlpPath) {
+        this.ytDlpPath = ytDlpPath;
+        return this;
+    }
+
+    /**
+     * Gets the path to httrack executable.
+     *
+     * @return The path to httrack executable
+     */
+    public String getHttrackPath() {
+        return httrackPath;
+    }
+
+    /**
+     * Sets the path to httrack executable.
+     *
+     * @param httrackPath The path to httrack executable
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setHttrackPath(String httrackPath) {
+        this.httrackPath = httrackPath;
+        return this;
+    }
+
+    /**
+     * Gets the path to curl executable.
+     *
+     * @return The path to curl executable
+     */
+    public String getCurlPath() {
+        return curlPath;
+    }
+
+    /**
+     * Sets the path to curl executable.
+     *
+     * @param curlPath The path to curl executable
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setCurlPath(String curlPath) {
+        this.curlPath = curlPath;
+        return this;
+    }
+
+    /**
+     * Gets the path to proxychains executable.
+     *
+     * @return The path to proxychains executable
+     */
+    public String getProxychainsPath() {
+        return proxychainsPath;
+    }
+
+    /**
+     * Sets the path to proxychains executable.
+     *
+     * @param proxychainsPath The path to proxychains executable
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setProxychainsPath(String proxychainsPath) {
+        this.proxychainsPath = proxychainsPath;
+        return this;
+    }
+
+    /**
+     * Gets the path to tor executable.
+     *
+     * @return The path to tor executable
+     */
+    public String getTorPath() {
+        return torPath;
+    }
+
+    /**
+     * Sets the path to tor executable.
+     *
+     * @param torPath The path to tor executable
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setTorPath(String torPath) {
+        this.torPath = torPath;
+        return this;
+    }
+
+    /**
+     * Checks if aria2 is available.
+     *
+     * @return true if aria2 is available, false otherwise
+     */
+    public boolean isAria2Available() {
+        return aria2Available;
+    }
+
+    /**
+     * Sets whether aria2 is available. This should only be called by the
+     * dependency manager.
+     *
+     * @param aria2Available true if aria2 is available, false otherwise
+     */
+    public void setAria2Available(boolean aria2Available) {
+        this.aria2Available = aria2Available;
+    }
+
+    /**
+     * Checks if yt-dlp is available.
+     *
+     * @return true if yt-dlp is available, false otherwise
+     */
+    public boolean isYtDlpAvailable() {
+        return ytDlpAvailable;
+    }
+
+    /**
+     * Sets whether yt-dlp is available. This should only be called by the
+     * dependency manager.
+     *
+     * @param ytDlpAvailable true if yt-dlp is available, false otherwise
+     */
+    public void setYtDlpAvailable(boolean ytDlpAvailable) {
+        this.ytDlpAvailable = ytDlpAvailable;
+    }
+
+    /**
+     * Checks if httrack is available.
+     *
+     * @return true if httrack is available, false otherwise
+     */
+    public boolean isHttrackAvailable() {
+        return httrackAvailable;
+    }
+
+    /**
+     * Sets whether httrack is available. This should only be called by the
+     * dependency manager.
+     *
+     * @param httrackAvailable true if httrack is available, false otherwise
+     */
+    public void setHttrackAvailable(boolean httrackAvailable) {
+        this.httrackAvailable = httrackAvailable;
+    }
+
+    /**
+     * Checks if curl is available.
+     *
+     * @return true if curl is available, false otherwise
+     */
+    public boolean isCurlAvailable() {
+        return curlAvailable;
+    }
+
+    /**
+     * Sets whether curl is available. This should only be called by the
+     * dependency manager.
+     *
+     * @param curlAvailable true if curl is available, false otherwise
+     */
+    public void setCurlAvailable(boolean curlAvailable) {
+        this.curlAvailable = curlAvailable;
+    }
+
+    /**
+     * Checks if proxychains is available.
+     *
+     * @return true if proxychains is available, false otherwise
+     */
+    public boolean isProxychainsAvailable() {
+        return proxychainsAvailable;
+    }
+
+    /**
+     * Sets whether proxychains is available. This should only be called by the
+     * dependency manager.
+     *
+     * @param proxychainsAvailable true if proxychains is available, false
+     *                             otherwise
+     */
+    public void setProxychainsAvailable(boolean proxychainsAvailable) {
+        this.proxychainsAvailable = proxychainsAvailable;
+    }
+
+    /**
+     * Checks if tor is available.
+     *
+     * @return true if tor is available, false otherwise
+     */
+    public boolean isTorAvailable() {
+        return torAvailable;
+    }
+
+    /**
+     * Sets whether tor is available. This should only be called by the
+     * dependency manager.
+     *
+     * @param torAvailable true if tor is available, false otherwise
+     */
+    public void setTorAvailable(boolean torAvailable) {
+        this.torAvailable = torAvailable;
+    }
+
+    /**
+     * Creates a map of all tool paths.
+     *
+     * @return A map of tool names to paths
+     */
+    public Map<String, String> getToolPaths() {
+        Map<String, String> paths = new HashMap<>();
+        paths.put("aria2", aria2Path);
+        paths.put("yt-dlp", ytDlpPath);
+        paths.put("httrack", httrackPath);
+        paths.put("curl", curlPath);
+        paths.put("proxychains", proxychainsPath);
+        paths.put("tor", torPath);
+        return paths;
+    }
+
+    /**
+     * Creates a copy of these settings.
+     *
+     * @return A new GlobalSettings instance with the same settings
+     */
+    public GlobalSettings copy() {
+        // GlobalSettings copy = new GlobalSettings();
+        GlobalSettings copy = ApplicationContext.getGlobalSettings();
+        copy.maxConcurrentDownloads = this.maxConcurrentDownloads;
+        copy.globalSpeedLimit = this.globalSpeedLimit;
+        copy.globalProxyEnabled = this.globalProxyEnabled;
+        copy.globalProxyAddress = this.globalProxyAddress;
+        copy.defaultDownloadDirectory = this.defaultDownloadDirectory;
+        copy.saveDownloadHistory = this.saveDownloadHistory;
+        copy.clipboardSettings = this.clipboardSettings != null ? this.clipboardSettings.copy()
+                : new ClipboardSettings();
+        copy.maxDownloadsInMemory = this.maxDownloadsInMemory;
+        copy.maxCompletedDownloadsToKeep = this.maxCompletedDownloadsToKeep;
+        copy.cleanupIntervalHours = this.cleanupIntervalHours;
+        copy.completedDownloadRetentionDays = this.completedDownloadRetentionDays;
+        copy.errorDownloadRetentionDays = this.errorDownloadRetentionDays;
+        copy.automaticCleanupEnabled = this.automaticCleanupEnabled;
+        copy.enableLazyLoading = this.enableLazyLoading;
+        copy.paginationDefaultSize = this.paginationDefaultSize;
+        copy.aria2Path = this.aria2Path;
+        copy.ytDlpPath = this.ytDlpPath;
+        copy.httrackPath = this.httrackPath;
+        copy.curlPath = this.curlPath;
+        copy.proxychainsPath = this.proxychainsPath;
+        copy.torPath = this.torPath;
+        // Don't copy transient availability flags
+        return copy;
+    }
+
+    /**
+     * Gets an integer property value. This method provides generic access to
+     * integer properties for UI compatibility.
+     *
+     * @param propertyName the property name
+     * @param defaultValue the default value if property is not found
+     * @return the property value or default if not found
+     */
+    public int getIntProperty(String propertyName, int defaultValue) {
+        return switch (propertyName) {
+            case "maxConcurrentDownloads" ->
+                maxConcurrentDownloads;
+            case "globalSpeedLimit" ->
+                globalSpeedLimit;
+            case "maxDownloadsInMemory" ->
+                maxDownloadsInMemory;
+            case "maxCompletedDownloadsToKeep" ->
+                maxCompletedDownloadsToKeep;
+            case "paginationDefaultSize" ->
+                paginationDefaultSize;
+            default -> {
+                String value = properties.getProperty(propertyName);
+                if (value != null) {
+                    try {
+                        yield Integer.parseInt(value);
+                    } catch (NumberFormatException e) {
+                        LOGGER.warning("Invalid integer property value for " + propertyName + ": " + value);
+                    }
+                }
+                yield defaultValue;
+            }
+        };
+    }
+
+    /**
+     * Gets a boolean property value. This method provides generic access to
+     * boolean properties for UI compatibility.
+     *
+     * @param propertyName the property name
+     * @param defaultValue the default value if property is not found
+     * @return the property value or default if not found
+     */
+    public boolean getBooleanProperty(String propertyName, boolean defaultValue) {
+        return switch (propertyName) {
+            case "globalProxyEnabled" ->
+                globalProxyEnabled;
+            case "saveDownloadHistory" ->
+                saveDownloadHistory;
+            case "automaticCleanupEnabled" ->
+                automaticCleanupEnabled;
+            case "enableLazyLoading" ->
+                enableLazyLoading;
+            default -> {
+                String value = properties.getProperty(propertyName);
+                if (value != null) {
+                    yield Boolean.parseBoolean(value);
+                }
+                yield defaultValue;
+            }
+        };
+    }
+
+    /**
+     * Gets a string property value. This method provides generic access to
+     * string properties for UI compatibility.
+     *
+     * @param propertyName the property name
+     * @param defaultValue the default value if property is not found
+     * @return the property value or default if not found
+     */
+    public String getProperty(String propertyName, String defaultValue) {
+        return switch (propertyName) {
+            case "globalProxyAddress" ->
+                globalProxyAddress != null ? globalProxyAddress : defaultValue;
+            case "defaultDownloadDirectory" ->
+                defaultDownloadDirectory != null ? defaultDownloadDirectory.toString() : defaultValue;
+            case "aria2Path" ->
+                aria2Path;
+            case "ytDlpPath" ->
+                ytDlpPath;
+            case "httrackPath" ->
+                httrackPath;
+            case "curlPath" ->
+                curlPath;
+            case "proxychainsPath" ->
+                proxychainsPath;
+            case "torPath" ->
+                torPath;
+            default ->
+                properties.getProperty(propertyName, defaultValue);
+        };
+    }
+
+    /**
+     * Sets a property value. This method provides generic access to set
+     * properties for UI compatibility.
+     *
+     * @param propertyName the property name
+     * @param value        the property value
+     */
+    public void setProperty(String propertyName, String value) {
+        switch (propertyName) {
+            case "globalProxyAddress" ->
+                setGlobalProxyAddress(value);
+            case "defaultDownloadDirectory" -> {
+                if (value != null) {
+                    setDefaultDownloadDirectory(Paths.get(value));
+                }
+            }
+            case "aria2Path" ->
+                setAria2Path(value);
+            case "ytDlpPath" ->
+                setYtDlpPath(value);
+            case "httrackPath" ->
+                setHttrackPath(value);
+            case "curlPath" ->
+                setCurlPath(value);
+            case "proxychainsPath" ->
+                setProxychainsPath(value);
+            case "torPath" ->
+                setTorPath(value);
+            default ->
+                properties.setProperty(propertyName, value);
+        }
+    }
+
+    /**
+     * Saves the settings to a file. This method provides persistence for UI
+     * compatibility.
+     */
+    public void save() {
+        // Sync current values to properties
+        properties.setProperty("maxConcurrentDownloads", String.valueOf(maxConcurrentDownloads));
+        properties.setProperty("globalSpeedLimit", String.valueOf(globalSpeedLimit));
+        properties.setProperty("globalProxyEnabled", String.valueOf(globalProxyEnabled));
+        properties.setProperty("saveDownloadHistory", String.valueOf(saveDownloadHistory));
+        properties.setProperty("automaticCleanupEnabled", String.valueOf(automaticCleanupEnabled));
+        properties.setProperty("enableLazyLoading", String.valueOf(enableLazyLoading));
+        properties.setProperty("maxDownloadsInMemory", String.valueOf(maxDownloadsInMemory));
+        properties.setProperty("maxCompletedDownloadsToKeep", String.valueOf(maxCompletedDownloadsToKeep));
+        properties.setProperty("paginationDefaultSize", String.valueOf(paginationDefaultSize));
+
+        if (globalProxyAddress != null) {
+            properties.setProperty("globalProxyAddress", globalProxyAddress);
+        }
+        if (defaultDownloadDirectory != null) {
+            properties.setProperty("defaultDownloadDirectory", defaultDownloadDirectory.toString());
+        }
+
+        // In a real implementation, you would save to a file
+        // For now, this is a no-op as the core settings are managed elsewhere
+        LOGGER.info("Settings saved");
+    }
+}

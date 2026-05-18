@@ -1,0 +1,363 @@
+package org.manager.schedule;
+
+import java.time.DayOfWeek;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * Represents a weekly schedule with time ranges for each day of the week.
+ * Each day can have multiple time ranges when downloads should be active.
+ */
+public class WeeklySchedule {
+
+    private final Map<DayOfWeek, List<TimeRange>> schedule;
+    private boolean enabled;
+
+    /**
+     * Creates a new empty weekly schedule.
+     */
+    public WeeklySchedule() {
+        this.schedule = new EnumMap<>(DayOfWeek.class);
+        this.enabled = true;
+
+        // Initialize empty lists for each day
+        for (DayOfWeek day : DayOfWeek.values()) {
+            schedule.put(day, new ArrayList<>());
+        }
+    }
+
+    /**
+     * Creates a weekly schedule where all days have the same time ranges.
+     *
+     * @param timeRanges The time ranges to apply to all days
+     */
+    public WeeklySchedule(List<TimeRange> timeRanges) {
+        this();
+        Objects.requireNonNull(timeRanges, "Time ranges cannot be null");
+
+        for (DayOfWeek day : DayOfWeek.values()) {
+            schedule.put(day, new ArrayList<>(timeRanges));
+        }
+    }
+
+    /**
+     * Creates a weekly schedule with different time ranges for weekdays and weekends.
+     *
+     * @param weekdayRanges Time ranges for Monday through Friday
+     * @param weekendRanges Time ranges for Saturday and Sunday
+     */
+    public WeeklySchedule(List<TimeRange> weekdayRanges, List<TimeRange> weekendRanges) {
+        this();
+        Objects.requireNonNull(weekdayRanges, "Weekday ranges cannot be null");
+        Objects.requireNonNull(weekendRanges, "Weekend ranges cannot be null");
+
+        // Set weekday ranges (Monday to Friday)
+        for (DayOfWeek day : Arrays.asList(DayOfWeek.MONDAY, DayOfWeek.TUESDAY,
+                                          DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)) {
+            schedule.put(day, new ArrayList<>(weekdayRanges));
+        }
+
+        // Set weekend ranges (Saturday and Sunday)
+        schedule.put(DayOfWeek.SATURDAY, new ArrayList<>(weekendRanges));
+        schedule.put(DayOfWeek.SUNDAY, new ArrayList<>(weekendRanges));
+    }
+
+    /**
+     * Creates a weekly schedule that is always active (24/7).
+     *
+     * @return A schedule that allows downloads at all times
+     */
+    public static WeeklySchedule alwaysActive() {
+        WeeklySchedule schedule = new WeeklySchedule();
+        TimeRange allDay = TimeRange.allDay();
+
+        for (DayOfWeek day : DayOfWeek.values()) {
+            schedule.addTimeRange(day, allDay);
+        }
+
+        return schedule;
+    }
+
+    /**
+     * Creates a weekly schedule that is never active.
+     *
+     * @return A schedule that never allows downloads
+     */
+    public static WeeklySchedule neverActive() {
+        WeeklySchedule schedule = new WeeklySchedule();
+        schedule.setEnabled(false);
+        return schedule;
+    }
+
+    /**
+     * Creates a business hours schedule (9 AM to 5 PM, Monday to Friday).
+     *
+     * @return A schedule for standard business hours
+     */
+    public static WeeklySchedule businessHours() {
+        WeeklySchedule schedule = new WeeklySchedule();
+        TimeRange businessHours = new TimeRange("09:00", "17:00");
+
+        // Add business hours to weekdays only
+        for (DayOfWeek day : Arrays.asList(DayOfWeek.MONDAY, DayOfWeek.TUESDAY,
+                                          DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY, DayOfWeek.FRIDAY)) {
+            schedule.addTimeRange(day, businessHours);
+        }
+
+        return schedule;
+    }
+
+    /**
+     * Creates a night hours schedule (10 PM to 6 AM, all days).
+     *
+     * @return A schedule for night hours
+     */
+    public static WeeklySchedule nightHours() {
+        WeeklySchedule schedule = new WeeklySchedule();
+        TimeRange nightHours = new TimeRange("22:00", "06:00");
+
+        for (DayOfWeek day : DayOfWeek.values()) {
+            schedule.addTimeRange(day, nightHours);
+        }
+
+        return schedule;
+    }
+
+    /**
+     * Adds a time range to a specific day.
+     *
+     * @param day The day of the week
+     * @param timeRange The time range to add
+     * @return This schedule for method chaining
+     */
+    public WeeklySchedule addTimeRange(DayOfWeek day, TimeRange timeRange) {
+        Objects.requireNonNull(day, "Day cannot be null");
+        Objects.requireNonNull(timeRange, "Time range cannot be null");
+
+        schedule.get(day).add(timeRange);
+        return this;
+    }
+
+    /**
+     * Adds a time range to multiple days.
+     *
+     * @param days The days of the week
+     * @param timeRange The time range to add
+     * @return This schedule for method chaining
+     */
+    public WeeklySchedule addTimeRange(Collection<DayOfWeek> days, TimeRange timeRange) {
+        Objects.requireNonNull(days, "Days cannot be null");
+        Objects.requireNonNull(timeRange, "Time range cannot be null");
+
+        for (DayOfWeek day : days) {
+            addTimeRange(day, timeRange);
+        }
+        return this;
+    }
+
+    /**
+     * Adds a time range to all days of the week.
+     *
+     * @param timeRange The time range to add
+     * @return This schedule for method chaining
+     */
+    public WeeklySchedule addTimeRangeAllDays(TimeRange timeRange) {
+        return addTimeRange(Arrays.asList(DayOfWeek.values()), timeRange);
+    }
+
+    /**
+     * Removes all time ranges from a specific day.
+     *
+     * @param day The day of the week
+     * @return This schedule for method chaining
+     */
+    public WeeklySchedule clearDay(DayOfWeek day) {
+        Objects.requireNonNull(day, "Day cannot be null");
+        schedule.get(day).clear();
+        return this;
+    }
+
+    /**
+     * Removes all time ranges from all days.
+     *
+     * @return This schedule for method chaining
+     */
+    public WeeklySchedule clearAll() {
+        for (DayOfWeek day : DayOfWeek.values()) {
+            clearDay(day);
+        }
+        return this;
+    }
+
+    /**
+     * Gets the time ranges for a specific day.
+     *
+     * @param day The day of the week
+     * @return A list of time ranges for the day (defensive copy)
+     */
+    public List<TimeRange> getTimeRanges(DayOfWeek day) {
+        Objects.requireNonNull(day, "Day cannot be null");
+        return new ArrayList<>(schedule.get(day));
+    }
+
+    /**
+     * Sets the time ranges for a specific day, replacing any existing ranges.
+     *
+     * @param day The day of the week
+     * @param timeRanges The time ranges to set
+     * @return This schedule for method chaining
+     */
+    public WeeklySchedule setTimeRanges(DayOfWeek day, List<TimeRange> timeRanges) {
+        Objects.requireNonNull(day, "Day cannot be null");
+        Objects.requireNonNull(timeRanges, "Time ranges cannot be null");
+
+        schedule.get(day).clear();
+        schedule.get(day).addAll(timeRanges);
+        return this;
+    }
+
+    /**
+     * Checks if downloads should be active at the given date and time.
+     *
+     * @param dateTime The date and time to check
+     * @return true if downloads should be active, false otherwise
+     */
+    public boolean isActiveAt(LocalDateTime dateTime) {
+        Objects.requireNonNull(dateTime, "Date time cannot be null");
+
+        if (!enabled) {
+            return false;
+        }
+
+        DayOfWeek day = dateTime.getDayOfWeek();
+        LocalTime time = dateTime.toLocalTime();
+
+        List<TimeRange> dayRanges = schedule.get(day);
+        return dayRanges.stream().anyMatch(range -> range.contains(time));
+    }
+
+    /**
+     * Checks if downloads should be active at the current time.
+     *
+     * @return true if downloads should be active now, false otherwise
+     */
+    public boolean isActiveNow() {
+        return isActiveAt(LocalDateTime.now());
+    }
+
+    /**
+     * Checks if the schedule is enabled.
+     *
+     * @return true if enabled, false otherwise
+     */
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    /**
+     * Enables or disables the entire schedule.
+     *
+     * @param enabled true to enable, false to disable
+     * @return This schedule for method chaining
+     */
+    public WeeklySchedule setEnabled(boolean enabled) {
+        this.enabled = enabled;
+        return this;
+    }
+
+    /**
+     * Checks if any day has time ranges defined.
+     *
+     * @return true if any day has time ranges, false otherwise
+     */
+    public boolean hasAnyTimeRanges() {
+        return schedule.values().stream().anyMatch(ranges -> !ranges.isEmpty());
+    }
+
+    /**
+     * Checks if a specific day has any time ranges defined.
+     *
+     * @param day The day of the week
+     * @return true if the day has time ranges, false otherwise
+     */
+    public boolean hasTimeRanges(DayOfWeek day) {
+        Objects.requireNonNull(day, "Day cannot be null");
+        return !schedule.get(day).isEmpty();
+    }
+
+    /**
+     * Gets a copy of the entire schedule map.
+     *
+     * @return A defensive copy of the schedule
+     */
+    public Map<DayOfWeek, List<TimeRange>> getScheduleMap() {
+        Map<DayOfWeek, List<TimeRange>> copy = new EnumMap<>(DayOfWeek.class);
+        for (Map.Entry<DayOfWeek, List<TimeRange>> entry : schedule.entrySet()) {
+            copy.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
+        return copy;
+    }
+
+    /**
+     * Creates a copy of this weekly schedule.
+     *
+     * @return A new WeeklySchedule with the same settings
+     */
+    public WeeklySchedule copy() {
+        WeeklySchedule copy = new WeeklySchedule();
+        copy.enabled = this.enabled;
+
+        for (Map.Entry<DayOfWeek, List<TimeRange>> entry : this.schedule.entrySet()) {
+            copy.schedule.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
+
+        return copy;
+    }
+
+    /**
+     * Returns a human-readable string representation of this schedule.
+     *
+     * @return A string describing the schedule
+     */
+    @Override
+    public String toString() {
+        if (!enabled) {
+            return "WeeklySchedule{disabled}";
+        }
+
+        StringBuilder sb = new StringBuilder("WeeklySchedule{\n");
+        for (DayOfWeek day : DayOfWeek.values()) {
+            List<TimeRange> ranges = schedule.get(day);
+            sb.append("  ").append(day).append(": ");
+            if (ranges.isEmpty()) {
+                sb.append("inactive");
+            } else {
+                sb.append(ranges);
+            }
+            sb.append("\n");
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+
+        WeeklySchedule that = (WeeklySchedule) obj;
+        return enabled == that.enabled && Objects.equals(schedule, that.schedule);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(schedule, enabled);
+    }
+}

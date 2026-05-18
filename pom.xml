@@ -1,0 +1,37 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>org.odm</groupId>
+    <artifactId>odm</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>odm</name>
+    <description>A full featured native download manager for Linux based on aria2, yt-dlp and httrack</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
+        <maven.assembly.plugin.version>3.6.0</maven.assembly.plugin.version>
+        <maven.source.plugin.version>3.3.0</maven.source.plugin.version>
+        <maven.javadoc.plugin.version>3.5.0</maven.javadoc.plugin.version>
+        <jdeb.plugin.version>1.10</jdeb.plugin.version>
+        <rpm.maven.plugin.version>2.2.0</rpm.maven.plugin.version>
+        <exec.maven.plugin.version>3.1.0</exec.maven.plugin.version>
+        <native.maven.plugin.version>0.9.23</native.maven.plugin.version>
+    </properties>
+
+    <modules>
+        <!-- <module>odm-lib</module> -->
+        <module>core</module>
+        <module>jgtk</module>
+        <module>odm-gtk</module>
+        <!--<module>examples</module>-->
+        <!--<module>gladedemo</module>-->
+    </modules>
+
+
+
+</project>
