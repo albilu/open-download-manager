@@ -134,6 +134,13 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.2</version>
+                <configuration>
+                    <!-- Test classes share static singletons (ApplicationFactory/
+                         ApplicationContext); lifecycle tests call shutdown() and poison
+                         later classes in the same JVM. Fork each class for isolation. -->
+                    <forkCount>1</forkCount>
+                    <reuseForks>false</reuseForks>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
