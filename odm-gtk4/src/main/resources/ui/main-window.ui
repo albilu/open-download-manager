@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+
+  <object class="GtkListStore" id="categories_store">
+    <columns>
+      <!-- column-name name -->
+      <column type="gchararray"/>
+      <!-- column-name count -->
+      <column type="gint"/>
+    </columns>
+  </object>
+
+  <object class="GtkListStore" id="downloads_store">
+    <columns>
+      <!-- column-name name -->
+      <column type="gchararray"/>
+      <!-- column-name size -->
+      <column type="gchararray"/>
+      <!-- column-name progress -->
+      <column type="gint"/>
+      <!-- column-name speed -->
+      <column type="gchararray"/>
+      <!-- column-name status -->
+      <column type="gchararray"/>
+    </columns>
+  </object>
+
+  <object class="GtkApplicationWindow" id="main_window">
+    <property name="title">oDM — GTK4 spike</property>
+    <property name="default-width">1000</property>
+    <property name="default-height">560</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+
+        <child>
+          <object class="GtkBox" id="toolbar">
+            <property name="orientation">horizontal</property>
+          <property name="spacing">6</property>
+          <property name="margin-start">6</property>
+          <property name="margin-end">6</property>
+          <property name="margin-top">6</property>
+          <property name="margin-bottom">6</property>
+          <child>
+            <object class="GtkButton" id="add_button">
+              <property name="icon-name">list-add</property>
+              <property name="tooltip-text">Add download</property>
+            </object>
+          </child>
+          <child>
+            <object class="GtkButton" id="pause_button">
+              <property name="icon-name">media-playback-pause</property>
+              <property name="tooltip-text">Pause</property>
+            </object>
+          </child>
+          <child>
+            <object class="GtkButton" id="resume_button">
+              <property name="icon-name">media-playback-start</property>
+              <property name="tooltip-text">Resume</property>
+            </object>
+          </child>
+          <child>
+            <object class="GtkButton" id="cancel_button">
+              <property name="icon-name">process-stop</property>
+              <property name="tooltip-text">Cancel</property>
+            </object>
+          </child>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkPaned">
+            <property name="position">220</property>
+            <property name="vexpand">true</property>
+            <property name="start-child">
+              <object class="GtkScrolledWindow">
+                <property name="hexpand">false</property>
+                <child>
+                  <object class="GtkTreeView" id="categories_view">
+                    <property name="model">categories_store</property>
+                    <property name="headers-visible">false</property>
+                    <child>
+                      <object class="GtkTreeViewColumn">
+                        <property name="title">Category</property>
+                        <child>
+                          <object class="GtkCellRendererText"/>
+                          <attributes>
+                            <attribute name="text">0</attribute>
+                          </attributes>
+                        </child>
+                        <child>
+                          <object class="GtkCellRendererText"/>
+                          <attributes>
+                            <attribute name="text">1</attribute>
+                          </attributes>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </property>
+            <property name="end-child">
+              <object class="GtkScrolledWindow">
+                <property name="hexpand">true</property>
+                <child>
+                  <object class="GtkTreeView" id="downloads_view">
+                    <property name="model">downloads_store</property>
+                    <child>
+                      <object class="GtkTreeViewColumn">
+                        <property name="title">Name</property>
+                        <property name="expand">true</property>
+                        <child>
+                          <object class="GtkCellRendererText"/>
+                          <attributes>
+                            <attribute name="text">0</attribute>
+                          </attributes>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkTreeViewColumn">
+                        <property name="title">Size</property>
+                        <child>
+                          <object class="GtkCellRendererText"/>
+                          <attributes>
+                            <attribute name="text">1</attribute>
+                          </attributes>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkTreeViewColumn">
+                        <property name="title">Progress</property>
+                        <child>
+                          <object class="GtkCellRendererProgress"/>
+                          <attributes>
+                            <attribute name="value">2</attribute>
+                          </attributes>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkTreeViewColumn">
+                        <property name="title">Speed</property>
+                        <child>
+                          <object class="GtkCellRendererText"/>
+                          <attributes>
+                            <attribute name="text">3</attribute>
+                          </attributes>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkTreeViewColumn">
+                        <property name="title">Status</property>
+                        <child>
+                          <object class="GtkCellRendererText"/>
+                          <attributes>
+                            <attribute name="text">4</attribute>
+                          </attributes>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </property>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+
+        <child>
+          <object class="GtkLabel" id="status_label">
+            <property name="label">Ready</property>
+            <property name="xalign">0</property>
+            <property name="margin-start">6</property>
+            <property name="margin-end">6</property>
+            <property name="margin-top">4</property>
+            <property name="margin-bottom">4</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

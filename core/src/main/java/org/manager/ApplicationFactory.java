@@ -114,6 +114,7 @@ public class ApplicationFactory {
                 Path tempBinaryDir = createTempBinaryDirectory();
                 toolManagerFactory = ToolManagerFactory.createDefault(getGlobalSettings(), tempBinaryDir);
                 LOGGER.info("Created ToolManagerFactory instance");
+                startupCoordinator.completeComponentInitialization(StartupCoordinator.TOOL_MANAGER_FACTORY);
             }
             return toolManagerFactory;
         } finally {

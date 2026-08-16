@@ -1,18 +1,17 @@
-FROM ubuntu:22.04
+FROM eclipse-temurin:25-jdk
 
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install all dependencies
 RUN apt-get update && apt-get install -y \
-    # java 21 and Maven
-    openjdk-21-jdk \
+    # Maven (JDK 25 comes from the base image)
     maven \
     # Build tools
     git \
     curl \
     wget \
-    # GTK libraries for JNA bindings
+    # GTK libraries for JNA bindings (GTK3 legacy module) and java-gi (GTK4)
     libgtk-3-dev \
     libgtk-4-dev \
     libglib2.0-dev \
@@ -36,12 +35,13 @@ RUN apt-get update && apt-get install -y \
     tree \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Java environment
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-ENV PATH=$JAVA_HOME/bin:$PATH
+# JAVA_HOME is already set by the temurin base image
 
-# Create non-root user
-RUN useradd -m -s /bin/bash developer && \
+# Create non-root user. Newer base images already have a default user holding
+# uid 1000 (e.g. "ubuntu"); reclaim uid 1000 so file ownership on mounted
+# volumes matches the typical host user.
+RUN (userdel -r ubuntu 2>/dev/null || true) && \
+    useradd -m -s /bin/bash -u 1000 developer && \
     usermod -aG sudo developer && \
     echo "developer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 

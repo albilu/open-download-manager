@@ -11,8 +11,8 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
         <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
         <maven.assembly.plugin.version>3.6.0</maven.assembly.plugin.version>
         <maven.source.plugin.version>3.3.0</maven.source.plugin.version>
@@ -28,6 +28,7 @@
         <module>core</module>
         <module>jgtk</module>
         <module>odm-gtk</module>
+        <module>odm-gtk4</module>
         <!--<module>examples</module>-->
         <!--<module>gladedemo</module>-->
     </modules>
