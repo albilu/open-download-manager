@@ -13,6 +13,7 @@
 **Plan mutation log:**
 - *Step 1 amendment (user decision)*: proxy rotation (`org.manager.proxy` + `RetryableDownloadHandler`) and `MetaLinkFolderMonitor` were intended-but-unwired features, NOT dead code — restored and wired (commit `b69fdbc`). Deleted-for-real items stand: `DependencyValidator`, `TorUtilityFactory`, standalone `Aria2RpcException`, empty `download.service` package. `org.manager.schedule` retained for Step 5 as planned.
 - *Step 1 addition*: surefire fork-per-class isolation (fixed ApplicationFactory singleton poisoning; suite was never green — 120 red at baseline, ~92 pre-existing reds remain as a rehab backlog).
+- *Step 3 outcome (GO)*: spike passed the gate (commit `c36545e`) — JDK 25 + java-gi on GTK 4.22.4, 10-min soak clean, RSS flat. Steps 4–7 proceed with java-gi. Spike deviations: plain `GtkBuilder.fromString` + explicit `Value`/`setValue` used instead of `@GtkTemplate`/`insertWithValues` (varargs convention caused invalid-string warnings; templates adopted in Step 4). Core fix folded in: `ApplicationFactory` now marks `ToolManagerFactory` initialized.
 
 ---
 
