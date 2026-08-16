@@ -379,7 +379,25 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-//        TODO
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        return CompletableFuture.runAsync(() -> {
+            if (download == null) {
+                return;
+            }
+
+            String jobId = downloadToJobMap.get(download.getId());
+            boolean running = download.getStatus() == Download.Status.DOWNLOADING
+                    || download.getStatus() == Download.Status.CONNECTING;
+
+            if (jobId != null && running) {
+                // Stop the current job, then restart with the settings stored
+                // on the Download (same mechanism as pause/resume).
+                httrackClient.pauseJob(jobId).join();
+                downloadToJobMap.remove(download.getId());
+                jobToDownloadMap.remove(jobId);
+                startDownload(download).join();
+            }
+            // If not actively running, the new settings stay stored on the
+            // Download and apply on (re)start.
+        }, executor);
     }
 }

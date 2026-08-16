@@ -288,8 +288,30 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-//        TODO
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        return CompletableFuture.runAsync(() -> {
+            if (download == null) {
+                return;
+            }
+
+            YtDlpDownloadTask task = activeDownloadTasks.get(download.getId());
+            boolean running = download.getStatus() == Download.Status.DOWNLOADING
+                    || download.getStatus() == Download.Status.CONNECTING;
+
+            if (task != null && running) {
+                // yt-dlp cannot reconfigure mid-transfer: stop the current
+                // task and start a new one with the settings stored on the
+                // Download (same mechanism as pause/resume).
+                if (task.pause()) {
+                    activeDownloadTasks.remove(download.getId());
+                    startDownload(download).join();
+                } else {
+                    LOGGER.warning("Could not pause yt-dlp download for settings change: "
+                            + download.getId());
+                }
+            }
+            // If not actively running, the new settings stay stored on the
+            // Download and apply on (re)start.
+        }, executor);
     }
 
 }

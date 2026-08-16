@@ -1,11 +1,15 @@
 package org.manager;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.logging.Level;
 import java.util.logging.Logger;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.manager.clipboard.ClipboardSettings;
 
 /**
@@ -15,6 +19,22 @@ import org.manager.clipboard.ClipboardSettings;
 public class GlobalSettings {
 
     private static final Logger LOGGER = Logger.getLogger(GlobalSettings.class.getName());
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String CONFIG_DIR = "odm";
+    private static final String SETTINGS_FILE = "settings.json";
+
+    /**
+     * Resolves the settings file path: ${XDG_CONFIG_HOME:-~/.config}/odm/settings.json.
+     *
+     * @return the path of the settings file
+     */
+    public static Path getConfigFilePath() {
+        String xdgHome = System.getenv("XDG_CONFIG_HOME");
+        Path base = (xdgHome != null && !xdgHome.isBlank())
+                ? Paths.get(xdgHome)
+                : Paths.get(System.getProperty("user.home"), ".config");
+        return base.resolve(CONFIG_DIR).resolve(SETTINGS_FILE);
+    }
 
     // Properties storage for generic access
     private final Properties properties = new Properties();
@@ -72,7 +92,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setMaxConcurrentDownloads(int maxConcurrentDownloads) {
-        this.maxConcurrentDownloads = maxConcurrentDownloads;
+        this.maxConcurrentDownloads = Math.clamp(maxConcurrentDownloads, 1, 20);
         return this;
     }
 
@@ -92,7 +112,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setGlobalSpeedLimit(int globalSpeedLimit) {
-        this.globalSpeedLimit = globalSpeedLimit;
+        this.globalSpeedLimit = Math.max(0, globalSpeedLimit);
         return this;
     }
 
@@ -192,7 +212,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setClipboardSettings(ClipboardSettings clipboardSettings) {
-        this.clipboardSettings = clipboardSettings != null ? clipboardSettings : new ClipboardSettings();
+        this.clipboardSettings = clipboardSettings;
         return this;
     }
 
@@ -214,7 +234,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setMaxDownloadsInMemory(int maxDownloadsInMemory) {
-        this.maxDownloadsInMemory = maxDownloadsInMemory;
+        this.maxDownloadsInMemory = Math.clamp(maxDownloadsInMemory, 10, 10000);
         return this;
     }
 
@@ -235,7 +255,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setMaxCompletedDownloadsToKeep(int maxCompletedDownloadsToKeep) {
-        this.maxCompletedDownloadsToKeep = maxCompletedDownloadsToKeep;
+        this.maxCompletedDownloadsToKeep = Math.max(0, maxCompletedDownloadsToKeep);
         return this;
     }
 
@@ -255,7 +275,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setCleanupIntervalHours(long cleanupIntervalHours) {
-        this.cleanupIntervalHours = cleanupIntervalHours;
+        this.cleanupIntervalHours = Math.max(1, cleanupIntervalHours);
         return this;
     }
 
@@ -276,7 +296,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setCompletedDownloadRetentionDays(long completedDownloadRetentionDays) {
-        this.completedDownloadRetentionDays = completedDownloadRetentionDays;
+        this.completedDownloadRetentionDays = Math.max(1, completedDownloadRetentionDays);
         return this;
     }
 
@@ -297,7 +317,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setErrorDownloadRetentionDays(long errorDownloadRetentionDays) {
-        this.errorDownloadRetentionDays = errorDownloadRetentionDays;
+        this.errorDownloadRetentionDays = Math.max(1, errorDownloadRetentionDays);
         return this;
     }
 
@@ -358,7 +378,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setPaginationDefaultSize(int paginationDefaultSize) {
-        this.paginationDefaultSize = paginationDefaultSize;
+        this.paginationDefaultSize = Math.clamp(paginationDefaultSize, 10, 1000);
         return this;
     }
 
@@ -779,11 +799,56 @@ public class GlobalSettings {
     }
 
     /**
-     * Saves the settings to a file. This method provides persistence for UI
-     * compatibility.
+     * Saves the settings to ${XDG_CONFIG_HOME:~/.config}/odm/settings.json so
+     * they persist across restarts. The Properties bag is synced first, then
+     * serialized with Jackson.
      */
     public void save() {
         // Sync current values to properties
+        syncToProperties();
+
+        // Persist the Properties bag to the config file
+        Path file = getConfigFilePath();
+        try {
+            Files.createDirectories(file.getParent());
+            Map<String, String> serialized = new HashMap<>();
+            for (String name : properties.stringPropertyNames()) {
+                serialized.put(name, properties.getProperty(name));
+            }
+            MAPPER.writeValue(file.toFile(), serialized);
+            LOGGER.fine("Settings saved to " + file);
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to save settings to " + file, e);
+        }
+    }
+
+    /**
+     * Loads settings from ${XDG_CONFIG_HOME:~/.config}/odm/settings.json into
+     * this instance. Does nothing if the file does not exist.
+     */
+    public void load() {
+        Path file = getConfigFilePath();
+        if (!Files.exists(file)) {
+            LOGGER.fine("No settings file found at " + file + ", keeping defaults");
+            return;
+        }
+        try {
+            Map<String, String> serialized = MAPPER.readValue(file.toFile(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {
+                    });
+            serialized.forEach((key, value) -> properties.setProperty(key, value));
+            applyLoadedValues();
+            LOGGER.fine("Settings loaded from " + file);
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to load settings from " + file, e);
+        }
+    }
+
+    /**
+     * Syncs the typed fields into the Properties bag so that generic property
+     * access and persistence see the current values.
+     */
+    private void syncToProperties() {
         properties.setProperty("maxConcurrentDownloads", String.valueOf(maxConcurrentDownloads));
         properties.setProperty("globalSpeedLimit", String.valueOf(globalSpeedLimit));
         properties.setProperty("globalProxyEnabled", String.valueOf(globalProxyEnabled));
@@ -800,9 +865,70 @@ public class GlobalSettings {
         if (defaultDownloadDirectory != null) {
             properties.setProperty("defaultDownloadDirectory", defaultDownloadDirectory.toString());
         }
+    }
 
-        // In a real implementation, you would save to a file
-        // For now, this is a no-op as the core settings are managed elsewhere
-        LOGGER.info("Settings saved");
+    /**
+     * Applies values present in the Properties bag back onto the typed fields.
+     * Called after loading a settings file.
+     */
+    private void applyLoadedValues() {
+        if (properties.containsKey("maxConcurrentDownloads")) {
+            try {
+                maxConcurrentDownloads = Integer.parseInt(properties.getProperty("maxConcurrentDownloads"));
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Invalid maxConcurrentDownloads in settings file: "
+                        + properties.getProperty("maxConcurrentDownloads"));
+            }
+        }
+        if (properties.containsKey("globalSpeedLimit")) {
+            try {
+                globalSpeedLimit = Integer.parseInt(properties.getProperty("globalSpeedLimit"));
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Invalid globalSpeedLimit in settings file: "
+                        + properties.getProperty("globalSpeedLimit"));
+            }
+        }
+        if (properties.containsKey("globalProxyEnabled")) {
+            globalProxyEnabled = Boolean.parseBoolean(properties.getProperty("globalProxyEnabled"));
+        }
+        if (properties.containsKey("globalProxyAddress")) {
+            globalProxyAddress = properties.getProperty("globalProxyAddress");
+        }
+        if (properties.containsKey("defaultDownloadDirectory")) {
+            defaultDownloadDirectory = Paths.get(properties.getProperty("defaultDownloadDirectory"));
+        }
+        if (properties.containsKey("saveDownloadHistory")) {
+            saveDownloadHistory = Boolean.parseBoolean(properties.getProperty("saveDownloadHistory"));
+        }
+        if (properties.containsKey("automaticCleanupEnabled")) {
+            automaticCleanupEnabled = Boolean.parseBoolean(properties.getProperty("automaticCleanupEnabled"));
+        }
+        if (properties.containsKey("enableLazyLoading")) {
+            enableLazyLoading = Boolean.parseBoolean(properties.getProperty("enableLazyLoading"));
+        }
+        if (properties.containsKey("maxDownloadsInMemory")) {
+            try {
+                maxDownloadsInMemory = Integer.parseInt(properties.getProperty("maxDownloadsInMemory"));
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Invalid maxDownloadsInMemory in settings file: "
+                        + properties.getProperty("maxDownloadsInMemory"));
+            }
+        }
+        if (properties.containsKey("maxCompletedDownloadsToKeep")) {
+            try {
+                maxCompletedDownloadsToKeep = Integer.parseInt(properties.getProperty("maxCompletedDownloadsToKeep"));
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Invalid maxCompletedDownloadsToKeep in settings file: "
+                        + properties.getProperty("maxCompletedDownloadsToKeep"));
+            }
+        }
+        if (properties.containsKey("paginationDefaultSize")) {
+            try {
+                paginationDefaultSize = Integer.parseInt(properties.getProperty("paginationDefaultSize"));
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Invalid paginationDefaultSize in settings file: "
+                        + properties.getProperty("paginationDefaultSize"));
+            }
+        }
     }
 }

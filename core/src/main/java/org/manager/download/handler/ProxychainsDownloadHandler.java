@@ -305,7 +305,32 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-//        TODO
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        return CompletableFuture.runAsync(() -> {
+            if (download == null) {
+                return;
+            }
+
+            boolean running = download.getStatus() == Download.Status.DOWNLOADING
+                    || download.getStatus() == Download.Status.CONNECTING;
+
+            if (running) {
+                // Restart the transfer (same mechanism as the existing
+                // pause/resume code) so the settings stored on the Download
+                // take effect.
+                Future<?> task = activeTasks.get(download.getId());
+                if (task != null) {
+                    task.cancel(false); // Don't interrupt if running
+                    activeTasks.remove(download.getId());
+                }
+
+                proxychainsClient.pauseDownload(download, this);
+
+                Map<String, String> options = getDownloadOptions(download.getId());
+                Future<?> resumeTask = executor.submit(() -> proxychainsClient.resumeDownload(download, this, options));
+                activeTasks.put(download.getId(), resumeTask);
+            }
+            // If not actively running, the new settings stay stored on the
+            // Download and apply on (re)start.
+        }, executor);
     }
 }

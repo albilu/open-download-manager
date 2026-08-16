@@ -2,6 +2,7 @@ package org.aria2;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -9,15 +10,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.aria2.Aria2Client.Aria2RpcError;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,6 +31,10 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.GlobalSettings;
 import org.manager.ApplicationContext;
+import org.manager.download.Download;
+import org.manager.download.DownloadSettingsFactory;
+import org.manager.download.handler.Aria2DownloadHandler;
+import utils.TestUtils;
 
 /**
  * Integration tests for Aria2 package components using real aria2c process.
@@ -68,6 +78,16 @@ class Aria2IntegrationTest {
                 // Ignore cleanup errors
             }
         }
+    }
+
+    @BeforeAll
+    static void setupMockServer() throws IOException {
+        TestUtils.setupMockWebServer();
+    }
+
+    @AfterAll
+    static void teardownMockServer() throws IOException {
+        TestUtils.teardownMockWebServer();
     }
 
     @Test
@@ -609,5 +629,84 @@ class Aria2IntegrationTest {
         // Verify client still works after all operations
         Map<String, Object> cleanupStats = client.getGlobalStat();
         assertNotNull(cleanupStats);
+    }
+
+    @Test
+    @DisplayName("Should change options on an active download via aria2.changeOption")
+    @Timeout(120)
+    void shouldChangeOptionsOnActiveDownload() throws Exception {
+        int port = BASE_PORT + 42;
+        Aria2Client aria2Client = new Aria2Client(
+                ApplicationContext.getToolPath("aria2"),
+                "http://localhost:" + port + "/jsonrpc",
+                TEST_RPC_TOKEN);
+
+        aria2Client.startAria2cWithRpc(Arrays.asList(
+                "--rpc-listen-port=" + port,
+                "--rpc-secret=" + TEST_RPC_TOKEN,
+                "--dir=" + downloadDir.toString()));
+
+        try {
+            // Start a large download so it stays active while we change options
+            String url = TestUtils.getMockUrl(50);
+            String gid = aria2Client.addUriRpc(url, Map.of("dir", downloadDir.toString()));
+            assertNotNull(gid);
+
+            // Change the per-download rate limit on the active transfer
+            aria2Client.changeOption(gid, Map.of("max-download-limit", "102400"));
+
+            // Verify the option was applied
+            Map<String, Object> options = aria2Client.getOption(gid);
+            assertEquals("102400", options.get("max-download-limit"));
+
+            aria2Client.remove(gid);
+        } finally {
+            aria2Client.stopAria2c();
+        }
+    }
+
+    @Test
+    @DisplayName("Should apply changeSettings on active download through handler")
+    @Timeout(180)
+    void shouldApplyChangeSettingsThroughHandler() throws Exception {
+        ExecutorService executor = Executors.newCachedThreadPool();
+        GlobalSettings globalSettings = new GlobalSettings();
+        globalSettings.setDefaultDownloadDirectory(downloadDir);
+        DownloadSettingsFactory settingsFactory = new DownloadSettingsFactory(globalSettings);
+        Aria2DownloadHandler handler = new Aria2DownloadHandler(
+                globalSettings,
+                settingsFactory,
+                executor,
+                ApplicationContext.getToolManagerFactory());
+
+        // A verification client targeting the handler's default RPC endpoint
+        Aria2Client verifier = new Aria2Client(ApplicationContext.getToolPath("aria2"));
+
+        try {
+            handler.initialize().join();
+
+            String url = TestUtils.getMockUrl(50);
+            Download download = new Download(URI.create(url));
+            download.setDestination(downloadDir);
+
+            String gid = handler.startDownload(download).get(30, TimeUnit.SECONDS);
+            assertNotNull(gid);
+
+            // Apply new settings via the handler's changeSettings
+            Aria2Settings newSettings = settingsFactory.createAria2Settings();
+            newSettings.setOption("max-download-limit", "102400");
+            download.setSettings(newSettings);
+
+            handler.changeSettings(download).get(30, TimeUnit.SECONDS);
+
+            // Verify the change reached the active aria2 download
+            Map<String, Object> options = verifier.getOption(gid);
+            assertEquals("102400", options.get("max-download-limit"));
+
+            handler.cancelDownload(download, true).get(30, TimeUnit.SECONDS);
+        } finally {
+            handler.shutdown().join();
+            executor.shutdownNow();
+        }
     }
 }

@@ -121,7 +121,7 @@ public class DownloadManagerImpl implements DownloadManager {
         this.cleanupManager = new DownloadCleanupManager(this.downloadRepository, getGlobalSettings());
         this.shutdownCoordinator = new ShutdownCoordinator();
         this.clipboardService = ClipboardFactory.createClipboardService(this,
-                getGlobalSettings().getClipboardSettings());
+                clipboardSettingsOrDefault());
 
         // Register clipboard service with centralized factory for lifecycle management
         try {
@@ -1045,7 +1045,7 @@ public class DownloadManagerImpl implements DownloadManager {
             loadState().join();
 
             // Initialize clipboard service if enabled
-            if (getGlobalSettings().getClipboardSettings().isMonitoringEnabled()) {
+            if (clipboardSettingsOrDefault().isMonitoringEnabled()) {
                 clipboardService.startService().join();
                 LOGGER.info("Clipboard service initialized and started");
             }
@@ -1478,7 +1478,7 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     @Override
     public void setClipboardMonitoringEnabled(boolean enabled) {
-        ClipboardSettings currentSettings = getGlobalSettings().getClipboardSettings();
+        ClipboardSettings currentSettings = clipboardSettingsOrDefault();
         ClipboardSettings updatedSettings = currentSettings.copy().setMonitoringEnabled(enabled);
         updateClipboardSettings(updatedSettings);
 
@@ -1497,8 +1497,19 @@ public class DownloadManagerImpl implements DownloadManager {
      * @return true if clipboard monitoring is enabled, false otherwise
      */
     public boolean isClipboardMonitoringEnabled() {
-        return getGlobalSettings().getClipboardSettings().isMonitoringEnabled()
+        return clipboardSettingsOrDefault().isMonitoringEnabled()
                 && clipboardService.isServiceEnabled();
+    }
+
+    /**
+     * Returns the configured clipboard settings, falling back to a default
+     * instance when none were explicitly set (GlobalSettings permits null).
+     *
+     * @return the clipboard settings, never null
+     */
+    private ClipboardSettings clipboardSettingsOrDefault() {
+        ClipboardSettings settings = getGlobalSettings().getClipboardSettings();
+        return settings != null ? settings : new ClipboardSettings();
     }
 
     /**

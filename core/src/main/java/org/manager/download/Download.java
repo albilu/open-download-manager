@@ -79,19 +79,20 @@ public class Download {
         this();
         this.uri = uri;
 
-        // Set type based on URI scheme
-        String scheme = uri.getScheme().toLowerCase();
-        if (scheme.equals("http") || scheme.equals("https")) {
-            this.type = Type.ARIA2; // Use ARIA2 for HTTP/HTTPS downloads
-        } else if (scheme.equals("ftp")) {
-            this.type = Type.ARIA2; // Use ARIA2 for FTP
-        } else if (scheme.equals("magnet")) {
-            this.type = Type.ARIA2; // Use ARIA2 for magnets
-        } else if (uri.toString().contains("youtube.com") || uri.toString().contains("youtu.be")) {
+        // Set type based on URI. YouTube detection must come before the
+        // generic http/https branch, otherwise YouTube URLs would always be
+        // typed as ARIA2.
+        if (uri.toString().contains("youtube.com") || uri.toString().contains("youtu.be")) {
             this.type = Type.YOUTUBE; // Use YouTube handler for YouTube URLs
         } else {
-            // Default to ARIA2 for complex downloads
-            this.type = Type.ARIA2;
+            String scheme = uri.getScheme().toLowerCase();
+            if (scheme.equals("http") || scheme.equals("https") || scheme.equals("ftp")
+                    || scheme.equals("magnet")) {
+                this.type = Type.ARIA2;
+            } else {
+                // Default to ARIA2 for complex downloads
+                this.type = Type.ARIA2;
+            }
         }
 
         // Initialize settings based on type

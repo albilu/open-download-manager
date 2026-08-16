@@ -103,6 +103,42 @@ public class TestUtils {
     }
 
     /**
+     * Gets a mock URL whose response body is throttled, keeping the download
+     * active for a controlled amount of time. Useful for tests that need a
+     * deterministic "download in progress" window.
+     *
+     * @param sizeMB the size of the file in megabytes
+     * @param bytesPerPeriod number of bytes served per period
+     * @param period unit of time for the period
+     * @return URL string that can be used for download testing
+     * @throws IllegalStateException if MockWebServer is not started
+     */
+    public static String getThrottledMockUrl(int sizeMB, long bytesPerPeriod, TimeUnit period) {
+        if (!isServerStarted || mockWebServer == null) {
+            throw new IllegalStateException("MockWebServer is not started. Call setupMockWebServer() first.");
+        }
+
+        long sizeBytes = (long) sizeMB * 1024 * 1024;
+        Buffer buffer = createTestData(sizeBytes);
+
+        MockResponse response = new MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/octet-stream")
+                .setHeader("Content-Length", String.valueOf(sizeBytes))
+                .setHeader("Content-Disposition", "attachment; filename=\"throttled-file.bin\"")
+                .setHeader("Accept-Ranges", "bytes")
+                .setBody(buffer)
+                .throttleBody(bytesPerPeriod, 1, period);
+
+        mockWebServer.enqueue(response);
+
+        String url = mockWebServer.url("/download/" + sizeMB + "mb/throttled-file.bin").toString();
+        LOGGER.info("Created throttled mock URL for " + sizeMB + "MB file: " + url);
+
+        return url;
+    }
+
+    /**
      * Gets a mock URL that serves a file with partial content support (HTTP
      * 206). Useful for testing resume functionality.
      *

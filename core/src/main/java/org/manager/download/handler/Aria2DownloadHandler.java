@@ -859,8 +859,40 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-        // TODO
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        return CompletableFuture.runAsync(() -> {
+            try {
+                ensureInitialized();
+
+                // Only apply when the download is active (has a gid); otherwise
+                // the new settings stored on the Download apply on (re)start.
+                String gid = download.getGid();
+                if (gid == null) {
+                    return;
+                }
+
+                Map<String, Object> options = new HashMap<>();
+                switch (download.getSettings()) {
+                    case Aria2Settings aria2Settings ->
+                        options.putAll(aria2Settings.toRpcOptions());
+                    case null, default -> {
+                        if (download.getSettings() != null) {
+                            Map<String, String> settingsMap = download.getSettings().toMap();
+                            for (Map.Entry<String, String> entry : settingsMap.entrySet()) {
+                                options.put(entry.getKey(), entry.getValue());
+                            }
+                        }
+                    }
+                }
+
+                if (!options.isEmpty()) {
+                    aria2Client.changeOption(gid, options);
+                    LOGGER.fine("Changed aria2 options for gid " + gid + ": " + options.keySet());
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "Failed to change settings for download: " + download.getName(), e);
+                throw new RuntimeException("Failed to change aria2 settings", e);
+            }
+        }, executor);
     }
 
     /**

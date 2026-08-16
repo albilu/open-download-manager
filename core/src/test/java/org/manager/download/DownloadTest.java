@@ -77,10 +77,10 @@ class DownloadTest {
 
             // YouTube URL
             Download youtubeDownload = new Download(URI.create("https://www.youtube.com/watch?v=test"));
-            assertEquals(Download.Type.ARIA2, youtubeDownload.getType());
+            assertEquals(Download.Type.YOUTUBE, youtubeDownload.getType());
 
             Download youtubeShortenedDownload = new Download(URI.create("https://youtu.be/test"));
-            assertEquals(Download.Type.ARIA2, youtubeShortenedDownload.getType());
+            assertEquals(Download.Type.YOUTUBE, youtubeShortenedDownload.getType());
         }
 
         @Test

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -11,12 +12,19 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import static org.awaitility.Awaitility.await;
+import okhttp3.mockwebserver.Dispatcher;
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
+import okio.Buffer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import org.junit.jupiter.api.BeforeAll;
@@ -474,6 +482,102 @@ class CurlIntegrationTest {
         assertTrue(command.get(0).endsWith("curl") || command.get(0).contains("curl"));
         assertTrue(command.contains(testUrl));
         assertTrue(command.contains(outputPath));
+    }
+
+    @Test
+    @DisplayName("Should restart with new settings when changeSettings on active download")
+    @Timeout(120)
+    void shouldRestartTransferWithNewSettingsOnChangeSettings() throws Exception {
+        // Dedicated server with true Range support: the restart uses `curl -C -`,
+        // which requires a 206 partial response; the shared TestUtils mock only
+        // enqueues one-shot full-body responses and cannot satisfy a resume.
+        byte[] content = new byte[2 * 1024 * 1024];
+        java.util.Arrays.fill(content, (byte) 7);
+        try (MockWebServer server = new MockWebServer()) {
+            server.setDispatcher(new Dispatcher() {
+                @Override
+                public MockResponse dispatch(RecordedRequest request) {
+                    String range = request.getHeader("Range");
+                    if (range != null && range.startsWith("bytes=")) {
+                        int from = Integer.parseInt(range.substring(6, range.indexOf('-')));
+                        byte[] slice = java.util.Arrays.copyOfRange(content, from, content.length);
+                        return new MockResponse()
+                                .setResponseCode(206)
+                                .setHeader("Content-Type", "application/octet-stream")
+                                .setHeader("Content-Range",
+                                        "bytes " + from + "-" + (content.length - 1) + "/" + content.length)
+                                .setHeader("Accept-Ranges", "bytes")
+                                .setHeader("Content-Length", String.valueOf(slice.length))
+                                .setBody(new Buffer().write(slice))
+                                .throttleBody(65536, 100, TimeUnit.MILLISECONDS);
+                    }
+                    return new MockResponse()
+                            .setResponseCode(200)
+                            .setHeader("Content-Type", "application/octet-stream")
+                            .setHeader("Accept-Ranges", "bytes")
+                            .setHeader("Content-Length", String.valueOf(content.length))
+                            .setBody(new Buffer().write(content))
+                            .throttleBody(65536, 100, TimeUnit.MILLISECONDS);
+                }
+            });
+            server.start();
+
+            String testUrl = server.url("/download/resumable.bin").toString();
+            Download download = createTestDownload(URI.create(testUrl));
+            download.setDestination(tempDir);
+
+            TestDownloadListener listener = new TestDownloadListener();
+            CompletableFuture<Void> downloadPaused = new CompletableFuture<>();
+            CompletableFuture<Void> downloadResumed = new CompletableFuture<>();
+            CompletableFuture<Void> downloadComplete = new CompletableFuture<>();
+
+            listener.onPauseCallback = (d) -> downloadPaused.complete(null);
+            listener.onResumeCallback = (d) -> downloadResumed.complete(null);
+            listener.onCompleteCallback = (d) -> downloadComplete.complete(null);
+
+            handler.addDownloadListener(listener);
+            CompletableFuture<String> startFuture = handler.startDownload(download);
+            startFuture.get(30, TimeUnit.SECONDS);
+
+            // Wait until the transfer is actually running so restart semantics
+            // can observe PAUSED → DOWNLOADING deterministically
+            await().atMost(Duration.ofSeconds(15)).until(() -> download.getStatus() == Download.Status.DOWNLOADING);
+
+            // Apply new settings while the transfer is active
+            CurlSettings newSettings = new CurlSettings();
+            newSettings.setConnectTimeout(5)
+                    .setRetryCount(0)
+                    .setUserAgent("ChangedAgent/1.0");
+            download.setSettings(newSettings);
+
+            assertDoesNotThrow(() -> handler.changeSettings(download).get(30, TimeUnit.SECONDS));
+
+            // Restart semantics: pause then resume must fire
+            assertDoesNotThrow(() -> downloadPaused.get(20, TimeUnit.SECONDS));
+            assertDoesNotThrow(() -> downloadResumed.get(20, TimeUnit.SECONDS));
+
+            // Download should reach completion after restart
+            assertDoesNotThrow(() -> downloadComplete.get(60, TimeUnit.SECONDS));
+            assertEquals(Download.Status.COMPLETED, download.getStatus());
+        }
+    }
+
+    @Test
+    @DisplayName("Should store settings when changeSettings on inactive download")
+    @Timeout(30)
+    void shouldStoreSettingsWhenChangeSettingsOnInactiveDownload() {
+        Download download = createTestDownload(URI.create(TestUtils.getMockUrl(1)));
+        download.setDestination(tempDir);
+
+        CurlSettings newSettings = new CurlSettings();
+        newSettings.setConnectTimeout(9);
+        download.setSettings(newSettings);
+
+        assertDoesNotThrow(() -> handler.changeSettings(download).get(10, TimeUnit.SECONDS));
+
+        // Settings stored on the download; transfer untouched (still queued)
+        assertSame(newSettings, download.getSettings());
+        assertEquals(Download.Status.QUEUED, download.getStatus());
     }
 
     // Helper methods

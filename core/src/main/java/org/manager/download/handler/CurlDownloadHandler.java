@@ -139,8 +139,20 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-//        TODO
-        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+        return CompletableFuture.runAsync(() -> {
+            if (download == null) {
+                return; // Handle null download gracefully
+            }
+
+            // If the transfer is actively running, restart it (same mechanism
+            // as pause/resume) so the settings stored on the Download take
+            // effect. Otherwise the stored settings apply on the next start.
+            if (download.getStatus() == Download.Status.DOWNLOADING
+                    || download.getStatus() == Download.Status.CONNECTING) {
+                curlClient.pauseDownload(download, this);
+                curlClient.resumeDownload(download, this);
+            }
+        }, executor);
     }
 
 }

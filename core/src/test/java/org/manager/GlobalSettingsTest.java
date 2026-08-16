@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.clipboard.ClipboardSettings;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -435,5 +437,49 @@ class GlobalSettingsTest {
         // Error retention should not be longer than completed retention in some configurations
         assertTrue(globalSettings.getCompletedDownloadRetentionDays() > 0);
         assertTrue(globalSettings.getErrorDownloadRetentionDays() > 0);
+    }
+
+    @Test
+    @DisplayName("Should round-trip settings through save and load")
+    void shouldRoundTripSettingsThroughSaveAndLoad() throws IOException {
+        Path configFile = GlobalSettings.getConfigFilePath();
+        boolean existed = Files.exists(configFile);
+        String originalContent = existed ? Files.readString(configFile) : null;
+
+        try {
+            // Set values on the in-memory settings
+            globalSettings.setMaxConcurrentDownloads(7);
+            globalSettings.setGlobalSpeedLimit(512);
+            globalSettings.setGlobalProxyEnabled(true);
+            globalSettings.setGlobalProxyAddress("http://proxy.test:3128");
+            globalSettings.setDefaultDownloadDirectory(downloadDir);
+            globalSettings.setProperty("customKey", "customValue");
+
+            globalSettings.save();
+
+            assertTrue(Files.exists(configFile), "save() should create the settings file");
+
+            // Load into a fresh instance
+            GlobalSettings reloaded = new GlobalSettings();
+            reloaded.load();
+
+            assertEquals(7, reloaded.getMaxConcurrentDownloads());
+            assertEquals(512, reloaded.getGlobalSpeedLimit());
+            assertTrue(reloaded.isGlobalProxyEnabled());
+            assertEquals("http://proxy.test:3128", reloaded.getGlobalProxyAddress());
+            assertEquals(downloadDir, reloaded.getDefaultDownloadDirectory());
+            assertEquals("customValue", reloaded.getProperty("customKey", null));
+        } finally {
+            // Restore pre-existing config or clean up the file we created
+            try {
+                if (existed) {
+                    Files.writeString(configFile, originalContent);
+                } else {
+                    Files.deleteIfExists(configFile);
+                }
+            } catch (IOException ignored) {
+                // Best effort cleanup
+            }
+        }
     }
 }
