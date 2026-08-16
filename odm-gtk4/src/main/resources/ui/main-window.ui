@@ -66,6 +66,24 @@
               <property name="tooltip-text">Cancel</property>
             </object>
           </child>
+          <child>
+            <object class="GtkButton" id="import_button">
+              <property name="icon-name">document-open</property>
+              <property name="tooltip-text">Import downloads from list</property>
+            </object>
+          </child>
+          <child>
+            <object class="GtkButton" id="settings_button">
+              <property name="icon-name">emblem-system</property>
+              <property name="tooltip-text">Settings</property>
+            </object>
+          </child>
+          <child>
+            <object class="GtkButton" id="about_button">
+              <property name="icon-name">help-about</property>
+              <property name="tooltip-text">About</property>
+            </object>
+          </child>
           </object>
         </child>
 

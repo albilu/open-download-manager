@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkWindow" id="import_list_dialog">
+    <property name="title">Import Downloads from List</property>
+    <property name="modal">true</property>
+    <property name="default-width">640</property>
+    <property name="default-height">440</property>
+    <child>
+      <object class="GtkBox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">10</property>
+        <property name="margin-start">16</property>
+        <property name="margin-end">16</property>
+        <property name="margin-top">16</property>
+        <property name="margin-bottom">16</property>
+        <child>
+          <object class="GtkLabel">
+            <property name="label">One URL per line (http, https, magnet:). Blank lines and # comments are ignored.</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow">
+            <property name="vexpand">true</property>
+            <child>
+              <object class="GtkTextView" id="urls_textview">
+                <property name="monospace">true</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="status_label">
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <child>
+              <object class="GtkButton" id="from_file_button">
+                <property name="label">From File…</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="validate_button">
+                <property name="label">Validate</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="hexpand">true</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="cancel_button">
+                <property name="label">Cancel</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="import_button">
+                <property name="label">Import All</property>
+                <property name="css-classes">['suggested-action']</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

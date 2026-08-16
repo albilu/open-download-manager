@@ -37,20 +37,20 @@ A full featured native download manager for Linux based on aria2, yt-dlp and htt
 -   speed limit
 -   Update tracker list every day automatically
 -   Torents property dialog
--   Brownser extension
+-   [LATER] Browser extension
     -   Right click download
     -   Detect files from selection
     -   yt-dlp integration to download videos
--   Command-Line / Terminal
--   i18n
--   FTP Login & Anonymous FTP
--   theme support
--   Keyboard Shortcuts
--   Interface to Search Torrents
+-   [LATER] Command-Line / Terminal
+-   [LATER] i18n
+-   [LATER] FTP Login & Anonymous FTP
+-   [LATER] theme support
+-   [LATER] Keyboard Shortcuts
+-   [LATER] Interface to Search Torrents
     -   https://github.com/Jackett/Jackett?tab=readme-ov-file
     -   https://prowlarr.com/
--   Interface to download videos (youtube etc...)
--   QT version
+-   [LATER] Interface to download videos (youtube etc...)
+-   [LATER] QT version
 
 ## Development Steps
 
