@@ -1,0 +1,75 @@
+# Proxy List Configuration File
+#
+# This file contains a list of proxy servers that can be used for automatic
+# proxy rotation during downloads. Each line should contain a proxy URL.
+#
+# Supported formats:
+# - http://host:port
+# - https://host:port
+# - socks4://host:port
+# - socks5://host:port
+# - http://username:password@host:port
+# - socks5://username:password@host:port
+#
+# Lines starting with # are treated as comments and ignored.
+#
+# Public proxy list sources (fetch fresh lists from these):
+# - https://github.com/TheSpeedX/PROXY-List
+# - https://github.com/monosans/proxy-list
+# - https://github.com/roosterkid/openproxylist
+# - https://github.com/vakhov/fresh-proxy-list
+# - https://github.com/proxifly/free-proxy-list
+# Empty lines are also ignored.
+#
+# Example entries (these are not real working proxies):
+
+# HTTP Proxies
+http://proxy1.example.com:8080
+http://proxy2.example.com:3128
+http://public-proxy.example.org:8080
+
+# HTTP Proxies with Authentication
+http://user:pass@authenticated-proxy.example.com:8080
+http://myuser:mypass@premium-proxy.example.net:3128
+
+# HTTPS Proxies
+https://secure-proxy.example.com:8443
+https://ssl-proxy.example.org:443
+
+# SOCKS4 Proxies
+socks4://socks-proxy1.example.com:1080
+socks4://socks-proxy2.example.com:1080
+
+# SOCKS5 Proxies
+socks5://socks5-proxy1.example.com:1080
+socks5://socks5-proxy2.example.com:1080
+socks5://user:pass@authenticated-socks5.example.com:1080
+
+# Public Free Proxies (Examples - Quality may vary)
+# Note: Free public proxies are often unreliable and slow
+# Consider using paid/private proxies for production use
+http://free-proxy1.example.com:8080
+http://free-proxy2.example.com:3128
+http://free-proxy3.example.com:8080
+
+# Regional Proxies
+# US Proxies
+http://us-proxy1.example.com:8080
+http://us-proxy2.example.com:8080
+
+# EU Proxies
+http://eu-proxy1.example.com:8080
+http://eu-proxy2.example.com:8080
+
+# Asia Proxies
+http://asia-proxy1.example.com:8080
+http://asia-proxy2.example.com:8080
+
+# Rotating Proxy Services (Example configurations)
+# These services typically provide a single endpoint that rotates IPs
+http://rotating-proxy.example.com:8080
+http://user:pass@premium-rotating.example.com:8080
+
+# Load this file in your application using:
+# ProxyRotationManager proxyManager = new ProxyRotationManager();
+# proxyManager.loadProxiesFromFile(Paths.get("proxy-list.txt"));

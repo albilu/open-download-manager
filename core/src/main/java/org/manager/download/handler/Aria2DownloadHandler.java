@@ -176,6 +176,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                             case "magnet" -> startMagnetDownload(download);
                             case "torrent" -> startTorrentDownload(download);
                             case "metalink" -> startMetaLinkDownload(download);
+                            case "file" -> startLocalFileDownload(download);
                             default -> null;
                         };
                     }
@@ -748,29 +749,21 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             uris.add(mirror.toString());
         }
 
-        // Prepare options list for aria2 (aria2.addTorrent expects List<String>
-        // options)
-        List<String> optionsList = new ArrayList<>();
-
         // Get settings from download if available using pattern matching
+        Map<String, Object> options = new HashMap<>();
         if (download.getSettings() instanceof Aria2Settings aria2Settings) {
-            Map<String, Object> optionsMap = aria2Settings.toRpcOptions();
-            // Convert map to list format expected by aria2.addTorrent
-            for (Map.Entry<String, Object> entry : optionsMap.entrySet()) {
-                optionsList.add(entry.getKey() + "=" + entry.getValue().toString());
-            }
-        } else {
+            options.putAll(aria2Settings.toRpcOptions());
+        } else if (download.getSettings() != null) {
             // For non-Aria2Settings, get options from the settings map
             Map<String, String> settingsMap = download.getSettings().toMap();
             for (Map.Entry<String, String> entry : settingsMap.entrySet()) {
-                optionsList.add(entry.getKey() + "=" + entry.getValue());
+                options.put(entry.getKey(), entry.getValue());
             }
         }
 
         // Use the existing addTorrent method from aria2Client
-        // Parameters: byte[] torrent, List<String> uris, String dir, List<String>
-        // options
-        String gid = aria2Client.addTorrent(torrentData, uris, download.getDestination().toString(), optionsList);
+        // Parameters: byte[] torrent, List<String> uris, String dir, Map options
+        String gid = aria2Client.addTorrent(torrentData, uris, download.getDestination().toString(), options);
 
         LOGGER.info("Started torrent download with GID: " + gid + " for file: " + torrentFile);
         return gid;
@@ -809,14 +802,63 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
-     * Starts a meta link download using aria2.
+     * Routes a local file:// URI to the right aria2 entry point by extension:
+     * .torrent goes to addTorrent, .metalink/.meta4 to addMetalink. Anything
+     * else is not a downloadable local file and yields no GID.
      *
      * @param download The download to start
+     * @return The aria2 GID, or null if the file type is unsupported
+     * @throws IOException if an I/O error occurs
+     * @throws Aria2RpcException if an error occurs in the aria2 RPC call
+     */
+    private String startLocalFileDownload(Download download) throws IOException, Aria2RpcException {
+        String path = download.getUri().getPath();
+        if (path == null) {
+            return null;
+        }
+        String lower = path.toLowerCase();
+        if (lower.endsWith(".torrent")) {
+            return startTorrentDownload(download);
+        }
+        if (lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
+            return startMetaLinkDownload(download);
+        }
+        LOGGER.warning("Unsupported local file type for aria2 download: " + path);
+        return null;
+    }
+
+    /**
+     * Starts a Metalink download using aria2's addMetalink RPC: the Metalink
+     * XML is read from the local file and sent to aria2, which handles mirror
+     * selection and segmented download itself.
+     *
+     * @param download The download to start (uri must point to a local
+     *            .metalink/.meta4 file, via file: or metalink: scheme)
      * @return The aria2 GID of the download
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
     private String startMetaLinkDownload(Download download) throws IOException, Aria2RpcException {
+        URI metaLinkUri = download.getUri();
+        Path metaLinkFile;
+
+        // Handle different URI schemes for metalink files
+        if ("file".equals(metaLinkUri.getScheme())) {
+            metaLinkFile = Paths.get(metaLinkUri);
+        } else if ("metalink".equals(metaLinkUri.getScheme())) {
+            // Custom metalink: scheme - extract file path from URI
+            metaLinkFile = Paths.get(metaLinkUri.getSchemeSpecificPart());
+        } else {
+            throw new IOException("Only local Metalink files are supported: " + metaLinkUri);
+        }
+
+        // Verify the metalink file exists and is readable
+        if (!Files.exists(metaLinkFile) || !Files.isReadable(metaLinkFile)) {
+            throw new IOException("Metalink file not found or not readable: " + metaLinkFile);
+        }
+
+        byte[] metaLinkData = Files.readAllBytes(metaLinkFile);
+
         Map<String, Object> options = new HashMap<>();
         options.put("dir", download.getDestination().toString());
 
@@ -828,15 +870,17 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
             case null, default -> {
                 // For non-Aria2Settings, get options from the settings map
-                Map<String, String> settingsMap = download.getSettings().toMap();
-                for (Map.Entry<String, String> entry : settingsMap.entrySet()) {
-                    options.put(entry.getKey(), entry.getValue());
+                if (download.getSettings() != null) {
+                    Map<String, String> settingsMap = download.getSettings().toMap();
+                    for (Map.Entry<String, String> entry : settingsMap.entrySet()) {
+                        options.put(entry.getKey(), entry.getValue());
+                    }
                 }
             }
         }
 
-        // Start download with aria2
-        String gid = aria2Client.addUriRpc(download.getUri().toString(), options);
+        String gid = aria2Client.addMetalink(metaLinkData, options);
+        LOGGER.info("Started Metalink download with GID: " + gid + " for file: " + metaLinkFile);
         return gid;
     }
 

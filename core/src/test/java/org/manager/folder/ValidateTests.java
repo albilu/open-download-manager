@@ -128,6 +128,18 @@ class ValidateTests {
     }
 
     @Test
+    @DisplayName("Should create MetaLinkFolderMonitor default settings")
+    void shouldCreateMetaLinkFolderMonitorDefaultSettings() {
+        FolderMonitorSettings settings = MetaLinkFolderMonitor.createDefaultMetaLinkSettings();
+
+        assertNotNull(settings);
+        assertTrue(settings.getFileExtensions().contains(".metalink") ||
+                   settings.getFileExtensions().contains(".meta4"));
+        assertNotNull(settings.getFileAction());
+        assertNotNull(settings.getDebounceDelay());
+    }
+
+    @Test
     @DisplayName("Should handle settings copying and modification")
     void shouldHandleSettingsCopyingAndModification() {
         FolderMonitorSettings original = new FolderMonitorSettings()

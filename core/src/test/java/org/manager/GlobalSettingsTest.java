@@ -453,6 +453,9 @@ class GlobalSettingsTest {
             globalSettings.setGlobalProxyEnabled(true);
             globalSettings.setGlobalProxyAddress("http://proxy.test:3128");
             globalSettings.setDefaultDownloadDirectory(downloadDir);
+            globalSettings.setProxyRotationEnabled(true);
+            globalSettings.setProxyRotationMaxRetries(7);
+            globalSettings.setProxyListFilePath("/tmp/odm-test-proxies.txt");
             globalSettings.setProperty("customKey", "customValue");
 
             globalSettings.save();
@@ -468,6 +471,9 @@ class GlobalSettingsTest {
             assertTrue(reloaded.isGlobalProxyEnabled());
             assertEquals("http://proxy.test:3128", reloaded.getGlobalProxyAddress());
             assertEquals(downloadDir, reloaded.getDefaultDownloadDirectory());
+            assertTrue(reloaded.isProxyRotationEnabled());
+            assertEquals(7, reloaded.getProxyRotationMaxRetries());
+            assertEquals("/tmp/odm-test-proxies.txt", reloaded.getProxyListFilePath());
             assertEquals("customValue", reloaded.getProperty("customKey", null));
         } finally {
             // Restore pre-existing config or clean up the file we created

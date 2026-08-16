@@ -42,6 +42,9 @@ public class GlobalSettings {
     private int maxConcurrentDownloads = 3;
     private int globalSpeedLimit = 0; // 0 means no limit (in KB/s)
     private boolean globalProxyEnabled = false;
+    private boolean proxyRotationEnabled = false;
+    private int proxyRotationMaxRetries = 5;
+    private String proxyListFilePath;
     private String globalProxyAddress = null;
     private Path defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
     private boolean saveDownloadHistory = true;
@@ -123,6 +126,72 @@ public class GlobalSettings {
      */
     public boolean isGlobalProxyEnabled() {
         return globalProxyEnabled;
+    }
+
+    /**
+     * Gets whether automatic proxy rotation is enabled. When enabled, failed
+     * downloads that look rate-limited/blocked (HTTP 403/429/5xx) are retried
+     * through a different proxy from the configured proxy list.
+     *
+     * @return true if proxy rotation is enabled
+     */
+    public boolean isProxyRotationEnabled() {
+        return proxyRotationEnabled;
+    }
+
+    /**
+     * Sets whether automatic proxy rotation is enabled.
+     *
+     * @param proxyRotationEnabled true to enable proxy rotation
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setProxyRotationEnabled(boolean proxyRotationEnabled) {
+        this.proxyRotationEnabled = proxyRotationEnabled;
+        return this;
+    }
+
+    /**
+     * Gets the maximum number of retry attempts per download when proxy
+     * rotation is enabled.
+     *
+     * @return the maximum retry count
+     */
+    public int getProxyRotationMaxRetries() {
+        return proxyRotationMaxRetries;
+    }
+
+    /**
+     * Sets the maximum number of retry attempts per download when proxy
+     * rotation is enabled. Clamped to [0, 20].
+     *
+     * @param proxyRotationMaxRetries the maximum retry count
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setProxyRotationMaxRetries(int proxyRotationMaxRetries) {
+        this.proxyRotationMaxRetries = Math.clamp(proxyRotationMaxRetries, 0, 20);
+        return this;
+    }
+
+    /**
+     * Gets the path of the proxy list file (one proxy per line, URL form
+     * accepted, e.g. http://user:pass@host:port). Used when proxy rotation is
+     * enabled.
+     *
+     * @return the proxy list file path, or null if unset
+     */
+    public String getProxyListFilePath() {
+        return proxyListFilePath;
+    }
+
+    /**
+     * Sets the path of the proxy list file used for proxy rotation.
+     *
+     * @param proxyListFilePath the proxy list file path
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setProxyListFilePath(String proxyListFilePath) {
+        this.proxyListFilePath = proxyListFilePath;
+        return this;
     }
 
     /**
@@ -858,9 +927,14 @@ public class GlobalSettings {
         properties.setProperty("maxDownloadsInMemory", String.valueOf(maxDownloadsInMemory));
         properties.setProperty("maxCompletedDownloadsToKeep", String.valueOf(maxCompletedDownloadsToKeep));
         properties.setProperty("paginationDefaultSize", String.valueOf(paginationDefaultSize));
+        properties.setProperty("proxyRotationEnabled", String.valueOf(proxyRotationEnabled));
+        properties.setProperty("proxyRotationMaxRetries", String.valueOf(proxyRotationMaxRetries));
 
         if (globalProxyAddress != null) {
             properties.setProperty("globalProxyAddress", globalProxyAddress);
+        }
+        if (proxyListFilePath != null) {
+            properties.setProperty("proxyListFilePath", proxyListFilePath);
         }
         if (defaultDownloadDirectory != null) {
             properties.setProperty("defaultDownloadDirectory", defaultDownloadDirectory.toString());
@@ -929,6 +1003,20 @@ public class GlobalSettings {
                 LOGGER.warning("Invalid paginationDefaultSize in settings file: "
                         + properties.getProperty("paginationDefaultSize"));
             }
+        }
+        if (properties.containsKey("proxyRotationEnabled")) {
+            proxyRotationEnabled = Boolean.parseBoolean(properties.getProperty("proxyRotationEnabled"));
+        }
+        if (properties.containsKey("proxyRotationMaxRetries")) {
+            try {
+                proxyRotationMaxRetries = Integer.parseInt(properties.getProperty("proxyRotationMaxRetries"));
+            } catch (NumberFormatException e) {
+                LOGGER.warning("Invalid proxyRotationMaxRetries in settings file: "
+                        + properties.getProperty("proxyRotationMaxRetries"));
+            }
+        }
+        if (properties.containsKey("proxyListFilePath")) {
+            proxyListFilePath = properties.getProperty("proxyListFilePath");
         }
     }
 }

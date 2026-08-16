@@ -43,12 +43,16 @@ class FolderMonitorE2ETest {
 
     private FolderMonitorServiceImpl folderMonitorService;
     private TorrentFolderMonitor torrentFolderMonitor;
+    private MetaLinkFolderMonitor metaLinkFolderMonitor;
 
     @Mock
     private DownloadManager mockDownloadManager;
 
     @Mock
     private Download mockTorrentDownload;
+
+    @Mock
+    private Download mockMetaLinkDownload;
 
     @Mock
     private GlobalSettings mockGlobalSettings;
@@ -77,17 +81,22 @@ class FolderMonitorE2ETest {
         when(mockDownloadManager.getGlobalSettings()).thenReturn(mockGlobalSettings);
         when(mockGlobalSettings.getDefaultDownloadDirectory()).thenReturn(downloadsDir);
         when(mockDownloadManager.createTorrentDownload(any(Path.class), any(Path.class))).thenReturn(mockTorrentDownload);
+        when(mockDownloadManager.createMetaLinkDownload(any(java.net.URI.class), any(Path.class))).thenReturn(mockMetaLinkDownload);
         when(mockDownloadManager.queueDownload(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
 
         // Create services
         folderMonitorService = new FolderMonitorServiceImpl();
         torrentFolderMonitor = new TorrentFolderMonitor(mockDownloadManager, folderMonitorService, downloadsDir);
+        metaLinkFolderMonitor = new MetaLinkFolderMonitor(mockDownloadManager, folderMonitorService, downloadsDir);
     }
 
     @AfterEach
     void tearDown() throws Exception {
         if (torrentFolderMonitor != null) {
             torrentFolderMonitor.shutdown().get(5, TimeUnit.SECONDS);
+        }
+        if (metaLinkFolderMonitor != null) {
+            metaLinkFolderMonitor.shutdown().get(5, TimeUnit.SECONDS);
         }
         if (folderMonitorService != null) {
             folderMonitorService.shutdown().get(10, TimeUnit.SECONDS);
@@ -258,7 +267,107 @@ class FolderMonitorE2ETest {
         }
     }
 
+    @Nested
+    @DisplayName("Multi-Format File Monitoring Tests")
+    class MultiFormatFileMonitoringTests {
 
+        @Test
+        @DisplayName("Should handle torrents and metalinks simultaneously")
+        @Timeout(value = 40, unit = TimeUnit.SECONDS)
+        void shouldHandleTorrentsAndMetalinksSimultaneously() throws Exception {
+            // Given - Setup for multiple file formats
+            Path multiFormatFolder = tempDir.resolve("multi-format");
+            Files.createDirectories(multiFormatFolder);
+
+            MultiFormatTracker tracker = new MultiFormatTracker();
+
+            // Configure different settings for each monitor
+            FolderMonitorSettings torrentSettings = TorrentFolderMonitor.createDefaultTorrentSettings()
+                    .setFileAction(FolderMonitorSettings.FileAction.MOVE_TO_DIRECTORY)
+                    .setMoveToDirectory(processedDir.resolve("torrents"));
+
+            FolderMonitorSettings metalinkSettings = MetaLinkFolderMonitor.createDefaultMetaLinkSettings()
+                    .setFileAction(FolderMonitorSettings.FileAction.MOVE_TO_DIRECTORY)
+                    .setMoveToDirectory(processedDir.resolve("metalinks"));
+
+            Files.createDirectories(processedDir.resolve("torrents"));
+            Files.createDirectories(processedDir.resolve("metalinks"));
+
+            folderMonitorService.addFolderMonitorListener(tracker);
+
+            // When - Start both monitors on same folder
+            torrentFolderMonitor.startTorrentMonitoring(multiFormatFolder, torrentSettings).get(5, TimeUnit.SECONDS);
+            metaLinkFolderMonitor.startMetaLinkMonitoring(multiFormatFolder, metalinkSettings).get(5, TimeUnit.SECONDS);
+
+            Thread.sleep(1000);
+
+            // Create mixed file types
+            createRealisticTorrentFile(multiFormatFolder.resolve("movie.torrent"), "Movie", 4_000_000L);
+            createRealisticMetaLinkFile(multiFormatFolder.resolve("software.meta4"), "Software Package");
+            createRealisticTorrentFile(multiFormatFolder.resolve("music.torrent"), "Music Album", 500_000L);
+            createRealisticMetaLinkFile(multiFormatFolder.resolve("document.metalink"), "Document Collection");
+            Files.createFile(multiFormatFolder.resolve("ignored.txt")); // Should be ignored
+
+            // Then - Verify both formats are handled correctly
+            await().atMost(Duration.ofSeconds(25))
+                    .untilAsserted(() -> {
+                        assertEquals(2, tracker.torrentsProcessed.get(), "Should process 2 torrent files");
+                        assertEquals(2, tracker.metalinksProcessed.get(), "Should process 2 metalink files");
+
+                        verify(mockDownloadManager, times(2)).createTorrentDownload(any(Path.class), eq(downloadsDir));
+        verify(mockDownloadManager, times(2)).createMetaLinkDownload(any(java.net.URI.class), eq(downloadsDir));
+                        verify(mockDownloadManager, times(4)).queueDownload(any(Download.class));
+                    });
+        }
+
+        @Test
+        @DisplayName("Should handle file format conflicts and priorities")
+        @Timeout(value = 35, unit = TimeUnit.SECONDS)
+        void shouldHandleFileFormatConflictsAndPriorities() throws Exception {
+            // Given - Setup scenario with potential conflicts
+            Path conflictFolder = tempDir.resolve("conflict-test");
+            Files.createDirectories(conflictFolder);
+
+            ConflictTracker tracker = new ConflictTracker();
+
+            // Configure overlapping extensions (both monitors watch .torrent)
+            FolderMonitorSettings torrentSettings = new FolderMonitorSettings()
+                    .setFileExtensions(Set.of(".torrent", ".meta4")) // Overlap with metalink
+                    .setFileAction(FolderMonitorSettings.FileAction.KEEP);
+
+            FolderMonitorSettings metalinkSettings = new FolderMonitorSettings()
+                    .setFileExtensions(Set.of(".meta4", ".metalink"))
+                    .setFileAction(FolderMonitorSettings.FileAction.KEEP);
+
+            folderMonitorService.addFolderMonitorListener(tracker);
+
+            // When - Start both monitors
+            torrentFolderMonitor.startTorrentMonitoring(conflictFolder, torrentSettings).get(5, TimeUnit.SECONDS);
+            metaLinkFolderMonitor.startMetaLinkMonitoring(conflictFolder, metalinkSettings).get(5, TimeUnit.SECONDS);
+
+            Thread.sleep(1000);
+
+            // Create files with overlapping extensions
+            createRealisticTorrentFile(conflictFolder.resolve("unique.torrent"), "Unique Torrent", 1_000_000L);
+            createRealisticMetaLinkFile(conflictFolder.resolve("unique.metalink"), "Unique Metalink");
+            createRealisticMetaLinkFile(conflictFolder.resolve("shared.meta4"), "Shared Format"); // Both will try to process
+
+            // Then - Verify conflict handling
+            await().atMost(Duration.ofSeconds(20))
+                    .untilAsserted(() -> {
+                        // Both monitors should process their respective unique files
+                        assertTrue(tracker.uniqueTorrentProcessed.get(), "Unique torrent should be processed");
+                        assertTrue(tracker.uniqueMetalinkProcessed.get(), "Unique metalink should be processed");
+
+                        // For shared format, both monitors might process it (depending on timing)
+                        // This is expected behavior - each monitor processes files matching its extensions
+                        assertTrue(tracker.sharedFormatEncountered.get(), "Shared format should be encountered");
+
+                        // Total calls should account for potential duplicate processing
+                        verify(mockDownloadManager, atLeast(2)).queueDownload(any(Download.class));
+                    });
+        }
+    }
 
     @Nested
     @DisplayName("Real-World Scenario Tests")
@@ -569,6 +678,20 @@ class FolderMonitorE2ETest {
         Files.write(torrentFile, torrentContent.getBytes());
     }
 
+    private void createRealisticMetaLinkFile(Path metalinkFile, String name) throws IOException {
+        String metalinkContent = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <metalink xmlns="urn:ietf:params:xml:ns:metalink">
+                  <file name="%s">
+                    <size>1048576</size>
+                    <hash type="sha256">abcdef1234567890</hash>
+                    <url>http://example.com/files/%s</url>
+                  </file>
+                </metalink>
+                """.formatted(name, name.replace(" ", "_"));
+        Files.write(metalinkFile, metalinkContent.getBytes());
+    }
+
     private void createTinyTorrentFile(Path torrentFile) throws IOException {
         Files.write(torrentFile, "d4:name4:tinye".getBytes()); // Very small, invalid torrent
     }
@@ -620,6 +743,38 @@ class FolderMonitorE2ETest {
             if (filePath.toString().endsWith(".torrent")) {
                 torrentsFound.incrementAndGet();
                 foundFiles.add(filePath);
+            }
+        }
+    }
+
+    private static class MultiFormatTracker implements FolderMonitorListener {
+        final AtomicInteger torrentsProcessed = new AtomicInteger(0);
+        final AtomicInteger metalinksProcessed = new AtomicInteger(0);
+
+        @Override
+        public void onFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
+            if (filePath.toString().endsWith(".torrent")) {
+                torrentsProcessed.incrementAndGet();
+            } else if (filePath.toString().endsWith(".meta4") || filePath.toString().endsWith(".metalink")) {
+                metalinksProcessed.incrementAndGet();
+            }
+        }
+    }
+
+    private static class ConflictTracker implements FolderMonitorListener {
+        final AtomicBoolean uniqueTorrentProcessed = new AtomicBoolean(false);
+        final AtomicBoolean uniqueMetalinkProcessed = new AtomicBoolean(false);
+        final AtomicBoolean sharedFormatEncountered = new AtomicBoolean(false);
+
+        @Override
+        public void onFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
+            String fileName = filePath.getFileName().toString();
+            if (fileName.equals("unique.torrent")) {
+                uniqueTorrentProcessed.set(true);
+            } else if (fileName.equals("unique.metalink")) {
+                uniqueMetalinkProcessed.set(true);
+            } else if (fileName.equals("shared.meta4")) {
+                sharedFormatEncountered.set(true);
             }
         }
     }

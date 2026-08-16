@@ -122,7 +122,27 @@ public class Download {
     public static Download fromTorrent(Path torrentPath, Path destination) {
         Download download = new Download();
         download.name = torrentPath.getFileName().toString();
+        download.uri = torrentPath.toUri();
         // download.type = Type.TORRENT;
+        download.type = Type.ARIA2;
+        download.destination = destination;
+        download.initSettings(); // Initialize settings based on type
+        return download;
+    }
+
+    /**
+     * Creates a new Download instance for a Metalink file (.metalink/.meta4).
+     * aria2 processes the Metalink itself: mirror selection and segmented
+     * download are handled natively via the addMetalink RPC.
+     *
+     * @param metaLinkPath Path to the Metalink file
+     * @param destination Destination directory
+     * @return A new Download instance
+     */
+    public static Download fromMetaLink(Path metaLinkPath, Path destination) {
+        Download download = new Download();
+        download.name = metaLinkPath.getFileName().toString();
+        download.uri = metaLinkPath.toUri();
         download.type = Type.ARIA2;
         download.destination = destination;
         download.initSettings(); // Initialize settings based on type

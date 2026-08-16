@@ -40,10 +40,12 @@ import org.manager.download.action.AfterCompletionActionListener;
 import org.manager.download.action.AfterCompletionActionManager;
 import org.manager.download.handler.DownloadHandler;
 import org.manager.download.handler.DownloadHandlerFactory;
+import org.manager.download.handler.RetryableDownloadHandler;
 import org.manager.exception.ErrorHandler;
 import org.manager.folder.FolderMonitorService;
 import org.manager.folder.FolderMonitorServiceImpl;
 import org.manager.folder.FolderMonitorSettings;
+import org.manager.folder.MetaLinkFolderMonitor;
 import org.manager.folder.TorrentFolderMonitor;
 import org.manager.tools.ToolManagerFactory;
 import org.manager.util.ExecutorServiceManager;
@@ -77,7 +79,10 @@ public class DownloadManagerImpl implements DownloadManager {
     private final ClipboardService clipboardService;
     private final FolderMonitorService folderMonitorService;
     private final TorrentFolderMonitor torrentFolderMonitor;
+    private final MetaLinkFolderMonitor metaLinkFolderMonitor;
     private final AtomicBoolean torrentFolderMonitoringEnabled;
+    private final AtomicBoolean metaLinkFolderMonitoringEnabled;
+    private final org.manager.proxy.ProxyRotationManager proxyRotationManager;
 
     // OPTIMIZATION: Efficient listener management
     private final Map<String, DownloadHandler> activeHandlers; // download ID -> handler
@@ -141,6 +146,9 @@ public class DownloadManagerImpl implements DownloadManager {
             this.folderMonitorService = new FolderMonitorServiceImpl();
             this.torrentFolderMonitor = new TorrentFolderMonitor(this, folderMonitorService, defaultDownloadDirectory);
             this.torrentFolderMonitoringEnabled = new AtomicBoolean(false);
+            this.metaLinkFolderMonitor = new MetaLinkFolderMonitor(this, folderMonitorService, defaultDownloadDirectory);
+            this.metaLinkFolderMonitoringEnabled = new AtomicBoolean(false);
+            this.proxyRotationManager = new org.manager.proxy.ProxyRotationManager();
 
             // Register folder monitor service with centralized factory for lifecycle
             // management
@@ -434,6 +442,10 @@ public class DownloadManagerImpl implements DownloadManager {
                 notifyDownloadError(download, "No suitable handler found for download type: " + download.getType());
                 return;
             }
+
+            // Wrap with proxy rotation when enabled: retries rate-limited /
+            // blocked downloads through different proxies from the proxy list
+            handler = maybeWrapWithProxyRotation(handler, download);
 
             // OPTIMIZATION: Store handler reference for cleanup and use reusable listener
             activeHandlers.put(download.getId(), handler);
@@ -989,6 +1001,60 @@ public class DownloadManagerImpl implements DownloadManager {
                 ? Paths.get(xdgDataHome)
                 : Paths.get(System.getProperty("user.home"), ".local", "share");
         return base.resolve("odm");
+    }
+
+    /**
+     * Wraps the handler with automatic proxy rotation when enabled in the
+     * global settings. Only HTTP-capable download types (aria2, curl) are
+     * wrapped: proxy rotation exists to bypass server restrictions and rate
+     * limits on plain HTTP downloads. The proxy list is loaded lazily, once,
+     * from the configured proxy list file.
+     *
+     * @param handler the handler selected for the download
+     * @param download the download being started
+     * @return the original handler, or a {@link RetryableDownloadHandler}
+     *         decorating it
+     */
+    private DownloadHandler maybeWrapWithProxyRotation(DownloadHandler handler, Download download) {
+        GlobalSettings settings = getGlobalSettings();
+        if (!settings.isProxyRotationEnabled()) {
+            return handler;
+        }
+        if (download.getType() != Download.Type.ARIA2 && download.getType() != Download.Type.CURL) {
+            return handler;
+        }
+        if (proxyRotationManager.isEmpty()) {
+            loadProxyList(settings);
+            if (proxyRotationManager.isEmpty()) {
+                LOGGER.warning("Proxy rotation is enabled but the proxy list is empty; "
+                        + "starting without rotation");
+                return handler;
+            }
+        }
+        return new RetryableDownloadHandler(handler, proxyRotationManager,
+                org.manager.proxy.ProxyRetrySettings.builder()
+                        .maxRetries(settings.getProxyRotationMaxRetries())
+                        .enableProxyRotation(true)
+                        .build(),
+                executorManager.getScheduledExecutor(), executorManager.getGeneralExecutor());
+    }
+
+    /**
+     * Loads proxies from the configured proxy list file into the rotation
+     * manager. Missing or unreadable files are logged and leave the manager
+     * empty.
+     */
+    private void loadProxyList(GlobalSettings settings) {
+        String path = settings.getProxyListFilePath();
+        if (path == null || path.isBlank()) {
+            return;
+        }
+        try {
+            int loaded = proxyRotationManager.loadProxiesFromFile(Paths.get(path));
+            LOGGER.info("Loaded " + loaded + " proxies for rotation from " + path);
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Could not load proxy list from " + path, e);
+        }
     }
 
     /**
@@ -1594,6 +1660,66 @@ public class DownloadManagerImpl implements DownloadManager {
     @Override
     public CompletableFuture<Void> startDefaultTorrentFolderMonitoring() {
         return torrentFolderMonitor.startDefaultTorrentMonitoring();
+    }
+
+    @Override
+    public MetaLinkFolderMonitor getMetaLinkFolderMonitor() {
+        return metaLinkFolderMonitor;
+    }
+
+    @Override
+    public CompletableFuture<Void> startMetaLinkFolderMonitoring(Path folderPath) {
+        if (!metaLinkFolderMonitoringEnabled.get()) {
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            future.completeExceptionally(new IllegalStateException("Metalink folder monitoring is disabled"));
+            return future;
+        }
+        return metaLinkFolderMonitor.startMetaLinkMonitoring(folderPath);
+    }
+
+    @Override
+    public CompletableFuture<Void> startMetaLinkFolderMonitoring(Path folderPath, FolderMonitorSettings settings) {
+        if (!metaLinkFolderMonitoringEnabled.get()) {
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            future.completeExceptionally(new IllegalStateException("Metalink folder monitoring is disabled"));
+            return future;
+        }
+        return metaLinkFolderMonitor.startMetaLinkMonitoring(folderPath, settings);
+    }
+
+    @Override
+    public CompletableFuture<Void> stopMetaLinkFolderMonitoring(Path folderPath) {
+        return metaLinkFolderMonitor.stopMetaLinkMonitoring(folderPath);
+    }
+
+    @Override
+    public boolean isMetaLinkFolderMonitored(Path folderPath) {
+        return folderMonitorService.isMonitoring(folderPath);
+    }
+
+    @Override
+    public void setMetaLinkFolderMonitoringEnabled(boolean enabled) {
+        metaLinkFolderMonitoringEnabled.set(enabled);
+        if (enabled) {
+            LOGGER.info("Metalink folder monitoring enabled");
+        } else {
+            LOGGER.info("Metalink folder monitoring disabled");
+        }
+    }
+
+    @Override
+    public boolean isMetaLinkFolderMonitoringEnabled() {
+        return metaLinkFolderMonitoringEnabled.get();
+    }
+
+    @Override
+    public CompletableFuture<Void> startDefaultMetaLinkFolderMonitoring() {
+        if (!metaLinkFolderMonitoringEnabled.get()) {
+            CompletableFuture<Void> future = new CompletableFuture<>();
+            future.completeExceptionally(new IllegalStateException("Metalink folder monitoring is disabled"));
+            return future;
+        }
+        return metaLinkFolderMonitor.startDefaultMetaLinkMonitoring();
     }
 
     /**

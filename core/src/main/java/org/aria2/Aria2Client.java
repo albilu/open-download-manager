@@ -503,19 +503,20 @@ public class Aria2Client {
     /**
      * Add a torrent file via JSON-RPC (returns GID list).
      */
-    public String addTorrent(byte[] torrent, List<String> uris, String dir, List<String> options)
+    public String addTorrent(byte[] torrent, List<String> uris, String dir, Map<String, Object> options)
             throws IOException, Aria2RpcException {
         String torrentBase64 = java.util.Base64.getEncoder().encodeToString(torrent);
+        Map<String, Object> opts = new LinkedHashMap<>();
+        if (options != null) {
+            opts.putAll(options);
+        }
+        if (dir != null) {
+            opts.put("dir", dir);
+        }
         List<Object> params = new ArrayList<>();
         params.add(torrentBase64);
         params.add(uris != null ? uris : new ArrayList<>());
-        params.add(options != null ? options : new LinkedHashMap<>());
-        if (dir != null) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> opts = (options != null) ? (Map<String, Object>) params.get(2) : new LinkedHashMap<>();
-            opts.put("dir", dir);
-            params.set(2, opts);
-        }
+        params.add(opts);
         if (useWebSocket) {
             try {
                 return sendRpcWebSocket("aria2.addTorrent", String.class, params.toArray()).result;
@@ -529,23 +530,30 @@ public class Aria2Client {
     }
 
     /**
-     * Add a Metalink file via JSON-RPC (returns GID list).
+     * Add a Metalink file via JSON-RPC. aria2 returns a list of GIDs (one per
+     * file in the metalink); this method returns the first GID, which tracks
+     * the primary download of typical single-file metalinks.
      */
-    public String addMetalink(byte[] metalink, List<String> options) throws IOException, Aria2RpcException {
+    public String addMetalink(byte[] metalink, Map<String, Object> options) throws IOException, Aria2RpcException {
         String metalinkBase64 = java.util.Base64.getEncoder().encodeToString(metalink);
         List<Object> params = new ArrayList<>();
         params.add(metalinkBase64);
         params.add(options != null ? options : new LinkedHashMap<>());
+        List<?> gids;
         if (useWebSocket) {
             try {
-                return sendRpcWebSocket("aria2.addMetalink", String.class, params.toArray()).result;
+                gids = sendRpcWebSocket("aria2.addMetalink", List.class, params.toArray()).result;
             } catch (Exception e) {
                 throw new IOException(e);
             }
         } else {
             String payload = buildPayload("aria2.addMetalink", params.toArray());
-            return sendRpcHttp(payload, String.class).result;
+            gids = sendRpcHttp(payload, List.class).result;
         }
+        if (gids == null || gids.isEmpty()) {
+            throw new IOException("aria2.addMetalink returned no GIDs");
+        }
+        return gids.get(0).toString();
     }
 
     /**
