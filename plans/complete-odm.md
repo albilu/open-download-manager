@@ -10,6 +10,10 @@
 
 **Dependency graph:** 0 → {1, 2} (parallel) → 3 → 4 → {5, 6} (parallel) → 7
 
+**Plan mutation log:**
+- *Step 1 amendment (user decision)*: proxy rotation (`org.manager.proxy` + `RetryableDownloadHandler`) and `MetaLinkFolderMonitor` were intended-but-unwired features, NOT dead code — restored and wired (commit `b69fdbc`). Deleted-for-real items stand: `DependencyValidator`, `TorUtilityFactory`, standalone `Aria2RpcException`, empty `download.service` package. `org.manager.schedule` retained for Step 5 as planned.
+- *Step 1 addition*: surefire fork-per-class isolation (fixed ApplicationFactory singleton poisoning; suite was never green — 120 red at baseline, ~92 pre-existing reds remain as a rehab backlog).
+
 ---
 
 ## Step 0 — Repo hygiene & truth-telling (1 PR)
