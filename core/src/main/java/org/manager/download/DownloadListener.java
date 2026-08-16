@@ -2,6 +2,16 @@ package org.manager.download;
 
 /**
  * Interface for receiving download events and status updates.
+ *
+ * <p>Threading contract: when registered via
+ * {@code DownloadManager.addDownloadListener}, callbacks are delivered on the
+ * dedicated single-threaded {@code odm-events} executor in submission order.
+ * Listeners that update a UI toolkit (GTK, AWT, ...) MUST marshal to their
+ * UI thread before touching widgets — never call toolkit code directly from
+ * these callbacks.</p>
+ *
+ * <p>Exceptions thrown by a listener are isolated and logged by the manager;
+ * other listeners still receive the event.</p>
  */
 public interface DownloadListener {
 

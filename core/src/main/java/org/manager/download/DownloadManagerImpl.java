@@ -12,11 +12,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -63,6 +66,7 @@ public class DownloadManagerImpl implements DownloadManager {
     private final PaginatedDownloadRepository downloadRepository;
     private final Map<String, String> gidToIdMap; // Handler GID -> download ID
     private final Set<DownloadListener> listeners;
+    private final ExecutorService eventExecutor;
     private final AtomicInteger runningDownloads;
     private final AtomicBoolean isShuttingDown;
     private final DependencyContainer container;
@@ -112,6 +116,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
         // Get centralized executor manager
         this.executorManager = ExecutorServiceManager.getInstance();
+        this.eventExecutor = executorManager.getEventExecutor();
 
         // Initialize dependencies
         initializeDependencies();
@@ -156,7 +161,10 @@ public class DownloadManagerImpl implements DownloadManager {
         } else {
             this.defaultDownloadDirectory = Paths.get(getGlobalSettings().getDefaultDownloadDirectory().toString());
         }
-        this.stateFilePath = defaultDownloadDirectory.resolve(STATE_FILE);
+        // ODM state lives in the XDG data dir, not inside the user's
+        // Downloads folder. aria2's own session/input files stay with the
+        // download directory.
+        this.stateFilePath = xdgDataDirectory().resolve(STATE_FILE);
         this.aria2SessionFilePath = defaultDownloadDirectory.resolve(ARIA2_SESSION_FILE);
         this.aria2InputFilePath = defaultDownloadDirectory.resolve(ARIA2_INPUT_FILE);
 
@@ -912,76 +920,75 @@ public class DownloadManagerImpl implements DownloadManager {
         return stats;
     }
 
-    // Notification helpers
-    private void notifyDownloadStart(Download download) {
+    // Notification helpers. All listener notifications are dispatched on the
+    // dedicated single-threaded odm-events executor (see ExecutorServiceManager),
+    // so consumers observe a serial, ordered event stream on one known thread.
+    // Listeners that touch a UI toolkit MUST marshal to their UI thread.
+
+    /**
+     * Dispatches an event to all registered listeners on the odm-events
+     * executor. Exceptions thrown by a listener are isolated and logged;
+     * during shutdown, events are dropped silently.
+     *
+     * @param action the listener callback to invoke for each listener
+     */
+    void fireEvent(Consumer<DownloadListener> action) {
         for (DownloadListener listener : listeners) {
             try {
-                listener.onDownloadStart(download);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                eventExecutor.execute(() -> {
+                    try {
+                        action.accept(listener);
+                    } catch (Exception e) {
+                        LOGGER.log(Level.WARNING, "Error in download listener", e);
+                    }
+                });
+            } catch (RejectedExecutionException e) {
+                // Executor already shut down (application exit) — drop event.
             }
         }
+    }
+
+    private void notifyDownloadStart(Download download) {
+        fireEvent(l -> l.onDownloadStart(download));
     }
 
     private void notifyDownloadProgress(Download download, float progress, long downloadedBytes, long totalBytes,
             float speed) {
-        for (DownloadListener listener : listeners) {
-            try {
-                listener.onDownloadProgress(download, progress, downloadedBytes, totalBytes, speed);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
-            }
-        }
+        fireEvent(l -> l.onDownloadProgress(download, progress, downloadedBytes, totalBytes, speed));
     }
 
     private void notifyDownloadPause(Download download) {
-        for (DownloadListener listener : listeners) {
-            try {
-                listener.onDownloadPause(download);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
-            }
-        }
+        fireEvent(l -> l.onDownloadPause(download));
     }
 
     private void notifyDownloadResume(Download download) {
-        for (DownloadListener listener : listeners) {
-            try {
-                listener.onDownloadResume(download);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
-            }
-        }
+        fireEvent(l -> l.onDownloadResume(download));
     }
 
     private void notifyDownloadComplete(Download download) {
-        for (DownloadListener listener : listeners) {
-            try {
-                listener.onDownloadComplete(download);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
-            }
-        }
+        fireEvent(l -> l.onDownloadComplete(download));
     }
 
     private void notifyDownloadError(Download download, String errorMessage) {
-        for (DownloadListener listener : listeners) {
-            try {
-                listener.onDownloadError(download, errorMessage);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
-            }
-        }
+        fireEvent(l -> l.onDownloadError(download, errorMessage));
     }
 
     private void notifyDownloadCanceled(Download download) {
-        for (DownloadListener listener : listeners) {
-            try {
-                listener.onDownloadCanceled(download);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying download listener", e);
-            }
-        }
+        fireEvent(l -> l.onDownloadCanceled(download));
+    }
+
+    /**
+     * Resolves the XDG data directory for ODM state files, honoring
+     * XDG_DATA_HOME and defaulting to ~/.local/share/odm.
+     *
+     * @return the directory in which to store odm-state.json
+     */
+    private static Path xdgDataDirectory() {
+        String xdgDataHome = System.getenv("XDG_DATA_HOME");
+        Path base = (xdgDataHome != null && !xdgDataHome.isBlank())
+                ? Paths.get(xdgDataHome)
+                : Paths.get(System.getProperty("user.home"), ".local", "share");
+        return base.resolve("odm");
     }
 
     /**

@@ -30,6 +30,7 @@ public class ExecutorServiceManager {
     private final ScheduledExecutorService scheduledExecutor;
     private final ExecutorService downloadExecutor;
     private final ExecutorService ioExecutor;
+    private final ExecutorService eventExecutor;
     private final AtomicBoolean isShutdown;
 
     /**
@@ -56,6 +57,12 @@ public class ExecutorServiceManager {
         // IO-bound operations (file operations, process management)
         this.ioExecutor = Executors.newCachedThreadPool(
                 new NamedThreadFactory("odm-io"));
+
+        // Single-threaded event dispatcher: DownloadListener notifications are
+        // delivered here, serially and in submission order, so that consumers
+        // never run on tool/poller threads and only need one marshal point.
+        this.eventExecutor = Executors.newSingleThreadExecutor(
+                new NamedThreadFactory("odm-events"));
 
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "odm-shutdown-hook"));
@@ -110,6 +117,19 @@ public class ExecutorServiceManager {
     public ExecutorService getDownloadExecutor() {
         checkNotShutdown();
         return downloadExecutor;
+    }
+
+    /**
+     * Gets the single-threaded event dispatcher. All DownloadListener
+     * notifications must be delivered on this executor so consumers observe a
+     * serial, ordered stream on one known thread.
+     *
+     * @return The event executor
+     * @throws IllegalStateException if the manager has been shut down
+     */
+    public ExecutorService getEventExecutor() {
+        checkNotShutdown();
+        return eventExecutor;
     }
 
     /**
@@ -195,6 +215,7 @@ public class ExecutorServiceManager {
             scheduledExecutor.shutdown();
             downloadExecutor.shutdown();
             ioExecutor.shutdown();
+            eventExecutor.shutdown();
 
             // Wait for termination
             try {

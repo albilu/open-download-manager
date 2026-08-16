@@ -287,18 +287,17 @@ class DownloadListenerTest {
     }
 
     @Test
-    @DisplayName("Should handle listener exception gracefully")
+    @DisplayName("Manager isolates listener exceptions (see EventDeliveryContractTest)")
     void shouldHandleListenerExceptionGracefully() {
+        // The previous version of this test asserted that a throwing listener's
+        // own invocations do not throw, which was contradictory. The real
+        // manager-level dispatch contract (including exception isolation) is
+        // covered by EventDeliveryContractTest. This placeholder only verifies
+        // the fault-injection helper keeps working for such tests.
         TestDownloadListener faultyListener = new TestDownloadListener(true);
 
-        // Listener throws exception, but should not crash the calling code
-        assertDoesNotThrow(() -> {
-            faultyListener.onDownloadStart(testDownload);
-            faultyListener.onDownloadProgress(testDownload, 50.0f, 1024, 2048, 512);
-            faultyListener.onDownloadComplete(testDownload);
-            faultyListener.onDownloadError(testDownload, "Error");
-            faultyListener.onDownloadCanceled(testDownload);
-        });
+        assertThrows(RuntimeException.class,
+                () -> faultyListener.onDownloadStart(testDownload));
     }
 
     @Test
