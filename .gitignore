@@ -1,0 +1,18 @@
+# Build output
+target/
+
+# Crash logs & runtime artifacts
+*.log
+hs_err_pid*.log
+core.*
+
+# Glade/editor backups
+*.glade~
+*.backup
+
+# Docker runtime data
+data/
+docker-data/*.torrent
+
+# OS
+.DS_Store

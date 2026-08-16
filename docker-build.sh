@@ -1,9 +1,6 @@
 #!/bin/bash
-# Simple Docker build script for Open Downl# Run application
-
-
-
-# Create packagesset -e
+# Simple Docker build script for Open Download Manager
+set -e
 
 PROJECT_NAME="open-download-manager"
 IMAGE_NAME="odm-dev"
