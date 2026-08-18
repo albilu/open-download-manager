@@ -209,6 +209,8 @@ public class MainWindow {
                 .add("New download", this::onAddClicked)
                 .add("Import from list", () -> new ImportListDialog(window, downloadManager,
                         () -> UiThread.marshal(this::refresh)).present())
+                .add("Import URL sequence", () -> new ImportSequenceDialog(window, downloadManager,
+                        () -> UiThread.marshal(this::refresh)).present())
                 .separator()
                 .add("Settings", this::onSettingsClicked)
                 .add("About", () -> AboutDialogPresenter.present(window))

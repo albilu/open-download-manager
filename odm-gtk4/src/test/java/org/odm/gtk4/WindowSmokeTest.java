@@ -128,19 +128,6 @@ class WindowSmokeTest {
     }
 
     @Test
-    @DisplayName("import-list.ui parses and contains all required widgets")
-    void importList() {
-        GtkBuilder builder = UiLoader.load("/ui/import-list.ui");
-        Widgets.require(builder, "import_list_dialog", Window.class);
-        Widgets.require(builder, "urls_textview", TextView.class);
-        Widgets.require(builder, "status_label", Label.class);
-        Widgets.require(builder, "from_file_button", Button.class);
-        Widgets.require(builder, "validate_button", Button.class);
-        Widgets.require(builder, "cancel_button", Button.class);
-        Widgets.require(builder, "import_button", Button.class);
-    }
-
-    @Test
     @DisplayName("new-download.ui parses with 1:1 original ids")
     void newDownload() {
         GtkBuilder builder = UiLoader.load("/ui/new-download.ui");
@@ -211,5 +198,52 @@ class WindowSmokeTest {
         Widgets.require(builder, "odm_logo_image", org.gnome.gtk.Image.class);
         Widgets.require(builder, "status_message_label", Label.class);
         Widgets.require(builder, "progress_bar", ProgressBar.class);
+    }
+
+    @Test
+    @DisplayName("import-list.ui parses with 1:1 original ids")
+    void importListStructure() {
+        GtkBuilder builder = UiLoader.load("/ui/import-list.ui");
+        Widgets.require(builder, "import_dialog", Window.class);
+        Widgets.require(builder, "options_notebook", org.gnome.gtk.Notebook.class);
+        Widgets.require(builder, "clipboard_page", org.gnome.gtk.Box.class);
+        Widgets.require(builder, "filter_label", Label.class);
+        Widgets.require(builder, "extension_filter_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "url_treeview", TreeView.class);
+        Widgets.require(builder, "url_liststore", ListStore.class);
+        Widgets.require(builder, "mark_renderer", org.gnome.gtk.CellRendererToggle.class);
+        Widgets.require(builder, "folder_destination", Button.class);
+        Widgets.require(builder, "disk_space_label", Label.class);
+        Widgets.require(builder, "import_spinnet", Spinner.class);
+        Widgets.require(builder, "cancel_button", Button.class);
+        Widgets.require(builder, "validate_button", Button.class);
+        // Options tab ids
+        for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
+                "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "proxy_port_spin"}) {
+            Widgets.require(builder, id, SpinButton.class);
+        }
+        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+    }
+
+    @Test
+    @DisplayName("import-sequence.ui parses with 1:1 original ids")
+    void importSequence() {
+        GtkBuilder builder = UiLoader.load("/ui/import-sequence.ui");
+        Widgets.require(builder, "import_sequence_dialog", Window.class);
+        Widgets.require(builder, "uri_entry", Entry.class);
+        Widgets.require(builder, "num_start_spin", SpinButton.class);
+        Widgets.require(builder, "num_vers_spin", SpinButton.class);
+        Widgets.require(builder, "num_count_spin", SpinButton.class);
+        Widgets.require(builder, "char_entry", Entry.class);
+        Widgets.require(builder, "char_vers_entry", Entry.class);
+        Widgets.require(builder, "num_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "char_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "preview_treeview", TreeView.class);
+        Widgets.require(builder, "preview_liststore", ListStore.class);
+        Widgets.require(builder, "destination_folder", Button.class);
+        Widgets.require(builder, "disk_space_label", Label.class);
+        Widgets.require(builder, "import_sequence_spinner", Spinner.class);
+        Widgets.require(builder, "cancel_button", Button.class);
+        Widgets.require(builder, "validate_button", Button.class);
     }
 }

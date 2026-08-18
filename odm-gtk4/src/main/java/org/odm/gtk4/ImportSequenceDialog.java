@@ -1,0 +1,202 @@
+package org.odm.gtk4;
+
+import java.net.URI;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import org.gnome.gio.File;
+import org.gnome.gtk.Button;
+import org.gnome.gtk.DropDown;
+import org.gnome.gtk.Entry;
+import org.gnome.gtk.FileDialog;
+import org.gnome.gtk.GtkBuilder;
+import org.gnome.gtk.Label;
+import org.gnome.gtk.ListStore;
+import org.gnome.gtk.SpinButton;
+import org.gnome.gtk.StringList;
+import org.gnome.gtk.TreeIter;
+import org.gnome.gtk.Window;
+import org.gnome.gobject.Value;
+import org.javagi.gobject.types.Types;
+import org.manager.download.Download;
+import org.manager.download.DownloadManager;
+
+/**
+ * Import URL Sequence dialog — 1:1 GTK4 port of import-sequence.glade. The
+ * user enters a URL pattern with a {} placeholder plus a numeric or character
+ * range; the preview list shows the generated URLs; Start Download queues
+ * them all.
+ */
+public class ImportSequenceDialog {
+
+    private static final Logger LOGGER = Logger.getLogger(ImportSequenceDialog.class.getName());
+    private static final String[] RANGE_MODES = {"Number", "Character"};
+
+    private final Window dialog;
+    private final DownloadManager downloadManager;
+    private final Runnable onImportDone;
+    private final GtkBuilder builder;
+
+    private final Entry uriEntry;
+    private final SpinButton numStartSpin;
+    private final SpinButton numVersSpin;
+    private final SpinButton numCountSpin;
+    private final Entry charEntry;
+    private final Entry charVersEntry;
+    private final ListStore previewStore;
+    private final Label diskSpaceLabel;
+
+    private Path destinationFolder;
+
+    public ImportSequenceDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone) {
+        this.downloadManager = downloadManager;
+        this.onImportDone = onImportDone;
+
+        this.builder = UiLoader.load("/ui/import-sequence.ui");
+        this.dialog = Widgets.require(builder, "import_sequence_dialog", Window.class);
+        this.uriEntry = Widgets.require(builder, "uri_entry", Entry.class);
+        this.numStartSpin = Widgets.require(builder, "num_start_spin", SpinButton.class);
+        this.numVersSpin = Widgets.require(builder, "num_vers_spin", SpinButton.class);
+        this.numCountSpin = Widgets.require(builder, "num_count_spin", SpinButton.class);
+        this.charEntry = Widgets.require(builder, "char_entry", Entry.class);
+        this.charVersEntry = Widgets.require(builder, "char_vers_entry", Entry.class);
+        this.previewStore = Widgets.require(builder, "preview_liststore", ListStore.class);
+        this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
+
+        dialog.setTransientFor(parent);
+
+        StringList modes = new StringList(new String[0]);
+        for (String mode : RANGE_MODES) {
+            modes.append(mode);
+        }
+        Widgets.require(builder, "num_combo", DropDown.class).setModel(modes);
+        Widgets.require(builder, "char_combo", DropDown.class).setModel(modes);
+
+        Button destinationButton = Widgets.require(builder, "destination_folder", Button.class);
+        destinationButton.setLabel(currentDefaultDirectory());
+        destinationButton.onClicked(this::onChooseFolder);
+
+        // Regenerate preview on any input change
+        Runnable regen = this::regeneratePreview;
+        uriEntry.onChanged(() -> regen.run());
+        numStartSpin.onValueChanged(() -> regen.run());
+        numVersSpin.onValueChanged(() -> regen.run());
+        numCountSpin.onValueChanged(() -> regen.run());
+        charEntry.onChanged(() -> regen.run());
+        charVersEntry.onChanged(() -> regen.run());
+
+        Widgets.require(builder, "cancel_button", Button.class).onClicked(dialog::close);
+        Widgets.require(builder, "validate_button", Button.class).onClicked(this::onImport);
+
+        regeneratePreview();
+    }
+
+    public void present() {
+        dialog.present();
+    }
+
+    private void onChooseFolder() {
+        FileDialog fileDialog = new FileDialog();
+        fileDialog.setTitle("Select destination folder");
+        fileDialog.selectFolder(dialog, null, result -> {
+            try {
+                File folder = fileDialog.selectFolderFinish(result);
+                if (folder != null && folder.getPath() != null) {
+                    destinationFolder = Path.of(folder.getPath().toString());
+                    Widgets.require(builder, "destination_folder", Button.class)
+                            .setLabel(destinationFolder.toString());
+                    updateDiskSpace(destinationFolder.toString());
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.FINE, "Folder selection cancelled or failed", e);
+            }
+        });
+    }
+
+    /** Generates the URL list from the pattern + range. */
+    private List<String> generateUrls() {
+        String pattern = uriEntry.getText().trim();
+        List<String> urls = new ArrayList<>();
+        if (pattern.isEmpty() || !pattern.contains("{}")) {
+            return urls;
+        }
+        int start = (int) numStartSpin.getValue();
+        int end = (int) numVersSpin.getValue();
+        int count = Math.max(1, (int) numCountSpin.getValue());
+
+        // Character range takes precedence when both char fields are filled
+        String charFrom = charEntry.getText().trim();
+        String charTo = charVersEntry.getText().trim();
+        if (!charFrom.isEmpty() && !charTo.isEmpty()
+                && charFrom.length() == 1 && charTo.length() == 1) {
+            char a = charFrom.charAt(0);
+            char b = charTo.charAt(0);
+            for (char c = a; c <= b && urls.size() < count; c++) {
+                urls.add(pattern.replace("{}", String.valueOf(c)));
+            }
+            return urls;
+        }
+
+        if (end < start) {
+            int tmp = start;
+            start = end;
+            end = tmp;
+        }
+        for (int i = start; i <= end && urls.size() < count; i++) {
+            urls.add(pattern.replace("{}", String.valueOf(i)));
+        }
+        return urls;
+    }
+
+    private void regeneratePreview() {
+        previewStore.clear();
+        for (String url : generateUrls()) {
+            TreeIter iter = new TreeIter();
+            previewStore.append(iter);
+            Value v = new Value().init(Types.STRING);
+            v.setString(url);
+            previewStore.setValue(iter, 0, v);
+            v.unset();
+        }
+    }
+
+    private void onImport() {
+        List<String> urls = generateUrls();
+        if (urls.isEmpty()) {
+            return;
+        }
+        Path destination = destinationFolder != null ? destinationFolder
+                : Path.of(currentDefaultDirectory());
+        int queued = 0;
+        for (String url : urls) {
+            try {
+                Download download = downloadManager.createDownload(new URI(url), destination);
+                downloadManager.queueDownload(download);
+                queued++;
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to queue " + url, e);
+            }
+        }
+        LOGGER.info("Imported " + queued + " downloads from URL sequence");
+        if (onImportDone != null) {
+            onImportDone.run();
+        }
+        dialog.close();
+    }
+
+    private void updateDiskSpace(String dir) {
+        try {
+            long free = new java.io.File(dir).getUsableSpace();
+            diskSpaceLabel.setLabel(String.format("%.2f GB free", free / (1024.0 * 1024 * 1024)));
+        } catch (Exception e) {
+            diskSpaceLabel.setLabel("");
+        }
+    }
+
+    private String currentDefaultDirectory() {
+        Path dir = downloadManager.getGlobalSettings().getDefaultDownloadDirectory();
+        return dir != null ? dir.toString() : System.getProperty("user.home") + "/Downloads";
+    }
+}
