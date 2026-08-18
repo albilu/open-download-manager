@@ -10,4 +10,7 @@ One of the pain points previously was the incomplete jgtk implementation which c
 
 
 
-3-Downloader: derive m4s manifestv
+3-[LATER] Downloader: derive m4s manifestv
+-the m4s support means that the download manager can download media from streaming services that use fragmented mp4 files. The download manager should be able to detect such format:
+1. by its manifest (ex: http://example.com/playlist.m3u8) => yt-dlp http://example.com/manifest.m3u8.
+2. or derive the manifest or media segments from the streaming service video page (ex: http://example.com/video-page) .

@@ -82,9 +82,12 @@ public class MainWindow {
     private final ProgressBar infoProgressBar;
     private final Label totalSizeValue;
     private final Label addedOnValue;
+    private final Label infoHashValue;
+    private final Label folderValue;
     private final Label etaValue;
     private final Label downloadedValue;
-    private final Label folderValue;
+    private final Label connectionsValue;
+    private final Label seedsPeersValue;
     private final DownloadManager downloadManager;
 
     private List<Download> rowSnapshot = new ArrayList<>();
@@ -111,9 +114,12 @@ public class MainWindow {
         this.infoProgressBar = Widgets.require(builder, "info_progress_bar", ProgressBar.class);
         this.totalSizeValue = Widgets.require(builder, "total_size_value", Label.class);
         this.addedOnValue = Widgets.require(builder, "added_on_value", Label.class);
+        this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
+        this.folderValue = Widgets.require(builder, "folder_value", Label.class);
         this.etaValue = Widgets.require(builder, "eta_value", Label.class);
         this.downloadedValue = Widgets.require(builder, "downloaded_value", Label.class);
-        this.folderValue = Widgets.require(builder, "folder_value", Label.class);
+        this.connectionsValue = Widgets.require(builder, "connections_value", Label.class);
+        this.seedsPeersValue = Widgets.require(builder, "seeds_peers_value", Label.class);
         window.setApplication(app);
 
         statusTreeview.getSelection().onChanged(this::onStatusSelectionChanged);
@@ -362,17 +368,23 @@ public class MainWindow {
             infoProgressBar.setFraction(0);
             totalSizeValue.setLabel("—");
             addedOnValue.setLabel("—");
+            infoHashValue.setLabel("—");
+            folderValue.setLabel("—");
             etaValue.setLabel("—");
             downloadedValue.setLabel("—");
-            folderValue.setLabel("—");
+            connectionsValue.setLabel("—");
+            seedsPeersValue.setLabel("—");
             return;
         }
         infoProgressBar.setFraction(selectedDownload.getProgress() / 100.0);
         totalSizeValue.setLabel(formatSize(selectedDownload.getSize()));
         addedOnValue.setLabel(selectedDownload.getCreatedAt() != null ? DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
+        infoHashValue.setLabel("—"); // BitTorrent-only; wired when aria2 detail RPC lands (Step 5)
+        folderValue.setLabel(selectedDownload.getDestination() != null ? selectedDownload.getDestination().toString() : "—");
         etaValue.setLabel(formatEta(selectedDownload));
         downloadedValue.setLabel(formatSize(selectedDownload.getDownloaded()));
-        folderValue.setLabel(selectedDownload.getDestination() != null ? selectedDownload.getDestination().toString() : "—");
+        connectionsValue.setLabel("—"); // aria2 detail RPC (Step 5)
+        seedsPeersValue.setLabel("—"); // aria2 detail RPC (Step 5)
     }
 
     private static String formatEta(Download download) {
