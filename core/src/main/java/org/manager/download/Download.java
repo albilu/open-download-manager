@@ -51,6 +51,11 @@ public class Download {
     private volatile long downloaded; // downloaded bytes
     private volatile float speed; // current speed in bytes/second
     private volatile float progress; // 0-100
+    private volatile float uploadSpeed; // current upload speed in bytes/second (BitTorrent)
+    private volatile int connections; // current connection count (aria2)
+    private volatile int seeders; // connected seeder count (BitTorrent)
+    private volatile String infoHash; // BitTorrent info hash, when applicable
+    private volatile int queuePosition; // position in the download queue (lower = earlier)
     private final Instant createdAt;
     private volatile Instant startedAt;
     private volatile Instant completedAt;
@@ -347,6 +352,56 @@ public class Download {
     public void setSpeed(float speed) {
         synchronized (lock) {
             this.speed = speed;
+        }
+    }
+
+    public float getUploadSpeed() {
+        return uploadSpeed;
+    }
+
+    public void setUploadSpeed(float uploadSpeed) {
+        synchronized (lock) {
+            this.uploadSpeed = uploadSpeed;
+        }
+    }
+
+    public int getConnectionCount() {
+        return connections;
+    }
+
+    public void setConnectionCount(int connections) {
+        synchronized (lock) {
+            this.connections = connections;
+        }
+    }
+
+    public int getSeeders() {
+        return seeders;
+    }
+
+    public void setSeeders(int seeders) {
+        synchronized (lock) {
+            this.seeders = seeders;
+        }
+    }
+
+    public String getInfoHash() {
+        return infoHash;
+    }
+
+    public void setInfoHash(String infoHash) {
+        synchronized (lock) {
+            this.infoHash = infoHash;
+        }
+    }
+
+    public int getQueuePosition() {
+        return queuePosition;
+    }
+
+    public void setQueuePosition(int queuePosition) {
+        synchronized (lock) {
+            this.queuePosition = queuePosition;
         }
     }
 

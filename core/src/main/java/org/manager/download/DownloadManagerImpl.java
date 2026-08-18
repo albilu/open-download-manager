@@ -567,14 +567,101 @@ public class DownloadManagerImpl implements DownloadManager {
         }, executorManager.getGeneralExecutor());
     }
 
+    @Override
+    public List<Map<String, Object>> getDownloadPeers(Download download) {
+        org.manager.download.handler.Aria2DownloadHandler handler = aria2HandlerFor(download);
+        return handler != null ? handler.getDownloadPeers(download) : List.of();
+    }
+
+    @Override
+    public List<Map<String, Object>> getDownloadFiles(Download download) {
+        org.manager.download.handler.Aria2DownloadHandler handler = aria2HandlerFor(download);
+        return handler != null ? handler.getDownloadFiles(download) : List.of();
+    }
+
+    @Override
+    public List<List<String>> getDownloadTrackers(Download download) {
+        org.manager.download.handler.Aria2DownloadHandler handler = aria2HandlerFor(download);
+        return handler != null ? handler.getDownloadTrackers(download) : List.of();
+    }
+
+    /** Returns the aria2 handler if the given download is handled by it. */
+    private org.manager.download.handler.Aria2DownloadHandler aria2HandlerFor(Download download) {
+        DownloadHandler handler = getHandlerFactory().getHandler(download);
+        return handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler
+                ? aria2Handler
+                : null;
+    }
+
+    /** Queued downloads ordered by queue position (then creation time). */
+    private List<Download> queuedDownloadsByPosition() {
+        return downloadRepository.getDownloadsByStatus(Download.Status.QUEUED, 0, Integer.MAX_VALUE)
+                .getDownloads()
+                .stream()
+                .sorted(java.util.Comparator.comparingInt(Download::getQueuePosition)
+                        .thenComparing(Download::getCreatedAt,
+                                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+    }
+
+    /** Next queue position for a newly queued download. */
+    private int nextQueuePosition() {
+        return downloadRepository.getAllDownloads(0, Integer.MAX_VALUE).getDownloads().stream()
+                .mapToInt(Download::getQueuePosition)
+                .max()
+                .orElse(0) + 1;
+    }
+
+    @Override
+    public void moveDownloadUp(Download download) {
+        moveInQueue(download, -1);
+    }
+
+    @Override
+    public void moveDownloadDown(Download download) {
+        moveInQueue(download, 1);
+    }
+
+    @Override
+    public void moveDownloadToTop(Download download) {
+        moveInQueue(download, Integer.MIN_VALUE);
+    }
+
+    @Override
+    public void moveDownloadToBottom(Download download) {
+        moveInQueue(download, Integer.MAX_VALUE);
+    }
+
+    /** Repositions a queued download and normalizes queue positions. */
+    private void moveInQueue(Download download, int direction) {
+        List<Download> queued = new java.util.ArrayList<>(queuedDownloadsByPosition());
+        int index = queued.indexOf(download);
+        if (index < 0) {
+            return;
+        }
+        int target = switch (direction) {
+            case -1 -> Math.max(0, index - 1);
+            case 1 -> Math.min(queued.size() - 1, index + 1);
+            case Integer.MIN_VALUE -> 0;
+            case Integer.MAX_VALUE -> queued.size() - 1;
+            default -> index;
+        };
+        if (target != index) {
+            queued.remove(index);
+            queued.add(target, download);
+        }
+        for (int i = 0; i < queued.size(); i++) {
+            queued.get(i).setQueuePosition(i + 1);
+        }
+    }
+
     private void startNextQueuedDownload() {
         if (isShuttingDown.get()) {
             return;
         }
 
-        // Find the next queued download
-        List<Download> queuedDownloads = downloadRepository.getDownloadsByStatus(Download.Status.QUEUED, 0, 1)
-                .getDownloads();
+        // Find the next queued download by queue position (reorderable)
+        List<Download> queuedDownloads = queuedDownloadsByPosition();
         Optional<Download> nextQueued = queuedDownloads.isEmpty() ? Optional.empty()
                 : Optional.of(queuedDownloads.get(0));
 
@@ -1386,6 +1473,7 @@ public class DownloadManagerImpl implements DownloadManager {
             }
 
             download.setStatus(Download.Status.QUEUED);
+            download.setQueuePosition(nextQueuePosition());
             downloadRepository.addDownload(download);
             notifyDownloadStart(download);
 

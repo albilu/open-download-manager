@@ -132,6 +132,58 @@ public interface DownloadManager {
     CompletableFuture<Void> changeSettings(Download download);
 
     /**
+     * Fetches the current peer list for a BitTorrent download (aria2.getPeers).
+     *
+     * @param download the download
+     * @return list of peer detail maps; empty for non-aria2 downloads
+     */
+    List<Map<String, Object>> getDownloadPeers(Download download);
+
+    /**
+     * Fetches the file list of a download (aria2.getFiles).
+     *
+     * @param download the download
+     * @return list of file detail maps; empty for non-aria2 downloads
+     */
+    List<Map<String, Object>> getDownloadFiles(Download download);
+
+    /**
+     * Fetches the tracker announce tiers of a BitTorrent download.
+     *
+     * @param download the download
+     * @return list of tracker tiers, each a list of announce URLs; empty otherwise
+     */
+    List<List<String>> getDownloadTrackers(Download download);
+
+    /**
+     * Moves a queued download one position up in the queue.
+     *
+     * @param download the download to move
+     */
+    void moveDownloadUp(Download download);
+
+    /**
+     * Moves a queued download one position down in the queue.
+     *
+     * @param download the download to move
+     */
+    void moveDownloadDown(Download download);
+
+    /**
+     * Moves a queued download to the top of the queue.
+     *
+     * @param download the download to move
+     */
+    void moveDownloadToTop(Download download);
+
+    /**
+     * Moves a queued download to the bottom of the queue.
+     *
+     * @param download the download to move
+     */
+    void moveDownloadToBottom(Download download);
+
+    /**
      * Cancels and removes a download.
      *
      * @param download The download to cancel

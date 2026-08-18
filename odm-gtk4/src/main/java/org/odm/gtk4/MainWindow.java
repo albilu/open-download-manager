@@ -20,6 +20,7 @@ import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreeModel;
+import java.util.Map;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeSelection;
 import org.gnome.gtk.TreeView;
@@ -89,12 +90,17 @@ public class MainWindow {
     private final Label connectionsValue;
     private final Label seedsPeersValue;
     private final org.gnome.gtk.Switch torSwitch;
+    private final org.gnome.gtk.SearchEntry searchEntry;
     private final MenuButton menuButton;
     private final DownloadManager downloadManager;
 
     private List<Download> rowSnapshot = new ArrayList<>();
     private Download selectedDownload;
     private String statusFilter = "All Status";
+    private String searchText = "";
+    private final ListStore trackersStore;
+    private final ListStore peersStore;
+    private final ListStore filesStore;
     private final org.tor.TorService torService;
     private final org.manager.download.action.AfterCompletionActionManager completionActionManager =
             new org.manager.download.action.AfterCompletionActionManager();
@@ -121,6 +127,9 @@ public class MainWindow {
         this.infoProgressBar = Widgets.require(builder, "info_progress_bar", ProgressBar.class);
         this.totalSizeValue = Widgets.require(builder, "total_size_value", Label.class);
         this.addedOnValue = Widgets.require(builder, "added_on_value", Label.class);
+        this.trackersStore = Widgets.require(builder, "trackers_store", ListStore.class);
+        this.peersStore = Widgets.require(builder, "peers_store", ListStore.class);
+        this.filesStore = Widgets.require(builder, "files_store", ListStore.class);
         this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
         this.folderValue = Widgets.require(builder, "folder_value", Label.class);
         this.etaValue = Widgets.require(builder, "eta_value", Label.class);
@@ -148,8 +157,18 @@ public class MainWindow {
         Widgets.require(builder, "pause_button", Button.class).onClicked(this::onPauseClicked);
         Widgets.require(builder, "resume_button", Button.class).onClicked(this::onResumeClicked);
         Widgets.require(builder, "delete_button", Button.class).onClicked(this::onDeleteClicked);
+        Widgets.require(builder, "move_up_button", Button.class)
+                .onClicked(() -> { downloadManager.moveDownloadUp(selectedDownload); refresh(); });
+        Widgets.require(builder, "move_top_button", Button.class)
+                .onClicked(() -> { downloadManager.moveDownloadToTop(selectedDownload); refresh(); });
+        Widgets.require(builder, "move_down_button", Button.class)
+                .onClicked(() -> { downloadManager.moveDownloadDown(selectedDownload); refresh(); });
+        Widgets.require(builder, "move_bottom_button", Button.class)
+                .onClicked(() -> { downloadManager.moveDownloadToBottom(selectedDownload); refresh(); });
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
-        // tor_switch, move_*_button, search_entry: widgets present, behavior deferred to Step 5
+        this.searchEntry = Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
+        searchEntry.onSearchChanged(this::onSearchChanged);
+        // tor_switch: wired below
         this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         torSwitch.onStateSet(this::onTorToggled);
         this.menuButton = Widgets.require(builder, "menu_button", MenuButton.class);
@@ -185,6 +204,11 @@ public class MainWindow {
 
     private void onSettingsClicked() {
         new SettingsDialog(window, downloadManager).present();
+    }
+
+    private void onSearchChanged() {
+        searchText = searchEntry.getText().strip().toLowerCase();
+        refresh();
     }
 
     private void onPauseClicked() {
@@ -429,6 +453,10 @@ public class MainWindow {
     }
 
     private boolean activeMatches(Download download) {
+        if (!searchText.isEmpty() && (download.getName() == null
+                || !download.getName().toLowerCase().contains(searchText))) {
+            return false;
+        }
         return switch (statusFilter) {
             case "All Status" -> true;
             case "Active" -> download.getStatus() == Download.Status.DOWNLOADING;
@@ -454,6 +482,8 @@ public class MainWindow {
         rowSnapshot = new ArrayList<>();
         int row = 0;
         double totalDownSpeed = 0;
+        double totalUpSpeed = 0;
+        int totalSeeders = 0;
         boolean anyActive = false;
         for (Download download : downloads) {
             if (!activeMatches(download)) continue;
@@ -478,6 +508,8 @@ public class MainWindow {
             setStr(downloadsStore, iter, COL_TOR_ICON, engineIconName(download));
             if (download.getStatus() == Download.Status.DOWNLOADING) {
                 totalDownSpeed += download.getSpeed();
+                totalUpSpeed += download.getUploadSpeed();
+                totalSeeders += download.getSeeders();
                 anyActive = true;
             }
             row++;
@@ -485,8 +517,8 @@ public class MainWindow {
 
         infoLabel.setLabel(downloads.size() + " download(s)");
         downSpeedLabel.setLabel(formatSize((long) totalDownSpeed) + "/s");
-        upSpeedLabel.setLabel("—");
-        dhtStatusLabel.setLabel("DHT: —");
+        upSpeedLabel.setLabel(totalUpSpeed > 0 ? formatSize((long) totalUpSpeed) + "/s" : "—");
+        dhtStatusLabel.setLabel(totalSeeders > 0 ? "DHT: " + totalSeeders + " seed(s)" : "DHT: —");
         activitySpinner.setSpinning(anyActive);
         updateInfoPanel();
     }
@@ -540,6 +572,65 @@ public class MainWindow {
         };
     }
 
+    private void loadDetailTabs() {
+        // Trackers
+        trackersStore.clear();
+        List<List<String>> trackers = downloadManager.getDownloadTrackers(selectedDownload);
+        int tier = 0;
+        for (List<String> urls : trackers) {
+            for (String url : urls) {
+                TreeIter iter = new TreeIter();
+                trackersStore.append(iter);
+                setStr(trackersStore, iter, 0, url);
+                setStr(trackersStore, iter, 1, "tier " + tier);
+                setStr(trackersStore, iter, 2, "—");
+                setStr(trackersStore, iter, 3, "—");
+                setStr(trackersStore, iter, 4, "—");
+                setStr(trackersStore, iter, 5, "—");
+            }
+            tier++;
+        }
+
+        // Peers
+        peersStore.clear();
+        List<Map<String, Object>> peers = downloadManager.getDownloadPeers(selectedDownload);
+        for (Map<String, Object> peer : peers) {
+            TreeIter iter = new TreeIter();
+            peersStore.append(iter);
+            setStr(peersStore, iter, 0, String.valueOf(peer.getOrDefault("peerId", "—")));
+            setStr(peersStore, iter, 1, String.valueOf(peer.getOrDefault("downloadSpeed", "—")));
+            setStr(peersStore, iter, 2, String.valueOf(peer.getOrDefault("ip", "—"))
+                    + ":" + peer.getOrDefault("port", ""));
+            setStr(peersStore, iter, 3, String.valueOf(peer.getOrDefault("peChoking", false)));
+        }
+
+        // Files
+        filesStore.clear();
+        List<Map<String, Object>> files = downloadManager.getDownloadFiles(selectedDownload);
+        for (Map<String, Object> file : files) {
+            TreeIter iter = new TreeIter();
+            filesStore.append(iter);
+            setBool(filesStore, iter, 0, true);
+            setStr(filesStore, iter, 1, String.valueOf(file.getOrDefault("path", "—")));
+            setStr(filesStore, iter, 2, formatSize(parseLong(file.get("length"), 0)));
+            setStr(filesStore, iter, 3, String.valueOf(progressPercent(
+                    parseLong(file.get("completedLength"), 0), parseLong(file.get("length"), 1))));
+            setStr(filesStore, iter, 4, "—");
+        }
+    }
+
+    private static long parseLong(Object value, long fallback) {
+        try {
+            return value != null ? Long.parseLong(value.toString()) : fallback;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static double progressPercent(long done, long total) {
+        return total > 0 ? done * 100.0 / total : 0;
+    }
+
     private static String engineIconName(Download download) {
         return switch (download.getType()) {
             case ARIA2 -> "network-server-symbolic";
@@ -561,19 +652,22 @@ public class MainWindow {
             folderValue.setLabel("—");
             etaValue.setLabel("—");
             downloadedValue.setLabel("—");
-            connectionsValue.setLabel("—");
-            seedsPeersValue.setLabel("—");
-            return;
+        connectionsValue.setLabel("—");
+        seedsPeersValue.setLabel("—");
+        return;
         }
         infoProgressBar.setFraction(selectedDownload.getProgress() / 100.0);
         totalSizeValue.setLabel(formatSize(selectedDownload.getSize()));
         addedOnValue.setLabel(selectedDownload.getCreatedAt() != null ? DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
-        infoHashValue.setLabel("—"); // BitTorrent-only; wired when aria2 detail RPC lands (Step 5)
+        infoHashValue.setLabel(selectedDownload.getInfoHash() != null ? selectedDownload.getInfoHash() : "—");
         folderValue.setLabel(selectedDownload.getDestination() != null ? selectedDownload.getDestination().toString() : "—");
         etaValue.setLabel(formatEta(selectedDownload));
         downloadedValue.setLabel(formatSize(selectedDownload.getDownloaded()));
-        connectionsValue.setLabel("—"); // aria2 detail RPC (Step 5)
-        seedsPeersValue.setLabel("—"); // aria2 detail RPC (Step 5)
+        connectionsValue.setLabel(String.valueOf(selectedDownload.getConnectionCount()));
+        seedsPeersValue.setLabel(selectedDownload.getSeeders() > 0
+                ? selectedDownload.getSeeders() + " seed(s)"
+                : "—");
+        loadDetailTabs();
     }
 
     private static String formatEta(Download download) {
@@ -611,6 +705,13 @@ public class MainWindow {
     private static void setInt(ListStore store, TreeIter iter, int column, int value) {
         Value v = new Value().init(column == COL_PROGRESS ? Types.INT : Types.UINT);
         v.setInt(value);
+        store.setValue(iter, column, v);
+        v.unset();
+    }
+
+    private static void setBool(ListStore store, TreeIter iter, int column, boolean value) {
+        Value v = new Value().init(Types.BOOLEAN);
+        v.setBoolean(value);
         store.setValue(iter, column, v);
         v.unset();
     }

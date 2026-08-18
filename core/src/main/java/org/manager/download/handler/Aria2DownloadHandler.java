@@ -82,7 +82,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         "status", // Download status: active, waiting, paused, error, complete, removed
         "completedLength", // Bytes downloaded so far
         "totalLength", // Total file size in bytes
-        "downloadSpeed" // Current download speed in bytes/second
+        "downloadSpeed", // Current download speed in bytes/second
+        "uploadSpeed", // Current upload speed in bytes/second (BitTorrent)
+        "connections", // Current connection count
+        "numSeeders", // Connected seeder count (BitTorrent)
+        "infoHash" // Torrent info hash (present for BitTorrent downloads)
     };
 
     private final Aria2Client aria2Client;
@@ -518,10 +522,22 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             long totalLength = Long.parseLong(totalLengthStr != null ? totalLengthStr : "0");
             float downloadSpeed = Float.parseFloat(downloadSpeedStr != null ? downloadSpeedStr : "0");
 
+            // Extended detail fields (upload speed, connections, seeders, info hash)
+            String uploadSpeedStr = (String) status.get("uploadSpeed");
+            String connectionsStr = (String) status.get("connections");
+            String numSeedersStr = (String) status.get("numSeeders");
+            String infoHash = (String) status.get("infoHash");
+
             // Update download object
             download.setDownloaded(completedLength);
             download.setSize(totalLength);
             download.setSpeed(downloadSpeed);
+            download.setUploadSpeed(Float.parseFloat(uploadSpeedStr != null ? uploadSpeedStr : "0"));
+            download.setConnectionCount(connectionsStr != null ? Integer.parseInt(connectionsStr) : 0);
+            download.setSeeders(numSeedersStr != null ? Integer.parseInt(numSeedersStr) : 0);
+            if (infoHash != null && !infoHash.isBlank()) {
+                download.setInfoHash(infoHash);
+            }
 
             // Calculate progress percentage
             float progress = 0;
@@ -899,6 +915,79 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             LOGGER.log(Level.WARNING, "Failed to get full status for debugging: " + e.getMessage(), e);
             return null;
         }
+    }
+
+    /**
+     * Fetches the current peer list for a BitTorrent download (aria2.getPeers).
+     *
+     * @param download the download (must have a GID)
+     * @return list of peer detail maps; empty when unavailable or not BT
+     */
+    public List<Map<String, Object>> getDownloadPeers(Download download) {
+        String gid = download.getGid();
+        if (gid == null) {
+            return List.of();
+        }
+        try {
+            return aria2Client.getPeers(gid);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to get peers for gid " + gid, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * Fetches the file list of a download (aria2.getFiles).
+     *
+     * @param download the download (must have a GID)
+     * @return list of file detail maps; empty when unavailable
+     */
+    public List<Map<String, Object>> getDownloadFiles(Download download) {
+        String gid = download.getGid();
+        if (gid == null) {
+            return List.of();
+        }
+        try {
+            return aria2Client.getFiles(gid);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to get files for gid " + gid, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * Fetches the tracker announce tiers of a BitTorrent download (from
+     * tellStatus.bittorrent.announceList).
+     *
+     * @param download the download (must have a GID)
+     * @return list of tracker tiers, each a list of announce URLs; empty otherwise
+     */
+    public List<List<String>> getDownloadTrackers(Download download) {
+        String gid = download.getGid();
+        if (gid == null) {
+            return List.of();
+        }
+        try {
+            String json = aria2Client.tellStatus(gid, new String[]{"bittorrent"});
+            @SuppressWarnings("unchecked")
+            Map<String, Object> status = objectMapper.readValue(json, Map.class);
+            Object bt = status.get("bittorrent");
+            if (bt instanceof Map<?, ?> btMap) {
+                Object announce = btMap.get("announceList");
+                if (announce instanceof List<?> tiers) {
+                    List<List<String>> trackers = new java.util.ArrayList<>();
+                    for (Object tier : tiers) {
+                        if (tier instanceof List<?> urls) {
+                            trackers.add(urls.stream().map(String::valueOf).toList());
+                        }
+                    }
+                    return trackers;
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to get trackers for gid " + gid, e);
+        }
+        return List.of();
     }
 
     @Override
