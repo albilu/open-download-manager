@@ -95,17 +95,53 @@ public class DownloadSettingsFactory {
      */
     public Aria2Settings createAria2Settings() {
         Aria2Settings settings = new Aria2Settings();
+        GlobalSettings g = getGlobalSettings();
 
-        // Set reasonable defaults
-        settings.setConnections(5);
-        settings.setMaxConnectionPerServer(5);
-        settings.setContinueDownload(true);
-        settings.setMinSplitSize(20); // 20MB
-        settings.setFileAllocation("prealloc");
+        // Defaults, overridable from the Settings dialog (persisted as
+        // aria2.* properties in GlobalSettings)
+        settings.setConnections(g.getIntProperty("aria2.maxConnections", 5));
+        settings.setMaxConnectionPerServer(g.getIntProperty("aria2.maxConnections", 5));
+        settings.setContinueDownload(g.getBooleanProperty("aria2.continueDownload", true));
+        settings.setMinSplitSize(g.getIntProperty("aria2.minSplitSizeMb", 20));
+        settings.setFileAllocation(g.getProperty("aria2.fileAllocation", "prealloc"));
         settings.setAutoFileRenaming(true);
+        settings.setCheckIntegrity(g.getBooleanProperty("aria2.checkIntegrity", false));
 
-        // Apply global speed limit if set
-        int globalSpeedLimit = getGlobalSettings().getGlobalSpeedLimit();
+        int maxTries = g.getIntProperty("aria2.maxTries", 0);
+        if (maxTries > 0) {
+            settings.setOption("max-tries", String.valueOf(maxTries));
+        }
+        int downKb = g.getIntProperty("aria2.maxDownloadSpeedKb", 0);
+        if (downKb > 0) {
+            settings.setOption("max-download-limit", String.valueOf(downKb * 1024L));
+        }
+        int upKb = g.getIntProperty("aria2.maxUploadSpeedKb", 0);
+        if (upKb > 0) {
+            settings.setOption("max-upload-limit", String.valueOf(upKb * 1024L));
+        }
+        int retryWait = g.getIntProperty("aria2.retryWait", 0);
+        if (retryWait > 0) {
+            settings.setOption("retry-wait", String.valueOf(retryWait));
+        }
+        int seedTimeMin = g.getIntProperty("aria2.seedTimeMin", 0);
+        if (g.getBooleanProperty("aria2.enableSeeding", false) && seedTimeMin > 0) {
+            settings.setOption("seed-time", String.valueOf(seedTimeMin));
+        }
+        String referer = g.getProperty("aria2.referer", "");
+        if (!referer.isEmpty()) {
+            settings.setOption("referer", referer);
+        }
+        String cookie = g.getProperty("aria2.cookie", "");
+        if (!cookie.isEmpty()) {
+            settings.setOption("header", "Cookie: " + cookie);
+        }
+        String userAgent = g.getProperty("aria2.userAgent", "");
+        if (!userAgent.isEmpty()) {
+            settings.setOption("user-agent", userAgent);
+        }
+
+        // Global speed limit (takes precedence over the aria2 default)
+        int globalSpeedLimit = g.getGlobalSpeedLimit();
         if (globalSpeedLimit > 0) {
             settings.setOption("max-download-limit", globalSpeedLimit + "K");
         }
@@ -143,13 +179,23 @@ public class DownloadSettingsFactory {
      */
     public YtDlpSettings createYtDlpSettings() {
         YtDlpSettings settings = new YtDlpSettings();
+        GlobalSettings g = getGlobalSettings();
 
-        // Set reasonable defaults
+        // Defaults, overridable from the Settings dialog (ytdlp.* properties)
         settings.setConnections(1); // yt-dlp manages connections internally
-        settings.setFormat("best");
-        settings.setEmbedThumbnail(true);
-        settings.setWriteSubtitles(false);
-        settings.setSubtitleLanguages(Arrays.asList("en"));
+        settings.setFormat(g.getProperty("ytdlp.videoFormat", "best").isEmpty()
+                ? "best" : g.getProperty("ytdlp.videoFormat", "best"));
+        settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.writeThumbnail", false));
+        settings.setWriteSubtitles(g.getBooleanProperty("ytdlp.writeSubtitles", false));
+        settings.setEmbedMetadata(g.getBooleanProperty("ytdlp.embedMetadata", true));
+        settings.setExtractAudio(g.getBooleanProperty("ytdlp.extractAudio", false));
+        settings.setUseAria2c(g.getBooleanProperty("ytdlp.useAria2External", true));
+        String subLangs = g.getProperty("ytdlp.subtitleLanguages", "");
+        if (!subLangs.isEmpty()) {
+            settings.setSubtitleLanguages(Arrays.asList(subLangs.split("\\s*,\\s*")));
+        } else {
+            settings.setSubtitleLanguages(Arrays.asList("en"));
+        }
         settings.setFragmentRetries(3);
 
         return settings;
@@ -162,19 +208,38 @@ public class DownloadSettingsFactory {
      */
     public HttrackSettings createHttrackSettings() {
         HttrackSettings settings = new HttrackSettings();
+        GlobalSettings g = getGlobalSettings();
 
-        // Set reasonable defaults
+        // Defaults, overridable from the Settings dialog (httrack.* properties)
         settings.setConnections(5);
-        settings.setDepth(2);
+        settings.setDepth(g.getIntProperty("httrack.depth", 2));
         settings.setFollowExternalLinks(false);
         settings.setIncludeImages(true);
         settings.setIncludeVideos(false);
         settings.setMaxRate(0); // no limit
-        settings.addIncludePattern("*.png");
-        settings.addIncludePattern("*.gif");
-        settings.addIncludePattern("*.jpg");
-        settings.addIncludePattern("*.css");
-        settings.addIncludePattern("*.js");
+        settings.setIncludeArchives(g.getBooleanProperty("httrack.includeArchives", false));
+        String include = g.getProperty("httrack.include", "");
+        if (!include.isEmpty()) {
+            for (String pattern : include.split("\\s+")) {
+                if (!pattern.isBlank()) {
+                    settings.addIncludePattern(pattern);
+                }
+            }
+        } else {
+            settings.addIncludePattern("*.png");
+            settings.addIncludePattern("*.gif");
+            settings.addIncludePattern("*.jpg");
+            settings.addIncludePattern("*.css");
+            settings.addIncludePattern("*.js");
+        }
+        String exclude = g.getProperty("httrack.exclude", "");
+        if (!exclude.isEmpty()) {
+            for (String pattern : exclude.split("\\s+")) {
+                if (!pattern.isBlank()) {
+                    settings.addExcludePattern(pattern);
+                }
+            }
+        }
 
         return settings;
     }
