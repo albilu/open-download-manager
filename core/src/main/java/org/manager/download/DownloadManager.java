@@ -122,6 +122,16 @@ public interface DownloadManager {
     CompletableFuture<Void> resumeDownload(Download download);
 
     /**
+     * Changes the settings of an existing download. aria2 handlers apply
+     * changes live via changeOption; process-based handlers restart the
+     * transfer with the new settings.
+     *
+     * @param download The download to update
+     * @return A future that completes when the settings are applied
+     */
+    CompletableFuture<Void> changeSettings(Download download);
+
+    /**
      * Cancels and removes a download.
      *
      * @param download The download to cancel

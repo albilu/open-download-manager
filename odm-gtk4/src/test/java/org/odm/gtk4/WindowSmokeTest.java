@@ -82,27 +82,6 @@ class WindowSmokeTest {
         Widgets.require(builder, "activity_spinner", Spinner.class);
     }
 
-    @Test
-    @DisplayName("new-download.ui parses and contains all required widgets")
-    void newDownload() {
-        GtkBuilder builder = UiLoader.load("/ui/new-download.ui");
-        Widgets.require(builder, "new_download_dialog", Window.class);
-        Widgets.require(builder, "url_entry", Entry.class);
-        Widgets.require(builder, "torrent_file_label", Label.class);
-        Widgets.require(builder, "folder_label", Label.class);
-        Widgets.require(builder, "max_connections_spin", SpinButton.class);
-        Widgets.require(builder, "max_speed_spin", SpinButton.class);
-        Widgets.require(builder, "use_proxy_check", CheckButton.class);
-        Widgets.require(builder, "proxy_entry", Entry.class);
-        Widgets.require(builder, "error_label", Label.class);
-        Widgets.require(builder, "torrent_choose_button", Button.class);
-        Widgets.require(builder, "folder_choose_button", Button.class);
-        Widgets.require(builder, "cancel_button", Button.class);
-        Widgets.require(builder, "start_button", Button.class);
-    }
-
-    @Test
-    @DisplayName("settings.ui parses and contains all required widgets")
     void settings() {
         GtkBuilder builder = UiLoader.load("/ui/settings.ui");
         Widgets.require(builder, "settings_dialog", Window.class);
@@ -135,5 +114,78 @@ class WindowSmokeTest {
         Widgets.require(builder, "validate_button", Button.class);
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "import_button", Button.class);
+    }
+
+    @Test
+    @DisplayName("new-download.ui parses with 1:1 original ids")
+    void newDownload() {
+        GtkBuilder builder = UiLoader.load("/ui/new-download.ui");
+        Widgets.require(builder, "new_download_dialog", Window.class);
+        Widgets.require(builder, "url_entry", Entry.class);
+        Widgets.require(builder, "torrent_file_chooser", Button.class);
+        Widgets.require(builder, "save_folder_chooser", Button.class);
+        Widgets.require(builder, "disk_space_label", Label.class);
+        Widgets.require(builder, "filename_entry", Entry.class);
+        Widgets.require(builder, "files_treeview", TreeView.class);
+        Widgets.require(builder, "files_liststore", ListStore.class);
+        Widgets.require(builder, "max_connections_spin", SpinButton.class);
+        Widgets.require(builder, "retry_limit_spin", SpinButton.class);
+        Widgets.require(builder, "max_download_speed_spin", SpinButton.class);
+        Widgets.require(builder, "max_upload_speed_spin", SpinButton.class);
+        Widgets.require(builder, "retry_after", SpinButton.class);
+        Widgets.require(builder, "referrer", Entry.class);
+        Widgets.require(builder, "cookie", Entry.class);
+        Widgets.require(builder, "user_agent", Entry.class);
+        Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "proxy_host_entry", Entry.class);
+        Widgets.require(builder, "proxy_port_spin", SpinButton.class);
+        Widgets.require(builder, "proxy_username_entry", Entry.class);
+        Widgets.require(builder, "proxy_password_entry", Entry.class);
+        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        Widgets.require(builder, "start_automatically_check", CheckButton.class);
+        Widgets.require(builder, "move_torrent_check", CheckButton.class);
+        Widgets.require(builder, "new_download_spinner", Spinner.class);
+        Widgets.require(builder, "new_download_cancel_button", Button.class);
+        Widgets.require(builder, "new_download_start_button", Button.class);
+    }
+
+    @Test
+    @DisplayName("property.ui parses with 1:1 original ids")
+    void property() {
+        GtkBuilder builder = UiLoader.load("/ui/property.ui");
+        Widgets.require(builder, "property_dialog", Window.class);
+        Widgets.require(builder, "properties_notebook", org.gnome.gtk.Notebook.class);
+        for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
+                "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "proxy_port_spin"}) {
+            Widgets.require(builder, id, SpinButton.class);
+        }
+        for (String id : new String[]{"referrer", "cookie", "user_agent", "proxy_host_entry",
+                "proxy_username_entry", "proxy_password_entry"}) {
+            Widgets.require(builder, id, Entry.class);
+        }
+        Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        Widgets.require(builder, "start_automatically_check", CheckButton.class);
+        Widgets.require(builder, "move_torrent_check", CheckButton.class);
+        Widgets.require(builder, "cancel_button", Button.class);
+        Widgets.require(builder, "apply_button", Button.class);
+        Widgets.require(builder, "ok_button", Button.class);
+    }
+
+    @Test
+    @DisplayName("about.ui parses")
+    void about() {
+        GtkBuilder builder = UiLoader.load("/ui/about.ui");
+        Widgets.require(builder, "about_dialog", org.gnome.gtk.AboutDialog.class);
+    }
+
+    @Test
+    @DisplayName("start-shutdown.ui parses")
+    void startShutdown() {
+        GtkBuilder builder = UiLoader.load("/ui/start-shutdown.ui");
+        Widgets.require(builder, "startup_shutdown_dialog", Window.class);
+        Widgets.require(builder, "odm_logo_image", org.gnome.gtk.Image.class);
+        Widgets.require(builder, "status_message_label", Label.class);
+        Widgets.require(builder, "progress_bar", ProgressBar.class);
     }
 }

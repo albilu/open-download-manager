@@ -529,6 +529,24 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     @Override
+    public CompletableFuture<Void> changeSettings(Download download) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                // Get the appropriate handler (which may be proxy-rotation-wrapped)
+                DownloadHandler handler = getHandlerFactory().getHandler(download);
+
+                if (handler != null) {
+                    handler.changeSettings(download).join();
+                } else {
+                    LOGGER.warning("No handler found for download type: " + download.getType());
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to change settings for download: " + download.getName(), e);
+            }
+        }, executorManager.getGeneralExecutor());
+    }
+
+    @Override
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
         return CompletableFuture.runAsync(() -> {
             try {

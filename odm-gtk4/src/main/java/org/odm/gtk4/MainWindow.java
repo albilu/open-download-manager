@@ -124,6 +124,7 @@ public class MainWindow {
 
         statusTreeview.getSelection().onChanged(this::onStatusSelectionChanged);
         downloadsTreeview.getSelection().onChanged(this::onDownloadSelectionChanged);
+        downloadsTreeview.onRowActivated((path, column) -> onPropertiesClicked());
 
         var rightClick = new GestureClick();
         rightClick.setButton(3);
@@ -180,6 +181,13 @@ public class MainWindow {
         if (selectedDownload != null) downloadManager.cancelDownload(selectedDownload, false);
     }
 
+    private void onPropertiesClicked() {
+        onDownloadSelectionChanged();
+        if (selectedDownload != null) {
+            new PropertyDialog(window, downloadManager, selectedDownload).present();
+        }
+    }
+
     private void showContextMenu() {
         onDownloadSelectionChanged();
         if (selectedDownload == null) return;
@@ -188,6 +196,7 @@ public class MainWindow {
                 .add("Resume", this::onResumeClicked)
                 .add("Delete", this::onDeleteClicked)
                 .separator()
+                .add("Properties", this::onPropertiesClicked)
                 .add("Remove finished", () -> {
                     downloadManager.pruneCompletedDownloads(Duration.ZERO);
                     refresh();
