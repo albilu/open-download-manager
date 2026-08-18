@@ -88,14 +88,21 @@ public class MainWindow {
     private final Label downloadedValue;
     private final Label connectionsValue;
     private final Label seedsPeersValue;
+    private final org.gnome.gtk.Switch torSwitch;
+    private final MenuButton menuButton;
     private final DownloadManager downloadManager;
 
     private List<Download> rowSnapshot = new ArrayList<>();
     private Download selectedDownload;
     private String statusFilter = "All Status";
+    private final org.tor.TorService torService;
+    private final org.manager.download.action.AfterCompletionActionManager completionActionManager =
+            new org.manager.download.action.AfterCompletionActionManager();
+    private org.manager.download.action.AfterCompletionAction completionAction;
 
-    public MainWindow(Application app, DownloadManager downloadManager) {
+    public MainWindow(Application app, DownloadManager downloadManager, org.tor.TorService torService) {
         this.downloadManager = downloadManager;
+        this.torService = torService;
 
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
 
@@ -122,6 +129,12 @@ public class MainWindow {
         this.seedsPeersValue = Widgets.require(builder, "seeds_peers_value", Label.class);
         window.setApplication(app);
 
+        restoreWindowState(builder);
+        window.onCloseRequest(() -> {
+            saveWindowState(builder);
+            return false; // allow close
+        });
+
         statusTreeview.getSelection().onChanged(this::onStatusSelectionChanged);
         downloadsTreeview.getSelection().onChanged(this::onDownloadSelectionChanged);
         downloadsTreeview.onRowActivated((path, column) -> onPropertiesClicked());
@@ -137,7 +150,9 @@ public class MainWindow {
         Widgets.require(builder, "delete_button", Button.class).onClicked(this::onDeleteClicked);
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
         // tor_switch, move_*_button, search_entry: widgets present, behavior deferred to Step 5
-        MenuButton menuButton = Widgets.require(builder, "menu_button", MenuButton.class);
+        this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        torSwitch.onStateSet(this::onTorToggled);
+        this.menuButton = Widgets.require(builder, "menu_button", MenuButton.class);
         menuButton.setPopover(buildMainMenu().getPopover());
 
         downloadManager.addDownloadListener(new DownloadListener() {
@@ -147,7 +162,10 @@ public class MainWindow {
             }
             @Override public void onDownloadPause(Download d) { UiThread.marshal(MainWindow.this::refresh); }
             @Override public void onDownloadResume(Download d) { UiThread.marshal(MainWindow.this::refresh); }
-            @Override public void onDownloadComplete(Download d) { UiThread.marshal(MainWindow.this::refresh); }
+            @Override public void onDownloadComplete(Download d) {
+                executeCompletionAction(d);
+                UiThread.marshal(MainWindow.this::refresh);
+            }
             @Override public void onDownloadError(Download d, String errorMessage) {
                 UiThread.marshal(MainWindow.this::refresh);
             }
@@ -207,15 +225,175 @@ public class MainWindow {
     private PopupMenu buildMainMenu() {
         return new PopupMenu()
                 .add("New download", this::onAddClicked)
+                .add("New website scrape", this::onScraperClicked)
                 .add("Import from list", () -> new ImportListDialog(window, downloadManager,
                         () -> UiThread.marshal(this::refresh)).present())
                 .add("Import URL sequence", () -> new ImportSequenceDialog(window, downloadManager,
                         () -> UiThread.marshal(this::refresh)).present())
                 .separator()
+                .add("Toggle clipboard monitor (currently "
+                        + (downloadManager.isClipboardMonitoringEnabled() ? "on" : "off") + ")", () -> {
+                    downloadManager.setClipboardMonitoringEnabled(
+                            !downloadManager.isClipboardMonitoringEnabled());
+                    menuButtonRefresh();
+                })
+                .separator()
+                .add("On completion: none", () -> setCompletionAction(null))
+                .add("On completion: notify (sound)", () -> setCompletionAction(
+                        new org.manager.download.action.PlayNotificationAction(
+                                org.manager.download.action.PlayNotificationAction.NotificationSound.SUCCESS)))
+                .add("On completion: shutdown", () -> setCompletionAction(
+                        new org.manager.download.action.ShutdownComputerAction(30)))
+                .separator()
                 .add("Settings", this::onSettingsClicked)
                 .add("About", () -> AboutDialogPresenter.present(window))
                 .separator()
                 .add("Exit", () -> window.getApplication().quit());
+    }
+
+    private void menuButtonRefresh() {
+        // Rebuild the main menu so toggle-state labels stay current
+        menuButton.setPopover(buildMainMenu().getPopover());
+    }
+
+    private void setCompletionAction(org.manager.download.action.AfterCompletionAction action) {
+        this.completionAction = action;
+        LOGGER.info("After-completion action set to: "
+                + (action == null ? "none" : action.getClass().getSimpleName()));
+    }
+
+    private void executeCompletionAction(Download download) {
+        if (completionAction == null) {
+            return;
+        }
+        completionActionManager.clearActions(download);
+        completionActionManager.addAction(download, completionAction);
+        completionActionManager.executeActions(download)
+                .exceptionally(e -> {
+                    LOGGER.log(java.util.logging.Level.WARNING,
+                            "Completion action failed for " + download.getName(), e);
+                    return null;
+                });
+    }
+
+    private boolean onTorToggled(boolean active) {
+        if (active) {
+            torService.start().thenAccept(ok -> {
+                if (Boolean.TRUE.equals(ok)) {
+                    LOGGER.info("Tor started; downloads can route via SOCKS5 127.0.0.1:9050");
+                    downloadManager.getGlobalSettings().setGlobalProxyEnabled(true);
+                    downloadManager.getGlobalSettings().setGlobalProxyAddress("socks5://127.0.0.1:9050");
+                } else {
+                    LOGGER.warning("Tor failed to start");
+                    UiThread.marshal(() -> torSwitchSet(false));
+                }
+            });
+        } else {
+            torService.stop();
+            downloadManager.getGlobalSettings().setGlobalProxyEnabled(false);
+            LOGGER.info("Tor stopped");
+        }
+        return false; // let the switch apply its new state
+    }
+
+    private void torSwitchSet(boolean active) {
+        UiThread.marshal(() -> torSwitch.setActive(active));
+    }
+
+    /** Restores window geometry + paned positions persisted from the last session. */
+    private void restoreWindowState(GtkBuilder builder) {
+        var s = downloadManager.getGlobalSettings();
+        int w = s.getIntProperty("ui.window.width", -1);
+        int h = s.getIntProperty("ui.window.height", -1);
+        if (w > 0 && h > 0) {
+            window.setDefaultSize(w, h);
+        }
+        int mainPos = s.getIntProperty("ui.paned.mainPosition", -1);
+        if (mainPos > 0) {
+            Widgets.require(builder, "main_paned", org.gnome.gtk.Paned.class).setPosition(mainPos);
+        }
+        int contentPos = s.getIntProperty("ui.paned.contentPosition", -1);
+        if (contentPos > 0) {
+            Widgets.require(builder, "content_paned", org.gnome.gtk.Paned.class).setPosition(contentPos);
+        }
+    }
+
+    /** Persists window geometry + paned positions for the next session. */
+    private void saveWindowState(GtkBuilder builder) {
+        var s = downloadManager.getGlobalSettings();
+        s.setProperty("ui.window.width", String.valueOf(window.getWidth()));
+        s.setProperty("ui.window.height", String.valueOf(window.getHeight()));
+        s.setProperty("ui.paned.mainPosition",
+                String.valueOf(Widgets.require(builder, "main_paned", org.gnome.gtk.Paned.class).getPosition()));
+        s.setProperty("ui.paned.contentPosition",
+                String.valueOf(Widgets.require(builder, "content_paned", org.gnome.gtk.Paned.class).getPosition()));
+        s.save();
+    }
+
+    private void onScraperClicked() {
+        // Website scrape via httrack: minimal dialog -> createWebsiteDownload
+        showScraperDialog();
+    }
+
+    private void showScraperDialog() {
+        org.gnome.gtk.Window scraper = new org.gnome.gtk.Window();
+        scraper.setTitle("New Website Scrape");
+        scraper.setModal(true);
+        scraper.setTransientFor(window);
+        scraper.setDefaultSize(520, -1);
+
+        org.gnome.gtk.Box box = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.VERTICAL, 10);
+        box.setMarginStart(16);
+        box.setMarginEnd(16);
+        box.setMarginTop(16);
+        box.setMarginBottom(16);
+
+        org.gnome.gtk.Entry urlEntry = new org.gnome.gtk.Entry();
+        urlEntry.setPlaceholderText("https://example.com/site");
+        org.gnome.gtk.SpinButton depthSpin = org.gnome.gtk.SpinButton.withRange(0, 20, 1);
+        depthSpin.setValue(3);
+
+        org.gnome.gtk.Label statusLabel = new org.gnome.gtk.Label("");
+
+        org.gnome.gtk.Button cancelButton = new org.gnome.gtk.Button();
+        cancelButton.setLabel("Cancel");
+        cancelButton.onClicked(scraper::close);
+        org.gnome.gtk.Button startButton = new org.gnome.gtk.Button();
+        startButton.setLabel("Start Scrape");
+        startButton.addCssClass("suggested-action");
+        startButton.onClicked(() -> {
+            String url = urlEntry.getText().trim();
+            if (url.isEmpty()) {
+                statusLabel.setLabel("Enter a URL");
+                return;
+            }
+            try {
+                java.util.Map<String, String> options = new java.util.HashMap<>();
+                options.put("depth", String.valueOf((int) depthSpin.getValue()));
+                Download download = downloadManager.createWebsiteDownload(new java.net.URI(url),
+                        java.nio.file.Path.of(downloadManager.getGlobalSettings()
+                                .getDefaultDownloadDirectory().toString()), options);
+                downloadManager.queueDownload(download);
+                refresh();
+                scraper.close();
+            } catch (java.net.URISyntaxException e) {
+                statusLabel.setLabel("Invalid URL");
+            }
+        });
+
+        box.append(new org.gnome.gtk.Label("Website URL:"));
+        box.append(urlEntry);
+        box.append(new org.gnome.gtk.Label("Depth:"));
+        box.append(depthSpin);
+        box.append(statusLabel);
+        org.gnome.gtk.Box buttons = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.HORIZONTAL, 8);
+        buttons.setHalign(org.gnome.gtk.Align.END);
+        buttons.append(cancelButton);
+        buttons.append(startButton);
+        box.append(buttons);
+
+        scraper.setChild(box);
+        scraper.present();
     }
 
     private void onStatusSelectionChanged() {

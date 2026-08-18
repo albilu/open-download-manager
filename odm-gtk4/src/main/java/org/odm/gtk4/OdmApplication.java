@@ -29,10 +29,24 @@ public final class OdmApplication {
         manager.initialize().join();
         awaitHandlersReady();
 
+        // Tor service (best-effort: falls back to system PATH tor)
+        org.tor.TorService torService = createTorService();
+
         Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
-        app.onActivate(() -> new MainWindow(app, manager).present());
+        app.onActivate(() -> new MainWindow(app, manager, torService).present());
         int status = app.run(args);
         System.exit(status);
+    }
+
+    static org.tor.TorService createTorService() {
+        try {
+            String torPath = ApplicationContext.getToolManagerFactory().getTorManager() != null
+                    ? ApplicationContext.getToolManagerFactory().getTorManager().getToolPath()
+                    : null;
+            return torPath != null ? new org.tor.TorService(torPath) : new org.tor.TorService("tor");
+        } catch (Exception e) {
+            return new org.tor.TorService("tor");
+        }
     }
 
     private static void awaitHandlersReady() throws InterruptedException {
