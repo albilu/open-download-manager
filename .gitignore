@@ -16,3 +16,5 @@ docker-data/*.torrent
 
 # OS
 .DS_Store
+odm.cmb
+.gitignore

@@ -8,7 +8,9 @@ import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
+import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.SpinButton;
+import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TextView;
 import org.gnome.gtk.TreeView;
 import org.gnome.gtk.Window;
@@ -30,21 +32,54 @@ class WindowSmokeTest {
     }
 
     @Test
-    @DisplayName("main-window.ui parses and contains all required widgets")
+    @DisplayName("main-window.ui parses and contains all 1:1 widgets")
     void mainWindow() {
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
         Widgets.require(builder, "main_window", ApplicationWindow.class);
-        Widgets.require(builder, "categories_store", ListStore.class);
-        Widgets.require(builder, "downloads_store", ListStore.class);
-        Widgets.require(builder, "downloads_view", TreeView.class);
-        Widgets.require(builder, "status_label", Label.class);
-        Widgets.require(builder, "add_button", Button.class);
-        Widgets.require(builder, "pause_button", Button.class);
-        Widgets.require(builder, "resume_button", Button.class);
-        Widgets.require(builder, "cancel_button", Button.class);
-        Widgets.require(builder, "import_button", Button.class);
-        Widgets.require(builder, "settings_button", Button.class);
-        Widgets.require(builder, "about_button", Button.class);
+        // stores
+        for (String id : new String[]{"status_store", "category_store", "download_store",
+                "files_store", "global_progress_store", "peers_store", "trackers_store"}) {
+            Widgets.require(builder, id, ListStore.class);
+        }
+        // side panel treeviews + columns
+        Widgets.require(builder, "status_treeview", TreeView.class);
+        Widgets.require(builder, "status_column", org.gnome.gtk.TreeViewColumn.class);
+        Widgets.require(builder, "count_column", org.gnome.gtk.TreeViewColumn.class);
+        Widgets.require(builder, "category_treeview", TreeView.class);
+        Widgets.require(builder, "category_column", org.gnome.gtk.TreeViewColumn.class);
+        Widgets.require(builder, "category_count_column", org.gnome.gtk.TreeViewColumn.class);
+        // toolbar buttons
+        for (String id : new String[]{"new_download_button", "pause_button", "resume_button",
+                "delete_button", "move_up_button", "move_top_button", "move_down_button", "move_bottom_button",
+                "settings_button", "menu_button"}) {
+            Widgets.require(builder, id, Button.class);
+        }
+        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
+        // download treeview + columns
+        Widgets.require(builder, "download_treeview", TreeView.class);
+        for (String id : new String[]{"number_column", "name_column", "complete_column", "size_column",
+                "percent_progress_column", "elapsed_column", "left_column", "speed_column", "up_speed_column",
+                "retry_column", "start_date_column", "end_date_column", "tor_icon_column"}) {
+            Widgets.require(builder, id, org.gnome.gtk.TreeViewColumn.class);
+        }
+        // info panel
+        Widgets.require(builder, "info_notebook", org.gnome.gtk.Notebook.class);
+        Widgets.require(builder, "info_progress_bar", ProgressBar.class);
+        for (String id : new String[]{"total_size_value", "added_on_value", "info_hash_v1_value",
+                "folder_value", "eta_value", "downloaded_value", "connections_value", "seeds_peers_value"}) {
+            Widgets.require(builder, id, Label.class);
+        }
+        Widgets.require(builder, "trackers_view", TreeView.class);
+        Widgets.require(builder, "peers_view", TreeView.class);
+        Widgets.require(builder, "files_view", TreeView.class);
+        // status bar
+        Widgets.require(builder, "statusbar", org.gnome.gtk.Statusbar.class);
+        for (String id : new String[]{"info_label", "up_speed_label", "down_speed_label",
+                "dht_status_label"}) {
+            Widgets.require(builder, id, Label.class);
+        }
+        Widgets.require(builder, "activity_spinner", Spinner.class);
     }
 
     @Test
