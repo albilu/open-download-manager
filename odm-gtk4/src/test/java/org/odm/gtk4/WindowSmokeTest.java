@@ -82,25 +82,49 @@ class WindowSmokeTest {
         Widgets.require(builder, "activity_spinner", Spinner.class);
     }
 
+    @Test
+    @DisplayName("settings.ui parses with 1:1 original ids (7 tabs)")
     void settings() {
         GtkBuilder builder = UiLoader.load("/ui/settings.ui");
         Widgets.require(builder, "settings_dialog", Window.class);
-        Widgets.require(builder, "max_concurrent_spin", SpinButton.class);
-        Widgets.require(builder, "speed_limit_spin", SpinButton.class);
-        Widgets.require(builder, "download_dir_label", Label.class);
-        Widgets.require(builder, "download_dir_button", Button.class);
-        Widgets.require(builder, "global_proxy_check", CheckButton.class);
-        Widgets.require(builder, "global_proxy_entry", Entry.class);
-        Widgets.require(builder, "proxy_rotation_check", CheckButton.class);
-        Widgets.require(builder, "proxy_list_entry", Entry.class);
-        Widgets.require(builder, "proxy_list_button", Button.class);
-        Widgets.require(builder, "max_retries_spin", SpinButton.class);
-        Widgets.require(builder, "clipboard_check", CheckButton.class);
-        Widgets.require(builder, "torrent_folder_check", CheckButton.class);
-        Widgets.require(builder, "metalink_folder_check", CheckButton.class);
+        Widgets.require(builder, "settings_notebook", org.gnome.gtk.Notebook.class);
+        // General
+        for (String id : new String[]{"max_concurrent_downloads_spin"}) {
+            Widgets.require(builder, id, SpinButton.class);
+        }
+        for (String id : new String[]{"default_download_folder_chooser", "monitored_folder_chooser",
+                "browse_aria2_button", "browse_ytdlp_button", "browse_httrack_button",
+                "browse_proxychains_button", "browse_tor_button", "browse_axel_button",
+                "settings_cancel_button", "settings_reset_button", "settings_apply_button", "settings_ok_button"}) {
+            Widgets.require(builder, id, Button.class);
+        }
+        for (String id : new String[]{"save_download_history_check", "clipboard_monitor_check",
+                "clipboard_silent_check", "system_tray_check", "start_automatically_check",
+                "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
+                "move_to_trash_check", "start_automatically_check2", "move_torrent_check2",
+                "continue_download_check", "check_integrity_check", "enable_auto_save_check",
+                "enable_seeding_check", "write_thumbnail_check", "write_subtitles_check",
+                "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
+                "include_archives_check", "enable_scheduling_check"}) {
+            Widgets.require(builder, id, CheckButton.class);
+        }
+        for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
+                "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "min_split_size_spin1",
+                "max_peers_spin", "peer_speed_limit_spin", "seed_time_spin", "depth_spin", "proxy_port_spin"}) {
+            Widgets.require(builder, id, SpinButton.class);
+        }
+        for (String id : new String[]{"aria2_path_entry", "ytdlp_path_entry", "httrack_path_entry",
+                "referer_entry", "cookie_entry", "user_agent_entry", "proxy_host_entry",
+                "proxy_username_entry", "proxy_password_entry", "video_format_entry",
+                "subtitle_language_entry", "include_entry", "exclude_entry",
+                "proxychains_path_entry", "tor_path_entry", "axel_path_entry"}) {
+            Widgets.require(builder, id, Entry.class);
+        }
+        Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        Widgets.require(builder, "available_space_label", Label.class);
         Widgets.require(builder, "settings_status_label", Label.class);
-        Widgets.require(builder, "settings_cancel_button", Button.class);
-        Widgets.require(builder, "settings_save_button", Button.class);
     }
 
     @Test
