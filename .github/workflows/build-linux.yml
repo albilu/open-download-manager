@@ -20,17 +20,7 @@ jobs:
             - name: Run tests
               run: ./docker-build.sh test
 
-            # Packages (.deb/.rpm/.pkg.tar.xz) are produced by the
-            # exec-maven-plugin executions in odm-gtk/pom.xml during install.
-            - name: Build packages
-              run: ./docker-build.sh package
-
-            - name: Upload Artifacts
-              uses: actions/upload-artifact@v4
-              with:
-                  name: linux-packages
-                  if-no-files-found: warn
-                  path: |
-                      odm-gtk/target/*.deb
-                      odm-gtk/target/*.rpm
-                      odm-gtk/target/*.pkg.tar.*
+            # Packaging (.deb/.rpm/.pkg.tar.zst) is rebuilt for the GTK4 app
+            # in Step 7 (release hardening) — see docs/STATUS.md.
+            - name: Build application
+              run: docker run --rm -v "$(pwd):/app" -v "$HOME/.m2:/home/developer/.m2" odm-dev mvn -q -pl odm-gtk4 -am package -DskipTests

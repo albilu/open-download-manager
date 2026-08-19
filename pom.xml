@@ -26,8 +26,6 @@
     <modules>
         <!-- <module>odm-lib</module> -->
         <module>core</module>
-        <module>jgtk</module>
-        <module>odm-gtk</module>
         <module>odm-gtk4</module>
         <!--<module>examples</module>-->
         <!--<module>gladedemo</module>-->

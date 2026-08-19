@@ -11,8 +11,7 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     wget \
-    # GTK libraries for JNA bindings (GTK3 legacy module) and java-gi (GTK4)
-    libgtk-3-dev \
+    # GTK libraries for java-gi (GTK4)
     libgtk-4-dev \
     libglib2.0-dev \
     pkg-config \

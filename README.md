@@ -4,9 +4,8 @@ A full featured native download manager for Linux based on aria2, yt-dlp and htt
 
 ## Compatibility
 
--   java 21
--   GTK 3 and GTK 4 through JNA
--   QT
+-   Java 25
+-   GTK 4 through java-gi
 
 ## Deployment matrix
 
