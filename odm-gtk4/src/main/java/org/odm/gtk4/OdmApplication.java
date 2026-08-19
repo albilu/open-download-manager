@@ -32,11 +32,21 @@ public final class OdmApplication {
         // Tor service (best-effort: falls back to system PATH tor)
         org.tor.TorService torService = createTorService();
 
+        // Scheduler (weekly download schedules; presets applied from the menu)
+        org.manager.schedule.ScheduleManager scheduleManager =
+                new org.manager.schedule.ScheduleManager(manager);
+        scheduleManager.start().exceptionally(e -> {
+            LOGGER.warning("ScheduleManager failed to start: " + e.getMessage());
+            return null;
+        });
+        String preset = manager.getGlobalSettings().getProperty("scheduler.preset", "always");
+        scheduleManager.setGlobalPresetSchedule(preset);
+
         Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
         app.onActivate(() -> {
             try {
                 LOGGER.info("onActivate: constructing MainWindow");
-                MainWindow mainWindow = new MainWindow(app, manager, torService);
+                MainWindow mainWindow = new MainWindow(app, manager, torService, scheduleManager);
                 LOGGER.info("onActivate: MainWindow constructed");
                 // Tray (best-effort: no-op when the session bus is unavailable)
                 StatusNotifierTray tray = new StatusNotifierTray(() -> UiThread.marshal(mainWindow::present));

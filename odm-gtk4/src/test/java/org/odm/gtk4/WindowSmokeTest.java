@@ -263,7 +263,8 @@ class WindowSmokeTest {
                                     "isMetaLinkFolderMonitoringEnabled" -> false;
                             default -> defaultValue(method.getReturnType());
                         });
-        MainWindow window = new MainWindow(null, stub, new org.tor.TorService("tor"));
+        MainWindow window = new MainWindow(null, stub, new org.tor.TorService("tor"),
+                new org.manager.schedule.ScheduleManager(stub));
         // Constructing is the test: every Widgets.require in the constructor
         // must resolve. (Null app: the window is a standalone toplevel here.)
     }

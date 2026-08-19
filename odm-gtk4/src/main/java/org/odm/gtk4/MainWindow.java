@@ -104,13 +104,16 @@ public class MainWindow {
     private final ListStore peersStore;
     private final ListStore filesStore;
     private final org.tor.TorService torService;
+    private final org.manager.schedule.ScheduleManager scheduleManager;
     private final org.manager.download.action.AfterCompletionActionManager completionActionManager =
             new org.manager.download.action.AfterCompletionActionManager();
     private org.manager.download.action.AfterCompletionAction completionAction;
 
-    public MainWindow(Application app, DownloadManager downloadManager, org.tor.TorService torService) {
+    public MainWindow(Application app, DownloadManager downloadManager, org.tor.TorService torService,
+            org.manager.schedule.ScheduleManager scheduleManager) {
         this.downloadManager = downloadManager;
         this.torService = torService;
+        this.scheduleManager = scheduleManager;
 
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
 
@@ -246,6 +249,11 @@ public class MainWindow {
                 .add("Pause", this::onPauseClicked)
                 .add("Resume", this::onResumeClicked)
                 .add("Delete", this::onDeleteClicked)
+                .add("Delete with files", () -> {
+                    if (selectedDownload != null) {
+                        downloadManager.cancelDownload(selectedDownload, true);
+                    }
+                })
                 .separator()
                 .add("Properties", this::onPropertiesClicked)
                 .add("Remove finished", () -> {
@@ -278,6 +286,13 @@ public class MainWindow {
                 .add("On completion: shutdown", () -> setCompletionAction(
                         new org.manager.download.action.ShutdownComputerAction(30)))
                 .separator()
+                .add("Schedule: always", () -> applySchedulePreset("always"))
+                .add("Schedule: business hours", () -> applySchedulePreset("business"))
+                .add("Schedule: night", () -> applySchedulePreset("night"))
+                .add("Schedule: weekends", () -> applySchedulePreset("weekend"))
+                .add("Schedule: weekdays", () -> applySchedulePreset("weekday"))
+                .add("Schedule: never (paused)", () -> applySchedulePreset("never"))
+                .separator()
                 .add("Settings", this::onSettingsClicked)
                 .add("About", () -> AboutDialogPresenter.present(window))
                 .separator()
@@ -287,6 +302,13 @@ public class MainWindow {
     private void menuButtonRefresh() {
         // Rebuild the main menu so toggle-state labels stay current
         menuButton.setPopover(buildMainMenu().getPopover());
+    }
+
+    private void applySchedulePreset(String preset) {
+        scheduleManager.setGlobalPresetSchedule(preset);
+        downloadManager.getGlobalSettings().setProperty("scheduler.preset", preset);
+        downloadManager.getGlobalSettings().save();
+        LOGGER.info("Schedule preset applied: " + preset);
     }
 
     private void setCompletionAction(org.manager.download.action.AfterCompletionAction action) {

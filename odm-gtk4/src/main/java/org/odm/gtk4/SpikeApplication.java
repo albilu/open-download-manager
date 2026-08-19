@@ -65,7 +65,8 @@ public final class SpikeApplication {
         }, soakMinutes, TimeUnit.MINUTES);
 
         Application app = new Application("org.odm.gtk4.spike", ApplicationFlags.DEFAULT_FLAGS);
-        app.onActivate(() -> new MainWindow(app, manager, OdmApplication.createTorService()).present());
+        app.onActivate(() -> new MainWindow(app, manager, OdmApplication.createTorService(),
+                new org.manager.schedule.ScheduleManager(manager)).present());
         int status = app.run(args);
         System.exit(status);
     }
