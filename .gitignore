@@ -25,3 +25,4 @@ packaging/*.pkg.tar.zst
 
 # OS
 .DS_Store
+opencode.json

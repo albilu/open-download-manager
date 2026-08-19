@@ -49,6 +49,16 @@ A full featured native download manager for Linux based on aria2, yt-dlp and htt
     -   https://github.com/Jackett/Jackett?tab=readme-ov-file
     -   https://prowlarr.com/
 -   [LATER] Interface to download videos (youtube etc...)
+-   [LATER] Downloader: derive m4s manifestv
+        -the m4s support means that the download manager can download media from streaming services that use fragmented mp4 files. The download manager should be able to detect such format:
+        1. by its manifest (ex: http://example.com/playlist.m3u8) => yt-dlp http://example.com/manifest.m3u8.
+        2. or derive the manifest or media segments from the streaming service video page (ex: http://example.com/video-page) .
+-   [LATER] Consider
+	- Sqlite for download managmrnt
+	- User agent rotation
+	- Clipboard monitor waitlist
+		- Meaning detected url are silently places in a waitlist and dont popup like in uget
+		- User can then start download from the waitlist
 -   [LATER] QT version
 
 ## Development Steps

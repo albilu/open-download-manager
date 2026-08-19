@@ -28,7 +28,7 @@ This resulted in two rapid successive calls to `refreshDownloadList()` within mi
 
 ## Solution Implemented
 
-**File Modified:** `/home/pain/NetBeansProjects/open-download-manager/odm-gtk/src/main/java/org/odm/ui/service/MainWindowService.java`
+**File Modified:** `/home/xxx/NetBeansProjects/open-download-manager/odm-gtk/src/main/java/org/odm/ui/service/MainWindowService.java`
 
 **Change:** Removed the unnecessary `refreshDownloadList()` call from the `onDownloadStart()` method.
 

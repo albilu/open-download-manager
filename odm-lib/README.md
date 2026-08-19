@@ -2,7 +2,7 @@
 
 Ultra fast Java library for file download. Support regular file download, BitTorent (using jlibtorrent), Website crawl (using crawler4j), Metalink
 
-This library is a replacement to the clients (aria2, curl, httrack, proxychains) based implementations in core module and serves as a library for ODM.
+This library is a replacement to the clients (aria2, curl, httrack, proxychains, yt-dlp) based implementations in core module and serves as a library for ODM.
 
 # Dev notes:
 -   Prioritize speed, performance, memory efficiency, and stability
@@ -34,7 +34,3 @@ This library is a replacement to the clients (aria2, curl, httrack, proxychains)
 -   IPv6 support with Happy Eyeballs
 -   Disk cache to reduce disk activity
 -   Keep downloads history in sqlite database
-
-
-Prompt:
-generate the appropriate requirements, design document and task list to implement the odm library
