@@ -20,9 +20,13 @@ Last verified: 2026-08-16 (Steps 0–2 of `plans/complete-odm.md` complete — s
 
 ## Known defects (verified; being fixed per plan)
 
-- **jgtk/odm-gtk UI is unstable by design**: GTK calls from background threads (JVM SIGSEGV in native `gtk_list_store_set` — see commit history for the crash log), no native memory management (leaked windows/strings/signals), 29 unwired glade handlers, 34 phantom signal registrations, 32 missing widget IDs (25 in Settings). → **Replaced with java-gi (GTK4) — plan Steps 3–6.**
-- **92 pre-existing red tests** remain (HttrackSettings validation, UrlDetector normalization, folder-monitor integration, yt-dlp/proxychains integration, misc). Suite was never green; these predate this round. → rehab backlog.
-- Tray/background mode, scheduler UI, website scraper UI, import-list execution: unimplemented. → plan Steps 4–5.
+- ~~**jgtk/odm-gtk UI is unstable by design**~~ → **Resolved in Step 6**: legacy GTK3/JNA modules deleted; the app is Java 25 + GTK4/java-gi only (`odm-gtk4`).
+- **~92 pre-existing red core tests** remain (HttrackSettings validation, UrlDetector normalization, folder-monitor integration, yt-dlp/proxychains integration, misc). Suite was never green; these predate this round. → rehab backlog.
+
+## Remaining work
+
+- **Step 7** — packaging & release hardening: .deb/.rpm/.pkg.tar.zst for the GTK4 app (old module's packaging went with it), stale dependency pins, JDK-25 runtime story (jlink/jpackage or documented requirement), coverage gates, install tests in clean containers.
+- Tracker-list auto-update (niche enhancement), final README-MVP end-to-end pass.
 
 ## Doc policy
 
