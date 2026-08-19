@@ -102,6 +102,10 @@ public class MainWindow {
     private String searchText = "";
     /** Re-entrancy guard for programmatic status-row re-selection. */
     private boolean suppressStatusSelection;
+    /** Re-entrancy guard for programmatic category-row re-selection. */
+    private boolean suppressCategorySelection;
+    /** Selected category filter (extension-based), null = All. */
+    private String categoryFilter = "All";
     /** Guard so menu actions register on the window only once. */
     private boolean menuActionsRegistered;
     private final ListStore trackersStore;
@@ -163,6 +167,7 @@ public class MainWindow {
         });
 
         statusTreeview.getSelection().onChanged(this::onStatusSelectionChanged);
+        categoryTreeview.getSelection().onChanged(this::onCategorySelectionChanged);
         downloadsTreeview.getSelection().onChanged(this::onDownloadSelectionChanged);
         downloadsTreeview.onRowActivated((path, column) -> onPropertiesClicked());
 
@@ -865,6 +870,18 @@ public class MainWindow {
         });
     }
 
+    private void onCategorySelectionChanged() {
+        if (suppressCategorySelection) {
+            return;
+        }
+        selectRow(categoryTreeview.getSelection(), (path, index) -> {
+            if (index < CATEGORIES.length) {
+                categoryFilter = CATEGORIES[index];
+                refresh();
+            }
+        });
+    }
+
     private void onDownloadSelectionChanged() {
         selectRow(downloadsTreeview.getSelection(), (path, index) -> {
             selectedDownload = index < rowSnapshot.size() ? rowSnapshot.get(index) : null;
@@ -893,6 +910,11 @@ public class MainWindow {
                 || !download.getName().toLowerCase().contains(searchText))) {
             return false;
         }
+        // Category filter (extension-based, mirrors the approved old UI)
+        if (categoryFilter != null && !"All".equals(categoryFilter)
+                && !categoryFilter.equals(downloadCategory(download))) {
+            return false;
+        }
         return switch (statusFilter) {
             case "All Status" -> true;
             case "Active" -> download.getStatus() == Download.Status.DOWNLOADING;
@@ -912,7 +934,8 @@ public class MainWindow {
         int[] counts = computeCounts(downloads);
 
         rebuildFilterStore(statusStore, STATUS_FILTERS, counts, downloads.size(), statusFilter);
-        rebuildFilterStore(categoryStore, CATEGORIES, new int[CATEGORIES.length], downloads.size(), "All");
+        rebuildFilterStore(categoryStore, CATEGORIES, computeCategoryCounts(downloads),
+                downloads.size(), categoryFilter);
 
         downloadsStore.clear();
         rowSnapshot = new ArrayList<>();
@@ -985,6 +1008,42 @@ public class MainWindow {
         return new int[]{active, queuing, finished, deleted};
     }
 
+    /** Counts per category (extension-based), index-aligned with CATEGORIES. */
+    private int[] computeCategoryCounts(List<Download> downloads) {
+        int[] result = new int[CATEGORIES.length];
+        for (Download download : downloads) {
+            String category = downloadCategory(download);
+            for (int i = 1; i < CATEGORIES.length; i++) {
+                if (CATEGORIES[i].equals(category)) {
+                    result[i]++;
+                    break;
+                }
+            }
+            result[0]++; // "All"
+        }
+        return result;
+    }
+
+    /**
+     * Extension-based category of a download — mirrors the approved old UI's
+     * mapping exactly (Videos/Audios/Photos/Programs/Others).
+     */
+    private static String downloadCategory(Download download) {
+        String name = download.getName();
+        if (name == null) {
+            return "Others";
+        }
+        int lastDot = name.lastIndexOf('.');
+        String extension = lastDot > 0 ? name.substring(lastDot + 1).toLowerCase() : "";
+        return switch (extension) {
+            case "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma" -> "Audios";
+            case "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "3gp" -> "Videos";
+            case "jpg", "jpeg", "png", "gif", "bmp", "tiff", "svg", "ico" -> "Photos";
+            case "exe", "msi", "deb", "rpm", "dmg", "appimage", "flatpak", "snap" -> "Programs";
+            default -> "Others";
+        };
+    }
+
     private void rebuildFilterStore(ListStore store, String[] labels, int[] counts, int total, String selected) {
         store.clear();
         for (int i = 0; i < labels.length; i++) {
@@ -1003,7 +1062,12 @@ public class MainWindow {
                         suppressStatusSelection = false;
                     }
                 } else {
-                    categoryTreeview.getSelection().selectIter(iter);
+                    suppressCategorySelection = true;
+                    try {
+                        categoryTreeview.getSelection().selectIter(iter);
+                    } finally {
+                        suppressCategorySelection = false;
+                    }
                 }
             }
         }

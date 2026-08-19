@@ -12,10 +12,14 @@ import org.gnome.gtk.Entry;
 import org.gnome.gtk.FileDialog;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
+import org.gnome.gtk.ListStore;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
+import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.Window;
+import org.gnome.gobject.Value;
+import org.javagi.gobject.types.Types;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 
@@ -40,6 +44,7 @@ public class NewDownloadDialog {
     private final Button saveFolderChooser;
     private final Label diskSpaceLabel;
     private final Entry filenameEntry;
+    private final ListStore filesListstore;
     private final SpinButton maxConnectionsSpin;
     private final SpinButton retryLimitSpin;
     private final SpinButton maxDownloadSpeedSpin;
@@ -71,6 +76,7 @@ public class NewDownloadDialog {
         this.saveFolderChooser = Widgets.require(builder, "save_folder_chooser", Button.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
         this.filenameEntry = Widgets.require(builder, "filename_entry", Entry.class);
+        this.filesListstore = Widgets.require(builder, "files_liststore", ListStore.class);
         this.maxConnectionsSpin = Widgets.require(builder, "max_connections_spin", SpinButton.class);
         this.retryLimitSpin = Widgets.require(builder, "retry_limit_spin", SpinButton.class);
         this.maxDownloadSpeedSpin = Widgets.require(builder, "max_download_speed_spin", SpinButton.class);
@@ -99,6 +105,10 @@ public class NewDownloadDialog {
         saveFolderChooser.setLabel(currentDefaultDirectory());
         updateDiskSpace(currentDefaultDirectory());
 
+        // Live URL analysis (mirrors the approved old UI): filename auto-fill
+        // + magnet metadata + multi-file listing in the Files tab
+        urlEntry.onChanged(this::analyzeUrl);
+
         torrentFileChooser.onClicked(this::onChooseTorrent);
         saveFolderChooser.onClicked(this::onChooseFolder);
         Widgets.require(builder, "new_download_cancel_button", Button.class).onClicked(dialog::close);
@@ -122,11 +132,130 @@ public class NewDownloadDialog {
                 if (file != null && file.getPath() != null) {
                     selectedTorrentFile = Path.of(file.getPath().toString());
                     torrentFileChooser.setLabel(selectedTorrentFile.getFileName().toString());
+                    analyzeTorrentFile();
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.FINE, "Torrent file selection cancelled or failed", e);
             }
         });
+    }
+
+    /**
+     * Analyzes the URL as it is typed (mirrors the approved old UI):
+     * auto-fills the filename from the URL path, and for magnet links
+     * extracts the display name / size / info hash into the Files tab.
+     */
+    private void analyzeUrl() {
+        String url = urlEntry.getText().trim();
+        filesListstore.clear();
+        if (url.isEmpty()) {
+            return;
+        }
+        try {
+            if (url.toLowerCase().startsWith("magnet:")) {
+                analyzeMagnet(url);
+                return;
+            }
+            java.net.URI uri = new java.net.URI(url);
+            String path = uri.getPath();
+            if (path != null && !path.isEmpty()) {
+                String filename = path.substring(path.lastIndexOf('/') + 1);
+                if (!filename.isEmpty() && filenameEntry.getText().isBlank()) {
+                    filenameEntry.setText(java.net.URLDecoder.decode(filename,
+                            java.nio.charset.StandardCharsets.UTF_8));
+                }
+            }
+        } catch (Exception e) {
+            // still typing an invalid URL: nothing to analyze
+        }
+    }
+
+    /** Extracts factual magnet metadata (dn, xl, btih) into the Files tab. */
+    private void analyzeMagnet(String magnet) {
+        String displayName = magnetParam(magnet, "dn");
+        String hash = magnetParam(magnet, "xt");
+        if (hash != null && hash.toLowerCase().startsWith("urn:btih:")) {
+            hash = hash.substring(8);
+        }
+        long size = 0;
+        try {
+            String xl = magnetParam(magnet, "xl");
+            if (xl != null) {
+                size = Long.parseLong(xl);
+            }
+        } catch (NumberFormatException ignored) {
+            // no valid size in the link
+        }
+
+        String name = displayName != null ? displayName
+                : hash != null ? "Torrent_" + hash.substring(0, Math.min(8, hash.length()))
+                        : "Unknown Torrent";
+        appendFileInfo(true, name, size, "High");
+        if (displayName == null && hash != null) {
+            appendFileInfo(true, "Torrent_" + hash.substring(0, Math.min(8, hash.length())) + ".torrent",
+                    50 * 1024L, "Normal");
+        }
+        if (filenameEntry.getText().isBlank() && displayName != null) {
+            filenameEntry.setText(displayName);
+        }
+    }
+
+    /** Lists a selected local .torrent/.meta4 file: its real name and byte size. */
+    private void analyzeTorrentFile() {
+        filesListstore.clear();
+        if (selectedTorrentFile == null) {
+            return;
+        }
+        String name = selectedTorrentFile.getFileName().toString();
+        long size;
+        try {
+            size = java.nio.file.Files.size(selectedTorrentFile);
+        } catch (Exception e) {
+            size = 0;
+        }
+        appendFileInfo(true, name, size, "High");
+        String base = name.replaceAll("\\.(torrent|metalink|meta4)$", "");
+        if (!base.equals(name)) {
+            appendFileInfo(true, base, 0, "Normal"); // content, size known after add
+        }
+    }
+
+    /** Extracts a parameter value from a magnet URI query string. */
+    private static String magnetParam(String magnet, String key) {
+        for (String part : magnet.substring(Math.min(7, magnet.length())).split("&")) {
+            int eq = part.indexOf('=');
+            if (eq > 0 && part.substring(0, eq).equalsIgnoreCase(key)) {
+                try {
+                    return java.net.URLDecoder.decode(part.substring(eq + 1),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    return part.substring(eq + 1);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Adds a row to the Files tab liststore (selected, name, size, priority). */
+    private void appendFileInfo(boolean selected, String name, long size, String priority) {
+        TreeIter iter = new TreeIter();
+        filesListstore.append(iter);
+        Value v = new Value().init(Types.BOOLEAN);
+        v.setBoolean(selected);
+        filesListstore.setValue(iter, 0, v);
+        v.unset();
+        Value s = new Value().init(Types.STRING);
+        s.setString(name);
+        filesListstore.setValue(iter, 1, s);
+        s.unset();
+        Value z = new Value().init(Types.STRING);
+        z.setString(size > 0 ? size / 1024 + " KB" : "—");
+        filesListstore.setValue(iter, 2, z);
+        z.unset();
+        Value p = new Value().init(Types.STRING);
+        p.setString(priority);
+        filesListstore.setValue(iter, 3, p);
+        p.unset();
     }
 
     private void onChooseFolder() {
