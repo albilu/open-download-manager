@@ -1,123 +1,68 @@
-# open-download-manager
+# Open Download Manager
 
-A full featured native download manager for Linux based on aria2, yt-dlp and httrack
+Open Download Manager (ODM) is a native download manager for Linux. It combines proven download engines — aria2, yt-dlp, and HTTrack — with a GTK4 desktop interface, persistent history, queue controls, and recovery after restarts.
 
-## Compatibility
+## Features
 
--   Java 25
--   GTK 4 through java-gi
+- Multi-connection HTTP, HTTPS, and FTP downloads
+- BitTorrent, magnet, and Metalink support
+- Video and media downloads through yt-dlp
+- Website mirroring through HTTrack
+- Pause, resume, cancel, reorder, and concurrent download limits
+- Clipboard URL monitoring and torrent/Metalink folder monitoring
+- Persistent download history and automatic resume
+- Speed limits, mirrors, retries, scheduling, and batch imports
+- Proxy, proxychains, and Tor routing
+- After-completion actions (notify, open file, verify, suspend, shutdown)
+- Native GTK4 interface with search, filtering, detail views, and tray/background mode
 
-## Deployment matrix
+## Requirements
 
-| Toolkit | Desktop Environments                | OS    | Packages                |
-| ------- | ----------------------------------- | ----- | ----------------------- |
-| GTK     | GNOME, XFCE, Cinnamon, MATE, Fedora | Linux | .deb, .rpm, .pkg.tar.gz |
-| QT      | KDE Plasma, LXQt, Deepin, LXDE      | Linux | .deb, .rpm, .pkg.tar.gz |
+- GTK 4 (>= 4.10)
+- aria2 (>= 1.34.0)
+- yt-dlp (>= 2024.01.01)
+- HTTrack (>= 3.49.0)
+- curl (>= 7.80.0)
 
-## MVP Features
+Optional but recommended: proxychains, Tor, and FFmpeg.
 
--   Multi-Connection Downloads
--   Clipboard Monitor
--   Downloads Queue
--   Pause/Resume Downloads
--   After Completion Actions (shutdown computer, move file etc...)
--   Multiple Mirrors/Sources
--   Multiple Protocols (HTTP, BitTorrent, Magnet)
--   Background Mode (with tray icon)
--   Download History
--   Plug into proxychains for SOCKS4/5 proxies and Tor download (fall back to curl)
--   Tor support
+## Installation
 
-## Enhancements
+Packages are produced for Debian/Ubuntu (`.deb`), Fedora/RHEL (`.rpm`), and Arch (`pkg.tar.zst`). Each package bundles a trimmed Java 25 runtime; GTK4 and the download tools above are still required from the host system.
 
--   Delete related files when removing tasks (optional)
--   Predefined regex for specific categories
--   Batch Downloads (import list of url in txt file)
--   speed limit
--   Update tracker list every day automatically
--   Torents property dialog
--   [LATER] Browser extension
-    -   Right click download
-    -   Detect files from selection
-    -   yt-dlp integration to download videos
--   [LATER] i18n
--   [LATER] FTP Login & Anonymous FTP
--   [LATER] theme support
--   [LATER] Keyboard accessibility
--   [LATER] Interface to Search Torrents
-    -   https://github.com/Jackett/Jackett?tab=readme-ov-file
-    -   https://prowlarr.com/
--   [LATER] Interface to download videos (youtube etc...)
--   [LATER] Downloader: derive m4s manifestv
-        -the m4s support means that the download manager can download media from streaming services that use fragmented mp4 files. The download manager should be able to detect such format:
-        1. by its manifest (ex: http://example.com/playlist.m3u8) => yt-dlp http://example.com/manifest.m3u8.
-        2. or derive the manifest or media segments from the streaming service video page (ex: http://example.com/video-page) .
--   [LATER] Consider
-	- replace odm-state.json persistence by Sqlite for better downloads managment
-	- User agent rotation
-	- Clipboard monitor waitlist
-		- Meaning detected url are silently places in a waitlist and dont popup like in uget
-		- User can then start download from the waitlist
--   [LATER] QT version
+```sh
+# Debian/Ubuntu
+sudo dpkg -i open-download-manager_*.deb
 
-## Concurrent apps
+# Fedora/RHEL
+sudo rpm -i open-download-manager-*.rpm
 
--   uget
--   Varia
--   https://github.com/agalwood/Motrix
--   Persepolis Download Manager
--   AB Download Manager
--   kget
--   JDownloader
--   idm
--   https://github.com/filecxx/FileCentipede (Proprietary)
-
-## Progress Notes
-
-All clients implement progress throttling to prevent UI flooding:
-
-1. **Time-based throttling**: Updates limited to 1-second intervals
-2. **Size-based throttling**: Updates when significant data transferred (1MB)
-3. **Percentage-based throttling**: Updates at specific percentage intervals
-
-## Example Usage with New Settings System
-
-### Global Settings
-
-```java
-// Get the download manager instance
-DownloadManager manager = DownloadManagerFactory.getInstance();
-
-// Configure global settings
-GlobalSettings globalSettings = manager.getGlobalSettings();
-globalSettings.setMaxConcurrentDownloads(3)
-             .setGlobalSpeedLimit(5000)  // 5000 KB/s = 5 MB/s
-             .setDefaultDownloadDirectory(Paths.get(System.getProperty("user.home"), "Downloads", "odm"));
-
-// Apply the updated global settings
-manager.setGlobalSettings(globalSettings);
+# Arch
+sudo pacman -U open-download-manager-*.pkg.tar.zst
 ```
 
-### Download-Specific Settings
+## Building from source
 
-```java
-// Create an HTTP download with aria2 settings
-URI uri = new URI("https://example.com/large-file.iso");
-Download download = manager.createDownload(uri, null);
+Source builds require JDK 25, Maven, a Linux native toolchain, and GTK4 development libraries. The supported development environment is Docker-based:
 
-// Configure Aria2-specific settings
-Aria2Settings aria2Settings = new Aria2Settings();
-aria2Settings.setMaxConnectionPerServer(16)
-            .setMinSplitSize(10)  // 10 MB
-            .setFileAllocation("falloc")
-            .setRetryWait(10)
-            .setCheckIntegrity(true);
-
-// Apply the settings to the download
-download.setSettings(aria2Settings);
-
-// Queue the download
-manager.queueDownload(download).join();
+```sh
+make build     # build the odm-dev Docker image
+make compile   # compile and package the project
+make test      # run the full test suite (starts Xvfb)
+make package   # build .deb, .rpm, and pkg.tar.zst artifacts
+make dev       # open an interactive development container
+make run       # launch the application with GUI forwarding
+make debug     # launch with a suspended debugger on port 5005
 ```
 
-See `.github/copilot-instructions.md` for workspace-specific coding guidelines.
+## Powered by
+
+ODM builds on the work of these outstanding open-source projects:
+
+- [aria2](https://github.com/aria2/aria2) ![GitHub stars](https://img.shields.io/github/stars/aria2/aria2?style=social) — multi-protocol download engine (HTTP/FTP, BitTorrent, Metalink) over local JSON-RPC
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) ![GitHub stars](https://img.shields.io/github/stars/yt-dlp/yt-dlp?style=social) — video and media extraction with format discovery
+- [HTTrack](https://github.com/xroche/httrack) ![GitHub stars](https://img.shields.io/github/stars/xroche/httrack?style=social) — website mirroring with depth and filter controls
+- [curl](https://github.com/curl/curl) ![GitHub stars](https://img.shields.io/github/stars/curl/curl?style=social) — process-based HTTP fallback and proxy-capable downloads
+- [proxychains-ng](https://github.com/rofl0r/proxychains-ng) ![GitHub stars](https://img.shields.io/github/stars/rofl0r/proxychains-ng?style=social) — SOCKS/HTTP proxy chaining
+- [Tor](https://www.torproject.org/) ![GitHub stars](https://img.shields.io/github/stars/torproject/tor?style=social) — optional privacy routing through the local SOCKS service
+- [java-gi](https://github.com/jwharm/java-gi) ![GitHub stars](https://img.shields.io/github/stars/jwharm/java-gi?style=social) — native GTK4 desktop interface from Java
