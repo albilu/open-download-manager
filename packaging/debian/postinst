@@ -1,0 +1,22 @@
+#!/bin/bash
+# Post-installation script for open-download-manager
+set -e
+
+# Raise the inotify watch limit so folder monitoring scales with large
+# watch folders (best-effort; skipped in containers without privileges)
+if sysctl -w fs.inotify.max_user_watches=524288 >/dev/null 2>&1; then
+    echo "[odm] fs.inotify.max_user_watches set to 524288"
+else
+    echo "[odm] could not raise inotify watches (non-privileged install?) — continuing"
+fi
+
+# Refresh desktop and icon caches so the launcher appears immediately
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+fi
+
+echo "[odm] installed to /opt/open-download-manager (bundled Java 25 runtime)"
+echo "[odm] launch with: open-download-manager"

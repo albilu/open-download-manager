@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=oDM
+GenericName=Download Manager
+Comment=A full featured native download manager for Linux based on aria2, yt-dlp and httrack
+Exec=open-download-manager
+Icon=open-download-manager
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=download;manager;aria2;yt-dlp;httrack;torrent;magnet;
+StartupWMClass=org.odm

@@ -89,7 +89,7 @@ package() {
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         $IMAGE_NAME \
-        mvn install
+        bash -c "cd /app && packaging/build-packages.sh 0.1.0"
 }
 
 # Clean up

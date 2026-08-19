@@ -20,7 +20,18 @@ jobs:
             - name: Run tests
               run: ./docker-build.sh test
 
-            # Packaging (.deb/.rpm/.pkg.tar.zst) is rebuilt for the GTK4 app
-            # in Step 7 (release hardening) — see docs/STATUS.md.
-            - name: Build application
-              run: docker run --rm -v "$(pwd):/app" -v "$HOME/.m2:/home/developer/.m2" odm-dev mvn -q -pl odm-gtk4 -am package -DskipTests
+            - name: Build packages (.deb/.rpm/.pkg.tar.zst)
+              run: docker run --rm -v "$(pwd):/app" -v "$HOME/.m2:/home/developer/.m2" odm-dev bash -c "cd /app && packaging/build-packages.sh 0.1.0"
+
+            - name: Install test (.deb on clean Ubuntu)
+              run: docker run --rm -v "$(pwd)/packaging:/pkgs:ro" ubuntu:24.04 bash -c "apt-get update -qq && apt-get install -y -qq /pkgs/open-download-manager_0.1.0_amd64.deb && test -x /usr/bin/open-download-manager"
+
+            - name: Upload Artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: linux-packages
+                  if-no-files-found: error
+                  path: |
+                      packaging/*.deb
+                      packaging/*.rpm
+                      packaging/*.pkg.tar.zst

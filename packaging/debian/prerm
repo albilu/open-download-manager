@@ -1,0 +1,5 @@
+#!/bin/bash
+# Pre-removal script for open-download-manager
+set -e
+echo "[odm] removing open-download-manager"
+exit 0

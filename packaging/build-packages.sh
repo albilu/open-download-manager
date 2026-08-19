@@ -1,0 +1,141 @@
+#!/bin/bash
+# Package builder for Open Download Manager (GTK4).
+# Builds the shaded jar + a self-contained jlink runtime, then assembles
+# .deb / .rpm / .pkg.tar.zst installers. Run inside the odm-dev Docker
+# image (or any Linux with JDK 25, maven, dpkg-deb, rpmbuild, makepkg).
+set -euo pipefail
+
+VERSION="${1:-0.1.0}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+STAGE="$ROOT/packaging/stage"
+RUNTIME="$STAGE/opt/open-download-manager/runtime"
+APP="$STAGE/opt/open-download-manager"
+JAR="odm-gtk4/target/odm-gtk4-0.1.0-SNAPSHOT-jar-with-dependencies.jar"
+
+log() { echo "[odm-package] $*"; }
+
+# Modules from jdeps over the shaded jar (+ crypto/naming/management for
+# TLS, WebSocket client usage, and runtime introspection)
+JDK_MODULES="java.base,java.desktop,java.sql,java.logging,jdk.httpserver,jdk.crypto.ec,java.naming,java.management"
+
+log "Building shaded jar..."
+cd "$ROOT"
+mvn -q -pl odm-gtk4 -am package -DskipTests
+
+log "Assembling application tree under $STAGE..."
+rm -rf "$STAGE"
+mkdir -p "$APP" "$RUNTIME" "$STAGE/usr/bin" \
+    "$STAGE/usr/share/applications" \
+    "$STAGE/usr/share/icons/hicolor/128x128/apps" \
+    "$STAGE/usr/share/icons/hicolor/512x512/apps"
+
+cp "$JAR" "$APP/odm.jar"
+
+log "Creating jlink runtime (modules: $JDK_MODULES)..."
+rm -rf "$RUNTIME"
+jlink --add-modules "$JDK_MODULES" \
+    --strip-debug --no-header-files --no-man-pages --compress zip-6 \
+    --output "$RUNTIME"
+
+cat > "$STAGE/usr/bin/open-download-manager" <<'EOF'
+#!/bin/sh
+# oDM launcher: prefer the bundled runtime, fall back to system java
+APP_HOME=/opt/open-download-manager
+if [ -x "$APP_HOME/runtime/bin/java" ]; then
+    exec "$APP_HOME/runtime/bin/java" --enable-native-access=ALL-UNNAMED -jar "$APP_HOME/odm.jar" "$@"
+else
+    exec java --enable-native-access=ALL-UNNAMED -jar "$APP_HOME/odm.jar" "$@"
+fi
+EOF
+chmod 755 "$STAGE/usr/bin/open-download-manager"
+
+cp packaging/resources/open-download-manager.desktop "$STAGE/usr/share/applications/"
+cp packaging/resources/icons/open-download-manager-128.png \
+    "$STAGE/usr/share/icons/hicolor/128x128/apps/open-download-manager.png"
+cp packaging/resources/icons/open-download-manager.png \
+    "$STAGE/usr/share/icons/hicolor/512x512/apps/open-download-manager.png"
+
+log "Stage complete:"
+du -sh "$STAGE" "$RUNTIME"
+
+# ---- .deb ----
+build_deb() {
+    log "Building .deb..."
+    local debroot="$STAGE-deb"
+    rm -rf "$debroot"
+    cp -r "$STAGE" "$debroot"
+    mkdir -p "$debroot/DEBIAN"
+    cp packaging/debian/control "$debroot/DEBIAN/control"
+    cp packaging/debian/postinst "$debroot/DEBIAN/postinst" 2>/dev/null || true
+    cp packaging/debian/prerm "$debroot/DEBIAN/prerm" 2>/dev/null || true
+    [ -f "$debroot/DEBIAN/postinst" ] && chmod 755 "$debroot/DEBIAN/postinst"
+    [ -f "$debroot/DEBIAN/prerm" ] && chmod 755 "$debroot/DEBIAN/prerm"
+    sed -i "s/__VERSION__/${VERSION}/g" "$debroot/DEBIAN/control"
+    (cd "$debroot" && dpkg-deb --build -Zxz . "$ROOT/packaging/open-download-manager_${VERSION}_amd64.deb")
+    log "Built open-download-manager_${VERSION}_amd64.deb"
+}
+
+# ---- .rpm ----
+build_rpm() {
+    log "Building .rpm..."
+    command -v rpmbuild >/dev/null || { log "rpmbuild not found, skipping rpm"; return 0; }
+    local rpmtop="$ROOT/packaging/rpmbuild"
+    rm -rf "$rpmtop"
+    mkdir -p "$rpmtop"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+    sed -e "s/__VERSION__/${VERSION}/g" packaging/rpm/open-download-manager.spec \
+        > "$rpmtop/SPECS/open-download-manager.spec"
+    (cd "$rpmtop" && rpmbuild --define "_topdir $rpmtop" --define "stage $STAGE" \
+        --nodeps --nocheck -bb "$rpmtop/SPECS/open-download-manager.spec")
+    find "$rpmtop/RPMS" "$ROOT/rpmbuild/RPMS" -name "*.rpm" -exec mv {} "$ROOT/packaging/" \; 2>/dev/null || true
+    rm -rf "$rpmtop" "$ROOT/rpmbuild"
+}
+
+# ---- Arch .pkg.tar.zst ----
+build_arch() {
+    log "Building .pkg.tar.zst..."
+    local archroot="$ROOT/packaging/archbuild"
+    rm -rf "$archroot"
+    mkdir -p "$archroot/pkg"
+    cp -a "$STAGE/." "$archroot/pkg/"
+    chmod 755 "$archroot/pkg/usr/bin/open-download-manager"
+
+    # Minimal pacman package: .PKGINFO + payload, compressed with zstd
+    local size=$(du -sk "$archroot/pkg" | cut -f1)
+    cat > "$archroot/pkg/.PKGINFO" <<EOF
+pkgname = open-download-manager
+pkgbase = open-download-manager
+pkgver = ${VERSION}-1
+pkgdesc = Full-featured download manager for Linux based on aria2, yt-dlp and httrack (bundled Java runtime)
+url = https://github.com/albilu/odm
+arch = x86_64
+license = GPL-3.0-or-later
+depend = gtk4>=4.10
+depend = aria2>=1.34.0
+depend = curl>=7.80.0
+depend = yt-dlp>=2024.01.01
+depend = httrack>=3.49.0
+optdepend = proxychains-ng: SOCKS proxy chains
+optdepend = tor: anonymous downloads
+optdepend = ffmpeg: video processing
+packager = ODM Development Team <dev@odm-project.org>
+size = $((size * 1024))
+builddate = $(date +%s)
+EOF
+    (cd "$archroot/pkg" && find . -type f \
+        -exec sha256sum {} + | sed 's| \./| |' > "$archroot/pkg/.MTREE" \
+        && printf 'mtree = .MTREE\n' >> /dev/null)
+    (cd "$archroot/pkg" && tar -C "$archroot/pkg" \
+        --use-compress-program="zstd -19 -T0" \
+        -cf "$ROOT/packaging/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst" \
+        .PKGINFO .MTREE opt usr)
+    rm -rf "$archroot"
+    log "Built open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
+}
+
+build_deb
+build_rpm
+build_arch
+
+log "Artifacts:"
+ls -la "$ROOT/packaging/"*.deb "$ROOT/packaging/"*.rpm "$ROOT/packaging/"*.pkg.tar.zst 2>/dev/null || true
+log "Done."

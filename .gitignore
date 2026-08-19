@@ -14,7 +14,14 @@ core.*
 data/
 docker-data/*.torrent
 
+# Packaging build output (metadata under packaging/ IS tracked)
+packaging/stage/
+packaging/stage-deb/
+packaging/rpmbuild/
+packaging/archbuild/
+packaging/*.deb
+packaging/*.rpm
+packaging/*.pkg.tar.zst
+
 # OS
 .DS_Store
-odm.cmb
-.gitignore
