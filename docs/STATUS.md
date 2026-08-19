@@ -25,8 +25,16 @@ Last verified: 2026-08-16 (Steps 0–2 of `plans/complete-odm.md` complete — s
 
 ## Remaining work
 
-- **Step 7** — packaging & release hardening: .deb/.rpm/.pkg.tar.zst for the GTK4 app (old module's packaging went with it), stale dependency pins, JDK-25 runtime story (jlink/jpackage or documented requirement), coverage gates, install tests in clean containers.
-- Tracker-list auto-update (niche enhancement), final README-MVP end-to-end pass.
+- **Step 7 done** — packaging rebuilt for the GTK4 app: one script
+  (`packaging/build-packages.sh`) produces .deb/.rpm/.pkg.tar.zst (~49MB
+  each) with a bundled jlink Java-25 runtime (no system Java dep), current
+  dependency ranges, desktop entry + icons; install-tested on clean
+  ubuntu:24.04 / fedora:40 / archlinux; the installed app launches under
+  Xvfb with zero crashes. CI builds + install-tests + uploads artifacts.
+- JaCoCo coverage gates (70%/60%) are wired on `mvn verify`; they stay
+  pass-blocked until the red-test rehab backlog (~92 pre-existing) clears.
+- Tracker-list auto-update (niche enhancement), final README-MVP end-to-end
+  pass.
 
 ## Doc policy
 
