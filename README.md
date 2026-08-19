@@ -40,11 +40,10 @@ A full featured native download manager for Linux based on aria2, yt-dlp and htt
     -   Right click download
     -   Detect files from selection
     -   yt-dlp integration to download videos
--   [LATER] Command-Line / Terminal
 -   [LATER] i18n
 -   [LATER] FTP Login & Anonymous FTP
 -   [LATER] theme support
--   [LATER] Keyboard Shortcuts
+-   [LATER] Keyboard accessibility
 -   [LATER] Interface to Search Torrents
     -   https://github.com/Jackett/Jackett?tab=readme-ov-file
     -   https://prowlarr.com/
