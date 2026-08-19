@@ -325,40 +325,50 @@
             <property name="margin-top">4</property>
             <property name="margin-bottom">4</property>
             <child>
-              <object class="GtkStatusbar" id="statusbar">
+              <object class="GtkBox" id="statusbar">
+                <property name="orientation">horizontal</property>
+                <property name="hexpand">true</property>
                 <child>
                   <object class="GtkBox" id="statusbar_content_box">
-                    <child><object class="GtkLabel" id="info_label"><property name="label">Ready</property><property name="xalign">0</property></object></child>
-                    <child><object class="GtkSeparator"/></child>
+                    <property name="orientation">horizontal</property>
+                    <property name="hexpand">true</property>
+                    <child><object class="GtkLabel" id="info_label"><property name="label">Ready</property><property name="xalign">0</property><property name="hexpand">true</property></object></child>
                     <child>
-                      <object class="GtkBox" id="upload_speed_box">
-                        <child><object class="GtkImage" id="upload_speed_icon"><property name="icon-name">go-up-symbolic</property></object></child>
-                        <child><object class="GtkLabel" id="up_speed_label"><property name="label">0 B/s</property></object></child>
-                      </object>
-                    </child>
-                    <child><object class="GtkSeparator" id="upload_separator"/></child>
-                    <child>
-                      <object class="GtkBox" id="download_speed_box">
-                        <child><object class="GtkImage" id="download_speed_icon"><property name="icon-name">go-down-symbolic</property></object></child>
-                        <child><object class="GtkLabel" id="down_speed_label"><property name="label">0 B/s</property></object></child>
-                      </object>
-                    </child>
-                    <child><object class="GtkSeparator" id="dht_separator"/></child>
-                    <child>
-                      <object class="GtkBox" id="dht_progress_box">
-                        <child><object class="GtkLabel" id="dht_status_label"><property name="label">DHT: —</property></object></child>
-                        <child><object class="GtkSeparator" id="dht_inner_separator"/></child>
+                      <object class="GtkBox" id="statusbar_right_box">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
+                        <property name="halign">end</property>
                         <child>
-                          <object class="GtkTreeView" id="global_progress_tree">
-                            <property name="model">global_progress_store</property>
-                            <property name="headers-visible">false</property>
-                            <child><object class="GtkTreeViewColumn" id="global_progress_column"><child><object class="GtkCellRendererProgress" id="global_progress_renderer"/><attributes><attribute name="value">0</attribute></attributes></child></object></child>
+                          <object class="GtkBox" id="upload_speed_box">
+                            <child><object class="GtkImage" id="upload_speed_icon"><property name="icon-name">go-up-symbolic</property></object></child>
+                            <child><object class="GtkLabel" id="up_speed_label"><property name="label">0 B/s</property></object></child>
                           </object>
                         </child>
+                        <child><object class="GtkSeparator" id="upload_separator"/></child>
+                        <child>
+                          <object class="GtkBox" id="download_speed_box">
+                            <child><object class="GtkImage" id="download_speed_icon"><property name="icon-name">go-down-symbolic</property></object></child>
+                            <child><object class="GtkLabel" id="down_speed_label"><property name="label">0 B/s</property></object></child>
+                          </object>
+                        </child>
+                        <child><object class="GtkSeparator" id="dht_separator"/></child>
+                        <child>
+                          <object class="GtkBox" id="dht_progress_box">
+                            <child><object class="GtkLabel" id="dht_status_label"><property name="label">DHT: —</property></object></child>
+                            <child><object class="GtkSeparator" id="dht_inner_separator"/></child>
+                            <child>
+                              <object class="GtkTreeView" id="global_progress_tree">
+                                <property name="model">global_progress_store</property>
+                                <property name="headers-visible">false</property>
+                                <child><object class="GtkTreeViewColumn" id="global_progress_column"><child><object class="GtkCellRendererProgress" id="global_progress_renderer"/><attributes><attribute name="value">0</attribute></attributes></child></object></child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child><object class="GtkSeparator" id="download_separator"/></child>
+                        <child><object class="GtkSpinner" id="activity_spinner"/></child>
                       </object>
                     </child>
-                    <child><object class="GtkSeparator" id="download_separator"/></child>
-                    <child><object class="GtkSpinner" id="activity_spinner"/></child>
                   </object>
                 </child>
               </object>
@@ -369,3 +379,4 @@
     </child>
   </object>
 </interface>
+

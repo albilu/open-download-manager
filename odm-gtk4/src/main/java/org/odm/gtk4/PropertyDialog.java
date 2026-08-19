@@ -23,7 +23,7 @@ import org.manager.download.DownloadManager;
 public class PropertyDialog {
 
     private static final Logger LOGGER = Logger.getLogger(PropertyDialog.class.getName());
-    private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
+    private static final String[] PROXY_TYPES = {"None", "HTTP", "SOCKS4", "SOCKS5"};
 
     private final Window dialog;
     private final DownloadManager downloadManager;

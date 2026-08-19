@@ -14,3 +14,10 @@ One of the pain points previously was the incomplete jgtk implementation which c
 -the m4s support means that the download manager can download media from streaming services that use fragmented mp4 files. The download manager should be able to detect such format:
 1. by its manifest (ex: http://example.com/playlist.m3u8) => yt-dlp http://example.com/manifest.m3u8.
 2. or derive the manifest or media segments from the streaming service video page (ex: http://example.com/video-page) .
+
+4-[LATER] Consider
+	- Sqlite for download managmrnt
+	- User agent rotation
+	- Clipboard monitor waitlist
+		- Meaning detected url are silently places in a waitlist and dont popup like in uget
+		- User can then start download from the waitlist

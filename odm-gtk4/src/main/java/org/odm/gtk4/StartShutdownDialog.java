@@ -21,6 +21,11 @@ public class StartShutdownDialog {
         this.dialog = Widgets.require(builder, "startup_shutdown_dialog", Window.class);
         this.statusMessageLabel = Widgets.require(builder, "status_message_label", Label.class);
         this.progressBar = Widgets.require(builder, "progress_bar", ProgressBar.class);
+        org.gnome.gtk.Image logo = Widgets.require(builder, "odm_logo_image", org.gnome.gtk.Image.class);
+        org.gnome.gdk.Texture texture = AboutDialogPresenter.loadLogo();
+        if (texture != null) {
+            logo.setFromPaintable(texture);
+        }
         if (parent != null) {
             dialog.setTransientFor(parent);
         }

@@ -32,7 +32,7 @@ import org.manager.download.DownloadManager;
 public class SettingsDialog {
 
     private static final Logger LOGGER = Logger.getLogger(SettingsDialog.class.getName());
-    private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
+    private static final String[] PROXY_TYPES = {"None", "HTTP", "SOCKS4", "SOCKS5"};
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
 
     private final Window dialog;

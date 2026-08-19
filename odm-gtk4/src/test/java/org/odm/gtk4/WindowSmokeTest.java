@@ -75,7 +75,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "peers_view", TreeView.class);
         Widgets.require(builder, "files_view", TreeView.class);
         // status bar
-        Widgets.require(builder, "statusbar", org.gnome.gtk.Statusbar.class);
+        Widgets.require(builder, "statusbar", org.gnome.gtk.Box.class);
         for (String id : new String[]{"info_label", "up_speed_label", "down_speed_label",
                 "dht_status_label"}) {
             Widgets.require(builder, id, Label.class);

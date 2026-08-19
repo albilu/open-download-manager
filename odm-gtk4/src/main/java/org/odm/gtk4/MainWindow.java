@@ -92,6 +92,8 @@ public class MainWindow {
     private final org.gnome.gtk.Switch torSwitch;
     private final org.gnome.gtk.SearchEntry searchEntry;
     private final MenuButton menuButton;
+    private final org.gnome.gtk.Widget leftPanelWidget;
+    private final org.gnome.gtk.Widget infoPanelWidget;
     private final DownloadManager downloadManager;
 
     private List<Download> rowSnapshot = new ArrayList<>();
@@ -100,9 +102,12 @@ public class MainWindow {
     private String searchText = "";
     /** Re-entrancy guard for programmatic status-row re-selection. */
     private boolean suppressStatusSelection;
+    /** Guard so menu actions register on the window only once. */
+    private boolean menuActionsRegistered;
     private final ListStore trackersStore;
     private final ListStore peersStore;
     private final ListStore filesStore;
+    private final ListStore globalProgressStore;
     private final org.tor.TorService torService;
     private final org.manager.schedule.ScheduleManager scheduleManager;
     private final org.manager.download.action.AfterCompletionActionManager completionActionManager =
@@ -135,6 +140,7 @@ public class MainWindow {
         this.trackersStore = Widgets.require(builder, "trackers_store", ListStore.class);
         this.peersStore = Widgets.require(builder, "peers_store", ListStore.class);
         this.filesStore = Widgets.require(builder, "files_store", ListStore.class);
+        this.globalProgressStore = Widgets.require(builder, "global_progress_store", ListStore.class);
         this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
         this.folderValue = Widgets.require(builder, "folder_value", Label.class);
         this.etaValue = Widgets.require(builder, "eta_value", Label.class);
@@ -184,7 +190,9 @@ public class MainWindow {
         this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         torSwitch.onStateSet(this::onTorToggled);
         this.menuButton = Widgets.require(builder, "menu_button", MenuButton.class);
-        menuButton.setPopover(buildMainMenu().getPopover());
+        this.leftPanelWidget = Widgets.require(builder, "left_panel", org.gnome.gtk.Widget.class);
+        this.infoPanelWidget = Widgets.require(builder, "info_panel_box", org.gnome.gtk.Widget.class);
+        menuButton.setMenuModel(buildMainMenu());
 
         downloadManager.addDownloadListener(new DownloadListener() {
             @Override public void onDownloadStart(Download d) { UiThread.marshal(MainWindow.this::refresh); }
@@ -245,63 +253,454 @@ public class MainWindow {
     private void showContextMenu() {
         onDownloadSelectionChanged();
         if (selectedDownload == null) return;
+        // 1:1 port of download_context_menu from the original glade
         new PopupMenu()
+                .add("Open", () -> openSelected("file"))
+                .add("Open Folder", () -> openSelected("folder"))
+                .separator()
                 .add("Pause", this::onPauseClicked)
                 .add("Resume", this::onResumeClicked)
-                .add("Delete", this::onDeleteClicked)
-                .add("Delete with files", () -> {
-                    if (selectedDownload != null) {
-                        downloadManager.cancelDownload(selectedDownload, true);
-                    }
-                })
+                .add("Start", () -> downloadManager.startDownload(selectedDownload))
                 .separator()
+                .add("Copy Magnet URI", this::copyMagnetUri)
+                .add("Change Destination…", this::changeDestination)
+                .add("Verify Data", this::verifyData)
                 .add("Properties", this::onPropertiesClicked)
-                .add("Remove finished", () -> {
-                    downloadManager.pruneCompletedDownloads(Duration.ZERO);
-                    refresh();
-                })
+                .separator()
+                .add("Delete", this::onDeleteClicked)
+                .add("Delete with Files", () ->
+                        downloadManager.cancelDownload(selectedDownload, true))
                 .popup();
     }
 
-    private PopupMenu buildMainMenu() {
-        return new PopupMenu()
-                .add("New download", this::onAddClicked)
-                .add("New website scrape", this::onScraperClicked)
-                .add("Import from list", () -> new ImportListDialog(window, downloadManager,
-                        () -> UiThread.marshal(this::refresh)).present())
-                .add("Import URL sequence", () -> new ImportSequenceDialog(window, downloadManager,
-                        () -> UiThread.marshal(this::refresh)).present())
-                .separator()
-                .add("Toggle clipboard monitor (currently "
-                        + (downloadManager.isClipboardMonitoringEnabled() ? "on" : "off") + ")", () -> {
-                    downloadManager.setClipboardMonitoringEnabled(
-                            !downloadManager.isClipboardMonitoringEnabled());
-                    menuButtonRefresh();
-                })
-                .separator()
-                .add("On completion: none", () -> setCompletionAction(null))
-                .add("On completion: notify (sound)", () -> setCompletionAction(
-                        new org.manager.download.action.PlayNotificationAction(
-                                org.manager.download.action.PlayNotificationAction.NotificationSound.SUCCESS)))
-                .add("On completion: shutdown", () -> setCompletionAction(
-                        new org.manager.download.action.ShutdownComputerAction(30)))
-                .separator()
-                .add("Schedule: always", () -> applySchedulePreset("always"))
-                .add("Schedule: business hours", () -> applySchedulePreset("business"))
-                .add("Schedule: night", () -> applySchedulePreset("night"))
-                .add("Schedule: weekends", () -> applySchedulePreset("weekend"))
-                .add("Schedule: weekdays", () -> applySchedulePreset("weekday"))
-                .add("Schedule: never (paused)", () -> applySchedulePreset("never"))
-                .separator()
-                .add("Settings", this::onSettingsClicked)
-                .add("About", () -> AboutDialogPresenter.present(window))
-                .separator()
-                .add("Exit", () -> window.getApplication().quit());
+    /** Copies the selected download's magnet URI (or builds one from its info hash). */
+    private void copyMagnetUri() {
+        if (selectedDownload == null) {
+            return;
+        }
+        String magnet = null;
+        try {
+            if ("magnet".equals(selectedDownload.getUri().getScheme())) {
+                magnet = selectedDownload.getUri().toString();
+            }
+        } catch (Exception ignored) {
+            // no uri
+        }
+        if (magnet == null && selectedDownload.getInfoHash() != null) {
+            magnet = "magnet:?xt=urn:btih:" + selectedDownload.getInfoHash();
+        }
+        if (magnet != null) {
+            downloadsTreeview.getClipboard().setText(magnet);
+            infoLabel.setLabel("Magnet URI copied");
+        }
+    }
+
+    /** Changes the destination folder of the selected download. */
+    private void changeDestination() {
+        if (selectedDownload == null) {
+            return;
+        }
+        org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
+        dialog.setTitle("Select new destination");
+        dialog.selectFolder(window, null, result -> {
+            try {
+                org.gnome.gio.File folder = dialog.selectFolderFinish(result);
+                if (folder != null && folder.getPath() != null && selectedDownload != null) {
+                    selectedDownload.setDestination(
+                            java.nio.file.Path.of(folder.getPath().toString()));
+                    downloadManager.changeSettings(selectedDownload);
+                    UiThread.marshal(this::refresh);
+                }
+            } catch (Exception e) {
+                LOGGER.log(java.util.logging.Level.FINE, "Destination change cancelled or failed", e);
+            }
+        });
+    }
+
+    /** Requests an integrity re-check of the selected download (aria2). */
+    private void verifyData() {
+        if (selectedDownload == null) {
+            return;
+        }
+        if (selectedDownload.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
+            aria2Settings.setOption("check-integrity", "true");
+            downloadManager.changeSettings(selectedDownload);
+            infoLabel.setLabel("Integrity check requested");
+        }
+    }
+
+    /**
+     * Builds the full main menu as a Gio.Menu — 1:1 port of the original
+     * menu bar (File/Edit/View/Download/Help with submenus, toggles, and
+     * radio items), shown from the toolbar's MenuButton.
+     */
+    private org.gnome.gio.Menu buildMainMenu() {
+        registerMenuActions();
+        org.gnome.gio.Menu menu = new org.gnome.gio.Menu();
+
+        // File
+        org.gnome.gio.Menu file = new org.gnome.gio.Menu();
+        file.append("New Download", "win.new-download");
+        file.append("New Website Scrape", "win.scrape");
+        org.gnome.gio.Menu batch = new org.gnome.gio.Menu();
+        batch.append("Import from Clipboard", "win.import-clipboard");
+        batch.append("Import URL Sequence", "win.import-sequence");
+        batch.append("Import from Text File", "win.import-file");
+        batch.append("Import from HTML File", "win.import-html");
+        batch.append("Export Download List", "win.export-file");
+        file.appendSubmenu("Batch Process", batch);
+        file.append("Offline Mode", "win.offline");
+        file.append("Exit", "win.quit");
+        menu.appendSubmenu("File", file);
+
+        // Edit
+        org.gnome.gio.Menu edit = new org.gnome.gio.Menu();
+        edit.append("Clipboard Monitoring", "win.clipboard-monitoring");
+        edit.append("Silent Mode", "win.clipboard-silent");
+        org.gnome.gio.Menu completion = new org.gnome.gio.Menu();
+        completion.append("None", "win.completion::none");
+        completion.append("Notify (sound)", "win.completion::notify");
+        completion.append("Suspend", "win.completion::suspend");
+        completion.append("Shutdown", "win.completion::shutdown");
+        completion.append("Custom…", "win.completion::custom");
+        edit.appendSubmenu("Completion Actions", completion);
+        org.gnome.gio.Menu schedule = new org.gnome.gio.Menu();
+        schedule.append("Always", "win.schedule::always");
+        schedule.append("Business Hours", "win.schedule::business");
+        schedule.append("Night Hours", "win.schedule::night");
+        schedule.append("Weekends", "win.schedule::weekend");
+        schedule.append("Weekdays", "win.schedule::weekday");
+        schedule.append("Never (paused)", "win.schedule::never");
+        edit.appendSubmenu("Schedule", schedule);
+        edit.append("Preferences", "win.preferences");
+        menu.appendSubmenu("Edit", edit);
+
+        // View
+        org.gnome.gio.Menu view = new org.gnome.gio.Menu();
+        view.append("Left Panel", "win.left-panel");
+        view.append("Info Panel", "win.info-panel");
+        String[] columnLabels = {"#", "Name", "Completed", "Size", "Progress", "Elapsed",
+                "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Type"};
+        org.gnome.gio.Menu columns = new org.gnome.gio.Menu();
+        for (int i = 0; i < columnLabels.length; i++) {
+            columns.append(columnLabels[i], "win.col-" + i);
+        }
+        view.appendSubmenu("Columns", columns);
+        menu.appendSubmenu("View", view);
+
+        // Download
+        org.gnome.gio.Menu download = new org.gnome.gio.Menu();
+        download.append("Open", "win.open-file");
+        download.append("Open Folder", "win.open-folder");
+        download.append("Force Download", "win.force-download");
+        download.append("Pause All", "win.pause-all");
+        download.append("Resume All", "win.resume-all");
+        download.append("Delete", "win.delete");
+        download.append("Delete with Files", "win.delete-with-files");
+        download.append("Remove All Finished", "win.remove-finished");
+        download.append("Properties", "win.properties");
+        menu.appendSubmenu("Download", download);
+
+        // Help
+        org.gnome.gio.Menu help = new org.gnome.gio.Menu();
+        help.append("Statistics", "win.statistics");
+        help.append("Donation", "win.donation");
+        help.append("About", "win.about");
+        menu.appendSubmenu("Help", help);
+
+        return menu;
+    }
+
+    /** Registers all menu actions on the window (ApplicationWindow is an ActionMap). */
+    private void registerMenuActions() {
+        if (menuActionsRegistered) {
+            return;
+        }
+        menuActionsRegistered = true;
+
+        // File
+        addAction("new-download", this::onAddClicked);
+        addAction("scrape", this::onScraperClicked);
+        addAction("import-clipboard", () -> downloadManager.importFromClipboard()
+                .thenRun(() -> UiThread.marshal(this::refresh)));
+        addAction("import-sequence", () -> new ImportSequenceDialog(window, downloadManager,
+                () -> UiThread.marshal(this::refresh)).present());
+        addAction("import-file", () -> new ImportListDialog(window, downloadManager,
+                () -> UiThread.marshal(this::refresh)).present());
+        addAction("import-html", this::onImportHtml);
+        addAction("export-file", this::onExportList);
+        addStatefulAction("offline", false, active -> {
+            downloadManager.getGlobalSettings().setProperty("ui.offline", String.valueOf(active));
+            if (active) {
+                downloadManager.pauseAllDownloads();
+            } else {
+                downloadManager.resumeAllDownloads();
+            }
+            UiThread.marshal(this::refresh);
+        });
+        addAction("quit", () -> window.destroy());
+
+        // Edit
+        addStatefulAction("clipboard-monitoring", downloadManager.isClipboardMonitoringEnabled(),
+                downloadManager::setClipboardMonitoringEnabled);
+        addStatefulAction("clipboard-silent",
+                downloadManager.getGlobalSettings().getBooleanProperty("ui.clipboardSilent", false),
+                active -> downloadManager.getGlobalSettings().setProperty("ui.clipboardSilent",
+                        String.valueOf(active)));
+        addRadioAction("completion", completionActionKey(), this::onCompletionActionChosen);
+        addRadioAction("schedule",
+                downloadManager.getGlobalSettings().getProperty("scheduler.preset", "always"),
+                this::applySchedulePreset);
+        addAction("preferences", this::onSettingsClicked);
+
+        // View
+        addStatefulAction("left-panel", true, leftPanelWidget::setVisible);
+        addStatefulAction("info-panel", true, infoPanelWidget::setVisible);
+        var columns = downloadsTreeview.getColumns();
+        for (int i = 0; i < columns.size(); i++) {
+            final int index = i;
+            addStatefulAction("col-" + i, true, active -> columns.get(index).setVisible(active));
+        }
+
+        // Download
+        addAction("open-file", () -> openSelected("file"));
+        addAction("open-folder", () -> openSelected("folder"));
+        addAction("force-download", () -> {
+            onDownloadSelectionChanged();
+            if (selectedDownload != null) {
+                downloadManager.startDownload(selectedDownload);
+            }
+        });
+        addAction("pause-all", () -> downloadManager.pauseAllDownloads()
+                .thenRun(() -> UiThread.marshal(this::refresh)));
+        addAction("resume-all", () -> downloadManager.resumeAllDownloads()
+                .thenRun(() -> UiThread.marshal(this::refresh)));
+        addAction("delete", this::onDeleteClicked);
+        addAction("delete-with-files", () -> {
+            onDownloadSelectionChanged();
+            if (selectedDownload != null) {
+                downloadManager.cancelDownload(selectedDownload, true);
+            }
+        });
+        addAction("remove-finished", () -> downloadManager.pruneCompletedDownloads(java.time.Duration.ZERO)
+                .thenRun(() -> UiThread.marshal(this::refresh)));
+        addAction("properties", this::onPropertiesClicked);
+
+        // Help
+        addAction("statistics", this::showStatistics);
+        addAction("donation", () -> org.gnome.gtk.Gtk.showUri(window,
+                "https://github.com/albilu/odm", 0));
+        addAction("about", () -> AboutDialogPresenter.present(window));
+    }
+
+    private void addAction(String name, Runnable handler) {
+        org.gnome.gio.SimpleAction action = new org.gnome.gio.SimpleAction(name, null);
+        action.onActivate(parameter -> handler.run());
+        window.addAction(action);
+    }
+
+    private void addStatefulAction(String name, boolean initial,
+            java.util.function.Consumer<Boolean> onToggle) {
+        org.gnome.gio.SimpleAction action = org.gnome.gio.SimpleAction.stateful(name, null,
+                org.gnome.glib.Variant.boolean_(initial));
+        action.onActivate(parameter -> {
+            boolean newState = !action.getState().getBoolean();
+            action.setState(org.gnome.glib.Variant.boolean_(newState));
+            onToggle.accept(newState);
+        });
+        window.addAction(action);
+    }
+
+    private void addRadioAction(String name, String initial,
+            java.util.function.Consumer<String> onChoice) {
+        org.gnome.gio.SimpleAction action = org.gnome.gio.SimpleAction.stateful(name, null,
+                org.gnome.glib.Variant.string(initial));
+        action.onActivate(parameter -> {
+            String choice = parameter != null ? parameter.dupString(new org.javagi.base.Out<>()) : initial;
+            action.setState(org.gnome.glib.Variant.string(choice));
+            onChoice.accept(choice);
+        });
+        window.addAction(action);
+    }
+
+    private String completionActionKey() {
+        return downloadManager.getGlobalSettings().getProperty("ui.completionAction", "none");
+    }
+
+    private void onCompletionActionChosen(String choice) {
+        downloadManager.getGlobalSettings().setProperty("ui.completionAction", choice);
+        downloadManager.getGlobalSettings().save();
+        switch (choice) {
+            case "notify" -> setCompletionAction(new org.manager.download.action.PlayNotificationAction(
+                    org.manager.download.action.PlayNotificationAction.NotificationSound.SUCCESS));
+            case "suspend" -> setCompletionAction(new SuspendAction());
+            case "shutdown" -> setCompletionAction(
+                    new org.manager.download.action.ShutdownComputerAction(30));
+            case "custom" -> setCompletionAction(new SuspendAction()); // custom command support: Step 6+
+            default -> setCompletionAction(null);
+        }
+    }
+
+    /** Suspends the machine on download completion (systemctl suspend). */
+    private static final class SuspendAction implements org.manager.download.action.AfterCompletionAction {
+        private volatile boolean canceled;
+
+        @Override
+        public boolean execute(Download download) {
+            if (canceled) {
+                return false;
+            }
+            try {
+                new ProcessBuilder("systemctl", "suspend").inheritIO().start();
+                return true;
+            } catch (Exception e) {
+                LOGGER.warning("Failed to suspend: " + e.getMessage());
+                return false;
+            }
+        }
+
+        @Override
+        public org.manager.download.action.AfterCompletionAction.ActionType getType() {
+            return org.manager.download.action.AfterCompletionAction.ActionType.SLEEP_COMPUTER;
+        }
+
+        @Override
+        public String getDescription() {
+            return "Suspend the computer when the download completes";
+        }
+
+        @Override
+        public org.manager.download.action.AfterCompletionAction.Severity getSeverity() {
+            return org.manager.download.action.AfterCompletionAction.Severity.HIGH;
+        }
+
+        @Override
+        public boolean cancel() {
+            canceled = true;
+            return true;
+        }
+    }
+
+    /** Opens the selected download's file or its folder with xdg-open. */
+    private void openSelected(String what) {
+        onDownloadSelectionChanged();
+        if (selectedDownload == null || selectedDownload.getDestination() == null) {
+            return;
+        }
+        try {
+            java.nio.file.Path target = "folder".equals(what)
+                    ? selectedDownload.getDestination()
+                    : selectedDownload.getDestination().resolve(selectedDownload.getName());
+            new ProcessBuilder("xdg-open", target.toString()).inheritIO().start();
+        } catch (Exception e) {
+            LOGGER.warning("Failed to open " + what + ": " + e.getMessage());
+        }
+    }
+
+    /** Imports links found in a local HTML file. */
+    private void onImportHtml() {
+        org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
+        dialog.setTitle("Select HTML file");
+        dialog.open(window, null, result -> {
+            try {
+                org.gnome.gio.File file = dialog.openFinish(result);
+                if (file == null || file.getPath() == null) {
+                    return;
+                }
+                String html = java.nio.file.Files.readString(java.nio.file.Path.of(file.getPath().toString()));
+                java.util.List<java.net.URI> urls = new java.util.ArrayList<>();
+                java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("href\\s*=\\s*[\"']([^\"']+)[\"']", java.util.regex.Pattern.CASE_INSENSITIVE)
+                        .matcher(html);
+                while (m.find()) {
+                    try {
+                        java.net.URI uri = new java.net.URI(m.group(1));
+                        if (uri.getScheme() != null && (uri.getScheme().startsWith("http"))) {
+                            urls.add(uri);
+                        }
+                    } catch (Exception ignored) {
+                        // non-absolute/invalid href: skip
+                    }
+                }
+                int queued = 0;
+                for (java.net.URI uri : urls) {
+                    try {
+                        downloadManager.queueDownload(downloadManager.createDownload(uri, null));
+                        queued++;
+                    } catch (Exception ignored) {
+                        // skip
+                    }
+                }
+                final int count = queued;
+                UiThread.marshal(() -> {
+                    infoLabel.setLabel("Imported " + count + " link(s) from HTML");
+                    refresh();
+                });
+            } catch (Exception e) {
+                LOGGER.log(java.util.logging.Level.FINE, "HTML import cancelled or failed", e);
+            }
+        });
+    }
+
+    /** Exports all download URLs to a text file. */
+    private void onExportList() {
+        org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
+        dialog.setTitle("Export download list");
+        dialog.setInitialName("odm-downloads.txt");
+        dialog.save(window, null, result -> {
+            try {
+                org.gnome.gio.File file = dialog.saveFinish(result);
+                if (file == null || file.getPath() == null) {
+                    return;
+                }
+                StringBuilder sb = new StringBuilder();
+                for (Download d : downloadManager.getAllDownloads()) {
+                    if (d.getUri() != null) {
+                        sb.append(d.getUri()).append('\n');
+                    }
+                }
+                java.nio.file.Files.writeString(java.nio.file.Path.of(file.getPath().toString()), sb.toString());
+                UiThread.marshal(() -> infoLabel.setLabel("Exported download list"));
+            } catch (Exception e) {
+                LOGGER.log(java.util.logging.Level.FINE, "Export cancelled or failed", e);
+            }
+        });
+    }
+
+    /** Shows a small statistics dialog (counts by status, total sizes). */
+    private void showStatistics() {
+        List<Download> all = downloadManager.getAllDownloads();
+        long totalSize = 0;
+        long doneSize = 0;
+        int active = 0;
+        int queued = 0;
+        int finished = 0;
+        int errors = 0;
+        for (Download d : all) {
+            totalSize += d.getSize();
+            doneSize += d.getDownloaded();
+            switch (d.getStatus()) {
+                case DOWNLOADING, CONNECTING -> active++;
+                case QUEUED, PAUSED -> queued++;
+                case COMPLETED -> finished++;
+                case ERROR, CANCELED -> errors++;
+                default -> { }
+            }
+        }
+        org.gnome.gtk.MessageDialog stats = new org.gnome.gtk.MessageDialog();
+        stats.setTransientFor(window);
+        stats.setModal(true);
+        stats.setMarkup("<b>Download Statistics</b>");
+        stats.formatSecondaryText("Total: " + all.size() + "\nActive: " + active
+                + "\nQueued/paused: " + queued + "\nFinished: " + finished
+                + "\nErrors: " + errors + "\n\nDownloaded: " + formatSize(doneSize)
+                + " / " + formatSize(totalSize));
+        stats.present();
     }
 
     private void menuButtonRefresh() {
         // Rebuild the main menu so toggle-state labels stay current
-        menuButton.setPopover(buildMainMenu().getPopover());
+        menuButton.setMenuModel(buildMainMenu());
     }
 
     private void applySchedulePreset(String preset) {
@@ -419,7 +818,7 @@ public class MainWindow {
         startButton.onClicked(() -> {
             String url = urlEntry.getText().trim();
             if (url.isEmpty()) {
-                statusLabel.setLabel("Enter a URL");
+                infoLabel.setLabel("Enter a URL");
                 return;
             }
             try {
@@ -432,7 +831,7 @@ public class MainWindow {
                 refresh();
                 scraper.close();
             } catch (java.net.URISyntaxException e) {
-                statusLabel.setLabel("Invalid URL");
+                infoLabel.setLabel("Invalid URL");
             }
         });
 
@@ -557,6 +956,19 @@ public class MainWindow {
         upSpeedLabel.setLabel(totalUpSpeed > 0 ? formatSize((long) totalUpSpeed) + "/s" : "—");
         dhtStatusLabel.setLabel(totalSeeders > 0 ? "DHT: " + totalSeeders + " seed(s)" : "DHT: —");
         activitySpinner.setSpinning(anyActive);
+
+        // Global progress: overall completion across all downloads
+        long totalBytes = 0;
+        long doneBytes = 0;
+        for (Download download : downloadManager.getAllDownloads()) {
+            totalBytes += download.getSize();
+            doneBytes += download.getDownloaded();
+        }
+        globalProgressStore.clear();
+        TreeIter progressIter = new TreeIter();
+        globalProgressStore.append(progressIter);
+        setInt(globalProgressStore, progressIter, 0,
+                totalBytes > 0 ? (int) (doneBytes * 100 / totalBytes) : 0);
         updateInfoPanel();
     }
 

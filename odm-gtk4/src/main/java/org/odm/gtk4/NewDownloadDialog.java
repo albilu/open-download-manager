@@ -29,7 +29,7 @@ import org.manager.download.DownloadManager;
 public class NewDownloadDialog {
 
     private static final Logger LOGGER = Logger.getLogger(NewDownloadDialog.class.getName());
-    private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
+    private static final String[] PROXY_TYPES = {"None", "HTTP", "SOCKS4", "SOCKS5"};
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -203,7 +203,7 @@ public class NewDownloadDialog {
         } else if (proxyTypeCombo.getSelected() > 0 && !proxyHostEntry.getText().isBlank()) {
             StringBuilder proxy = new StringBuilder();
             String type = PROXY_TYPES[(int) proxyTypeCombo.getSelected()].toLowerCase();
-            proxy.append(type.equals("https") ? "https" : type).append("://");
+            proxy.append(type).append("://");
             if (!proxyUsernameEntry.getText().isBlank()) {
                 proxy.append(proxyUsernameEntry.getText().trim());
                 if (!proxyPasswordEntry.getText().isEmpty()) {
