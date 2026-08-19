@@ -98,6 +98,8 @@ public class MainWindow {
     private Download selectedDownload;
     private String statusFilter = "All Status";
     private String searchText = "";
+    /** Re-entrancy guard for programmatic status-row re-selection. */
+    private boolean suppressStatusSelection;
     private final ListStore trackersStore;
     private final ListStore peersStore;
     private final ListStore filesStore;
@@ -136,10 +138,17 @@ public class MainWindow {
         this.downloadedValue = Widgets.require(builder, "downloaded_value", Label.class);
         this.connectionsValue = Widgets.require(builder, "connections_value", Label.class);
         this.seedsPeersValue = Widgets.require(builder, "seeds_peers_value", Label.class);
-        window.setApplication(app);
+        if (app != null) {
+            window.setApplication(app);
+        }
 
         restoreWindowState(builder);
         window.onCloseRequest(() -> {
+            boolean toTray = downloadManager.getGlobalSettings().getBooleanProperty("ui.systemTray", false);
+            if (toTray) {
+                window.setVisible(false);
+                return true; // suppress the close; tray keeps the app running
+            }
             saveWindowState(builder);
             return false; // allow close
         });
@@ -421,6 +430,12 @@ public class MainWindow {
     }
 
     private void onStatusSelectionChanged() {
+        // Re-entrant guard: rebuildFilterStore re-selects the filter row,
+        // which fires "changed" again — without the guard this recurses
+        // infinitely (store clear + re-select + refresh loop).
+        if (suppressStatusSelection) {
+            return;
+        }
         selectRow(statusTreeview.getSelection(), (path, index) -> {
             if (index < STATUS_FILTERS.length) {
                 statusFilter = STATUS_FILTERS[index];
@@ -547,7 +562,12 @@ public class MainWindow {
             setStr(store, iter, SC_LABEL, labels[i]);
             if (labels[i].equals(selected)) {
                 if (store == statusStore) {
-                    statusTreeview.getSelection().selectIter(iter);
+                    suppressStatusSelection = true;
+                    try {
+                        statusTreeview.getSelection().selectIter(iter);
+                    } finally {
+                        suppressStatusSelection = false;
+                    }
                 } else {
                     categoryTreeview.getSelection().selectIter(iter);
                 }
@@ -703,7 +723,8 @@ public class MainWindow {
     }
 
     private static void setInt(ListStore store, TreeIter iter, int column, int value) {
-        Value v = new Value().init(column == COL_PROGRESS ? Types.INT : Types.UINT);
+        // All int-typed store columns (progress, filter counts) are gint
+        Value v = new Value().init(Types.INT);
         v.setInt(value);
         store.setValue(iter, column, v);
         v.unset();

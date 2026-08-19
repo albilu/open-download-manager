@@ -51,9 +51,10 @@ class WindowSmokeTest {
         // toolbar buttons
         for (String id : new String[]{"new_download_button", "pause_button", "resume_button",
                 "delete_button", "move_up_button", "move_top_button", "move_down_button", "move_bottom_button",
-                "settings_button", "menu_button"}) {
+                "settings_button"}) {
             Widgets.require(builder, id, Button.class);
         }
+        Widgets.require(builder, "menu_button", org.gnome.gtk.MenuButton.class);
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         // download treeview + columns
@@ -245,5 +246,38 @@ class WindowSmokeTest {
         Widgets.require(builder, "import_sequence_spinner", Spinner.class);
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "validate_button", Button.class);
+    }
+
+    @Test
+    @DisplayName("MainWindow constructs against its .ui (catches require-type mismatches)")
+    void mainWindowConstructs() {
+        org.manager.download.DownloadManager stub =
+                (org.manager.download.DownloadManager) java.lang.reflect.Proxy.newProxyInstance(
+                        org.manager.download.DownloadManager.class.getClassLoader(),
+                        new Class<?>[]{org.manager.download.DownloadManager.class},
+                        (proxy, method, args) -> switch (method.getName()) {
+                            case "getGlobalSettings" -> new org.manager.GlobalSettings();
+                            case "getAllDownloads" -> java.util.List.of();
+                            case "getDownloads" -> java.util.List.of();
+                            case "isClipboardMonitoringEnabled", "isTorrentFolderMonitoringEnabled",
+                                    "isMetaLinkFolderMonitoringEnabled" -> false;
+                            default -> defaultValue(method.getReturnType());
+                        });
+        MainWindow window = new MainWindow(null, stub, new org.tor.TorService("tor"));
+        // Constructing is the test: every Widgets.require in the constructor
+        // must resolve. (Null app: the window is a standalone toplevel here.)
+    }
+
+    private static Object defaultValue(Class<?> type) {
+        if (!type.isPrimitive()) return null;
+        if (type == boolean.class) return false;
+        if (type == int.class) return 0;
+        if (type == long.class) return 0L;
+        if (type == float.class) return 0f;
+        if (type == double.class) return 0d;
+        if (type == byte.class) return (byte) 0;
+        if (type == short.class) return (short) 0;
+        if (type == char.class) return (char) 0;
+        return null;
     }
 }

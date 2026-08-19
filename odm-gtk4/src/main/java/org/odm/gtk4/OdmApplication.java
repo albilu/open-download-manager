@@ -33,7 +33,20 @@ public final class OdmApplication {
         org.tor.TorService torService = createTorService();
 
         Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
-        app.onActivate(() -> new MainWindow(app, manager, torService).present());
+        app.onActivate(() -> {
+            try {
+                LOGGER.info("onActivate: constructing MainWindow");
+                MainWindow mainWindow = new MainWindow(app, manager, torService);
+                LOGGER.info("onActivate: MainWindow constructed");
+                // Tray (best-effort: no-op when the session bus is unavailable)
+                StatusNotifierTray tray = new StatusNotifierTray(() -> UiThread.marshal(mainWindow::present));
+                LOGGER.info("onActivate: tray constructed");
+                mainWindow.present();
+                LOGGER.info("onActivate: window presented");
+            } catch (Throwable t) {
+                LOGGER.log(java.util.logging.Level.SEVERE, "onActivate failed", t);
+            }
+        });
         int status = app.run(args);
         System.exit(status);
     }

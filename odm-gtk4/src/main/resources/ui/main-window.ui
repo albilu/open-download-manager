@@ -153,7 +153,7 @@
                         <child><object class="GtkSearchEntry" id="search_entry"><property name="placeholder-text">Search…</property><property name="hexpand">true</property></object></child>
                       </object>
                     </child>
-                    <child><object class="GtkButton" id="menu_button"><property name="icon-name">open-menu-symbolic</property><property name="tooltip-text">Menu</property></object></child>
+                    <child><object class="GtkMenuButton" id="menu_button"><property name="icon-name">open-menu-symbolic</property><property name="tooltip-text">Menu</property></object></child>
                   </object>
                 </child>
 
