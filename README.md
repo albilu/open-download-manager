@@ -53,54 +53,12 @@ A full featured native download manager for Linux based on aria2, yt-dlp and htt
         1. by its manifest (ex: http://example.com/playlist.m3u8) => yt-dlp http://example.com/manifest.m3u8.
         2. or derive the manifest or media segments from the streaming service video page (ex: http://example.com/video-page) .
 -   [LATER] Consider
-	- Sqlite for download managmrnt
+	- replace odm-state.json persistence by Sqlite for better downloads managment
 	- User agent rotation
 	- Clipboard monitor waitlist
 		- Meaning detected url are silently places in a waitlist and dont popup like in uget
 		- User can then start download from the waitlist
 -   [LATER] QT version
-
-## Development Steps
-
-1. Create Java project architecture (Maven)
-2.  - **Notes:**
-
-        - Prioritize performance, memory efficiency, and stability.
-        - Align with Gnome/GTK by using approriate widjets, APIs
-        - Skip unit tests for now.
-
-    - **Tasks:**
-
-        - A. Set up Java bindings for GTK using JNA (ensure codebase is reusable for QT).
-        - B. Set up maven Build for Linux: Package as .deb, .rpm, .pkg.tar.gz
-        - C. Implement a wrapper for aria2 supporting features relevant for this app.-
-        - D. Design main windows (refer to uGet screenshots).\*
-        - E. Implement the corresponding Glade file for each window screenshot.\*
-        - F. Implement Download engine: Develop logic to manage multiple downloads, queue, and pause/resume functionality.
-            - Plug into proxychains for SOCKS4/5 proxies and Tor download
-            - if proxychains fails, fallback to curl (except torrents...)
-        - G. Keep track of downloads (resume even after exit).
-        - H. Implement Clipboard monitor: Use Java Clipboard API to detect new URLs.
-        - I. Implement Tray icon: GTK system tray for background mode.\*
-        - J. Tor support: Allow proxy configuration for downloads (for a single download or all downloads).
-        - K. Implement After Completion Actions (shutdown computer, move file etc...)
-            - Automatic antivirus check (chkrootkit etc…)
-        - Scrap website (with httrack)
-        - Download completed Notification
-        - Scheduler
-        - Automatic Proxy rotation
-        - Download Youtube Videos (with yt-dlp)
-
-3. Implement Enhancements
-4. Testing & Documentation
-    - Write unit/integration tests.
-    - Document features and usage in README.
-5. Open Source & Community
-    - Host on GitHub.
-    - Encourage contributions and feedback.
-        - gnome forums
-        - linux forums
-        - alternativeto
 
 ## Concurrent apps
 
