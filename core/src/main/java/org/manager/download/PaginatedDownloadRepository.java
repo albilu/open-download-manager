@@ -180,6 +180,14 @@ public class PaginatedDownloadRepository {
     /**
      * Updates a download's status and maintains indices.
      *
+     * <p>The transition is membership-based and idempotent: the download id
+     * is removed from <em>every</em> status index and then added to the index
+     * of the target status. Handlers may call {@code Download.setStatus}
+     * directly before the manager reindexes, so deriving the move from
+     * {@code download.getStatus()} (which then equals the new status) would
+     * leave stale entries behind and break status queries and queue
+     * progression.</p>
+     *
      * @param download  The download to update
      * @param newStatus The new status
      */
@@ -187,25 +195,25 @@ public class PaginatedDownloadRepository {
         lock.writeLock().lock();
         try {
             Download.Status oldStatus = download.getStatus();
-            if (oldStatus != newStatus) {
-                // Remove from old status index
-                Set<String> oldStatusSet = statusIndex.get(oldStatus);
-                if (oldStatusSet != null) {
-                    oldStatusSet.remove(download.getId());
-                }
 
-                // Update download status
-                download.setStatus(newStatus);
-
-                // Add to new status index
-                Set<String> newStatusSet = statusIndex.get(newStatus);
-                if (newStatusSet != null) {
-                    newStatusSet.add(download.getId());
-                }
-
-                invalidateCacheForStatusChange(oldStatus, newStatus);
-                LOGGER.fine("Updated download status: " + download.getId() + " " + oldStatus + " -> " + newStatus);
+            // Remove from all status indexes (self-healing: also clears any
+            // stale entry left by a handler-first status write)
+            for (Set<String> statusSet : statusIndex.values()) {
+                statusSet.remove(download.getId());
             }
+
+            if (oldStatus != newStatus) {
+                download.setStatus(newStatus);
+            }
+
+            // Add to new status index
+            Set<String> newStatusSet = statusIndex.get(newStatus);
+            if (newStatusSet != null) {
+                newStatusSet.add(download.getId());
+            }
+
+            invalidateCacheForStatusChange(oldStatus, newStatus);
+            LOGGER.fine("Updated download status: " + download.getId() + " " + oldStatus + " -> " + newStatus);
         } finally {
             lock.writeLock().unlock();
         }

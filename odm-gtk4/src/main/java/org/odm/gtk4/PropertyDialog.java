@@ -115,6 +115,10 @@ public class PropertyDialog {
             if (ua != null) {
                 userAgentEntry.setText(ua);
             }
+            String cookieHeader = aria2Settings.getOption("header");
+            if (cookieHeader != null && cookieHeader.startsWith("Cookie: ")) {
+                cookieEntry.setText(cookieHeader.substring("Cookie: ".length()));
+            }
         }
     }
 
@@ -140,6 +144,9 @@ public class PropertyDialog {
             }
             if (!userAgentEntry.getText().isBlank()) {
                 aria2Settings.setOption("user-agent", userAgentEntry.getText().trim());
+            }
+            if (!cookieEntry.getText().isBlank()) {
+                aria2Settings.setOption("header", "Cookie: " + cookieEntry.getText().trim());
             }
         }
         downloadManager.changeSettings(download)

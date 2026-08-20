@@ -1381,12 +1381,24 @@ public class Aria2Client {
     }
 
     public String addUriRpc(String url, Map<String, Object> options) throws IOException, Aria2RpcException {
+        return addUriRpc(new String[] { url }, options);
+    }
+
+    /**
+     * Adds a download with multiple URIs pointing to the same resource. aria2
+     * treats all URIs as mirrors of a single download with automatic failover.
+     *
+     * @param uris    URIs of the resource (first is primary, rest are mirrors)
+     * @param options optional aria2 options
+     * @return the GID of the download
+     */
+    public String addUriRpc(String[] uris, Map<String, Object> options) throws IOException, Aria2RpcException {
         if (useWebSocket) {
             try {
                 if (options != null && !options.isEmpty()) {
-                    return sendRpcWebSocket("aria2.addUri", String.class, new String[] { url }, options).result;
+                    return sendRpcWebSocket("aria2.addUri", String.class, uris, options).result;
                 } else {
-                    return sendRpcWebSocket("aria2.addUri", String.class, (Object) new String[] { url }).result;
+                    return sendRpcWebSocket("aria2.addUri", String.class, (Object) uris).result;
                 }
             } catch (Exception e) {
                 throw new IOException(e);
@@ -1394,9 +1406,9 @@ public class Aria2Client {
         } else {
             String payload;
             if (options != null && !options.isEmpty()) {
-                payload = buildPayload("aria2.addUri", new String[] { url }, options);
+                payload = buildPayload("aria2.addUri", uris, options);
             } else {
-                payload = buildPayload("aria2.addUri", (Object) new String[] { url });
+                payload = buildPayload("aria2.addUri", (Object) uris);
             }
             return sendRpcHttp(payload, String.class).result;
         }

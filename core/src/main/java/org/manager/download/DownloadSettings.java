@@ -1,5 +1,7 @@
 package org.manager.download;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -7,7 +9,20 @@ import java.util.Map;
  * Base class for all download settings.
  * Provides common configuration options that apply to all download types.
  * All specific download types should extend this class to add type-specific settings.
+ *
+ * <p>The Jackson type annotations make the persisted download state
+ * (odm-state.json) round-trippable: the concrete settings subtype is recorded
+ * in an {@code @type} property and restored on load.</p>
  */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "@type")
+@JsonSubTypes({
+    @JsonSubTypes.Type(value = org.aria2.Aria2Settings.class, name = "aria2"),
+    @JsonSubTypes.Type(value = org.ytdlp.YtDlpSettings.class, name = "ytdlp"),
+    @JsonSubTypes.Type(value = org.httrack.HttrackSettings.class, name = "httrack"),
+    @JsonSubTypes.Type(value = org.curl.CurlSettings.class, name = "curl"),
+    @JsonSubTypes.Type(value = org.proxychains.ProxychainsSettings.class, name = "proxychains"),
+    @JsonSubTypes.Type(value = org.manager.proxy.ProxyAwareDownloadSettings.class, name = "proxy-aware")
+})
 public abstract class DownloadSettings {
 
     private int connections = 5;

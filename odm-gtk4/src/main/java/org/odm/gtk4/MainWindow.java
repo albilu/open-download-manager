@@ -117,6 +117,8 @@ public class MainWindow {
     private final org.manager.download.action.AfterCompletionActionManager completionActionManager =
             new org.manager.download.action.AfterCompletionActionManager();
     private org.manager.download.action.AfterCompletionAction completionAction;
+    /** Builder reference kept for window-state persistence from menu actions. */
+    private final GtkBuilder uiBuilder;
 
     public MainWindow(Application app, DownloadManager downloadManager, org.tor.TorService torService,
             org.manager.schedule.ScheduleManager scheduleManager) {
@@ -125,6 +127,7 @@ public class MainWindow {
         this.scheduleManager = scheduleManager;
 
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        this.uiBuilder = builder;
 
         this.window = Widgets.require(builder, "main_window", ApplicationWindow.class);
         this.statusStore = Widgets.require(builder, "status_store", ListStore.class);
@@ -159,6 +162,7 @@ public class MainWindow {
         window.onCloseRequest(() -> {
             boolean toTray = downloadManager.getGlobalSettings().getBooleanProperty("ui.systemTray", false);
             if (toTray) {
+                saveWindowState(builder); // persist geometry; destroy() skips this handler
                 window.setVisible(false);
                 return true; // suppress the close; tray keeps the app running
             }
@@ -214,6 +218,45 @@ public class MainWindow {
                 UiThread.marshal(MainWindow.this::refresh);
             }
             @Override public void onDownloadCanceled(Download d) { UiThread.marshal(MainWindow.this::refresh); }
+        });
+
+        // Surface after-completion action results (e.g. antivirus threats)
+        // in the info bar; callbacks may arrive from worker threads.
+        completionActionManager.addListener(new org.manager.download.action.AfterCompletionActionListener() {
+            @Override
+            public void onActionStart(Download d, org.manager.download.action.AfterCompletionAction a) {
+                // no-op
+            }
+
+            @Override
+            public void onActionComplete(Download d, org.manager.download.action.AfterCompletionAction a) {
+                if (a instanceof org.manager.download.action.AntivirusCheckAction av) {
+                    UiThread.marshal(() -> {
+                        if (av.isThreatDetected()) {
+                            infoLabel.setLabel("THREAT DETECTED in " + d.getName()
+                                    + " — scan result: " + av.getScanResult());
+                            LOGGER.warning("Antivirus threat detected in " + d.getName()
+                                    + ": " + av.getScanResult());
+                        } else {
+                            infoLabel.setLabel("Antivirus scan completed for " + d.getName());
+                        }
+                    });
+                }
+            }
+
+            @Override
+            public void onActionError(Download d, org.manager.download.action.AfterCompletionAction a,
+                    String errorMessage, org.manager.download.action.AfterCompletionAction.Severity severity) {
+                LOGGER.log(java.util.logging.Level.WARNING,
+                        "Completion action failed for " + d.getName() + ": " + errorMessage);
+            }
+
+            @Override
+            public void onAllActionsComplete(Download d,
+                    java.util.List<org.manager.download.action.AfterCompletionAction> successful,
+                    java.util.List<org.manager.download.action.AfterCompletionAction> failed) {
+                // no-op
+            }
         });
 
         refresh();
@@ -365,6 +408,7 @@ public class MainWindow {
         org.gnome.gio.Menu completion = new org.gnome.gio.Menu();
         completion.append("None", "win.completion::none");
         completion.append("Notify (sound)", "win.completion::notify");
+        completion.append("Antivirus Scan", "win.completion::antivirus");
         completion.append("Suspend", "win.completion::suspend");
         completion.append("Shutdown", "win.completion::shutdown");
         completion.append("Custom…", "win.completion::custom");
@@ -443,7 +487,12 @@ public class MainWindow {
             }
             UiThread.marshal(this::refresh);
         });
-        addAction("quit", () -> window.destroy());
+        // File -> Exit performs a normal exit (destroy() bypasses the
+        // close-request handler), so geometry must be saved explicitly first.
+        addAction("quit", () -> {
+            saveWindowState(uiBuilder);
+            window.destroy();
+        });
 
         // Edit
         addStatefulAction("clipboard-monitoring", downloadManager.isClipboardMonitoringEnabled(),
@@ -453,6 +502,9 @@ public class MainWindow {
                 active -> downloadManager.getGlobalSettings().setProperty("ui.clipboardSilent",
                         String.valueOf(active)));
         addRadioAction("completion", completionActionKey(), this::onCompletionActionChosen);
+        // Rebuild the completion action from the persisted key: GTK only
+        // fires radio-action activate on user selection, not at creation.
+        onCompletionActionChosen(completionActionKey());
         addRadioAction("schedule",
                 downloadManager.getGlobalSettings().getProperty("scheduler.preset", "always"),
                 this::applySchedulePreset);
@@ -538,12 +590,39 @@ public class MainWindow {
         switch (choice) {
             case "notify" -> setCompletionAction(new org.manager.download.action.PlayNotificationAction(
                     org.manager.download.action.PlayNotificationAction.NotificationSound.SUCCESS));
+            case "antivirus" -> setCompletionAction(buildAntivirusAction());
             case "suspend" -> setCompletionAction(new SuspendAction());
             case "shutdown" -> setCompletionAction(
                     new org.manager.download.action.ShutdownComputerAction(30));
             case "custom" -> setCompletionAction(new SuspendAction()); // custom command support: Step 6+
             default -> setCompletionAction(null);
         }
+    }
+
+    /**
+     * Builds the antivirus completion action from persisted settings:
+     * {@code antivirus.scanner} (clamav|chkrootkit|rkhunter|custom, default
+     * clamav), {@code antivirus.command} for the custom scanner, and
+     * {@code antivirus.timeout} seconds (default 600, 0 = no timeout).
+     */
+    private org.manager.download.action.AntivirusCheckAction buildAntivirusAction() {
+        var s = downloadManager.getGlobalSettings();
+        String scanner = s.getProperty("antivirus.scanner", "clamav");
+        int timeout = s.getIntProperty("antivirus.timeout", 600);
+        var type = switch (scanner.toLowerCase()) {
+            case "chkrootkit" ->
+                org.manager.download.action.AntivirusCheckAction.AntivirusType.CHKROOTKIT;
+            case "rkhunter" ->
+                org.manager.download.action.AntivirusCheckAction.AntivirusType.RKHUNTER;
+            case "custom" ->
+                org.manager.download.action.AntivirusCheckAction.AntivirusType.CUSTOM;
+            default -> org.manager.download.action.AntivirusCheckAction.AntivirusType.CLAMAV;
+        };
+        if (type == org.manager.download.action.AntivirusCheckAction.AntivirusType.CUSTOM) {
+            return new org.manager.download.action.AntivirusCheckAction(
+                    s.getProperty("antivirus.command", "clamscan --no-summary {file}"), timeout);
+        }
+        return new org.manager.download.action.AntivirusCheckAction(type, timeout);
     }
 
     /** Suspends the machine on download completion (systemctl suspend). */
@@ -742,6 +821,8 @@ public class MainWindow {
                     LOGGER.info("Tor started; downloads can route via SOCKS5 127.0.0.1:9050");
                     downloadManager.getGlobalSettings().setGlobalProxyEnabled(true);
                     downloadManager.getGlobalSettings().setGlobalProxyAddress("socks5://127.0.0.1:9050");
+                    // Reconfigure running downloads to use the new proxy
+                    downloadManager.applyGlobalSettingsToActiveDownloads();
                 } else {
                     LOGGER.warning("Tor failed to start");
                     UiThread.marshal(() -> torSwitchSet(false));
@@ -750,6 +831,8 @@ public class MainWindow {
         } else {
             torService.stop();
             downloadManager.getGlobalSettings().setGlobalProxyEnabled(false);
+            // Clear the proxy from running downloads
+            downloadManager.applyGlobalSettingsToActiveDownloads();
             LOGGER.info("Tor stopped");
         }
         return false; // let the switch apply its new state

@@ -914,6 +914,49 @@ public class GlobalSettings {
     }
 
     /**
+     * Copies every persisted setting from another instance into this one: all
+     * typed fields plus the generic property bag ({@code aria2.*},
+     * {@code ytdlp.*}, {@code ui.*}, {@code scheduler.*} keys). Runtime-only
+     * tool availability flags are not copied.
+     *
+     * @param other the settings to copy from; null is a no-op
+     */
+    public void copyFrom(GlobalSettings other) {
+        if (other == null || other == this) {
+            return;
+        }
+        this.maxConcurrentDownloads = other.maxConcurrentDownloads;
+        this.globalSpeedLimit = other.globalSpeedLimit;
+        this.globalProxyEnabled = other.globalProxyEnabled;
+        this.proxyRotationEnabled = other.proxyRotationEnabled;
+        this.proxyRotationMaxRetries = other.proxyRotationMaxRetries;
+        this.proxyListFilePath = other.proxyListFilePath;
+        this.globalProxyAddress = other.globalProxyAddress;
+        this.defaultDownloadDirectory = other.defaultDownloadDirectory;
+        this.saveDownloadHistory = other.saveDownloadHistory;
+        this.clipboardSettings = other.clipboardSettings;
+        this.maxDownloadsInMemory = other.maxDownloadsInMemory;
+        this.maxCompletedDownloadsToKeep = other.maxCompletedDownloadsToKeep;
+        this.cleanupIntervalHours = other.cleanupIntervalHours;
+        this.completedDownloadRetentionDays = other.completedDownloadRetentionDays;
+        this.errorDownloadRetentionDays = other.errorDownloadRetentionDays;
+        this.automaticCleanupEnabled = other.automaticCleanupEnabled;
+        this.enableLazyLoading = other.enableLazyLoading;
+        this.paginationDefaultSize = other.paginationDefaultSize;
+        this.aria2Path = other.aria2Path;
+        this.ytDlpPath = other.ytDlpPath;
+        this.httrackPath = other.httrackPath;
+        this.curlPath = other.curlPath;
+        this.proxychainsPath = other.proxychainsPath;
+        this.torPath = other.torPath;
+
+        properties.clear();
+        for (String name : other.properties.stringPropertyNames()) {
+            properties.setProperty(name, other.properties.getProperty(name));
+        }
+    }
+
+    /**
      * Syncs the typed fields into the Properties bag so that generic property
      * access and persistence see the current values.
      */

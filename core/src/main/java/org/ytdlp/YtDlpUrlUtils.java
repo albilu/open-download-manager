@@ -81,6 +81,12 @@ public class YtDlpUrlUtils {
         "twitch\\.tv\\/(?:videos\\/)?([^\\s\\/]+)"
     );
 
+    // Streaming media manifests and segments (HLS playlists, DASH manifests,
+    // fragmented MP4) that require yt-dlp instead of plain HTTP downloading.
+    private static final Pattern MEDIA_MANIFEST_PATTERN = Pattern.compile(
+        ".*\\.(m3u8|mpd|m4s)([?&#].*)?$"
+    );
+
     /**
      * Platform types that can be detected from URLs.
      */
@@ -133,6 +139,66 @@ public class YtDlpUrlUtils {
             return String.format("UrlInfo{platform=%s, videoId='%s', isPlaylist=%s, domain='%s'}",
                 platform, videoId, isPlaylist, domain);
         }
+    }
+
+    /**
+     * Checks whether the URL's host is a known media platform domain,
+     * including subdomains (for example music.youtube.com).
+     *
+     * @param url the URL to inspect
+     * @return true when the host is a known media platform
+     */
+    public static boolean isKnownMediaHost(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            String host = new URI(url).getHost();
+            if (host == null) {
+                return false;
+            }
+            host = host.toLowerCase();
+            for (String domain : SUPPORTED_DOMAINS) {
+                if (host.equals(domain) || host.endsWith("." + domain)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (URISyntaxException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Checks whether the URL points to a streaming media manifest or segment
+     * (HLS playlist, DASH manifest, fragmented MP4) that requires yt-dlp.
+     *
+     * @param url the URL to inspect
+     * @return true when the URL is a media manifest or segment
+     */
+    public static boolean isMediaManifestUrl(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            String path = new URI(url).getPath();
+            return path != null && MEDIA_MANIFEST_PATTERN.matcher(path.toLowerCase()).matches();
+        } catch (URISyntaxException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Checks whether a URL should be routed to the yt-dlp handler: either a
+     * streaming manifest (HLS/DASH/fragmented MP4) or a page hosted on a known
+     * media platform. Direct media file URLs are deliberately excluded so they
+     * keep using the multi-connection aria2 engine.
+     *
+     * @param url the URL to inspect
+     * @return true when the URL should be handled by yt-dlp
+     */
+    public static boolean isMediaUrl(String url) {
+        return isKnownMediaHost(url) || isMediaManifestUrl(url);
     }
 
     /**

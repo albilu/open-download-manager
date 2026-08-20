@@ -154,6 +154,11 @@ public class SettingsDialog {
         check("clipboard_silent_check").setActive(s.getBooleanProperty("ui.clipboardSilent", false));
         check("folder_recursive_check").setActive(s.getBooleanProperty("ui.folderRecursive", false));
         check("move_to_trash_check").setActive(s.getBooleanProperty("ui.moveToTrash", false));
+        // Restore the persisted monitored folder (empty until first configured)
+        String monitoredDir = s.getProperty("folder.monitorPath", "");
+        if (!monitoredDir.isBlank()) {
+            setMonitoredDir(monitoredDir);
+        }
         // Network (aria2 defaults + proxy)
         torSwitchSet(s.getBooleanProperty("tor.enabled", false));
         spin("max_connections_spin").setValue(s.getIntProperty("aria2.maxConnections", 8));
@@ -216,8 +221,15 @@ public class SettingsDialog {
         // Runtime toggles apply immediately
         downloadManager.setClipboardMonitoringEnabled(check("clipboard_monitor_check").getActive());
         boolean folderMonitoring = check("folder_monitoring_check").getActive();
-        downloadManager.setTorrentFolderMonitoringEnabled(folderMonitoring);
-        downloadManager.setMetaLinkFolderMonitoringEnabled(folderMonitoring);
+        // Persist the monitored folder so monitoring survives restarts; the
+        // chooser button keeps its placeholder label until a folder is picked
+        String monitoredDir = Widgets.require(builder, "monitored_folder_chooser", Button.class).getLabel();
+        boolean hasMonitoredDir = monitoredDir != null && !monitoredDir.isBlank()
+                && !monitoredDir.startsWith("Select");
+        s.setProperty("folder.monitorPath", hasMonitoredDir ? monitoredDir : "");
+        s.setProperty("folder.monitorEnabled", String.valueOf(folderMonitoring && hasMonitoredDir));
+        downloadManager.setTorrentFolderMonitoringEnabled(folderMonitoring && hasMonitoredDir);
+        downloadManager.setMetaLinkFolderMonitoringEnabled(folderMonitoring && hasMonitoredDir);
         // Network
         s.setProperty("aria2.maxConnections", String.valueOf((int) spin("max_connections_spin").getValue()));
         s.setProperty("aria2.maxTries", String.valueOf((int) spin("retry_limit_spin").getValue()));

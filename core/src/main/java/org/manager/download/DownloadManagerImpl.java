@@ -50,8 +50,18 @@ import org.manager.folder.TorrentFolderMonitor;
 import org.manager.tools.ToolManagerFactory;
 import org.manager.util.ExecutorServiceManager;
 
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.ser.std.StdSerializer;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 /**
  * Implementation of the DownloadManager interface using a modular handler
@@ -113,7 +123,7 @@ public class DownloadManagerImpl implements DownloadManager {
         this.listeners = new CopyOnWriteArraySet<>();
         this.runningDownloads = new AtomicInteger(0);
         this.isShuttingDown = new AtomicBoolean(false);
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = createStateObjectMapper();
 
         // OPTIMIZATION: Initialize efficient listener management
         this.activeHandlers = new ConcurrentHashMap<>();
@@ -458,20 +468,23 @@ public class DownloadManagerImpl implements DownloadManager {
                 if (gid != null) {
                     download.setGid(gid);
                     gidToIdMap.put(gid, download.getId());
-                    download.setStatus(Download.Status.DOWNLOADING);
+                    // Route the transition through the repository so status
+                    // indexes stay consistent (bare setStatus leaves the id
+                    // in the QUEUED index and breaks status queries).
+                    downloadRepository.updateDownloadStatus(download, Download.Status.DOWNLOADING);
                     // Only increment if this is a new download start, not a restart
                     int currentCount = runningDownloads.incrementAndGet();
                     LOGGER.info("Download status set to DOWNLOADING for: " + download.getName()
                             + " (running count: " + currentCount + ")");
                 } else {
                     LOGGER.warning("Handler returned null GID for download: " + download.getName());
-                    download.setStatus(Download.Status.ERROR);
+                    downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
                     download.setErrorMessage("Handler returned null GID");
                     // Clean up on failure
                     cleanupDownloadResources(download.getId());
                 }
             }).exceptionally(e -> {
-                download.setStatus(Download.Status.ERROR);
+                downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
                 download.setErrorMessage(e.getMessage());
                 notifyDownloadError(download, e.getMessage());
                 LOGGER.log(Level.SEVERE, "Failed to start download: " + download.getName(), e);
@@ -482,7 +495,7 @@ public class DownloadManagerImpl implements DownloadManager {
             });
 
         } catch (Exception e) {
-            download.setStatus(Download.Status.ERROR);
+            downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
             download.setErrorMessage(e.getMessage());
             notifyDownloadError(download, e.getMessage());
             LOGGER.log(Level.SEVERE, "Failed to start download: " + download.getName(), e);
@@ -558,7 +571,9 @@ public class DownloadManagerImpl implements DownloadManager {
                     // Remove from our downloads map
                     downloadRepository.removeDownload(download.getId());
                     gidToIdMap.values().removeIf(id -> id.equals(download.getId()));
-                    runningDownloads.decrementAndGet();
+                    // runningDownloads is decremented by the handler's
+                    // onDownloadCanceled notification (reusableListener);
+                    // decrementing here as well would double-count.
                     notifyDownloadCanceled(download);
                 }
             } catch (Exception e) {
@@ -794,7 +809,7 @@ public class DownloadManagerImpl implements DownloadManager {
             for (Download download : pausedDownloads) {
                 if (count >= remainingSlots) {
                     // If we've reached the limit, queue the rest
-                    download.setStatus(Download.Status.QUEUED);
+                    downloadRepository.updateDownloadStatus(download, Download.Status.QUEUED);
                     notifyDownloadStart(download);
                 } else {
                     // Otherwise, resume it immediately
@@ -832,15 +847,29 @@ public class DownloadManagerImpl implements DownloadManager {
     public void setGlobalSettings(GlobalSettings settings) {
         if (settings != null) {
             GlobalSettings currentSettings = getGlobalSettings();
-            // Copy all settings to our global settings object
-            currentSettings.setDefaultDownloadDirectory(settings.getDefaultDownloadDirectory());
-            currentSettings.setMaxConcurrentDownloads(settings.getMaxConcurrentDownloads());
-            currentSettings.setGlobalSpeedLimit(settings.getGlobalSpeedLimit());
-            currentSettings.setGlobalProxyEnabled(settings.isGlobalProxyEnabled());
-            currentSettings.setGlobalProxyAddress(settings.getGlobalProxyAddress());
+            // Copy ALL settings (typed fields + generic property bag) so no
+            // persisted value is silently dropped.
+            currentSettings.copyFrom(settings);
 
             // Update internal state (for backward compatibility)
             defaultDownloadDirectory = currentSettings.getDefaultDownloadDirectory();
+
+            // Propagate runtime-relevant changes (proxy, speed limit) to the
+            // engines so running downloads pick them up immediately
+            applyGlobalSettingsToActiveDownloads();
+        }
+    }
+
+    @Override
+    public void applyGlobalSettingsToActiveDownloads() {
+        try {
+            DownloadHandler handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
+            if (handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler) {
+                aria2Handler.applyGlobalRuntimeOptions();
+            }
+        } catch (Exception e) {
+            // Handler factory may not be initialized (e.g. tests); not fatal
+            LOGGER.log(Level.WARNING, "Failed to apply global settings to running downloads", e);
         }
     }
 
@@ -857,10 +886,11 @@ public class DownloadManagerImpl implements DownloadManager {
                         .map(Download::getId)
                         .collect(Collectors.toSet());
 
-                // Save all downloads (including completed/canceled)
+                // Save all downloads (including completed/canceled). Global
+                // settings are NOT part of the state file: they persist
+                // through GlobalSettings.save()/load() in settings.json.
                 state.put("downloads", allDownloads);
                 state.put("activeDownloadsBeforeExit", activeDownloads);
-                state.put("globalSettings", getGlobalSettings());
 
                 // Create parent directories if they don't exist
                 if (stateFilePath.getParent() != null) {
@@ -891,13 +921,6 @@ public class DownloadManagerImpl implements DownloadManager {
                             new TypeReference<Map<String, Object>>() {
                             });
 
-                    // Load global settings
-                    if (state.containsKey("globalSettings")) {
-                        GlobalSettings loadedSettings = objectMapper.convertValue(
-                                state.get("globalSettings"), GlobalSettings.class);
-                        setGlobalSettings(loadedSettings);
-                    }
-
                     // Load active downloads set for auto-resume
                     Set<String> activeDownloadsIds = new HashSet<>();
                     if (state.containsKey("activeDownloadsBeforeExit")) {
@@ -924,7 +947,9 @@ public class DownloadManagerImpl implements DownloadManager {
                         // Reset status for previously active downloads to allow proper auto-resume
                         if (activeDownloadsIds.contains(download.getId())
                                 && download.getStatus() == Download.Status.DOWNLOADING) {
-                            download.setStatus(Download.Status.PAUSED);
+                            // Route through the repository: addDownload already
+                            // indexed the download as DOWNLOADING
+                            downloadRepository.updateDownloadStatus(download, Download.Status.PAUSED);
                         }
                     }
 
@@ -941,6 +966,37 @@ public class DownloadManagerImpl implements DownloadManager {
                 LOGGER.log(Level.SEVERE, "Failed to load download state", e);
             }
         }, executorManager.getGeneralExecutor());
+    }
+
+    /**
+     * Builds the ObjectMapper used for odm-state.json persistence. It handles
+     * the Java time types used by {@link Download}, serializes {@link Path}s
+     * as plain strings, and tolerates unknown properties so state files
+     * written by newer versions still load. Package-private for testing.
+     */
+    static ObjectMapper createStateObjectMapper() {
+        SimpleModule pathModule = new SimpleModule("PathAsString");
+        pathModule.addSerializer(new StdSerializer<Path>(Path.class) {
+            @Override
+            public void serialize(Path value, JsonGenerator gen, SerializerProvider serializers)
+                    throws IOException {
+                gen.writeString(value.toString());
+            }
+        });
+        pathModule.addDeserializer(Path.class, new StdDeserializer<>(Path.class) {
+            @Override
+            public Path deserialize(JsonParser parser, DeserializationContext context) throws IOException {
+                String text = parser.getValueAsString();
+                return text == null || text.isBlank() ? null : Paths.get(text);
+            }
+        });
+
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        mapper.registerModule(pathModule);
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        return mapper;
     }
 
     // After-completion action methods
@@ -1226,6 +1282,14 @@ public class DownloadManagerImpl implements DownloadManager {
             if (clipboardSettingsOrDefault().isMonitoringEnabled()) {
                 clipboardService.startService().join();
                 LOGGER.info("Clipboard service initialized and started");
+            }
+
+            // Restore folder monitoring from persisted settings
+            if (getGlobalSettings().getBooleanProperty("folder.monitorEnabled", false)) {
+                torrentFolderMonitoringEnabled.set(true);
+                metaLinkFolderMonitoringEnabled.set(true);
+                startConfiguredFolderMonitoring();
+                LOGGER.info("Folder monitoring restored from settings");
             }
 
             // Log tool availability
@@ -1751,6 +1815,8 @@ public class DownloadManagerImpl implements DownloadManager {
         torrentFolderMonitoringEnabled.set(enabled);
         if (enabled) {
             LOGGER.info("Torrent folder monitoring enabled");
+            // Actually start watching the configured folder, if any
+            startConfiguredFolderMonitoring();
         } else {
             LOGGER.info("Torrent folder monitoring disabled");
             // Stop all current monitoring when disabled
@@ -1766,6 +1832,60 @@ public class DownloadManagerImpl implements DownloadManager {
     @Override
     public CompletableFuture<Void> startDefaultTorrentFolderMonitoring() {
         return torrentFolderMonitor.startDefaultTorrentMonitoring();
+    }
+
+    /**
+     * Starts torrent and Metalink folder monitoring from the persisted
+     * configuration: the {@code folder.monitorPath} property with the
+     * {@code ui.folderRecursive} and {@code ui.moveToTrash} options. No-op
+     * when no folder is configured, the folder is missing, or it is already
+     * being watched.
+     */
+    private void startConfiguredFolderMonitoring() {
+        String pathText = getGlobalSettings().getProperty("folder.monitorPath", "");
+        if (pathText.isBlank()) {
+            LOGGER.fine("No monitored folder configured; folder monitoring stays idle");
+            return;
+        }
+        Path folder = Paths.get(pathText);
+        if (!Files.isDirectory(folder)) {
+            LOGGER.warning("Configured monitored folder does not exist: " + folder);
+            return;
+        }
+        if (folderMonitorService.isMonitoring(folder)) {
+            LOGGER.fine("Folder already monitored: " + folder);
+            return;
+        }
+
+        boolean recursive = getGlobalSettings().getBooleanProperty("ui.folderRecursive", false);
+        boolean moveToTrash = getGlobalSettings().getBooleanProperty("ui.moveToTrash", false);
+        FolderMonitorSettings.FileAction action = moveToTrash
+                ? FolderMonitorSettings.FileAction.MOVE_TO_TRASH
+                : FolderMonitorSettings.FileAction.KEEP;
+
+        LOGGER.info("Starting folder monitoring on " + folder
+                + " (recursive=" + recursive + ", action=" + action + ")");
+
+        if (torrentFolderMonitoringEnabled.get()) {
+            torrentFolderMonitor.startTorrentMonitoring(folder,
+                            TorrentFolderMonitor.createDefaultTorrentSettings()
+                                    .setRecursive(recursive)
+                                    .setFileAction(action))
+                    .exceptionally(e -> {
+                        LOGGER.log(Level.WARNING, "Failed to start torrent folder monitoring on " + folder, e);
+                        return null;
+                    });
+        }
+        if (metaLinkFolderMonitoringEnabled.get()) {
+            metaLinkFolderMonitor.startMetaLinkMonitoring(folder,
+                            MetaLinkFolderMonitor.createDefaultMetaLinkSettings()
+                                    .setRecursive(recursive)
+                                    .setFileAction(action))
+                    .exceptionally(e -> {
+                        LOGGER.log(Level.WARNING, "Failed to start Metalink folder monitoring on " + folder, e);
+                        return null;
+                    });
+        }
     }
 
     @Override
@@ -1808,6 +1928,8 @@ public class DownloadManagerImpl implements DownloadManager {
         metaLinkFolderMonitoringEnabled.set(enabled);
         if (enabled) {
             LOGGER.info("Metalink folder monitoring enabled");
+            // Actually start watching the configured folder, if any
+            startConfiguredFolderMonitoring();
         } else {
             LOGGER.info("Metalink folder monitoring disabled");
         }

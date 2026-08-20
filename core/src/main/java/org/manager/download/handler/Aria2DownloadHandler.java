@@ -1,11 +1,17 @@
 package org.manager.download.handler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -176,7 +182,25 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     case ARIA2 -> {
                         // For aria2 downloads, we can use the same method for HTTP/FTP
                         yield switch (download.getUri().getScheme()) {
-                            case "http", "https", "ftp", "ftps" -> startHttpDownload(download);
+                            // Descriptor files referenced over http(s) are fetched
+                            // and added via addTorrent/addMetalink so mirrors and
+                            // multi-file handling work like local files
+                            case "http", "https" -> {
+                                String path = download.getUri().getPath();
+                                String lower = path != null ? path.toLowerCase() : "";
+                                if (lower.endsWith(".torrent")) {
+                                    yield startTorrentDownload(download);
+                                }
+                                if (lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
+                                    yield startMetaLinkDownload(download);
+                                }
+                                yield startHttpDownload(download);
+                            }
+                            case "ftp", "ftps" -> startHttpDownload(download);
+                            // aria2 handles SFTP natively when built with
+                            // libssh2 (Debian/Ubuntu builds are); credentials
+                            // embedded in the URI userinfo are honored
+                            case "sftp" -> startHttpDownload(download);
                             case "magnet" -> startMagnetDownload(download);
                             case "torrent" -> startTorrentDownload(download);
                             case "metalink" -> startMetaLinkDownload(download);
@@ -344,6 +368,56 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         aria2Client.connectWebSocket();
 
         LOGGER.info("aria2 RPC server started successfully with session management");
+    }
+
+    /**
+     * Pushes the current global settings (overall speed limit, concurrency,
+     * and proxy) to the running aria2 daemon and to every active download,
+     * so changes made in the settings dialog or via the Tor toggle affect
+     * running transfers without a restart. Downloads that carry their own
+     * per-download proxy are left untouched.
+     */
+    public void applyGlobalRuntimeOptions() {
+        if (aria2Client == null) {
+            return;
+        }
+
+        // Daemon-wide options
+        try {
+            Map<String, Object> globalOptions = new HashMap<>();
+            // Convert KB/s to B/s for aria2; "0" clears a previously set limit
+            long speedLimitBytesPerSec = globalSettings.getGlobalSpeedLimit() * 1024L;
+            globalOptions.put("max-overall-download-limit",
+                    speedLimitBytesPerSec > 0 ? String.valueOf(speedLimitBytesPerSec) : "0");
+            globalOptions.put("max-concurrent-downloads",
+                    String.valueOf(globalSettings.getMaxConcurrentDownloads()));
+            aria2Client.changeGlobalOption(globalOptions);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to apply global options to aria2", e);
+        }
+
+        // Per-download proxy: global proxy applies unless the download has
+        // its own proxy configured. An empty value clears a previous proxy.
+        String globalProxy = globalSettings.isGlobalProxyEnabled()
+                && globalSettings.getGlobalProxyAddress() != null
+                        ? globalSettings.getGlobalProxyAddress()
+                        : "";
+        for (Download download : activeDownloads.values()) {
+            String gid = download.getGid();
+            if (gid == null) {
+                continue;
+            }
+            if (download.getSettings() instanceof Aria2Settings aria2Settings
+                    && aria2Settings.isUseProxy()
+                    && aria2Settings.getProxyAddress() != null) {
+                continue; // per-download proxy wins
+            }
+            try {
+                aria2Client.changeOption(gid, Map.of("all-proxy", globalProxy));
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to update proxy option for GID " + gid, e);
+            }
+        }
     }
 
     /**
@@ -692,30 +766,20 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
         }
 
-        // Add mirrors if available
+        // Add mirrors if available: aria2 treats all URIs of a single addUri
+        // call as mirrors of one download with automatic failover.
         List<String> uris = new ArrayList<>();
         uris.add(download.getUri().toString());
         for (URI mirror : download.getMirrors()) {
             uris.add(mirror.toString());
         }
 
-        // Start download with aria2
+        // Start download with aria2 as ONE multi-source task
         String[] uriArray = uris.toArray(new String[0]);
-        LOGGER.info("Calling aria2.addUri for: " + uriArray[0] + " with options: " + options);
-        String gid = aria2Client.addUriRpc(uriArray[0], options);
+        LOGGER.info("Calling aria2.addUri for: " + uriArray[0] + " with " + uriArray.length
+                + " URI(s) and options: " + options);
+        String gid = aria2Client.addUriRpc(uriArray, options);
         LOGGER.info("aria2.addUri returned GID: " + gid);
-
-        // Add additional URIs if available
-        if (uriArray.length > 1) {
-            for (int i = 1; i < uriArray.length; i++) {
-                try {
-                    aria2Client.addUriRpc(uriArray[i], options);
-                } catch (Exception e) {
-                    // Log but continue with other URIs
-                    LOGGER.log(Level.WARNING, "Failed to add mirror URI: " + uriArray[i], e);
-                }
-            }
-        }
 
         return gid;
     }
@@ -730,32 +794,27 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      */
     private String startTorrentDownload(Download download) throws IOException, Aria2RpcException {
         URI torrentUri = download.getUri();
-        Path torrentFile;
 
         // Handle different URI schemes for torrent files
+        byte[] torrentData;
+        String torrentSource;
         if ("file".equals(torrentUri.getScheme())) {
             // Local file path
-            torrentFile = Paths.get(torrentUri);
+            Path torrentFile = Paths.get(torrentUri);
+            torrentData = readLocalFile(torrentFile, "Torrent");
+            torrentSource = torrentFile.toString();
         } else if ("torrent".equals(torrentUri.getScheme())) {
             // Custom torrent: scheme - extract file path from URI
-            String path = torrentUri.getSchemeSpecificPart();
-            torrentFile = Paths.get(path);
+            Path torrentFile = Paths.get(torrentUri.getSchemeSpecificPart());
+            torrentData = readLocalFile(torrentFile, "Torrent");
+            torrentSource = torrentFile.toString();
+        } else if ("http".equals(torrentUri.getScheme()) || "https".equals(torrentUri.getScheme())) {
+            // Remote torrent file: fetch it into memory, then hand the bytes
+            // to aria2's addTorrent
+            torrentData = fetchRemoteBytes(torrentUri);
+            torrentSource = torrentUri.toString();
         } else {
-            // HTTP/HTTPS torrent file - download it first (not implemented in this fix)
-            throw new IOException("HTTP/HTTPS torrent downloads not yet supported. Use local torrent files.");
-        }
-
-        // Verify the torrent file exists and is readable
-        if (!Files.exists(torrentFile) || !Files.isReadable(torrentFile)) {
-            throw new IOException("Torrent file not found or not readable: " + torrentFile);
-        }
-
-        // Read the torrent file as bytes
-        byte[] torrentData;
-        try {
-            torrentData = Files.readAllBytes(torrentFile);
-        } catch (IOException e) {
-            throw new IOException("Failed to read torrent file: " + torrentFile, e);
+            throw new IOException("Unsupported torrent source URI: " + torrentUri);
         }
 
         // Prepare URI list for trackers/mirrors
@@ -781,7 +840,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Parameters: byte[] torrent, List<String> uris, String dir, Map options
         String gid = aria2Client.addTorrent(torrentData, uris, download.getDestination().toString(), options);
 
-        LOGGER.info("Started torrent download with GID: " + gid + " for file: " + torrentFile);
+        LOGGER.info("Started torrent download with GID: " + gid + " for source: " + torrentSource);
         return gid;
     }
 
@@ -845,35 +904,38 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
     /**
      * Starts a Metalink download using aria2's addMetalink RPC: the Metalink
-     * XML is read from the local file and sent to aria2, which handles mirror
-     * selection and segmented download itself.
+     * XML is read from a local or remote (.metalink/.meta4) file and sent to
+     * aria2, which handles mirror selection and segmented download itself.
      *
-     * @param download The download to start (uri must point to a local
-     *            .metalink/.meta4 file, via file: or metalink: scheme)
+     * @param download The download to start (uri points to a local or remote
+     *            .metalink/.meta4 file)
      * @return The aria2 GID of the download
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
     private String startMetaLinkDownload(Download download) throws IOException, Aria2RpcException {
         URI metaLinkUri = download.getUri();
-        Path metaLinkFile;
 
         // Handle different URI schemes for metalink files
+        byte[] metaLinkData;
+        String metaLinkSource;
         if ("file".equals(metaLinkUri.getScheme())) {
-            metaLinkFile = Paths.get(metaLinkUri);
+            Path metaLinkFile = Paths.get(metaLinkUri);
+            metaLinkData = readLocalFile(metaLinkFile, "Metalink");
+            metaLinkSource = metaLinkFile.toString();
         } else if ("metalink".equals(metaLinkUri.getScheme())) {
             // Custom metalink: scheme - extract file path from URI
-            metaLinkFile = Paths.get(metaLinkUri.getSchemeSpecificPart());
+            Path metaLinkFile = Paths.get(metaLinkUri.getSchemeSpecificPart());
+            metaLinkData = readLocalFile(metaLinkFile, "Metalink");
+            metaLinkSource = metaLinkFile.toString();
+        } else if ("http".equals(metaLinkUri.getScheme()) || "https".equals(metaLinkUri.getScheme())) {
+            // Remote Metalink file: fetch it into memory and hand the bytes
+            // to aria2's addMetalink
+            metaLinkData = fetchRemoteBytes(metaLinkUri);
+            metaLinkSource = metaLinkUri.toString();
         } else {
-            throw new IOException("Only local Metalink files are supported: " + metaLinkUri);
+            throw new IOException("Unsupported Metalink source URI: " + metaLinkUri);
         }
-
-        // Verify the metalink file exists and is readable
-        if (!Files.exists(metaLinkFile) || !Files.isReadable(metaLinkFile)) {
-            throw new IOException("Metalink file not found or not readable: " + metaLinkFile);
-        }
-
-        byte[] metaLinkData = Files.readAllBytes(metaLinkFile);
 
         Map<String, Object> options = new HashMap<>();
         options.put("dir", download.getDestination().toString());
@@ -896,8 +958,78 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }
 
         String gid = aria2Client.addMetalink(metaLinkData, options);
-        LOGGER.info("Started Metalink download with GID: " + gid + " for file: " + metaLinkFile);
+        LOGGER.info("Started Metalink download with GID: " + gid + " for source: " + metaLinkSource);
         return gid;
+    }
+
+    /**
+     * Reads a local descriptor file (.torrent/.metalink) after verifying it
+     * exists and is readable.
+     *
+     * @param file the file to read
+     * @param kind human-readable kind used in error messages
+     * @return the file content
+     * @throws IOException if the file is missing, unreadable, or reading fails
+     */
+    private static byte[] readLocalFile(Path file, String kind) throws IOException {
+        if (!Files.exists(file) || !Files.isReadable(file)) {
+            throw new IOException(kind + " file not found or not readable: " + file);
+        }
+        try {
+            return Files.readAllBytes(file);
+        } catch (IOException e) {
+            throw new IOException("Failed to read " + kind + " file: " + file, e);
+        }
+    }
+
+    /**
+     * Upper bound for remote descriptor files (.torrent/.metalink) fetched
+     * into memory. Real descriptors are a few KB; anything larger is treated
+     * as a misconfigured URL pointing at the actual payload.
+     */
+    private static final long MAX_REMOTE_DESCRIPTOR_BYTES = 16L * 1024 * 1024;
+
+    /**
+     * Fetches a small remote descriptor (a .torrent or Metalink file) into
+     * memory using the JDK built-in HTTP client, following redirects.
+     *
+     * @param uri the http/https URI to fetch
+     * @return the file content
+     * @throws IOException on connection failure, non-2xx response, empty body,
+     *             or a body exceeding {@link #MAX_REMOTE_DESCRIPTOR_BYTES}
+     */
+    private static byte[] fetchRemoteBytes(URI uri) throws IOException {
+        HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(60))
+                .GET()
+                .build();
+        HttpResponse<InputStream> response;
+        try {
+            response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while fetching " + uri, e);
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("Failed to fetch " + uri + ": HTTP " + response.statusCode());
+        }
+        try (InputStream in = response.body();
+                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            in.transferTo(out);
+            byte[] data = out.toByteArray();
+            if (data.length == 0) {
+                throw new IOException("Remote descriptor is empty: " + uri);
+            }
+            if (data.length > MAX_REMOTE_DESCRIPTOR_BYTES) {
+                throw new IOException("Remote descriptor exceeds " + MAX_REMOTE_DESCRIPTOR_BYTES
+                        + " bytes (not a .torrent/.metalink file?): " + uri);
+            }
+            return data;
+        }
     }
 
     /**

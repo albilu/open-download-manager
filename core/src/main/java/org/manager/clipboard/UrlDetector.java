@@ -26,7 +26,7 @@ public class UrlDetector {
     private static final String URL_REGEX = """
             (?i)\\b(?:
             (?:https?://)(?:[-\\w.])+(?:[:\\d]+)?(?:/(?:[\\w._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})*)*(?:\\?(?:[\\w._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?(?:#(?:[\\w._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?|
-            (?:ftp://)(?:[-\\w.])+(?:[:\\d]+)?(?:/(?:[\\w._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})*)*|
+            (?:ftps?://|sftp://)(?:[-\\w:@.]+)?(?:[:\\d]+)?(?:/(?:[\\w._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})*)*|
             magnet:\\?xt=urn:[a-z0-9]+:[a-zA-Z0-9]{32,40}[&\\w\\d%+/=.]*|
             file://[^\\s]*\\.torrent
             )\\b"""
@@ -157,7 +157,9 @@ public class UrlDetector {
 
         // Accept common download protocols
         if (scheme.equals("http") || scheme.equals("https")
-                || scheme.equals("ftp") || scheme.equals("magnet")
+                || scheme.equals("ftp") || scheme.equals("ftps")
+                || scheme.equals("sftp")
+                || scheme.equals("magnet")
                 || scheme.equals("file")) {
 
             // For magnet links, they're always valid for downloads
@@ -168,6 +170,11 @@ public class UrlDetector {
             // For file:// URLs, check if it's a torrent file
             if (scheme.equals("file")) {
                 return TORRENT_PATTERN.matcher(uri.getPath()).matches();
+            }
+
+            // SFTP references are always treated as downloads
+            if (scheme.equals("sftp")) {
+                return true;
             }
 
             // For HTTP/HTTPS/FTP, check various criteria

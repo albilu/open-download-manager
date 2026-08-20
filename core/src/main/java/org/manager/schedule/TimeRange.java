@@ -1,5 +1,8 @@
 package org.manager.schedule;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -21,7 +24,9 @@ public class TimeRange {
      * @param startTime The start time of the range
      * @param endTime The end time of the range
      */
-    public TimeRange(LocalTime startTime, LocalTime endTime) {
+    @JsonCreator
+    public TimeRange(@JsonProperty("startTime") LocalTime startTime,
+            @JsonProperty("endTime") LocalTime endTime) {
         this.startTime = Objects.requireNonNull(startTime, "Start time cannot be null");
         this.endTime = Objects.requireNonNull(endTime, "End time cannot be null");
         this.spansMidnight = endTime.isBefore(startTime);
@@ -170,10 +175,10 @@ public class TimeRange {
     }
 
     /**
-     * Checks if this time range spans across midnight.
-     *
-     * @return true if the range spans midnight, false otherwise
+     * Checks if this time range spans across midnight. Derived from the
+     * start/end times; not part of the persisted representation.
      */
+    @JsonIgnore
     public boolean spansMidnight() {
         return spansMidnight;
     }

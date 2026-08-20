@@ -548,6 +548,10 @@ public class ApplicationFactory {
         settings.setCompletedDownloadRetentionDays(30);
         settings.setErrorDownloadRetentionDays(7);
 
+        // Apply persisted user settings over the defaults; load() is a no-op
+        // when the settings file does not exist yet.
+        settings.load();
+
         return settings;
     }
 

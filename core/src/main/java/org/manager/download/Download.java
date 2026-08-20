@@ -1,5 +1,8 @@
 package org.manager.download;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -67,10 +70,22 @@ public class Download {
      * Creates a new Download instance with a random UUID.
      */
     public Download() {
-        this.id = UUID.randomUUID().toString();
+        this(UUID.randomUUID().toString(), Instant.now());
+    }
+
+    /**
+     * Creates a Download with an explicit id and creation time. Used by
+     * Jackson to restore persisted downloads with their original identity.
+     *
+     * @param id        the download id
+     * @param createdAt the creation timestamp
+     */
+    @JsonCreator
+    public Download(@JsonProperty("id") String id, @JsonProperty("createdAt") Instant createdAt) {
+        this.id = id;
         this.mirrors = new ArrayList<>();
         this.status = Status.QUEUED;
-        this.createdAt = Instant.now();
+        this.createdAt = createdAt;
 
         // Settings will be initialized based on type when needed
     }
@@ -84,13 +99,15 @@ public class Download {
         this();
         this.uri = uri;
 
-        // Set type based on URI. YouTube detection must come before the
-        // generic http/https branch, otherwise YouTube URLs would always be
-        // typed as ARIA2.
-        if (uri.toString().contains("youtube.com") || uri.toString().contains("youtu.be")) {
-            this.type = Type.YOUTUBE; // Use YouTube handler for YouTube URLs
+        // Set type based on URI. Media detection must come before the generic
+        // http/https branch: known media platforms and streaming manifests
+        // (m3u8/DASH/fragmented MP4) are handled by the yt-dlp engine, while
+        // everything else (including direct media file links, which benefit
+        // from aria2 multi-connection) goes to aria2.
+        if (org.ytdlp.YtDlpUrlUtils.isMediaUrl(uri.toString())) {
+            this.type = Type.YOUTUBE; // Use yt-dlp handler for media URLs
         } else {
-            String scheme = uri.getScheme().toLowerCase();
+            String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
             if (scheme.equals("http") || scheme.equals("https") || scheme.equals("ftp")
                     || scheme.equals("magnet")) {
                 this.type = Type.ARIA2;
@@ -163,8 +180,17 @@ public class Download {
                 return; // Already initialized
             }
 
-            // Use the factory to create appropriate settings
-            DownloadSettingsFactory factory = new DownloadSettingsFactory(new org.manager.GlobalSettings());
+            // Use the application's live GlobalSettings so per-download
+            // defaults (proxy, aria2.*, ytdlp.* properties) reflect the
+            // persisted settings rather than a fresh default instance.
+            org.manager.GlobalSettings globalSettings;
+            try {
+                globalSettings = org.manager.ApplicationContext.getGlobalSettings();
+            } catch (IllegalStateException e) {
+                // Application factory unavailable (unit tests); fall back to defaults
+                globalSettings = new org.manager.GlobalSettings();
+            }
+            DownloadSettingsFactory factory = new DownloadSettingsFactory(globalSettings);
             settings = factory.createSettings(type);
         }
     }
@@ -230,6 +256,18 @@ public class Download {
     public List<URI> getMirrors() {
         synchronized (lock) {
             return new ArrayList<>(mirrors);
+        }
+    }
+
+    /**
+     * Replaces the mirror list. Used by state deserialization and mirror
+     * editing.
+     *
+     * @param mirrors the new mirror list, may be null for none
+     */
+    public void setMirrors(List<URI> mirrors) {
+        synchronized (lock) {
+            this.mirrors = mirrors != null ? new ArrayList<>(mirrors) : new ArrayList<>();
         }
     }
 
@@ -417,8 +455,20 @@ public class Download {
         return startedAt;
     }
 
+    public void setStartedAt(Instant startedAt) {
+        synchronized (lock) {
+            this.startedAt = startedAt;
+        }
+    }
+
     public Instant getCompletedAt() {
         return completedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        synchronized (lock) {
+            this.completedAt = completedAt;
+        }
     }
 
     public String getErrorMessage() {
@@ -437,6 +487,7 @@ public class Download {
      *
      * @return The options map
      */
+    @JsonIgnore
     public Map<String, String> getOptions() {
         synchronized (lock) {
             if (settings == null) {

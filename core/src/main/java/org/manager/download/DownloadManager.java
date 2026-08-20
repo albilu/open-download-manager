@@ -296,6 +296,13 @@ public interface DownloadManager {
     void setGlobalSettings(GlobalSettings settings);
 
     /**
+     * Pushes the current global settings (speed limit, concurrency, proxy) to
+     * the engines so running downloads pick them up without a restart. Call
+     * this after mutating {@link #getGlobalSettings()} directly.
+     */
+    void applyGlobalSettingsToActiveDownloads();
+
+    /**
      * Saves the current download state to be resumed after restart.
      *
      * @return A future that completes when the state is saved
