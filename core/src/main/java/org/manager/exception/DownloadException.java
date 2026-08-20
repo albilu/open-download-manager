@@ -113,10 +113,10 @@ public class DownloadException extends DownloadManagerException {
                  ErrorCodes.UNSUPPORTED_PROTOCOL,
                  ErrorCodes.AUTHENTICATION_FAILED,
                  ErrorCodes.INSUFFICIENT_SPACE,
-                 ErrorCodes.CORRUPTED_DATA -> false;
+                 ErrorCodes.CORRUPTED_DATA,
+                 ErrorCodes.CANCELLED -> false;
             case ErrorCodes.HANDLER_ERROR,
-                 ErrorCodes.ALREADY_EXISTS,
-                 ErrorCodes.CANCELLED -> true;
+                 ErrorCodes.ALREADY_EXISTS -> true;
             case null -> true; // Default to recoverable for unknown errors
             default -> true; // Default to recoverable for unknown errors
         };

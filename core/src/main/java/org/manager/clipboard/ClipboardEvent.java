@@ -131,7 +131,8 @@ public class ClipboardEvent {
     @Override
     public String toString() {
         return String.format("ClipboardEvent{type=%s, urlCount=%d, timestamp=%s, content='%s'}",
-                eventType, detectedUrls.size(), timestamp, getTruncatedContent(50));
+                eventType, detectedUrls.size(), timestamp,
+                content == null ? "null" : getTruncatedContent(50));
     }
 
     /**

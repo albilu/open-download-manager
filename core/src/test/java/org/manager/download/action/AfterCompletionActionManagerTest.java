@@ -210,14 +210,16 @@ class AfterCompletionActionManagerTest {
 
     @Test
     @DisplayName("Should handle listener management")
-    void shouldHandleListenerManagement() {
+    void shouldHandleListenerManagement() throws Exception {
         TestAfterCompletionActionListener listener2 = new TestAfterCompletionActionListener();
         actionManager.addListener(listener2);
 
         TestAfterCompletionAction action = new TestAfterCompletionAction(AfterCompletionAction.ActionType.PLAY_SOUND, true);
         actionManager.addAction(testDownload, action);
 
-        actionManager.executeActions(testDownload);
+        // Wait for execution: executeActions is asynchronous, so asserting
+        // listener counts immediately would race the executor thread
+        actionManager.executeActions(testDownload).get(5, TimeUnit.SECONDS);
 
         // Both listeners should be notified
         assertTrue(testListener.getActionStartCount() > 0);
@@ -226,8 +228,9 @@ class AfterCompletionActionManagerTest {
         // Remove one listener
         actionManager.removeListener(listener2);
         listener2.reset();
+        testListener.reset();
 
-        actionManager.executeActions(testDownload);
+        actionManager.executeActions(testDownload).get(5, TimeUnit.SECONDS);
 
         // Only the remaining listener should be notified
         assertTrue(testListener.getActionStartCount() > 0);

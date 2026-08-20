@@ -111,7 +111,7 @@ class ProxychainsConfigTest {
     @Test
     @DisplayName("Should add proxy with authentication")
     void shouldAddProxyWithAuth() {
-        config.addProxy(ProxychainsConfig.ProxyType.HTTP, "proxy.example.com", 8080, "user", "pass");
+        config.addProxy(ProxychainsConfig.ProxyType.HTTP, "proxy.example.com", 8080, "testuser", "testpass");
 
         assertEquals(1, config.getProxyList().size());
 

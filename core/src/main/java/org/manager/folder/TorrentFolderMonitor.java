@@ -31,9 +31,9 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
     public TorrentFolderMonitor(DownloadManager downloadManager,
             FolderMonitorService folderMonitorService,
             Path defaultDownloadDirectory) {
-        this.downloadManager = downloadManager;
-        this.folderMonitorService = folderMonitorService;
-        this.defaultDownloadDirectory = defaultDownloadDirectory;
+        this.downloadManager = java.util.Objects.requireNonNull(downloadManager, "downloadManager");
+        this.folderMonitorService = java.util.Objects.requireNonNull(folderMonitorService, "folderMonitorService");
+        this.defaultDownloadDirectory = defaultDownloadDirectory; // null allowed; fallbacks in determineDownloadDestination
 
         // Register this monitor as a listener
         folderMonitorService.addFolderMonitorListener(this);

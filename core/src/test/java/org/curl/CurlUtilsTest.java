@@ -233,14 +233,22 @@ class CurlUtilsTest {
     @Test
     @DisplayName("Should return -1 when content length header is missing")
     @Timeout(30)
-    void shouldReturnMinusOneWhenContentLengthHeaderIsMissing() {
-        // Use chunked transfer encoding which doesn't include Content-Length
-        String testUrl = "https://httpbin.org/stream/10";
+    void shouldReturnMinusOneWhenContentLengthHeaderIsMissing() throws IOException {
+        // Chunked transfer encoding does not include Content-Length. A
+        // dedicated server avoids queue coupling with tests that share the
+        // class-level MockWebServer.
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.start();
+            server.enqueue(new okhttp3.mockwebserver.MockResponse()
+                    .setResponseCode(200)
+                    .setChunkedBody("chunked-body-data", 8));
+            String testUrl = server.url("/stream/no-content-length").toString();
 
-        long contentLength = CurlUtils.getContentLength(testUrl);
+            long contentLength = CurlUtils.getContentLength(testUrl);
 
-        // Should return -1 for chunked responses without Content-Length
-        assertEquals(-1, contentLength);
+            // Should return -1 for chunked responses without Content-Length
+            assertEquals(-1, contentLength);
+        }
     }
 
     @Test
@@ -257,50 +265,78 @@ class CurlUtilsTest {
     @Test
     @DisplayName("Should extract filename from content disposition header")
     @Timeout(30)
-    void shouldExtractFilenameFromContentDispositionHeader() {
-        // Use a URL that provides Content-Disposition header with filename
-        String testUrl = "https://httpbin.org/response-headers?Content-Disposition=attachment;%20filename=test-file.txt";
+    void shouldExtractFilenameFromContentDispositionHeader() throws IOException {
+        // Served locally so the test is deterministic (httpbin.org is
+        // unreliable); dedicated server to avoid shared-queue coupling
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.start();
+            server.enqueue(new okhttp3.mockwebserver.MockResponse()
+                    .setResponseCode(200)
+                    .setHeader("Content-Disposition", "attachment; filename=test-file.txt")
+                    .setBody(""));
+            String testUrl = server.url("/content-disposition/unquoted").toString();
 
-        String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
+            String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
 
-        assertNotNull(filename);
-        assertEquals("test-file.txt", filename);
+            assertNotNull(filename);
+            assertEquals("test-file.txt", filename);
+        }
     }
 
     @Test
     @DisplayName("Should extract filename without quotes from content disposition header")
     @Timeout(30)
-    void shouldExtractFilenameWithoutQuotesFromContentDispositionHeader() {
-        // Use a URL that provides Content-Disposition header with quoted filename
-        String testUrl = "https://httpbin.org/response-headers?Content-Disposition=attachment;%20filename=\"quoted-file.txt\"";
+    void shouldExtractFilenameWithoutQuotesFromContentDispositionHeader() throws IOException {
+        // Quoted filename variant, served locally for determinism
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.start();
+            server.enqueue(new okhttp3.mockwebserver.MockResponse()
+                    .setResponseCode(200)
+                    .setHeader("Content-Disposition", "attachment; filename=\"quoted-file.txt\"")
+                    .setBody(""));
+            String testUrl = server.url("/content-disposition/quoted").toString();
 
-        String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
+            String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
 
-        assertNotNull(filename);
-        assertEquals("quoted-file.txt", filename);
+            assertNotNull(filename);
+            assertEquals("quoted-file.txt", filename);
+        }
     }
 
     @Test
     @DisplayName("Should return null when content disposition header is missing")
     @Timeout(30)
-    void shouldReturnNullWhenContentDispositionHeaderIsMissing() {
-        String testUrl = "https://httpbin.org/headers";
+    void shouldReturnNullWhenContentDispositionHeaderIsMissing() throws IOException {
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.start();
+            server.enqueue(new okhttp3.mockwebserver.MockResponse()
+                    .setResponseCode(200)
+                    .setBody("{}"));
+            String testUrl = server.url("/headers").toString();
 
-        String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
+            String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
 
-        assertNull(filename);
+            assertNull(filename);
+        }
     }
 
     @Test
     @DisplayName("Should return null when filename pattern not found in content disposition header")
     @Timeout(30)
-    void shouldReturnNullWhenFilenamePatternNotFoundInContentDispositionHeader() {
-        // Use a URL that provides Content-Disposition header without filename
-        String testUrl = "https://httpbin.org/response-headers?Content-Disposition=attachment";
+    void shouldReturnNullWhenFilenamePatternNotFoundInContentDispositionHeader() throws IOException {
+        // Content-Disposition without a filename parameter
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.start();
+            server.enqueue(new okhttp3.mockwebserver.MockResponse()
+                    .setResponseCode(200)
+                    .setHeader("Content-Disposition", "attachment")
+                    .setBody(""));
+            String testUrl = server.url("/content-disposition/no-filename").toString();
 
-        String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
+            String filename = CurlUtils.getFilenameFromContentDisposition(testUrl);
 
-        assertNull(filename);
+            assertNull(filename);
+        }
     }
 
     @Test

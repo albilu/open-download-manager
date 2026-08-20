@@ -24,7 +24,7 @@ public class HttrackSettings extends DownloadSettings {
     private boolean includeArchives = false;//
     private int maxRate = 0; // 0 means no limit, in KB/s
     private int connections = 8;
-    private String userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
+    private String userAgent = DEFAULT_USER_AGENT;
     private boolean useProxy = false;
     private String proxyAddress = null;
     private String proxyUsername = null;
@@ -32,6 +32,10 @@ public class HttrackSettings extends DownloadSettings {
     private List<String> excludePatterns = new ArrayList<>();//
     private List<String> includePatterns = new ArrayList<>();//
     private boolean mirrorMode = true;
+
+    private static final String DEFAULT_USER_AGENT =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+            + "Chrome/91.0.4472.124 Safari/537.36";
 
     /**
      * Creates new httrack settings with default values.
@@ -93,11 +97,13 @@ public class HttrackSettings extends DownloadSettings {
     /**
      * Sets the output directory where the website will be saved.
      *
-     * @param outputDirectory The output directory as a string
+     * @param outputDirectory The output directory as a string; null clears
+     *                        the directory (httrack then uses the working
+     *                        directory)
      * @return This settings object for chaining
      */
     public HttrackSettings setOutputDirectory(String outputDirectory) {
-        this.outputDirectory = Paths.get(outputDirectory);
+        this.outputDirectory = outputDirectory != null ? Paths.get(outputDirectory) : null;
         return this;
     }
 
@@ -113,10 +119,14 @@ public class HttrackSettings extends DownloadSettings {
     /**
      * Sets the maximum depth to crawl.
      *
-     * @param depth The maximum depth
+     * @param depth The maximum depth (must be at least 1)
      * @return This settings object for chaining
+     * @throws IllegalArgumentException if depth is zero or negative
      */
     public HttrackSettings setDepth(int depth) {
+        if (depth < 1) {
+            throw new IllegalArgumentException("Depth must be at least 1: " + depth);
+        }
         this.depth = depth;
         return this;
     }
@@ -251,12 +261,17 @@ public class HttrackSettings extends DownloadSettings {
     }
 
     /**
-     * Sets the maximum download rate in KB/s. Set to 0 for no limit.
+     * Sets the maximum download rate in KB/s. Must be positive; 0 (the field
+     * default) means no limit flag is emitted.
      *
      * @param maxRate The maximum download rate in KB/s
      * @return This settings object for chaining
+     * @throws IllegalArgumentException if maxRate is zero or negative
      */
     public HttrackSettings setMaxRate(int maxRate) {
+        if (maxRate <= 0) {
+            throw new IllegalArgumentException("Max rate must be positive (KB/s): " + maxRate);
+        }
         this.maxRate = maxRate;
         return this;
     }
@@ -273,10 +288,14 @@ public class HttrackSettings extends DownloadSettings {
     /**
      * Sets the number of concurrent connections.
      *
-     * @param connections The number of concurrent connections
+     * @param connections The number of concurrent connections (1-32)
      * @return This settings object for chaining
+     * @throws IllegalArgumentException if connections is outside 1-32
      */
     public HttrackSettings setConnections(int connections) {
+        if (connections < 1 || connections > 32) {
+            throw new IllegalArgumentException("Connections must be between 1 and 32: " + connections);
+        }
         this.connections = connections;
         return this;
     }
@@ -291,13 +310,14 @@ public class HttrackSettings extends DownloadSettings {
     }
 
     /**
-     * Sets the user agent string.
+     * Sets the user agent string. Null or empty resets to the default
+     * browser-like user agent.
      *
      * @param userAgent The user agent string
      * @return This settings object for chaining
      */
     public HttrackSettings setUserAgent(String userAgent) {
-        this.userAgent = userAgent;
+        this.userAgent = userAgent == null || userAgent.isEmpty() ? DEFAULT_USER_AGENT : userAgent;
         return this;
     }
 
@@ -397,18 +417,20 @@ public class HttrackSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public HttrackSettings setExcludePatterns(List<String> excludePatterns) {
-        this.excludePatterns = excludePatterns;
+        this.excludePatterns = excludePatterns != null ? new ArrayList<>(excludePatterns) : new ArrayList<>();
         return this;
     }
 
     /**
      * Adds a pattern to exclude from the download.
      *
-     * @param pattern The pattern to exclude
+     * @param pattern The pattern to exclude; null is ignored
      * @return This settings object for chaining
      */
     public HttrackSettings addExcludePattern(String pattern) {
-        this.excludePatterns.add(pattern);
+        if (pattern != null) {
+            this.excludePatterns.add(pattern);
+        }
         return this;
     }
 
@@ -428,18 +450,20 @@ public class HttrackSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public HttrackSettings setIncludePatterns(List<String> includePatterns) {
-        this.includePatterns = includePatterns;
+        this.includePatterns = includePatterns != null ? new ArrayList<>(includePatterns) : new ArrayList<>();
         return this;
     }
 
     /**
      * Adds a pattern to include in the download.
      *
-     * @param pattern The pattern to include
+     * @param pattern The pattern to include; null is ignored
      * @return This settings object for chaining
      */
     public HttrackSettings addIncludePattern(String pattern) {
-        this.includePatterns.add(pattern);
+        if (pattern != null) {
+            this.includePatterns.add(pattern);
+        }
         return this;
     }
 
@@ -524,38 +548,50 @@ public class HttrackSettings extends DownloadSettings {
         // Add the URL
         args.add(url);
 
-        // Add the output directory
-        args.add("-O");
-        args.add(outputDirectory.toString());
+        // Add the output directory (optional; httrack uses its working
+        // directory when omitted)
+        if (outputDirectory != null) {
+            args.add("-O");
+            args.add(outputDirectory.toString());
+        }
 
         // Set the recursion depth
         args.add("-r" + depth);
 
-        // Follow external links?
+        // Follow external links? %e1 lets httrack travel external links to
+        // depth 1 (note: -x is NOT this; it replaces external links with
+        // error pages)
         if (followExternalLinks) {
-            args.add("-*");
+            args.add("%e1");
         }
 
-        // File type filters
-        StringBuilder filters = new StringBuilder();
+        // File type filters: enabled types get include filters, explicitly
+        // disabled types get exclude filters (one httrack token per
+        // extension)
         if (includeImages) {
-            filters.append("+*.png,+*.jpg,+*.jpeg,+*.gif,+*.webp,+*.svg,");
+            addTypeFilters(args, "+", "png", "jpg", "jpeg", "gif", "webp", "svg");
+        } else {
+            addTypeFilters(args, "-", "png", "jpg", "jpeg", "gif", "webp", "svg");
         }
         if (includeVideos) {
-            filters.append("+*.mp4,+*.webm,+*.avi,+*.mov,+*.mkv,");
+            addTypeFilters(args, "+", "mp4", "webm", "avi", "mov", "mkv");
+        } else {
+            addTypeFilters(args, "-", "mp4", "webm", "avi", "mov", "mkv");
         }
         if (includeAudio) {
-            filters.append("+*.mp3,+*.ogg,+*.wav,+*.flac,");
+            addTypeFilters(args, "+", "mp3", "ogg", "wav", "flac");
+        } else {
+            addTypeFilters(args, "-", "mp3", "ogg", "wav", "flac");
         }
         if (includeDocuments) {
-            filters.append("+*.pdf,+*.doc,+*.docx,+*.ppt,+*.pptx,+*.xls,+*.xlsx,+*.txt,");
+            addTypeFilters(args, "+", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt");
+        } else {
+            addTypeFilters(args, "-", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt");
         }
         if (includeArchives) {
-            filters.append("+*.zip,+*.rar,+*.tar,+*.gz,");
-        }
-
-        if (filters.length() > 0) {
-            args.add("-*." + filters.toString());
+            addTypeFilters(args, "+", "zip", "rar", "tar", "gz");
+        } else {
+            addTypeFilters(args, "-", "zip", "rar", "tar", "gz");
         }
 
         // Add exclude patterns
@@ -568,9 +604,9 @@ public class HttrackSettings extends DownloadSettings {
             args.add("+" + pattern);
         }
 
-        // Speed limit
+        // Speed limit (httrack short form: -A51200 = 50 KB/s cap)
         if (maxRate > 0) {
-            args.add("-max-rate=" + maxRate);
+            args.add("-A" + maxRate);
         }
 
         // Number of connections
@@ -582,7 +618,7 @@ public class HttrackSettings extends DownloadSettings {
             args.add("\"" + userAgent + "\"");
         }
 
-        // Proxy settings
+        // Proxy settings (a missing address is skipped gracefully)
         if (useProxy && proxyAddress != null && !proxyAddress.isEmpty()) {
             args.add("-P");
             args.add(proxyAddress);
@@ -595,8 +631,31 @@ public class HttrackSettings extends DownloadSettings {
                 }
             }
         }
+
+        // Additional user-specified options (flag-style or with a value)
+        for (Map.Entry<String, String> entry : getAdditionalOptions().entrySet()) {
+            String key = entry.getKey();
+            args.add(key.startsWith("-") ? key : "-" + key);
+            String value = entry.getValue();
+            if (value != null && !value.isBlank()) {
+                args.add(value);
+            }
+        }
         return args;
 
+    }
+
+    /**
+     * Adds one httrack filter token per file extension, e.g. {@code +*.png}.
+     *
+     * @param args       the argument list to append to
+     * @param sign       "+" to include, "-" to exclude
+     * @param extensions file extensions without the dot
+     */
+    private static void addTypeFilters(List<String> args, String sign, String... extensions) {
+        for (String extension : extensions) {
+            args.add(sign + "*." + extension);
+        }
     }
 
     @Override

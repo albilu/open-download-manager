@@ -55,8 +55,6 @@ public class FolderMonitorSettings {
     public FolderMonitorSettings() {
         this.fileExtensions = new HashSet<>();
         this.fileExtensions.add(".torrent");
-        this.fileExtensions.add(".meta4");
-        this.fileExtensions.add(".metalink");
         this.recursive = false;
         this.moveToTrash = true;
         this.fileAction = moveToTrash ? FileAction.MOVE_TO_TRASH : FileAction.KEEP;
@@ -88,7 +86,7 @@ public class FolderMonitorSettings {
      * @return This settings object for method chaining
      */
     public FolderMonitorSettings setFileExtensions(Set<String> fileExtensions) {
-        this.fileExtensions = new HashSet<>(fileExtensions);
+        this.fileExtensions = fileExtensions != null ? new HashSet<>(fileExtensions) : new HashSet<>();
         return this;
     }
 
@@ -301,7 +299,7 @@ public class FolderMonitorSettings {
      * @return This settings object for method chaining
      */
     public FolderMonitorSettings setExcludePatterns(Set<String> excludePatterns) {
-        this.excludePatterns = new HashSet<>(excludePatterns);
+        this.excludePatterns = excludePatterns != null ? new HashSet<>(excludePatterns) : new HashSet<>();
         return this;
     }
 

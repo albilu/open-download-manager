@@ -29,6 +29,7 @@ import org.manager.download.DownloadListener;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.download.handler.ProxychainsDownloadHandler;
 import org.mockito.Mock;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import org.mockito.MockitoAnnotations;
 import org.tor.TorService;
@@ -299,8 +300,10 @@ class ProxychainsDownloadHandlerTest {
             handler.resumeDownload(null).join();
         });
 
-        // Test with non-paused download
-        when(mockDownload.getStatus()).thenReturn(Download.Status.DOWNLOADING);
+        // Test with non-paused download. doReturn (not when()) because the
+        // handler's executor thread concurrently invokes the void setStatus
+        // on the same mock, which would corrupt when()'s stubbing state.
+        doReturn(Download.Status.DOWNLOADING).when(mockDownload).getStatus();
         assertDoesNotThrow(() -> {
             handler.resumeDownload(mockDownload).join();
         });

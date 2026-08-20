@@ -212,11 +212,13 @@ public class DownloadSettingsFactory {
 
         // Defaults, overridable from the Settings dialog (httrack.* properties)
         settings.setConnections(5);
-        settings.setDepth(g.getIntProperty("httrack.depth", 2));
+        // Depth must be >= 1; clamp persisted/absent values defensively
+        settings.setDepth(Math.max(1, g.getIntProperty("httrack.depth", 2)));
         settings.setFollowExternalLinks(false);
         settings.setIncludeImages(true);
         settings.setIncludeVideos(false);
-        settings.setMaxRate(0); // no limit
+        // maxRate stays at the field default (0 = no limit flag emitted);
+        // setMaxRate now rejects non-positive values
         settings.setIncludeArchives(g.getBooleanProperty("httrack.includeArchives", false));
         String include = g.getProperty("httrack.include", "");
         if (!include.isEmpty()) {

@@ -1,9 +1,7 @@
 package org.manager.clipboard;
 
-import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -22,13 +20,17 @@ public class UrlDetector {
 
     private static final Logger LOGGER = Logger.getLogger(UrlDetector.class.getName());
 
-    // Comprehensive URL regex pattern that matches various protocols
+    // Comprehensive URL regex pattern that matches various protocols. The
+    // path/query/fragment sections use a single flat character class (one
+    // iterative star) to avoid nested-quantifier recursion, which caused
+    // StackOverflowError on long URLs. The last alternative matches bare
+    // domains so protocol-less URLs can be normalized.
     private static final String URL_REGEX = """
             (?i)\\b(?:
-            (?:https?://)(?:[-\\w.])+(?:[:\\d]+)?(?:/(?:[\\w._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})*)*(?:\\?(?:[\\w._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?(?:#(?:[\\w._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?|
-            (?:ftps?://|sftp://)(?:[-\\w:@.]+)?(?:[:\\d]+)?(?:/(?:[\\w._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})*)*|
-            magnet:\\?xt=urn:[a-z0-9]+:[a-zA-Z0-9]{32,40}[&\\w\\d%+/=.]*|
-            file://[^\\s]*\\.torrent
+            (?:https?|ftps?|sftp)://[-\\w.]+(?::\\d+)?[\\w._~!$&'()*+,;=:@%/?#-]*
+            |magnet:\\?xt=urn:[a-z0-9]+:[a-zA-Z0-9]{32,40}[&\\w\\d%+/=.]*
+            |file://[^\\s]*\\.torrent
+            |(?:[\\w-]+\\.)+[a-z]{2,}(?::\\d+)?[\\w._~!$&'()*+,;=:@%/?#-]*
             )\\b"""
             .replaceAll("\\s+", "");
 
@@ -45,7 +47,7 @@ public class UrlDetector {
             (?i)(?:https?://)?(?:www\\.)?
             (?:youtube\\.com/watch\\?v=|youtu\\.be/|youtube\\.com/embed/|youtube\\.com/v/|
             vimeo\\.com/|dailymotion\\.com/video/|twitch\\.tv/|facebook\\.com/.*videos/|
-            instagram\\.com/p/|tiktok\\.com/|twitter\\.com/.*status/)
+            instagram\\.com/p/|tiktok\\.com/@[\\w.\\-]+/video/|twitter\\.com/.*status/)
             [\\w-]+""".replaceAll("\\s+", ""));
 
     // Common download file extensions
@@ -120,19 +122,30 @@ public class UrlDetector {
                 return new URI(urlString);
             }
 
-            // For HTTP/HTTPS URLs, ensure they're properly formed
-            if (!urlString.startsWith("http://") && !urlString.startsWith("https://")
-                    && !urlString.startsWith("ftp://") && !urlString.startsWith("file://")) {
+            // For HTTP/HTTPS URLs, ensure they're properly formed. The scheme
+            // comparison is case-insensitive so HTTP:// URLs are not
+            // double-prefixed.
+            String lowerCaseUrl = urlString.toLowerCase(java.util.Locale.ROOT);
+            if (!lowerCaseUrl.startsWith("http://") && !lowerCaseUrl.startsWith("https://")
+                    && !lowerCaseUrl.startsWith("ftp://") && !lowerCaseUrl.startsWith("ftps://")
+                    && !lowerCaseUrl.startsWith("sftp://") && !lowerCaseUrl.startsWith("file://")) {
                 // Try adding https:// prefix for URLs that look like web URLs
                 if (urlString.contains(".") && !urlString.contains(" ")) {
                     urlString = "https://" + urlString;
                 }
             }
 
-            // Validate the URL
-            URL url = new URL(urlString);
-            return url.toURI();
-        } catch (MalformedURLException | URISyntaxException e) {
+            // java.net.URI (unlike URL) accepts sftp and preserves the
+            // file:/// empty authority, so round-trip through it instead of
+            // URL.toURI() which mangles both.
+            URI uri = new URI(urlString);
+            if (uri.getScheme() != null
+                    && !uri.getScheme().equals(uri.getScheme().toLowerCase(java.util.Locale.ROOT))) {
+                uri = new URI(uri.getScheme().toLowerCase(java.util.Locale.ROOT)
+                        + urlString.substring(uri.getScheme().length()));
+            }
+            return uri;
+        } catch (URISyntaxException e) {
             return null;
         }
     }

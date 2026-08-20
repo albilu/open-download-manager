@@ -38,11 +38,13 @@ public class DownloadManagerException extends Exception {
      *
      * @param message The error message
      * @param cause The underlying cause
-     * @param errorCode A specific error code for categorization
+     * @param errorCode A specific error code for categorization; an explicit
+     *                  null is stored as null (only the message-only
+     *                  constructors substitute GENERAL_ERROR)
      */
     public DownloadManagerException(String message, Throwable cause, String errorCode) {
         super(message, cause);
-        this.errorCode = errorCode != null ? errorCode : "GENERAL_ERROR";
+        this.errorCode = errorCode;
         this.recoverable = false;
     }
 
@@ -56,7 +58,7 @@ public class DownloadManagerException extends Exception {
      */
     public DownloadManagerException(String message, Throwable cause, String errorCode, boolean recoverable) {
         super(message, cause);
-        this.errorCode = errorCode != null ? errorCode : "GENERAL_ERROR";
+        this.errorCode = errorCode;
         this.recoverable = recoverable;
     }
 

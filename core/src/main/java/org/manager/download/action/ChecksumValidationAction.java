@@ -78,8 +78,8 @@ public class ChecksumValidationAction implements AfterCompletionAction {
 
     @Override
     public boolean execute(Download download) {
-        // Reset state
-        cancelled.set(false);
+        // Reset state. The cancelled flag is deliberately NOT reset here: a
+        // cancel() issued before execute() must be honored, not wiped.
         actualChecksum = null;
         validatedFile = null;
 
@@ -152,7 +152,7 @@ public class ChecksumValidationAction implements AfterCompletionAction {
     @Override
     public String getDescription() {
         return "Checksum validation (" + algorithm.name() + ") - Expected: "
-                + truncateChecksum(expectedChecksum, 16)
+                + truncateChecksum(expectedChecksum, 18)
                 + (caseSensitive ? " (case-sensitive)" : " (case-insensitive)");
     }
 

@@ -456,7 +456,8 @@ public class ProxychainsConfig {
         }
 
         public boolean hasAuthentication() {
-            return username != null && !username.isEmpty();
+            return username != null && !username.isEmpty()
+                    && password != null && !password.isEmpty();
         }
 
         @Override

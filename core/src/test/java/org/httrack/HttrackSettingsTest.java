@@ -367,8 +367,12 @@ class HttrackSettingsTest {
         assertFalse(commandLine.isEmpty(), "Command line should not be empty");
         assertTrue(commandLine.contains("https://example.com"), "Command line should contain URL");
         assertTrue(commandLine.contains("-r3"), "Command line should contain depth option");
-        assertTrue(commandLine.contains("-x"), "Command line should contain follow external links option");
-        assertTrue(commandLine.contains("-j"), "Command line should contain exclude images option");
+        // %e1 = httrack external-depth 1 (travel external links); -x is NOT
+        // used for this (it replaces external links with error pages)
+        assertTrue(commandLine.contains("%e1"), "Command line should contain follow external links option");
+        // includeImages=false emits explicit exclude filters (httrack has no
+        // -j "exclude images" flag)
+        assertTrue(commandLine.contains("-*.png"), "Command line should exclude images when disabled");
         assertTrue(commandLine.contains("-A51200"), "Command line should contain max rate option");
         assertTrue(commandLine.contains("-c8"), "Command line should contain connections option");
 

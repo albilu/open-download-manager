@@ -291,6 +291,10 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     }
 
     private void scanFolderInternal(Path folderPath, FolderMonitorSettings settings) {
+        if (!settings.isEnabled()) {
+            LOGGER.info("Skipping folder scan - monitoring disabled: " + folderPath);
+            return;
+        }
         try {
             LOGGER.info("Scanning folder for existing files: " + folderPath);
 
@@ -335,6 +339,10 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
     private void processBatch(Path folderPath, List<Path> files, FolderMonitorSettings settings) {
         for (Path file : files) {
+            // Notify detection for every file found by a scan. The watch-event
+            // path emits onFileAdded separately (handleFileEvent); batches are
+            // unreachable from watch events, so there is no double-notify.
+            notifyListeners(listener -> listener.onFileAdded(folderPath, file, settings));
             try {
                 processFile(folderPath, file, settings);
             } catch (Exception e) {
@@ -567,9 +575,12 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         try {
             LOGGER.info("Processing file: " + filePath);
 
-            // Double-check that monitoring is still active before processing
-            if (!isMonitoring(folderPath) || !settings.isEnabled()) {
-                LOGGER.info("Skipping file processing - monitoring stopped: " + filePath);
+            // Double-check that settings are still active before processing.
+            // Note: the isMonitoring() check is deliberately absent so a
+            // standalone scanFolder() (which does not register the folder)
+            // still processes files, per the FolderMonitorService contract.
+            if (!settings.isEnabled()) {
+                LOGGER.info("Skipping file processing - monitoring disabled: " + filePath);
                 return;
             }
 
@@ -608,13 +619,12 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     private void executeFileAction(Path folderPath, Path filePath, FolderMonitorSettings settings) throws IOException {
         FolderMonitorSettings.FileAction action = settings.getFileAction();
 
-        // Check file permissions before processing
+        // Check file permissions before processing. Errors are thrown only:
+        // processFile's catch block performs the single onFileProcessingError
+        // notification (notifying here as well would double-notify).
         if (!Files.isReadable(filePath)) {
             String errorMsg = "Cannot access file due to permissions";
-            IOException permissionError = new IOException(errorMsg + ": " + filePath);
-            notifyListeners(
-                    listener -> listener.onFileProcessingError(folderPath, filePath, permissionError, settings));
-            throw permissionError;
+            throw new IOException(errorMsg + ": " + filePath);
         }
 
         // Validate file format for specific file types
@@ -622,10 +632,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         if (fileName.endsWith(".torrent") || fileName.endsWith(".metalink")) {
             if (!isValidFileFormat(filePath, fileName)) {
                 String errorMsg = "Invalid file format";
-                IOException formatError = new IOException(errorMsg + ": " + filePath);
-                notifyListeners(
-                        listener -> listener.onFileProcessingError(folderPath, filePath, formatError, settings));
-                throw formatError;
+                throw new IOException(errorMsg + ": " + filePath);
             }
         }
 

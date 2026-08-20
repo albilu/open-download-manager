@@ -476,10 +476,16 @@ public class YtDlpClient {
                 Process process = pb.start();
 
                 StringBuilder output = new StringBuilder();
+                String jsonLine = null;
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         output.append(line).append("\n");
+                        // yt-dlp prints WARNING/ERROR lines ahead of the JSON
+                        // payload; the first JSON line carries the video info
+                        if (jsonLine == null && line.trim().startsWith("{")) {
+                            jsonLine = line;
+                        }
                     }
                 }
 
@@ -487,9 +493,12 @@ public class YtDlpClient {
                 if (exitCode != 0) {
                     throw new RuntimeException("yt-dlp failed with exit code: " + exitCode + "\nOutput: " + output);
                 }
+                if (jsonLine == null) {
+                    throw new RuntimeException("yt-dlp produced no JSON output\nOutput: " + output);
+                }
 
                 // Parse JSON output
-                JsonNode jsonNode = OBJECT_MAPPER.readTree(output.toString());
+                JsonNode jsonNode = OBJECT_MAPPER.readTree(jsonLine);
                 return parseVideoInfo(jsonNode);
 
             } catch (Exception e) {

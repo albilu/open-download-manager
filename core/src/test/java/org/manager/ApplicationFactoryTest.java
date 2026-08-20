@@ -349,10 +349,19 @@ class ApplicationFactoryTest {
 
     @Test
     void testApplicationContextCannotBeInstantiated() {
-        assertThrows(UnsupportedOperationException.class,
-                    () -> {
-                        // Use reflection to try to create instance
-                        ApplicationContext.class.getDeclaredConstructor().newInstance();
-                    });
+        // Constructor.newInstance wraps the constructor's throw in an
+        // InvocationTargetException; the guard must be the cause
+        java.lang.reflect.InvocationTargetException thrown = assertThrows(
+                java.lang.reflect.InvocationTargetException.class,
+                () -> {
+                    // Use reflection to try to create instance; the
+                    // constructor is private, so it must be made
+                    // accessible to reach the guard throw
+                    var constructor = ApplicationContext.class.getDeclaredConstructor();
+                    constructor.setAccessible(true);
+                    constructor.newInstance();
+                });
+        assertTrue(thrown.getCause() instanceof UnsupportedOperationException,
+                "cause should be UnsupportedOperationException but was " + thrown.getCause());
     }
 }

@@ -269,9 +269,14 @@ class ValidateTests {
             try {
                 folderMonitorService.startMonitoring(invalidPath, settings).get(2, TimeUnit.SECONDS);
             } catch (Exception e) {
-                // Expected - invalid path should cause exception
-                assertTrue(e.getCause() instanceof IllegalArgumentException ||
-                          e.getCause() instanceof IOException);
+                // Expected - invalid path should cause exception. The impl may
+                // wrap the meaningful cause one level deeper in a RuntimeException.
+                Throwable cause = e.getCause();
+                Throwable root = cause != null ? cause.getCause() : null;
+                assertTrue(cause instanceof IllegalArgumentException
+                        || cause instanceof IOException
+                        || root instanceof IllegalArgumentException
+                        || root instanceof IOException);
             }
         });
     }

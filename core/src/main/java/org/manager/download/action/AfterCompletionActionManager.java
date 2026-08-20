@@ -1,6 +1,7 @@
 package org.manager.download.action;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -86,7 +87,11 @@ public class AfterCompletionActionManager {
     }
 
     /**
-     * Execute all actions for a download that has completed.
+     * Execute all actions for a download that has completed. Actions run
+     * concurrently (one task each, joined with allOf) so independent actions
+     * such as notification, antivirus scan, and file moves do not serialize
+     * behind the slowest one. onAllActionsComplete fires once, after every
+     * action has settled.
      *
      * @param download The completed download
      * @return CompletableFuture that completes when all actions are done
@@ -94,17 +99,17 @@ public class AfterCompletionActionManager {
     public CompletableFuture<Void> executeActions(Download download) {
         String downloadId = download.getId();
 
-        if (!downloadActions.containsKey(downloadId)
-                || downloadActions.get(downloadId).isEmpty()) {
+        List<AfterCompletionAction> actions = downloadActions.get(downloadId);
+        if (actions == null || actions.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
 
-        return CompletableFuture.runAsync(() -> {
-            List<AfterCompletionAction> actions = downloadActions.get(downloadId);
-            List<AfterCompletionAction> successfulActions = new ArrayList<>();
-            List<AfterCompletionAction> failedActions = new ArrayList<>();
+        List<AfterCompletionAction> successfulActions = Collections.synchronizedList(new ArrayList<>());
+        List<AfterCompletionAction> failedActions = Collections.synchronizedList(new ArrayList<>());
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
 
-            for (AfterCompletionAction action : actions) {
+        for (AfterCompletionAction action : new ArrayList<>(actions)) {
+            futures.add(submitAsync(() -> {
                 try {
                     // Notify listeners that action is starting
                     notifyActionStart(download, action);
@@ -125,12 +130,24 @@ public class AfterCompletionActionManager {
                             + action.getDescription(), e);
                     notifyActionError(download, action, e.getMessage(), action.getSeverity());
                 }
-            }
+            }));
+        }
 
-            // Notify listeners that all actions are complete
-            notifyAllActionsComplete(download, successfulActions, failedActions);
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenRun(() -> notifyAllActionsComplete(download, successfulActions, failedActions));
+    }
 
-        }, executorService);
+    /**
+     * Submits a task to the executor, falling back to the common pool when
+     * the executor has already been shut down.
+     */
+    private CompletableFuture<Void> submitAsync(Runnable task) {
+        try {
+            return CompletableFuture.runAsync(task, executorService);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            LOGGER.warning("Action executor is shut down; falling back to common pool");
+            return CompletableFuture.runAsync(task);
+        }
     }
 
     /**
