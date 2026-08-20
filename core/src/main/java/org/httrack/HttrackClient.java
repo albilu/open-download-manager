@@ -43,6 +43,10 @@ public class HttrackClient {
             "Bytes\\s+received:\\s+(\\d+)");
     private static final Pattern RATE_PATTERN = Pattern.compile(
             "Transfer\\s+rate:\\s+(\\d+)\\s+bytes/sec");
+    /** Strips the VT100 escapes httrack emits in verbose status lines. */
+    private static final Pattern ANSI_PATTERN = Pattern.compile("\u001B\\[[0-9;]*[A-Za-z]");
+    /** "Files written: N" summary line; 0 written + errors = total failure. */
+    private static final Pattern FILES_WRITTEN_PATTERN = Pattern.compile("Files\\s+written:\\s*(\\d+)");
 
     static {
         OBJECT_MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -335,10 +339,13 @@ public class HttrackClient {
      * Shuts down the client and stops all active jobs.
      */
     public void shutdown() {
-        // Cancel all active jobs
+        // Cancel all active jobs and wait so callers observe a fully
+        // stopped client with no lingering active jobs
+        List<CompletableFuture<Void>> cancellations = new ArrayList<>();
         for (String jobId : new ArrayList<>(activeJobs.keySet())) {
-            cancelJob(jobId, false);
+            cancellations.add(cancelJob(jobId, false));
         }
+        CompletableFuture.allOf(cancellations.toArray(new CompletableFuture[0])).join();
 
         // Shutdown executor
         executorService.shutdown();
@@ -463,9 +470,23 @@ public class HttrackClient {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             long lastUpdateTime = System.currentTimeMillis();
+            boolean sawErrors = false;
+            int filesWritten = 0;
 
             while ((line = reader.readLine()) != null && !Thread.currentThread().isInterrupted()) {
                 parseProgressLine(line, job);
+
+                // httrack exits 0 even when the whole mirror failed (e.g.
+                // unresolvable host); " error - " entries in the (ANSI
+                // escaped) output are the only failure signal
+                String plain = ANSI_PATTERN.matcher(line).replaceAll("");
+                if (plain.contains(" error - ")) {
+                    sawErrors = true;
+                }
+                Matcher filesMatcher = FILES_WRITTEN_PATTERN.matcher(plain);
+                if (filesMatcher.find()) {
+                    filesWritten = Math.max(filesWritten, Integer.parseInt(filesMatcher.group(1)));
+                }
 
                 // Throttle progress updates
                 long currentTime = System.currentTimeMillis();
@@ -477,7 +498,7 @@ public class HttrackClient {
 
             // Wait for process completion
             int exitCode = process.waitFor();
-            handleProcessCompletion(exitCode, job);
+            handleProcessCompletion(exitCode, job, sawErrors && filesWritten == 0);
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -531,7 +552,7 @@ public class HttrackClient {
         }
     }
 
-    private void handleProcessCompletion(int exitCode, HttrackJob job) {
+    private void handleProcessCompletion(int exitCode, HttrackJob job, boolean totalFailure) {
         synchronized (this) {
             // Don't process completion if the job is already paused
             // (paused jobs have their process destroyed intentionally)
@@ -543,14 +564,19 @@ public class HttrackClient {
             // Clean up monitoring future
             monitoringFutures.remove(job.getJobId());
 
-            if (exitCode == 0) {
+            // exitCode 0 with totalFailure: httrack reported transfer errors
+            // and wrote no files (e.g. unresolvable host) — the exit code
+            // alone cannot distinguish this from success
+            if (exitCode == 0 && !totalFailure) {
                 job.setStatus(HttrackJob.Status.COMPLETED);
                 job.setProgress(100.0f);
                 notifyJobCompleted(job);
                 LOGGER.info("httrack job completed successfully: " + job.getJobId());
             } else {
                 job.setStatus(HttrackJob.Status.ERROR);
-                job.setErrorMessage("httrack process exited with code: " + exitCode);
+                job.setErrorMessage(totalFailure
+                        ? "httrack reported transfer errors and wrote no files"
+                        : "httrack process exited with code: " + exitCode);
                 notifyJobError(job, job.getErrorMessage());
                 LOGGER.warning("httrack job failed with exit code " + exitCode + ": " + job.getJobId());
             }

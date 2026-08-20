@@ -180,6 +180,13 @@ public class ProxychainsClient {
         executorService.submit(() -> {
             Process process = null;
             try {
+                // Paused before the process spawned (pause raced the async
+                // start): abort so the paused state sticks
+                if (download.getStatus() == Download.Status.PAUSED) {
+                    LOGGER.info("Download " + download.getId() + " was paused before spawning; aborting start");
+                    return;
+                }
+
                 // Create destination directory if it doesn't exist
                 Path destinationDir = download.getDestination();
                 if (destinationDir != null) {
@@ -263,6 +270,11 @@ public class ProxychainsClient {
                     if (listener != null) {
                         listener.onDownloadComplete(download);
                     }
+                } else if (download.getStatus() == Download.Status.PAUSED) {
+                    // Intentionally stopped by pauseDownload (process destroy):
+                    // keep the PAUSED state so a later resume works
+                    LOGGER.info("Process of paused download " + download.getId()
+                            + " terminated (exit " + exitCode + ")");
                 } else {
                     download.setStatus(Download.Status.ERROR);
                     download.setErrorMessage("proxychains process exited with code: " + exitCode);
@@ -272,6 +284,10 @@ public class ProxychainsClient {
                 }
             } catch (IOException | InterruptedException e) {
                 // Handle errors
+                if (download.getStatus() == Download.Status.PAUSED) {
+                    // Reader failure caused by the intentional pause-destroy
+                    return;
+                }
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage("Error during download: " + e.getMessage());
                 if (listener != null) {
@@ -463,6 +479,14 @@ public class ProxychainsClient {
                 if (listener != null) {
                     listener.onDownloadPause(download);
                 }
+            }
+        } else {
+            // Process not spawned yet (pause raced the asynchronous start):
+            // the download is trivially paused; reflect it so a subsequent
+            // resume works and listeners learn about the pause
+            download.setStatus(Download.Status.PAUSED);
+            if (listener != null) {
+                listener.onDownloadPause(download);
             }
         }
     }

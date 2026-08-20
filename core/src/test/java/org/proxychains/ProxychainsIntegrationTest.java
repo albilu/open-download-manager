@@ -293,13 +293,14 @@ class ProxychainsIntegrationTest {
         assertTrue(handler.isActive(download.getId()));
         // assertEquals(1, handler.getActiveDownloadCount());
 
-        // Test pause functionality
-        doNothing().when(mockListener).onDownloadPause(any());
+        // Test pause functionality. (No doNothing() stubbing here: a mock's
+        // default behavior is already a no-op, and mid-test stubbing races
+        // the handler thread's asynchronous listener notifications, which
+        // Mockito reports as "Unfinished stubbing".)
         handler.pauseDownload(download);
 
         // Test resume functionality
         download.setStatus(Download.Status.PAUSED);
-        doNothing().when(mockListener).onDownloadResume(any());
         handler.resumeDownload(download);
 
         // Test cancellation

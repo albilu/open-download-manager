@@ -134,8 +134,9 @@ class FolderMonitorE2ETest {
             Path torrentFile = inboxFolder.resolve("ubuntu-22.04.torrent");
             createRealisticTorrentFile(torrentFile, "Ubuntu 22.04 LTS", 4_000_000_000L);
 
-            // Then - Verify complete workflow
-            await().atMost(Duration.ofSeconds(30))
+            // Then - Verify complete workflow (45s: full-suite load can slow
+            // the debounce + watch pipeline considerably)
+            await().atMost(Duration.ofSeconds(45))
                     .untilAsserted(() -> {
                         // File should be detected and processed
                         assertTrue(tracker.fileAdded.get(), "File should be detected");
@@ -168,7 +169,7 @@ class FolderMonitorE2ETest {
             FolderMonitorSettings settings = new FolderMonitorSettings()
                     .setFileExtensions(Set.of(".torrent"))
                     .setMaxFilesPerBatch(3)
-                    .setMinFileSize(1000L)
+                    .setMinFileSize(50L) // realistic fixtures are ~180 bytes; tiny fixture is 15
                     .setMaxFileSize(50_000L)
                     .setFileAction(FolderMonitorSettings.FileAction.MOVE_TO_TRASH)
                     .setDebounceDelay(Duration.ofMillis(100));
@@ -281,23 +282,23 @@ class FolderMonitorE2ETest {
 
             MultiFormatTracker tracker = new MultiFormatTracker();
 
-            // Configure different settings for each monitor
-            FolderMonitorSettings torrentSettings = TorrentFolderMonitor.createDefaultTorrentSettings()
+            // Both specialized monitors are listeners on the same service and
+            // self-filter by extension; one combined monitoring session
+            // covering all extensions is the correct pattern (a second
+            // startMonitoring on the same folder would REPLACE the first's
+            // settings)
+            FolderMonitorSettings combinedSettings = new FolderMonitorSettings()
+                    .setFileExtensions(Set.of(".torrent", ".meta4", ".metalink"))
                     .setFileAction(FolderMonitorSettings.FileAction.MOVE_TO_DIRECTORY)
                     .setMoveToDirectory(processedDir.resolve("torrents"));
-
-            FolderMonitorSettings metalinkSettings = MetaLinkFolderMonitor.createDefaultMetaLinkSettings()
-                    .setFileAction(FolderMonitorSettings.FileAction.MOVE_TO_DIRECTORY)
-                    .setMoveToDirectory(processedDir.resolve("metalinks"));
 
             Files.createDirectories(processedDir.resolve("torrents"));
             Files.createDirectories(processedDir.resolve("metalinks"));
 
             folderMonitorService.addFolderMonitorListener(tracker);
 
-            // When - Start both monitors on same folder
-            torrentFolderMonitor.startTorrentMonitoring(multiFormatFolder, torrentSettings).get(5, TimeUnit.SECONDS);
-            metaLinkFolderMonitor.startMetaLinkMonitoring(multiFormatFolder, metalinkSettings).get(5, TimeUnit.SECONDS);
+            // When - Start monitoring with the combined session
+            torrentFolderMonitor.startTorrentMonitoring(multiFormatFolder, combinedSettings).get(5, TimeUnit.SECONDS);
 
             Thread.sleep(1000);
 
@@ -330,20 +331,17 @@ class FolderMonitorE2ETest {
 
             ConflictTracker tracker = new ConflictTracker();
 
-            // Configure overlapping extensions (both monitors watch .torrent)
-            FolderMonitorSettings torrentSettings = new FolderMonitorSettings()
-                    .setFileExtensions(Set.of(".torrent", ".meta4")) // Overlap with metalink
-                    .setFileAction(FolderMonitorSettings.FileAction.KEEP);
-
-            FolderMonitorSettings metalinkSettings = new FolderMonitorSettings()
-                    .setFileExtensions(Set.of(".meta4", ".metalink"))
+            // Configure overlapping extensions (both monitors listen on the
+            // same service); one combined session keeps every extension
+            // watched — separate sessions would replace each other's settings
+            FolderMonitorSettings combinedSettings = new FolderMonitorSettings()
+                    .setFileExtensions(Set.of(".torrent", ".meta4", ".metalink"))
                     .setFileAction(FolderMonitorSettings.FileAction.KEEP);
 
             folderMonitorService.addFolderMonitorListener(tracker);
 
-            // When - Start both monitors
-            torrentFolderMonitor.startTorrentMonitoring(conflictFolder, torrentSettings).get(5, TimeUnit.SECONDS);
-            metaLinkFolderMonitor.startMetaLinkMonitoring(conflictFolder, metalinkSettings).get(5, TimeUnit.SECONDS);
+            // When - Start a single monitoring session covering all extensions
+            torrentFolderMonitor.startTorrentMonitoring(conflictFolder, combinedSettings).get(5, TimeUnit.SECONDS);
 
             Thread.sleep(1000);
 
@@ -500,7 +498,7 @@ class FolderMonitorE2ETest {
                     .setDebounceDelay(Duration.ofMillis(50)) // Lower delay for automated systems
                     .setProcessExistingFiles(true)
                     .setFileAction(FolderMonitorSettings.FileAction.DELETE) // Clean up after processing
-                    .setMinFileSize(500L)
+                    .setMinFileSize(50L) // realistic fixtures are ~180 bytes
                     .setMaxFileSize(100_000L);
 
             folderMonitorService.addFolderMonitorListener(tracker);
@@ -640,6 +638,10 @@ class FolderMonitorE2ETest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(1, tracker.filesProcessedBeforeInterruption.get());
+                        // Fully processed (moved to trash) before stopping,
+                        // otherwise the restart scan re-announces the same file
+                        assertEquals(1, tracker.filesCompleted.get());
+                        assertFalse(Files.exists(monitoredFolder.resolve("before.torrent")));
                     });
 
             // Simulate filesystem interruption by stopping and restarting monitoring
@@ -845,6 +847,7 @@ class FolderMonitorE2ETest {
         final AtomicInteger filesProcessedBeforeInterruption = new AtomicInteger(0);
         final AtomicInteger totalFilesProcessed = new AtomicInteger(0);
         final AtomicBoolean monitoringRestarted = new AtomicBoolean(false);
+        final AtomicInteger filesCompleted = new AtomicInteger(0);
 
         @Override
         public void onFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
@@ -854,6 +857,12 @@ class FolderMonitorE2ETest {
             } else if (filePath.toString().contains("after")) {
                 monitoringRestarted.set(true);
             }
+        }
+
+        @Override
+        public void onFileProcessed(Path folderPath, Path filePath,
+                FolderMonitorSettings.FileAction action, FolderMonitorSettings settings) {
+            filesCompleted.incrementAndGet();
         }
     }
 }

@@ -56,6 +56,10 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     private final AtomicLong errorCount = new AtomicLong(0);
     private final Map<String, Object> statistics = new ConcurrentHashMap<>();
     private final Map<Path, Long> processedFiles = new ConcurrentHashMap<>(); // Track processed files with timestamp
+    /** Files already announced via onFileAdded (dedupes CREATE vs later MODIFY eligibility). */
+    private final Set<Path> announcedFiles = ConcurrentHashMap.newKeySet();
+    /** Files whose processing error was already reported (exactly-once per round). */
+    private final Set<Path> fileErrorReported = ConcurrentHashMap.newKeySet();
     private static final long PROCESSED_FILES_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
     private static final long PROCESSED_FILES_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
     private static final int PROCESSED_FILES_MAX_SIZE = 10000; // Maximum number of tracked files
@@ -160,6 +164,9 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                                 StandardWatchEventKinds.ENTRY_DELETE);
                         recursiveKeys.add(subDirKey);
                         watchKeys.put(dir, subDirKey);
+                        // Recursive subdirectories must resolve to the root's
+                        // settings, otherwise monitoringLoop drops their events
+                        folderSettings.put(dir, settings.copy());
                     }
                     return FileVisitResult.CONTINUE;
                 }
@@ -197,6 +204,12 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         }
 
         FolderMonitorSettings settings = folderSettings.remove(folderPath);
+
+        // Remove settings registered for recursively monitored subdirectories
+        folderSettings.keySet().removeIf(path -> path.startsWith(folderPath) && !path.equals(folderPath));
+
+        // Clear announced-file tracking for this folder (see handleFileEvent)
+        announcedFiles.removeIf(path -> path.startsWith(folderPath));
 
         // Cancel any pending debounce timers for files in this folder
         List<Path> timersToCancel = new ArrayList<>();
@@ -339,10 +352,11 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
     private void processBatch(Path folderPath, List<Path> files, FolderMonitorSettings settings) {
         for (Path file : files) {
-            // Notify detection for every file found by a scan. The watch-event
-            // path emits onFileAdded separately (handleFileEvent); batches are
-            // unreachable from watch events, so there is no double-notify.
-            notifyListeners(listener -> listener.onFileAdded(folderPath, file, settings));
+            // Notify detection for every file found by a scan. announcedFiles
+            // dedupes against a later MODIFY re-announcing the same file.
+            announcedFiles.add(file);
+            notifyFileEvent(folderPath, file, settings,
+                    listener -> listener.onFileAdded(folderPath, file, settings));
             try {
                 processFile(folderPath, file, settings);
             } catch (Exception e) {
@@ -443,6 +457,9 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                     // Track the new subdirectory watch key
                     watchKeys.put(filePath, subDirKey);
                     recursiveWatchKeys.computeIfAbsent(folderPath, k -> ConcurrentHashMap.newKeySet()).add(subDirKey);
+                    // The subdirectory must resolve to the root's settings,
+                    // otherwise monitoringLoop drops its events
+                    folderSettings.put(filePath, currentSettings.copy());
 
                     LOGGER.info("Registered new subdirectory for monitoring: " + filePath);
                 } catch (IOException e) {
@@ -451,20 +468,33 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             } else if (Files.isRegularFile(filePath)) {
                 scheduleFileProcessing(folderPath, filePath, currentSettings);
             }
-            // Only notify listeners about files that should be processed
-            if (Files.isRegularFile(filePath) && shouldProcessFile(filePath, currentSettings)) {
-                notifyListeners(listener -> listener.onFileAdded(folderPath, filePath, currentSettings));
+            // Only notify listeners about files that should be processed;
+            // announcedFiles dedupes against later MODIFY announcements
+            if (Files.isRegularFile(filePath) && shouldProcessFile(filePath, currentSettings)
+                    && announcedFiles.add(filePath)) {
+                notifyFileEvent(folderPath, filePath, currentSettings,
+                        listener -> listener.onFileAdded(folderPath, filePath, currentSettings));
             }
         } else if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
             if (Files.isRegularFile(filePath)) {
                 scheduleFileProcessing(folderPath, filePath, currentSettings);
             }
+            // Progressive downloads are ineligible at CREATE (file still
+            // empty); announce once when a modification first makes the
+            // file processable.
+            if (Files.isRegularFile(filePath) && shouldProcessFile(filePath, currentSettings)
+                    && announcedFiles.add(filePath)) {
+                notifyFileEvent(folderPath, filePath, currentSettings,
+                        listener -> listener.onFileAdded(folderPath, filePath, currentSettings));
+            }
             // Only notify listeners about files that should be processed
             if (Files.isRegularFile(filePath) && shouldProcessFile(filePath, currentSettings)) {
-                notifyListeners(listener -> listener.onFileModified(folderPath, filePath, currentSettings));
+                notifyFileEvent(folderPath, filePath, currentSettings,
+                        listener -> listener.onFileModified(folderPath, filePath, currentSettings));
             }
         } else if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
             cancelScheduledProcessing(filePath);
+            announcedFiles.remove(filePath);
 
             // If it's a directory being deleted, clean up its watch key
             if (currentSettings.isRecursive()) {
@@ -604,6 +634,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             executeFileAction(folderPath, filePath, settings);
 
             processedFilesCount.incrementAndGet();
+            fileErrorReported.remove(filePath); // allow future rounds to report again
             updateStatistics();
 
             LOGGER.info("Successfully processed file: " + filePath);
@@ -612,7 +643,11 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             LOGGER.log(Level.SEVERE, "Error processing file: " + filePath, e);
             errorCount.incrementAndGet();
             updateStatistics();
-            notifyListeners(listener -> listener.onFileProcessingError(folderPath, filePath, e, settings));
+            // Exactly-once per round: notifyFileEvent may already have
+            // reported a listener failure for this file
+            if (fileErrorReported.add(filePath)) {
+                notifyListeners(listener -> listener.onFileProcessingError(folderPath, filePath, e, settings));
+            }
         }
     }
 
@@ -731,6 +766,30 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 action.execute(listener);
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Error notifying listener", e);
+            }
+        }
+    }
+
+    /**
+     * Notifies listeners about a file event (onFileAdded / onFileModified).
+     * A listener that throws must not break the pipeline, but the failure is
+     * reported to all listeners through onFileProcessingError so pipeline
+     * errors (for example a download-creation failure in
+     * TorrentFolderMonitor) stay observable.
+     */
+    private void notifyFileEvent(Path folderPath, Path filePath, FolderMonitorSettings settings,
+            ListenerAction action) {
+        for (FolderMonitorListener listener : listeners) {
+            try {
+                action.execute(listener);
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error notifying listener for file: " + filePath, e);
+                // Exactly-once per processing round: a file that later also
+                // fails format validation must not produce a second
+                // onFileProcessingError
+                if (fileErrorReported.add(filePath)) {
+                    notifyListeners(l -> l.onFileProcessingError(folderPath, filePath, e, settings));
+                }
             }
         }
     }

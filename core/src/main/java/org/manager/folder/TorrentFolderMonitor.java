@@ -204,7 +204,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error processing torrent file: " + filePath, e);
-            throw new RuntimeException("Failed to process torrent file: " + filePath, e);
+            throw new RuntimeException("Failed to process torrent file: " + filePath + ": " + e.getMessage(), e);
         }
     }
 

@@ -24,6 +24,7 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -170,6 +171,7 @@ class TorServiceIntegrationTest {
 
     @Test
     @Order(3)
+    @Timeout(120) // two full tor lifecycles + settle sleeps exceed the 30s global default
     @DisplayName("Should restart Tor service successfully")
     void testTorServiceRestart() throws Exception {
         // Ensure service is started first
@@ -195,6 +197,7 @@ class TorServiceIntegrationTest {
 
     @Test
     @Order(4)
+    @Timeout(120) // two full tor lifecycles + settle sleeps exceed the 30s global default
     @DisplayName("Should handle configuration updates")
     void testConfigurationUpdate() throws Exception {
         // Ensure service is started first

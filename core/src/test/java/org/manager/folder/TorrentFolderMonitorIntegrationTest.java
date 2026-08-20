@@ -225,8 +225,11 @@ class TorrentFolderMonitorIntegrationTest {
 
             folderMonitorService.addFolderMonitorListener(trackingListener);
 
-            // When
-            torrentFolderMonitor.startTorrentMonitoring(watchFolder).get(5, TimeUnit.SECONDS);
+            // When - minFileSize 0 so the small invalid fixtures reach the
+            // listeners (the default 100-byte filter drops them silently)
+            FolderMonitorSettings settings = TorrentFolderMonitor.createDefaultTorrentSettings()
+                    .setMinFileSize(0L);
+            torrentFolderMonitor.startTorrentMonitoring(watchFolder, settings).get(5, TimeUnit.SECONDS);
 
             Thread.sleep(1000);
 
@@ -330,6 +333,7 @@ class TorrentFolderMonitorIntegrationTest {
 
             // Create files in subdirectory (should be detected due to recursive=true)
             Path subDir = Files.createTempDirectory(watchFolder, "subdir");
+            Thread.sleep(500); // let the monitor register the new subdirectory first
             createValidTorrentFile(subDir.resolve("recursive.torrent"));
 
             // Then
@@ -675,21 +679,20 @@ class TorrentFolderMonitorIntegrationTest {
 
             folderMonitorService.addFolderMonitorListener(startListener);
 
+            // The container image has a bare HOME; the default Downloads
+            // folder must exist for startDefaultTorrentMonitoring (the
+            // service intentionally fails fast on missing folders)
+            String userHome = System.getProperty("user.home");
+            Path expectedPath = Paths.get(userHome, "Downloads");
+            Files.createDirectories(expectedPath);
+
             // When
             CompletableFuture<Void> future = torrentFolderMonitor.startDefaultTorrentMonitoring();
 
             // Then
             assertDoesNotThrow(() -> future.get(10, TimeUnit.SECONDS));
 
-            // Note: We can't easily test file detection in the real Downloads folder
-            // in a unit test environment, so we just verify the monitoring started correctly
-            String userHome = System.getProperty("user.home");
-            Path expectedPath = Paths.get(userHome, "Downloads");
-
-            // If the Downloads folder exists, monitoring should be active
-            if (Files.exists(expectedPath)) {
-                assertTrue(folderMonitorService.isMonitoring(expectedPath));
-            }
+            assertTrue(folderMonitorService.isMonitoring(expectedPath));
         }
     }
 
@@ -777,8 +780,11 @@ class TorrentFolderMonitorIntegrationTest {
             torrentFolderMonitor.startTorrentMonitoring(watchFolder).get(5, TimeUnit.SECONDS);
             assertTrue(folderMonitorService.isMonitoring(watchFolder));
 
-            // Shutdown the monitor
+            // Shutdown the monitor. shutdown() only detaches the torrent
+            // listener; the watch service itself must be stopped too, or it
+            // keeps notifying remaining listeners
             torrentFolderMonitor.shutdown().get(5, TimeUnit.SECONDS);
+            torrentFolderMonitor.stopTorrentMonitoring(watchFolder).get(5, TimeUnit.SECONDS);
 
             Thread.sleep(1000);
 

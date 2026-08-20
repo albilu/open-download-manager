@@ -40,6 +40,8 @@ public class TorService {
     private final AtomicReference<Process> torProcess = new AtomicReference<>();
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
+    /** Serializes start(): concurrent callers coalesce onto one process. */
+    private final Object startLock = new Object();
 
     // Configuration
     private final Map<String, String> torConfig;
@@ -93,52 +95,72 @@ public class TorService {
      *         start
      */
     public CompletableFuture<Boolean> start() {
-        if (isRunning.get()) {
-            LOGGER.info("Tor service is already running");
-            return CompletableFuture.completedFuture(true);
-        }
-
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                LOGGER.info("Starting Tor service...");
-
-                // Write configuration to file
-                writeConfigFile();
-
-                // Build command
-                List<String> command = buildTorCommand();
-
-                // Start process
-                ProcessBuilder processBuilder = new ProcessBuilder(command);
-                processBuilder.environment().put("HOME", System.getProperty("user.home"));
-                // Don't redirect error stream - we'll handle stdout and stderr separately
-
-                Process process = processBuilder.start();
-                torProcess.set(process);
-
-                // Monitor process output
-                startOutputMonitoring(process);
-
-                // Wait for Tor to be ready
-                boolean ready = waitForTorReady(30); // 30 seconds timeout
-
-                if (ready) {
-                    isRunning.set(true);
-                    notifyListeners(TorServiceEvent.STARTED);
-                    LOGGER.info("Tor service started successfully");
-                    return true;
-                } else {
-                    LOGGER.severe("Tor failed to start within timeout");
-                    stopInternal();
-                    return false;
-                }
-
-            } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to start Tor service", e);
-                stopInternal();
-                return false;
+        synchronized (startLock) {
+            if (isRunning.get()) {
+                LOGGER.info("Tor service is already running");
+                return CompletableFuture.completedFuture(true);
             }
-        }, executorService);
+
+            return CompletableFuture.supplyAsync(() -> {
+                synchronized (startLock) {
+                    if (isRunning.get()) {
+                        // A concurrent start call already launched Tor;
+                        // coalesce instead of spawning a duplicate process
+                        // that dies on the port bind and breaks isHealthy()
+                        return true;
+                    }
+                    // A previous stop() left isShuttingDown latched; a new
+                    // lifecycle clears it (the output monitors check it, and
+                    // with it stuck true nobody drains tor's pipes, so the
+                    // relaunched process never becomes ready). After a real
+                    // shutdown() the executor is gone: refuse to resurrect.
+                    if (executorService.isShutdown()) {
+                        LOGGER.severe("Cannot start Tor service: executor is shut down");
+                        return false;
+                    }
+                    isShuttingDown.set(false);
+                    try {
+                        LOGGER.info("Starting Tor service...");
+
+                        // Write configuration to file
+                        writeConfigFile();
+
+                        // Build command
+                        List<String> command = buildTorCommand();
+
+                        // Start process
+                        ProcessBuilder processBuilder = new ProcessBuilder(command);
+                        processBuilder.environment().put("HOME", System.getProperty("user.home"));
+                        // Don't redirect error stream - we'll handle stdout and stderr separately
+
+                        Process process = processBuilder.start();
+                        torProcess.set(process);
+
+                        // Monitor process output
+                        startOutputMonitoring(process);
+
+                        // Wait for Tor to be ready
+                        boolean ready = waitForTorReady(30); // 30 seconds timeout
+
+                        if (ready) {
+                            isRunning.set(true);
+                            notifyListeners(TorServiceEvent.STARTED);
+                            LOGGER.info("Tor service started successfully");
+                            return true;
+                        } else {
+                            LOGGER.severe("Tor failed to start within timeout");
+                            stopInternal();
+                            return false;
+                        }
+
+                    } catch (Exception e) {
+                        LOGGER.log(Level.SEVERE, "Failed to start Tor service", e);
+                        stopInternal();
+                        return false;
+                    }
+                }
+            }, executorService);
+        }
     }
 
     /**

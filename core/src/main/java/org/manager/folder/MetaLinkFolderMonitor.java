@@ -211,7 +211,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error processing Metalink file: " + filePath, e);
-            throw new RuntimeException("Failed to process Metalink file: " + filePath, e);
+            throw new RuntimeException("Failed to process Metalink file: " + filePath + ": " + e.getMessage(), e);
         }
     }
 

@@ -111,7 +111,8 @@ class HttrackE2ETest {
         // Wait for completion or progress
         await().atMost(60, TimeUnit.SECONDS).untilAsserted(() -> {
             HttrackJob job = client.getJobStatus(jobId);
-            assertTrue(job.isCompleted() || listener.hasJobProgress() || listener.hasJobCompleted(),
+            // null = finished and deregistered from the active-job registry
+            assertTrue(job == null || job.isCompleted() || listener.hasJobProgress() || listener.hasJobCompleted(),
                     "Job should complete or show progress");
         });
 
@@ -462,12 +463,14 @@ class HttrackE2ETest {
         settings.setOutputDirectory(tempDir.resolve("post-shutdown"));
 
         // Attempting to start new job after shutdown should handle gracefully
-        // (specific behavior depends on implementation)
-        CompletableFuture<String> postShutdownFuture = client.startMirror(settings);
-
-        // The future might complete exceptionally or the client might reject new operations
-        // Either behavior is acceptable as long as it doesn't crash
+        // (specific behavior depends on implementation). With a synchronous
+        // shutdown the executor is already terminated, so the rejection can
+        // also surface synchronously — both paths are acceptable.
         try {
+            CompletableFuture<String> postShutdownFuture = client.startMirror(settings);
+
+            // The future might complete exceptionally or the client might reject new operations
+            // Either behavior is acceptable as long as it doesn't crash
             postShutdownFuture.get(5, TimeUnit.SECONDS);
         } catch (Exception e) {
             // Expected - client should not accept new jobs after shutdown

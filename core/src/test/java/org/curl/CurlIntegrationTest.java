@@ -374,10 +374,14 @@ class CurlIntegrationTest {
     @DisplayName("Should integrate concurrent download management")
     @Timeout(60)
     void shouldIntegrateConcurrentDownloadManagement() throws Exception {
+        // Distinct filenames (and therefore distinct URL paths and output
+        // files): three concurrent curls writing one shared output file with
+        // the default -C - resume flag race into "server does not support
+        // byte ranges" failures
         String[] testUrls = {
-            TestUtils.getMockUrl(5), // 5MB file
-            TestUtils.getMockUrl(5), // 5MB file
-            TestUtils.getMockUrl(5) // 5MB file
+            TestUtils.getMockUrl(5, "application/octet-stream", "concurrent-1.bin"),
+            TestUtils.getMockUrl(5, "application/octet-stream", "concurrent-2.bin"),
+            TestUtils.getMockUrl(5, "application/octet-stream", "concurrent-3.bin")
         };
 
         Download[] downloads = new Download[testUrls.length];
