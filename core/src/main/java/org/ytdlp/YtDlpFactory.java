@@ -97,10 +97,11 @@ public class YtDlpFactory {
             throw new IllegalStateException("YtDlpFactory has been shut down");
         }
 
-        // Use DependencyManager to get yt-dlp path instead of direct GlobalSettings
-        // access
+        // Use ToolManagerFactory to get yt-dlp path, falling back to the
+        // system yt-dlp when no manager exists or its path is blank
         YtDlpToolManager ytDlpManager = toolManagerFactory.getYtDlpManager();
-        String ytDlpPath = ytDlpManager != null ? ytDlpManager.getToolPath() : "yt-dlp";
+        String managerPath = ytDlpManager != null ? ytDlpManager.getToolPath() : null;
+        String ytDlpPath = managerPath != null && !managerPath.isBlank() ? managerPath : "yt-dlp";
 
         YtDlpClient client = new YtDlpClient(ytDlpPath);
 

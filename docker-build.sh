@@ -66,6 +66,8 @@ test() {
     docker run --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
+        -e PROXYCHAINS_AVAILABLE=true \
+        -e ENABLE_NETWORK_TESTS=true \
         $IMAGE_NAME \
         bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 & sleep 2 && mvn test"
 }

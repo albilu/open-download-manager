@@ -20,7 +20,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -43,6 +42,9 @@ class YtDlpFactoryTest {
 
     @Mock
     private GlobalSettings mockGlobalSettings;
+
+    @Mock
+    private org.manager.tools.ToolManagerFactory mockToolManagerFactory;
 
     private YtDlpFactory factory;
     private Path tempDownloadDir;
@@ -145,31 +147,29 @@ class YtDlpFactoryTest {
     }
 
     @Test
-    @Disabled("Disabled due to path handling via DependencyManager")
-    @DisplayName("Should handle null yt-dlp path gracefully")
+    @DisplayName("Should fall back to system yt-dlp when no tool manager exists")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testCreateClientNullPath() {
-        when(mockGlobalSettings.getYtDlpPath()).thenReturn(null);
-        factory = YtDlpFactory.getInstance(mockGlobalSettings);
+        when(mockToolManagerFactory.getYtDlpManager()).thenReturn(null);
+        factory = YtDlpFactory.getInstance(mockGlobalSettings, mockToolManagerFactory);
 
         YtDlpClient client = factory.createClient();
 
         assertNotNull(client);
-        verify(mockGlobalSettings).getYtDlpPath();
     }
 
     @Test
-    @Disabled("Disabled due to path handling via DependencyManager")
-    @DisplayName("Should handle empty yt-dlp path gracefully")
+    @DisplayName("Should fall back to system yt-dlp when the manager path is blank")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testCreateClientEmptyPath() {
-        when(mockGlobalSettings.getYtDlpPath()).thenReturn("");
-        factory = YtDlpFactory.getInstance(mockGlobalSettings);
+        org.ytdlp.YtDlpToolManager blankManager = org.mockito.Mockito.mock(org.ytdlp.YtDlpToolManager.class);
+        when(blankManager.getToolPath()).thenReturn("");
+        when(mockToolManagerFactory.getYtDlpManager()).thenReturn(blankManager);
+        factory = YtDlpFactory.getInstance(mockGlobalSettings, mockToolManagerFactory);
 
         YtDlpClient client = factory.createClient();
 
         assertNotNull(client);
-        verify(mockGlobalSettings).getYtDlpPath();
     }
 
     @Test

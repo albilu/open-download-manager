@@ -21,7 +21,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -80,7 +79,6 @@ class TorToolManagerTest {
     }
 
     @Test
-    @Disabled("Use DependencyManager to test discovery")
     @Order(3)
     @DisplayName("Should get configured path from settings")
     void testGetConfiguredPath() {
@@ -88,9 +86,11 @@ class TorToolManagerTest {
         when(mockSettings.getTorPath()).thenReturn(expectedPath);
 
         toolManager = new TorToolManager(mockSettings, testExecutor);
-        // This would be tested through the parent class methods that use
-        // getConfiguredPath
 
+        // getToolPath() consults the configured path first (falling back to
+        // discovery when it is not a valid executable)
+        String resolved = toolManager.getToolPath();
+        assertNotNull(resolved);
         verify(mockSettings, atLeastOnce()).getTorPath();
     }
 

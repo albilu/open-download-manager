@@ -146,6 +146,8 @@ class ProxychainsE2ETest {
     @EnabledIfEnvironmentVariable(named = "PROXYCHAINS_AVAILABLE", matches = "true")
     @Timeout(30)
     void shouldCompleteFullDownloadWorkflowWithSuccessfulResponse() throws InterruptedException {
+        assertDoesNotThrow(() -> handler.initialize().join());
+
         // Set up mock server response
         mockWebServer.enqueue(new MockResponse()
                 .setBody(TEST_FILE_CONTENT)
@@ -216,17 +218,21 @@ class ProxychainsE2ETest {
 
         assertNotNull(download);
         assertEquals(Download.Type.PROXYCHAINS, download.getType());
-        assertTrue(handler.isActive(download.getId()));
-        assertEquals(1, handler.getActiveDownloadCount());
 
-        // Wait for completion (will likely fail due to invalid proxy, but test the
-        // workflow)
+        // Wait for the workflow to settle. The mock server is on localhost
+        // and the proxy chain is real tor (which denies loopback targets),
+        // so the expected outcome is the ERROR path — what this test
+        // verifies is the full real-proxychains + aria2 workflow and the
+        // error surfacing through the listener chain. The synchronous
+        // isActive/count assertions the test once had race any
+        // fast-settling download and are covered by the cleanup check
+        // below.
         assertTrue(completionLatch.await(25, TimeUnit.SECONDS),
                 "Download should complete or error within timeout");
 
         assertTrue(downloadStarted.get(), "Download should have started");
 
-        // Since we're using an invalid proxy, we expect an error
+        // Since the chain denies loopback, we expect an error
         if (errorMessage.get() != null) {
             assertNotNull(errorMessage.get());
             assertTrue(errorMessage.get().length() > 0);
@@ -241,6 +247,8 @@ class ProxychainsE2ETest {
     @EnabledIfEnvironmentVariable(named = "PROXYCHAINS_AVAILABLE", matches = "true")
     @Timeout(20)
     void shouldHandleDownloadWithPauseAndResume() throws InterruptedException {
+        assertDoesNotThrow(() -> handler.initialize().join());
+
         // Large file to allow time for pause/resume
         String largeContent = "A".repeat(10000);
         mockWebServer.enqueue(new MockResponse()
@@ -802,6 +810,8 @@ class ProxychainsE2ETest {
     @DisplayName("Should work with real network endpoints")
     @Timeout(60)
     void shouldWorkWithRealNetworkEndpoints() throws InterruptedException {
+        assertDoesNotThrow(() -> handler.initialize().join());
+
         // This test uses real network endpoints - only enable when specifically
         // requested
         URI testUri = URI.create("https://httpbin.org/bytes/1024");
