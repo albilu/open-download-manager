@@ -129,6 +129,19 @@ public class DownloadManagerFactory {
     }
 
     /**
+     * Clears the singleton reference WITHOUT shutting the instance down.
+     * The caller is responsible for (already having performed) the shutdown;
+     * this keeps the factory in lockstep with an owner that has just shut
+     * the manager down (e.g. ApplicationFactory.shutdownCoreServices), so a
+     * later getInstance() creates a fresh instance instead of returning a
+     * dead one.
+     */
+    public static synchronized void reset() {
+        instance = null;
+        container = null;
+    }
+
+    /**
      * Gets the dependency container used by the singleton instance.
      * Useful for accessing components for testing or advanced configuration.
      *

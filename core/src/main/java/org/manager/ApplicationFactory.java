@@ -53,6 +53,10 @@ public class ApplicationFactory {
      */
     private ApplicationFactory() {
         this.startupCoordinator = StartupCoordinator.getInstance();
+        // A new factory generation starts a new lifecycle: clear a stale
+        // shutdown flag left by a previous generation on the shared
+        // coordinator singleton (it would block all initialization)
+        this.startupCoordinator.clearShutdownInitiated();
         LOGGER.fine("ApplicationFactory instance created");
     }
 
@@ -80,6 +84,9 @@ public class ApplicationFactory {
      * @return The GlobalSettings singleton instance
      */
     public GlobalSettings getGlobalSettings() {
+        if (shutdownCalled) {
+            throw new IllegalStateException("Cannot access GlobalSettings after shutdown");
+        }
         if (globalSettings != null) {
             return globalSettings; // Fast path - no locking needed
         }
@@ -127,18 +134,47 @@ public class ApplicationFactory {
      * DownloadManagerFactory but ensures singleton behavior. Includes
      * initialization coordination to prevent duplicate component creation.
      *
+     * <p>Concurrency notes: creation runs under the core write lock, but
+     * waiting for a concurrent initializer happens OUTSIDE the lock (a
+     * former version spun while holding the lock, which blocked shutdown
+     * and every other core operation indefinitely when the initializer
+     * died). The wait is bounded; a stale coordination state (component
+     * marked initialized while this factory has no instance, e.g. after a
+     * factory reset without a coordinator reset) is self-healed by forcing
+     * re-initialization.</p>
+     *
      * @return The DownloadManager singleton instance
+     * @throws IllegalStateException if the factory has been shut down
      */
     public DownloadManager getDownloadManager() {
         if (downloadManager != null) {
             return downloadManager; // Fast path - no locking needed
         }
+        if (shutdownCalled) {
+            throw new IllegalStateException("Cannot access DownloadManager after shutdown");
+        }
 
-        coreLock.writeLock().lock();
-        try {
-            if (downloadManager == null) {
-                // Check if we should proceed with initialization
-                if (startupCoordinator.beginComponentInitialization(StartupCoordinator.DOWNLOAD_MANAGER)) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            boolean began = false;
+            coreLock.writeLock().lock();
+            try {
+                if (downloadManager != null) {
+                    return downloadManager;
+                }
+
+                began = startupCoordinator.beginComponentInitialization(
+                        StartupCoordinator.DOWNLOAD_MANAGER);
+                if (!began && !startupCoordinator.isComponentInitializing(
+                        StartupCoordinator.DOWNLOAD_MANAGER)) {
+                    // Stale state: marked initialized (an earlier factory
+                    // generation) but no instance exists here. Self-heal by
+                    // forcing re-initialization.
+                    startupCoordinator.resetComponent(StartupCoordinator.DOWNLOAD_MANAGER);
+                    began = startupCoordinator.beginComponentInitialization(
+                            StartupCoordinator.DOWNLOAD_MANAGER);
+                }
+
+                if (began) {
                     try {
                         LOGGER.info("Creating DownloadManager with coordinated initialization...");
                         long startTime = System.currentTimeMillis();
@@ -146,35 +182,52 @@ public class ApplicationFactory {
                         // Use existing factory but ensure singleton behavior
                         downloadManager = DownloadManagerFactory.getInstance();
 
-                        startupCoordinator.completeComponentInitialization(StartupCoordinator.DOWNLOAD_MANAGER);
+                        startupCoordinator.completeComponentInitialization(
+                                StartupCoordinator.DOWNLOAD_MANAGER);
                         long duration = System.currentTimeMillis() - startTime;
                         LOGGER.info("DownloadManager created successfully in " + duration + "ms");
-                    } catch (Exception e) {
-                        startupCoordinator.failComponentInitialization(StartupCoordinator.DOWNLOAD_MANAGER, e);
+                        return downloadManager;
+                    } catch (Throwable e) {
+                        // Throwable, not Exception: an Error must also clear
+                        // the initializing flag or waiters spin forever
+                        startupCoordinator.failComponentInitialization(
+                                StartupCoordinator.DOWNLOAD_MANAGER, e);
                         throw e;
                     }
-                } else {
-                    // Another thread is initializing or already initialized
-                    while (downloadManager == null
-                            && startupCoordinator.isComponentInitializing(StartupCoordinator.DOWNLOAD_MANAGER)) {
-                        try {
-                            Thread.sleep(10);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            throw new RuntimeException("Interrupted while waiting for DownloadManager initialization",
-                                    e);
-                        }
-                    }
-                    if (downloadManager == null) {
-                        throw new RuntimeException("DownloadManager initialization failed in another thread");
-                    }
+                }
+            } finally {
+                coreLock.writeLock().unlock();
+            }
+
+            // Another thread is initializing: wait WITHOUT holding the core
+            // lock, bounded so an orphaned initializing state cannot hang
+            // callers (and shutdown) forever.
+            long deadline = System.currentTimeMillis() + DOWNLOAD_MANAGER_WAIT_MS;
+            while (downloadManager == null && startupCoordinator.isComponentInitializing(
+                    StartupCoordinator.DOWNLOAD_MANAGER)) {
+                if (System.currentTimeMillis() > deadline) {
+                    throw new RuntimeException("Timed out after " + DOWNLOAD_MANAGER_WAIT_MS
+                            + "ms waiting for DownloadManager initialization");
+                }
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(
+                            "Interrupted while waiting for DownloadManager initialization", e);
                 }
             }
-            return downloadManager;
-        } finally {
-            coreLock.writeLock().unlock();
+            if (downloadManager != null) {
+                return downloadManager;
+            }
+            // Initializer finished without publishing an instance (failed):
+            // loop once more to retry creation ourselves.
         }
+        throw new RuntimeException("DownloadManager initialization failed in another thread");
     }
+
+    /** Bounded wait for a concurrent DownloadManager initialization (ms). */
+    private static final long DOWNLOAD_MANAGER_WAIT_MS = 60_000;
 
     /**
      * Sets a custom GlobalSettings instance. This will also reset the
@@ -417,6 +470,10 @@ public class ApplicationFactory {
                     LOGGER.warning("Error shutting down DownloadManager: " + e.getMessage());
                 }
                 downloadManager = null;
+                // Keep DownloadManagerFactory's static singleton in lockstep:
+                // otherwise a later getDownloadManager() would hand back this
+                // already-shut-down instance
+                DownloadManagerFactory.reset();
             }
 
             // Shutdown ToolManagerFactory

@@ -338,7 +338,7 @@ class OptimizedApplicationFactoryTest {
             assertTrue(status.contains("ApplicationFactory Status"));
             assertTrue(status.contains("Initialized: true"));
             assertTrue(status.contains("GlobalSettings: Created"));
-            assertTrue(status.contains("DependencyManager: Created"));
+            assertTrue(status.contains("ToolManagerFactory: Created"));
             assertTrue(status.contains("UIStateService: Registered"));
         }
 

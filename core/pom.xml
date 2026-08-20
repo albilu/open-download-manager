@@ -140,6 +140,21 @@
                          later classes in the same JVM. Fork each class for isolation. -->
                     <forkCount>1</forkCount>
                     <reuseForks>false</reuseForks>
+                    <!-- Real external-tool / network suites are excluded from
+                         the default (hermetic) run; enable with -Pintegration.
+                         The $ patterns cover @Nested runner classes, which
+                         surefire discovers independently of the outer class. -->
+                    <excludes>
+                        <exclude>**/*IntegrationTest*.java</exclude>
+                        <exclude>**/*IntegrationTest$*</exclude>
+                        <exclude>**/*E2ETest*.java</exclude>
+                        <exclude>**/*E2ETest$*</exclude>
+                        <exclude>**/ProxychainsClientTest.java</exclude>
+                        <exclude>**/TorToolManagerTest.java</exclude>
+                        <exclude>**/TorLeakCheckerTest.java</exclude>
+                        <exclude>**/CurlUtilsTest.java</exclude>
+                        <exclude>**/ValidateTests.java</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>
@@ -209,6 +224,29 @@
 
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Runs EVERYTHING, including suites that launch real aria2c, yt-dlp,
+             httrack, curl, tor, and proxychains processes and reach the
+             network. The default run is hermetic; CI and developers use
+             this profile inside the odm-dev Docker environment:
+                 mvn test -Pintegration -->
+        <profile>
+            <id>integration</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <version>3.2.2</version>
+                        <configuration>
+                            <excludes combine.self="override"/>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 
 </project>

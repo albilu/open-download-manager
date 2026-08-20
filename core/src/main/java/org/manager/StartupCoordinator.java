@@ -183,6 +183,26 @@ public final class StartupCoordinator {
     }
 
     /**
+     * Clears all coordination state for a component (both initializing and
+     * initialized). Used to self-heal stale state: a component marked
+     * initialized by an earlier factory generation whose instance no longer
+     * exists would otherwise block re-creation forever.
+     *
+     * @param componentId The component identifier
+     */
+    public void resetComponent(String componentId) {
+        coordinationLock.lock();
+        try {
+            initializingComponents.remove(componentId);
+            initializedComponents.remove(componentId);
+            startupComplete.set(false);
+            LOGGER.fine("Reset coordination state for component " + componentId);
+        } finally {
+            coordinationLock.unlock();
+        }
+    }
+
+    /**
      * Checks if core startup is complete. Core components are:
      * ToolManagerFactory, DownloadManager
      */
@@ -206,6 +226,19 @@ public final class StartupCoordinator {
     public void markShutdownBegin() {
         shutdownInitiated.set(true);
         LOGGER.info("Shutdown coordination initiated");
+    }
+
+    /**
+     * Clears the shutdown flag so component initialization becomes possible
+     * again. Called when a NEW factory generation starts (e.g. after a test
+     * reset): the coordinator singleton survives factory resets, and a
+     * stale shutdown flag from an earlier generation would otherwise block
+     * every future component initialization.
+     */
+    public void clearShutdownInitiated() {
+        if (shutdownInitiated.compareAndSet(true, false)) {
+            LOGGER.fine("Cleared stale shutdown coordination flag for a new factory generation");
+        }
     }
 
     /**
