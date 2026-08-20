@@ -35,13 +35,21 @@ public class SettingsDialog {
     private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
 
+    private static final String[] DAY_LABELS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+
     private final Window dialog;
     private final DownloadManager downloadManager;
+    private final org.manager.schedule.ScheduleManager scheduleManager;
     private final GtkBuilder builder;
     private final Label statusLabel;
 
-    public SettingsDialog(Window parent, DownloadManager downloadManager) {
+    /** 7x24 toggle buttons of the scheduler grid (row 0 = Monday). */
+    private final org.gnome.gtk.ToggleButton[][] schedulerToggles = new org.gnome.gtk.ToggleButton[7][24];
+
+    public SettingsDialog(Window parent, DownloadManager downloadManager,
+            org.manager.schedule.ScheduleManager scheduleManager) {
         this.downloadManager = downloadManager;
+        this.scheduleManager = scheduleManager;
         this.builder = UiLoader.load("/ui/settings.ui");
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
         this.statusLabel = Widgets.require(builder, "settings_status_label", Label.class);
@@ -50,6 +58,8 @@ public class SettingsDialog {
 
         initDropdown("proxy_type_combo", PROXY_TYPES);
         initDropdown("file_allocation_combo", FILE_ALLOCATIONS);
+
+        buildSchedulerGrid();
 
         // File/folder pickers
         onPick("default_download_folder_chooser", "Select download folder", this::setDefaultDir);
@@ -72,11 +82,94 @@ public class SettingsDialog {
         });
     }
 
+    /**
+     * Builds the uGet-style 7x24 hour grid inside the
+     * {@code scheduler_grid_box} container: one row of day-label + 24 small
+     * toggle buttons per weekday. The grid is enabled/disabled together with
+     * the "Enable Scheduling" checkbox.
+     */
+    private void buildSchedulerGrid() {
+        org.gnome.gtk.Box gridBox = Widgets.require(builder, "scheduler_grid_box", org.gnome.gtk.Box.class);
+        org.gnome.gtk.Grid grid = new org.gnome.gtk.Grid();
+        grid.setColumnHomogeneous(true);
+        grid.setColumnSpacing(1);
+        grid.setRowSpacing(1);
+
+        for (int day = 0; day < 7; day++) {
+            org.gnome.gtk.Label dayLabel = new org.gnome.gtk.Label(DAY_LABELS[day]);
+            grid.attach(dayLabel, 0, day, 1, 1);
+            for (int hour = 0; hour < 24; hour++) {
+                org.gnome.gtk.ToggleButton toggle = new org.gnome.gtk.ToggleButton();
+                toggle.setLabel(String.valueOf(hour));
+                toggle.setHasFrame(false);
+                toggle.setSizeRequest(6, -1);
+                grid.attach(toggle, hour + 1, day, 1, 1);
+                schedulerToggles[day][hour] = toggle;
+            }
+        }
+        gridBox.append(grid);
+
+        CheckButton enableCheck = check("enable_scheduling_check");
+        enableCheck.onToggled(() -> gridBox.setSensitive(enableCheck.getActive()));
+    }
+
     public void present() {
         dialog.present();
     }
 
     // ---- widget helpers ----
+
+    /** Fills the scheduler grid toggles from a persisted hex grid. */
+    private void loadSchedulerGrid(String hex) {
+        boolean[][] grid = org.manager.schedule.WeeklySchedule.hourGridFromString(hex);
+        for (int day = 0; day < 7; day++) {
+            for (int hour = 0; hour < 24; hour++) {
+                schedulerToggles[day][hour].setActive(grid[day][hour]);
+            }
+        }
+    }
+
+    /** Reads the current scheduler grid state from the toggles. */
+    private boolean[][] readSchedulerGrid() {
+        boolean[][] grid = new boolean[7][24];
+        for (int day = 0; day < 7; day++) {
+            for (int hour = 0; hour < 24; hour++) {
+                grid[day][hour] = schedulerToggles[day][hour].getActive();
+            }
+        }
+        return grid;
+    }
+
+    /**
+     * Applies the scheduling decision to the running scheduler: an enabled
+     * grid installs a STRICT global schedule (outside the marked ranges all
+     * downloads are prevented, uGet semantics); disabled or an empty grid
+     * installs alwaysActive so nothing is restricted. Note that "disabled"
+     * must NOT map to neverActive — the enabled flag controls the
+     * scheduler's presence, not inverted ranges.
+     */
+    private void applySchedulerRuntime(boolean enabled, boolean[][] hourGrid) {
+        if (scheduleManager == null) {
+            return;
+        }
+        try {
+            if (enabled) {
+                org.manager.schedule.ScheduleSettings settings =
+                        new org.manager.schedule.ScheduleSettings(
+                                org.manager.schedule.WeeklySchedule.fromHourGrid(hourGrid));
+                settings.setPolicy(org.manager.schedule.ScheduleSettings.SchedulePolicy.STRICT);
+                scheduleManager.start();
+                scheduleManager.getScheduler().setGlobalSchedule(settings);
+                LOGGER.info("Applied scheduler hour grid (STRICT)");
+            } else {
+                scheduleManager.getScheduler()
+                        .setGlobalSchedule(org.manager.schedule.ScheduleSettings.alwaysActive());
+                LOGGER.info("Scheduling disabled; downloads unrestricted");
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to apply scheduler settings", e);
+        }
+    }
 
     private void torSwitchSet(boolean active) {
         Widgets.require(builder, "tor_switch", Switch.class).setActive(active);
@@ -180,6 +273,8 @@ public class SettingsDialog {
         check("check_integrity_check").setActive(s.getBooleanProperty("aria2.checkIntegrity", false));
         check("enable_auto_save_check").setActive(s.getBooleanProperty("aria2.autoSave", true));
         check("enable_seeding_check").setActive(s.getBooleanProperty("aria2.enableSeeding", false));
+        entry("tracker_list_entry").setText(s.getProperty("tracker.list", ""));
+        spin("tracker_refresh_spin").setValue(s.getIntProperty("tracker.refreshInterval", 0));
         // Yt-dlp
         entry("ytdlp_path_entry").setText(s.getYtDlpPath() != null ? s.getYtDlpPath() : "");
         entry("video_format_entry").setText(s.getProperty("ytdlp.videoFormat", ""));
@@ -196,7 +291,11 @@ public class SettingsDialog {
         entry("exclude_entry").setText(s.getProperty("httrack.exclude", ""));
         check("include_archives_check").setActive(s.getBooleanProperty("httrack.includeArchives", false));
         // Advanced
-        check("enable_scheduling_check").setActive(s.getBooleanProperty("scheduler.enabled", false));
+        boolean schedulingEnabled = s.getBooleanProperty("scheduler.enabled", false);
+        check("enable_scheduling_check").setActive(schedulingEnabled);
+        Widgets.require(builder, "scheduler_grid_box", org.gnome.gtk.Box.class)
+                .setSensitive(schedulingEnabled);
+        loadSchedulerGrid(s.getProperty("scheduler.grid", ""));
         entry("proxychains_path_entry").setText(s.getProxychainsPath() != null ? s.getProxychainsPath() : "");
         entry("tor_path_entry").setText(s.getTorPath() != null ? s.getTorPath() : "");
         entry("axel_path_entry").setText(s.getProperty("tools.axelPath", ""));
@@ -216,6 +315,15 @@ public class SettingsDialog {
         s.setProperty("ui.moveTorrent", String.valueOf(check("move_torrent_check").getActive()));
         s.setProperty("ui.startAtLogin", String.valueOf(check("startup_check").getActive()));
         s.setProperty("ui.clipboardSilent", String.valueOf(check("clipboard_silent_check").getActive()));
+        // Push silent mode into the core clipboard service immediately
+        try {
+            downloadManager.updateClipboardSettings(
+                    downloadManager.getClipboardService().getSettings()
+                            .copy()
+                            .setSilentMode(check("clipboard_silent_check").getActive()));
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Clipboard settings sync skipped", e);
+        }
         s.setProperty("ui.folderRecursive", String.valueOf(check("folder_recursive_check").getActive()));
         s.setProperty("ui.moveToTrash", String.valueOf(check("move_to_trash_check").getActive()));
         // Runtime toggles apply immediately
@@ -252,6 +360,9 @@ public class SettingsDialog {
         s.setProperty("aria2.checkIntegrity", String.valueOf(check("check_integrity_check").getActive()));
         s.setProperty("aria2.autoSave", String.valueOf(check("enable_auto_save_check").getActive()));
         s.setProperty("aria2.enableSeeding", String.valueOf(check("enable_seeding_check").getActive()));
+        s.setProperty("tracker.list", entry("tracker_list_entry").getText().trim());
+        s.setProperty("tracker.refreshInterval",
+                String.valueOf((int) spin("tracker_refresh_spin").getValue()));
         // Yt-dlp
         s.setYtDlpPath(entry("ytdlp_path_entry").getText().trim());
         s.setProperty("ytdlp.videoFormat", entry("video_format_entry").getText().trim());
@@ -268,7 +379,24 @@ public class SettingsDialog {
         s.setProperty("httrack.exclude", entry("exclude_entry").getText().trim());
         s.setProperty("httrack.includeArchives", String.valueOf(check("include_archives_check").getActive()));
         // Advanced
-        s.setProperty("scheduler.enabled", String.valueOf(check("enable_scheduling_check").getActive()));
+        boolean schedulingEnabled = check("enable_scheduling_check").getActive();
+        s.setProperty("scheduler.enabled", String.valueOf(schedulingEnabled));
+        boolean[][] hourGrid = readSchedulerGrid();
+        boolean allInactive = true;
+        outer:
+        for (boolean[] row : hourGrid) {
+            for (boolean cell : row) {
+                if (cell) {
+                    allInactive = false;
+                    break outer;
+                }
+            }
+        }
+        s.setProperty("scheduler.grid",
+                schedulingEnabled && !allInactive
+                        ? org.manager.schedule.WeeklySchedule.hourGridToString(hourGrid)
+                        : "");
+        applySchedulerRuntime(schedulingEnabled && !allInactive, hourGrid);
         s.setProxychainsPath(entry("proxychains_path_entry").getText().trim());
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());

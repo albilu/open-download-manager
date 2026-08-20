@@ -175,6 +175,10 @@ public class MainWindow {
         downloadsTreeview.getSelection().onChanged(this::onDownloadSelectionChanged);
         downloadsTreeview.onRowActivated((path, column) -> onPropertiesClicked());
 
+        // Torrent per-file selection: toggle a row -> apply aria2 select-file
+        Widgets.require(builder, "files_selected_renderer", org.gnome.gtk.CellRendererToggle.class)
+                .onToggled(this::onFileSelectionToggled);
+
         var rightClick = new GestureClick();
         rightClick.setButton(3);
         rightClick.onPressed((nPress, x, y) -> showContextMenu());
@@ -259,6 +263,43 @@ public class MainWindow {
             }
         });
 
+        // Clipboard detection flow: in silent mode core creates QUEUED
+        // downloads on its own; otherwise pop the new-download dialog with
+        // the detected URL prefilled. Callbacks arrive on monitor threads,
+        // so everything widget-touching goes through UiThread.
+        try {
+            downloadManager.getClipboardService().addServiceListener(
+                    new org.manager.clipboard.ClipboardServiceListener() {
+                @Override
+                public void onUrlsDetected(java.util.List<java.net.URI> urls, String content) {
+                    // handled by the silent/auto paths in ClipboardService
+                }
+
+                @Override
+                public void onConfirmationRequired(java.util.List<java.net.URI> urls, String content) {
+                    if (urls == null || urls.isEmpty()) {
+                        return;
+                    }
+                    UiThread.marshal(() -> {
+                        NewDownloadDialog dialog = new NewDownloadDialog(window, downloadManager,
+                                () -> UiThread.marshal(MainWindow.this::refresh));
+                        dialog.prefillUrl(urls.get(0).toString());
+                        if (urls.size() > 1) {
+                            LOGGER.info(urls.size() + " URLs detected; offering the first, "
+                                    + "use Import from Clipboard for all");
+                        }
+                        dialog.present();
+                    });
+                }
+            });
+            // Restore the persisted silent-mode flag into the core service
+            applyClipboardSilentToCore(downloadManager.getGlobalSettings()
+                    .getBooleanProperty("ui.clipboardSilent", false));
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.WARNING,
+                    "Clipboard service listener registration failed", e);
+        }
+
         refresh();
     }
 
@@ -270,8 +311,27 @@ public class MainWindow {
         new NewDownloadDialog(window, downloadManager, () -> UiThread.marshal(this::refresh)).present();
     }
 
+    private void onNewMediaClicked() {
+        new NewMediaDialog(window, downloadManager, () -> UiThread.marshal(this::refresh)).present();
+    }
+
+    /**
+     * Pushes the silent-mode flag into the core clipboard service so
+     * detected URLs are placed in QUEUED status instead of popping dialogs.
+     */
+    private void applyClipboardSilentToCore(boolean silent) {
+        try {
+            org.manager.clipboard.ClipboardSettings current =
+                    downloadManager.getClipboardService().getSettings();
+            downloadManager.updateClipboardSettings(current.copy().setSilentMode(silent));
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.WARNING,
+                    "Failed to apply clipboard silent mode", e);
+        }
+    }
+
     private void onSettingsClicked() {
-        new SettingsDialog(window, downloadManager).present();
+        new SettingsDialog(window, downloadManager, scheduleManager).present();
     }
 
     private void onSearchChanged() {
@@ -389,6 +449,7 @@ public class MainWindow {
         // File
         org.gnome.gio.Menu file = new org.gnome.gio.Menu();
         file.append("New Download", "win.new-download");
+        file.append("New Media Download", "win.new-media");
         file.append("New Website Scrape", "win.scrape");
         org.gnome.gio.Menu batch = new org.gnome.gio.Menu();
         batch.append("Import from Clipboard", "win.import-clipboard");
@@ -469,6 +530,7 @@ public class MainWindow {
 
         // File
         addAction("new-download", this::onAddClicked);
+        addAction("new-media", this::onNewMediaClicked);
         addAction("scrape", this::onScraperClicked);
         addAction("import-clipboard", () -> downloadManager.importFromClipboard()
                 .thenRun(() -> UiThread.marshal(this::refresh)));
@@ -499,12 +561,15 @@ public class MainWindow {
                 downloadManager::setClipboardMonitoringEnabled);
         addStatefulAction("clipboard-silent",
                 downloadManager.getGlobalSettings().getBooleanProperty("ui.clipboardSilent", false),
-                active -> downloadManager.getGlobalSettings().setProperty("ui.clipboardSilent",
-                        String.valueOf(active)));
+                active -> {
+                    downloadManager.getGlobalSettings().setProperty("ui.clipboardSilent",
+                            String.valueOf(active));
+                    applyClipboardSilentToCore(active);
+                });
         addRadioAction("completion", completionActionKey(), this::onCompletionActionChosen);
         // Rebuild the completion action from the persisted key: GTK only
         // fires radio-action activate on user selection, not at creation.
-        onCompletionActionChosen(completionActionKey());
+        onCompletionActionChosen(completionActionKey(), false);
         addRadioAction("schedule",
                 downloadManager.getGlobalSettings().getProperty("scheduler.preset", "always"),
                 this::applySchedulePreset);
@@ -585,6 +650,16 @@ public class MainWindow {
     }
 
     private void onCompletionActionChosen(String choice) {
+        onCompletionActionChosen(choice, true);
+    }
+
+    /**
+     * @param choice the completion action key
+     * @param interactive when true, choosing "custom" with no stored command
+     *                    opens the command-entry prompt; the startup rebuild
+     *                    passes false
+     */
+    private void onCompletionActionChosen(String choice, boolean interactive) {
         downloadManager.getGlobalSettings().setProperty("ui.completionAction", choice);
         downloadManager.getGlobalSettings().save();
         switch (choice) {
@@ -594,8 +669,86 @@ public class MainWindow {
             case "suspend" -> setCompletionAction(new SuspendAction());
             case "shutdown" -> setCompletionAction(
                     new org.manager.download.action.ShutdownComputerAction(30));
-            case "custom" -> setCompletionAction(new SuspendAction()); // custom command support: Step 6+
+            case "custom" -> {
+                if (interactive) {
+                    promptForCustomCommand();
+                } else {
+                    rebuildCustomCommandAction();
+                }
+            }
             default -> setCompletionAction(null);
+        }
+    }
+
+    /**
+     * Installs the custom completion action from the persisted
+     * {@code ui.completionCommand}, or nothing when no command is stored.
+     */
+    private void rebuildCustomCommandAction() {
+        String saved = downloadManager.getGlobalSettings().getProperty("ui.completionCommand", "");
+        setCompletionAction(saved.isBlank() ? null
+                : new org.manager.download.action.ExecuteCommandAction(saved));
+    }
+
+    /**
+     * Asks for (or reuses) the custom completion command and installs the
+     * {@link org.manager.download.action.ExecuteCommandAction}. The command
+     * persists as {@code ui.completionCommand} so it survives restarts; the
+     * startup rebuild (no user gesture) silently reuses the stored value.
+     */
+    private void promptForCustomCommand() {
+        String saved = downloadManager.getGlobalSettings().getProperty("ui.completionCommand", "");
+        if (saved.isBlank()) {
+            org.gnome.gtk.Window prompt = new org.gnome.gtk.Window();
+            prompt.setTitle("Custom completion command");
+            prompt.setModal(true);
+            prompt.setTransientFor(window);
+            prompt.setDefaultSize(520, -1);
+
+            org.gnome.gtk.Box box = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.VERTICAL, 10);
+            box.setMarginTop(10);
+            box.setMarginBottom(10);
+            box.setMarginStart(10);
+            box.setMarginEnd(10);
+
+            org.gnome.gtk.Label help = new org.gnome.gtk.Label(
+                    "Command to run on completion. Variables: "
+                    + "{file_path} {filename} {dir} {url} {id} {gid}");
+            help.setWrap(true);
+            box.append(help);
+
+            org.gnome.gtk.Entry entry = new org.gnome.gtk.Entry();
+            entry.setPlaceholderText("mv {file_path} /tmp");
+            box.append(entry);
+
+            org.gnome.gtk.Box buttons = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.HORIZONTAL, 6);
+            buttons.setHalign(org.gnome.gtk.Align.END);
+            org.gnome.gtk.Button cancel = org.gnome.gtk.Button.withLabel("Cancel");
+            org.gnome.gtk.Button ok = org.gnome.gtk.Button.withLabel("Save");
+            ok.addCssClass("suggested-action");
+            buttons.append(cancel);
+            buttons.append(ok);
+            box.append(buttons);
+
+            prompt.setChild(box);
+            Runnable apply = () -> {
+                String command = entry.getText().strip();
+                if (!command.isBlank()) {
+                    downloadManager.getGlobalSettings().setProperty("ui.completionCommand", command);
+                    downloadManager.getGlobalSettings().save();
+                    setCompletionAction(new org.manager.download.action.ExecuteCommandAction(command));
+                } else {
+                    // Empty command: leave no completion action configured
+                    setCompletionAction(null);
+                }
+                prompt.close();
+            };
+            cancel.onClicked(() -> prompt.close());
+            ok.onClicked(apply::run);
+            entry.onActivate(apply::run);
+            prompt.present();
+        } else {
+            setCompletionAction(new org.manager.download.action.ExecuteCommandAction(saved));
         }
     }
 
@@ -1211,12 +1364,81 @@ public class MainWindow {
         for (Map<String, Object> file : files) {
             TreeIter iter = new TreeIter();
             filesStore.append(iter);
-            setBool(filesStore, iter, 0, true);
+            // Seed the checkbox from aria2's own per-file selected flag
+            boolean selected = !"false".equalsIgnoreCase(
+                    String.valueOf(file.getOrDefault("selected", "true")));
+            setBool(filesStore, iter, 0, selected);
             setStr(filesStore, iter, 1, String.valueOf(file.getOrDefault("path", "—")));
             setStr(filesStore, iter, 2, formatSize(parseLong(file.get("length"), 0)));
             setStr(filesStore, iter, 3, String.valueOf(progressPercent(
                     parseLong(file.get("completedLength"), 0), parseLong(file.get("length"), 1))));
             setStr(filesStore, iter, 4, "—");
+        }
+    }
+
+    /**
+     * Handles a torrent-file checkbox toggle in the Files tab: flips the row
+     * and pushes the selected file indexes to aria2 via the
+     * {@code select-file} option. Active torrents are paused around the
+     * change because aria2 applies select-file reliably only while paused.
+     * aria2 offers skip/include only — no per-file priority.
+     */
+    private void onFileSelectionToggled(String pathStr) {
+        Download download = selectedDownload;
+        if (download == null || !(download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings)) {
+            return;
+        }
+
+        // Flip the toggled row
+        TreeIter iter = new TreeIter();
+        if (!filesStore.getIterFromString(iter, pathStr)) {
+            return;
+        }
+        Value current = new Value().init(Types.BOOLEAN);
+        filesStore.getValue(iter, 0, current);
+        boolean newValue = !current.getBoolean();
+        current.unset();
+        setBool(filesStore, iter, 0, newValue);
+
+        // Collect all selected indexes (row order == getDownloadFiles order)
+        java.util.List<Integer> selectedIndexes = new java.util.ArrayList<>();
+        int index = 0;
+        TreeIter walk = new TreeIter();
+        if (filesStore.getIterFirst(walk)) {
+            do {
+                Value v = new Value().init(Types.BOOLEAN);
+                filesStore.getValue(walk, 0, v);
+                if (v.getBoolean()) {
+                    selectedIndexes.add(index);
+                }
+                v.unset();
+                index++;
+            } while (filesStore.iterNext(walk));
+        }
+        if (selectedIndexes.isEmpty()) {
+            LOGGER.warning("Refusing to deselect every file of " + download.getName());
+            setBool(filesStore, iter, 0, true);
+            return;
+        }
+
+        String selectFile = selectedIndexes.stream().map(String::valueOf)
+                .reduce((a, b) -> a + "," + b).orElse("");
+        aria2Settings.setOption("select-file", selectFile);
+
+        boolean wasActive = download.getStatus() == Download.Status.DOWNLOADING
+                && download.getGid() != null;
+        try {
+            if (wasActive) {
+                downloadManager.pauseDownload(download).join();
+            }
+            downloadManager.changeSettings(download).join();
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.WARNING,
+                    "Failed to apply file selection to " + download.getName(), e);
+        } finally {
+            if (wasActive) {
+                downloadManager.resumeDownload(download);
+            }
         }
     }
 

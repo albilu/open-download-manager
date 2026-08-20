@@ -203,7 +203,12 @@ public class ClipboardService implements ClipboardListener {
             // Auto-download without confirmation
             List<Download> downloads = createDownloadsFromUrls(finalFilteredUrls, true);
             LOGGER.info("Auto-downloading " + downloads.size() + " URL(s)");
-        } else if (!settings.isSilentMode()) {
+        } else if (settings.isSilentMode()) {
+            // Silent mode: register the downloads in QUEUED status without
+            // starting them; the user starts them from the list at will
+            List<Download> downloads = createDownloadsFromUrls(finalFilteredUrls, false);
+            LOGGER.info("Silently created " + downloads.size() + " download(s) in QUEUED state");
+        } else {
             // Show confirmation dialog (this would typically be handled by the UI layer)
             notifyServiceListeners(listener -> listener.onConfirmationRequired(finalFilteredUrls, clipboardContent));
         }

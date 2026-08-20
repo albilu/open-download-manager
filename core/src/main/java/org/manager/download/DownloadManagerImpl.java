@@ -484,6 +484,11 @@ public class DownloadManagerImpl implements DownloadManager {
                     cleanupDownloadResources(download.getId());
                 }
             }).exceptionally(e -> {
+                // proxychains start failure: one-shot fallback to curl with
+                // the socks proxy for plain http(s)/ftp downloads
+                if (maybeFallbackProxychainsToCurl(download, e)) {
+                    return null;
+                }
                 downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
                 download.setErrorMessage(e.getMessage());
                 notifyDownloadError(download, e.getMessage());
@@ -495,6 +500,9 @@ public class DownloadManagerImpl implements DownloadManager {
             });
 
         } catch (Exception e) {
+            if (maybeFallbackProxychainsToCurl(download, e)) {
+                return;
+            }
             downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
             download.setErrorMessage(e.getMessage());
             notifyDownloadError(download, e.getMessage());
@@ -503,6 +511,60 @@ public class DownloadManagerImpl implements DownloadManager {
             // Clean up on failure
             cleanupDownloadResources(download.getId());
         }
+    }
+
+    /** Download IDs already fallen back from proxychains to curl (one-shot). */
+    private final Set<String> proxychainsCurlFallback = ConcurrentHashMap.newKeySet();
+
+    /** Schedule gate: consulted before starting a download (null = allow all). */
+    private volatile java.util.function.Predicate<String> downloadGate;
+
+    @Override
+    public void setDownloadGate(java.util.function.Predicate<String> gate) {
+        this.downloadGate = gate;
+    }
+
+    /**
+     * Checks the schedule gate for a download.
+     *
+     * @return true when starting is allowed (or no gate is installed)
+     */
+    private boolean isStartAllowedBySchedule(Download download) {
+        java.util.function.Predicate<String> gate = downloadGate;
+        try {
+            return gate == null || gate.test(download.getId());
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Schedule gate check failed; allowing start", e);
+            return true;
+        }
+    }
+
+    /**
+     * When a PROXYCHAINS download fails at start and the URL is plain
+     * http(s)/ftp work, retypes the download to CURL (curl carries the socks
+     * proxy natively via -x) and restarts it once. Torrents/magnets are
+     * excluded — only aria2 can perform those.
+     *
+     * @return true when the fallback was applied
+     */
+    private boolean maybeFallbackProxychainsToCurl(Download download, Throwable cause) {
+        if (download.getType() != Download.Type.PROXYCHAINS
+                || !proxychainsCurlFallback.add(download.getId())) {
+            return false;
+        }
+        URI uri = download.getUri();
+        String scheme = uri != null && uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
+        if (!scheme.equals("http") && !scheme.equals("https") && !scheme.equals("ftp")
+                && !scheme.equals("ftps")) {
+            return false;
+        }
+        LOGGER.log(Level.WARNING, "proxychains failed for " + download.getName()
+                + "; falling back to curl with socks proxy", cause);
+        download.setType(Download.Type.CURL);
+        download.setErrorMessage(null);
+        downloadRepository.updateDownloadStatus(download, Download.Status.QUEUED);
+        startDownloadInternal(download);
+        return true;
     }
 
     @Override
@@ -723,6 +785,13 @@ public class DownloadManagerImpl implements DownloadManager {
                 return;
             }
 
+            // Respect the schedule: outside active ranges nothing starts
+            if (!isStartAllowedBySchedule(download)) {
+                LOGGER.fine("Download " + download.getName()
+                        + " not started: outside the active download schedule");
+                return;
+            }
+
             LOGGER.info("Starting next queued download: " + download.getName()
                     + " (current status: " + download.getStatus() + ", GID: " + download.getGid() + ")");
             startDownloadInternal(download);
@@ -857,6 +926,11 @@ public class DownloadManagerImpl implements DownloadManager {
             // Propagate runtime-relevant changes (proxy, speed limit) to the
             // engines so running downloads pick them up immediately
             applyGlobalSettingsToActiveDownloads();
+
+            // Re-evaluate the tracker refresh schedule (interval may have
+            // changed) and immediately apply a changed tracker list
+            startTrackerRefreshJob();
+            runTrackerRefresh();
         }
     }
 
@@ -1292,6 +1366,9 @@ public class DownloadManagerImpl implements DownloadManager {
                 LOGGER.info("Folder monitoring restored from settings");
             }
 
+            // Start the periodic tracker refresh when configured
+            startTrackerRefreshJob();
+
             // Log tool availability
             Map<String, Map<String, Object>> toolStatus = toolFactory.getStatusReport();
             LOGGER.info("Tool availability: " + toolStatus);
@@ -1310,8 +1387,10 @@ public class DownloadManagerImpl implements DownloadManager {
             switch (step) {
                 case "save state" ->
                     saveState().join();
-                case "shutdown handlers" ->
+                case "shutdown handlers" -> {
+                    stopTrackerRefreshJob();
                     getHandlerFactory().shutdownHandlers();
+                }
                 case "shutdown action manager" ->
                     getActionManager().shutdown();
                 case "shutdown clipboard service" ->
@@ -1541,9 +1620,15 @@ public class DownloadManagerImpl implements DownloadManager {
             downloadRepository.addDownload(download);
             notifyDownloadStart(download);
 
-            // Start the download if we are under the concurrent limit
-            if (runningDownloads.get() < getGlobalSettings().getMaxConcurrentDownloads()) {
+            // Start the download if we are under the concurrent limit and
+            // the schedule allows downloading right now (uGet-style ranges:
+            // outside the ranges downloads stay QUEUED)
+            if (runningDownloads.get() < getGlobalSettings().getMaxConcurrentDownloads()
+                    && isStartAllowedBySchedule(download)) {
                 startDownloadInternal(download);
+            } else if (!isStartAllowedBySchedule(download)) {
+                LOGGER.info("Download " + download.getName()
+                        + " stays queued: outside the active download schedule");
             }
 
             LOGGER.fine("Queued download: " + download.getId());
@@ -1885,6 +1970,49 @@ public class DownloadManagerImpl implements DownloadManager {
                         LOGGER.log(Level.WARNING, "Failed to start Metalink folder monitoring on " + folder, e);
                         return null;
                     });
+         }
+     }
+
+    /** Handle to the scheduled tracker refresh job, for shutdown cancellation. */
+    private java.util.concurrent.ScheduledFuture<?> trackerRefreshTask;
+
+    /**
+     * Starts the periodic tracker refresh when {@code tracker.refreshInterval}
+     * (minutes) and {@code tracker.list} are configured. Each tick re-applies
+     * the tracker list to every active BitTorrent download through
+     * {@code aria2.changeOption}.
+     */
+    private void startTrackerRefreshJob() {
+        stopTrackerRefreshJob();
+        int intervalMinutes = getGlobalSettings().getIntProperty("tracker.refreshInterval", 0);
+        String trackerList = getGlobalSettings().getProperty("tracker.list", "");
+        if (intervalMinutes <= 0 || trackerList.isBlank()) {
+            return;
+        }
+        long periodSeconds = intervalMinutes * 60L;
+        trackerRefreshTask = executorManager.getScheduledExecutor()
+                .scheduleWithFixedDelay(this::runTrackerRefresh,
+                        periodSeconds, periodSeconds, TimeUnit.SECONDS);
+        LOGGER.info("Tracker refresh scheduled every " + intervalMinutes + " minute(s)");
+    }
+
+    /** One tracker refresh tick; failures never kill the schedule. */
+    private void runTrackerRefresh() {
+        try {
+            DownloadHandler handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
+            if (handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler) {
+                aria2Handler.refreshTrackers();
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Tracker refresh failed", e);
+        }
+    }
+
+    /** Cancels the tracker refresh job, if running. */
+    private void stopTrackerRefreshJob() {
+        if (trackerRefreshTask != null) {
+            trackerRefreshTask.cancel(false);
+            trackerRefreshTask = null;
         }
     }
 

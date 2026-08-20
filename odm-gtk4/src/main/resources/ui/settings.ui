@@ -32,6 +32,9 @@
   <object class="GtkAdjustment" id="seed_time_adjustment">
     <property name="lower">0</property><property name="upper">10080</property><property name="value">60</property><property name="step-increment">10</property>
   </object>
+  <object class="GtkAdjustment" id="tracker_refresh_adjustment">
+    <property name="lower">0</property><property name="upper">1440</property><property name="value">0</property><property name="step-increment">30</property>
+  </object>
   <object class="GtkAdjustment" id="depth_adjustment">
     <property name="lower">0</property><property name="upper">20</property><property name="value">3</property><property name="step-increment">1</property>
   </object>
@@ -219,6 +222,20 @@
                     <child><object class="GtkCheckButton" id="check_integrity_check"><property name="label">Check file integrity</property></object></child>
                     <child><object class="GtkCheckButton" id="enable_auto_save_check"><property name="label">Enable Auto Save</property></object></child>
                     <child><object class="GtkCheckButton" id="enable_seeding_check"><property name="label">Enable Seeding</property></object></child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property><property name="spacing">8</property>
+                        <child><object class="GtkLabel"><property name="label">Extra trackers:</property><property name="xalign">0</property></object></child>
+                        <child><object class="GtkEntry" id="tracker_list_entry"><property name="hexpand">true</property><property name="placeholder-text">https://tracker.example.com/announce, …</property></object></child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property><property name="spacing">8</property>
+                        <child><object class="GtkLabel"><property name="label">Tracker refresh interval (min, 0 = off):</property><property name="xalign">0</property></object></child>
+                        <child><object class="GtkSpinButton" id="tracker_refresh_spin"><property name="adjustment">tracker_refresh_adjustment</property><property name="hexpand">true</property><property name="halign">end</property></object></child>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>
@@ -305,6 +322,8 @@
                     <property name="margin-top">12</property><property name="margin-bottom">12</property>
                     <child><object class="GtkLabel"><property name="label">&lt;b&gt;Scheduling&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property></object></child>
                     <child><object class="GtkCheckButton" id="enable_scheduling_check"><property name="label">Enable Scheduling</property></object></child>
+                    <child><object class="GtkLabel"><property name="label">Active download hours (days x hours, uGet-style):</property><property name="xalign">0</property></object></child>
+                    <child><object class="GtkBox" id="scheduler_grid_box"><property name="orientation">vertical</property><property name="spacing">4</property><property name="sensitive">false</property></object></child>
                     <child><object class="GtkLabel"><property name="label">&lt;b&gt;Advanced Tools&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property></object></child>
                     <child>
                       <object class="GtkGrid">

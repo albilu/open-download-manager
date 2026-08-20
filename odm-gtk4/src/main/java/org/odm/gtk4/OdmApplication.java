@@ -32,15 +32,38 @@ public final class OdmApplication {
         // Tor service (best-effort: falls back to system PATH tor)
         org.tor.TorService torService = createTorService();
 
-        // Scheduler (weekly download schedules; presets applied from the menu)
+        // Scheduler (weekly download schedules). The uGet-style grid from
+        // the Advanced settings tab takes precedence over menu presets.
+        // scheduler.enabled=false means NO restrictions: the scheduler is
+        // simply not started (the default alwaysActive gate allows all).
         org.manager.schedule.ScheduleManager scheduleManager =
                 new org.manager.schedule.ScheduleManager(manager);
-        scheduleManager.start().exceptionally(e -> {
-            LOGGER.warning("ScheduleManager failed to start: " + e.getMessage());
-            return null;
-        });
-        String preset = manager.getGlobalSettings().getProperty("scheduler.preset", "always");
-        scheduleManager.setGlobalPresetSchedule(preset);
+        boolean schedulingEnabled = manager.getGlobalSettings()
+                .getBooleanProperty("scheduler.enabled", false);
+        if (schedulingEnabled) {
+            scheduleManager.start().exceptionally(e -> {
+                LOGGER.warning("ScheduleManager failed to start: " + e.getMessage());
+                return null;
+            });
+            String grid = manager.getGlobalSettings().getProperty("scheduler.grid", "");
+            if (!grid.isBlank()) {
+                boolean[][] hourGrid = org.manager.schedule.WeeklySchedule.hourGridFromString(grid);
+                org.manager.schedule.ScheduleSettings settings =
+                        new org.manager.schedule.ScheduleSettings(
+                                org.manager.schedule.WeeklySchedule.fromHourGrid(hourGrid));
+                settings.setPolicy(org.manager.schedule.ScheduleSettings.SchedulePolicy.STRICT);
+                scheduleManager.getScheduler().setGlobalSchedule(settings);
+                LOGGER.info("Applied scheduler hour grid from settings");
+            } else {
+                String preset = manager.getGlobalSettings().getProperty("scheduler.preset", "always");
+                scheduleManager.setGlobalPresetSchedule(preset);
+            }
+        } else {
+            LOGGER.info("Scheduling disabled (scheduler.enabled=false); downloads unrestricted");
+        }
+        // Gate download starts on the scheduler's verdict; with scheduling
+        // disabled the global schedule stays alwaysActive, so all starts pass
+        manager.setDownloadGate(id -> scheduleManager.getScheduler().shouldDownloadBeActive(id));
 
         Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
         app.onActivate(() -> {

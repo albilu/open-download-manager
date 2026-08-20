@@ -331,6 +331,17 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             extraArgs.add("--all-proxy=" + globalSettings.getGlobalProxyAddress());
         }
 
+        // Extra BitTorrent trackers (comma-separated announce URLs) and the
+        // re-announce interval, when configured
+        String trackerList = trackerListSetting();
+        if (!trackerList.isBlank()) {
+            extraArgs.add("--bt-tracker=" + trackerList);
+        }
+        int trackerInterval = globalSettings.getIntProperty("tracker.refreshInterval", 0);
+        if (trackerInterval > 0) {
+            extraArgs.add("--bt-tracker-interval=" + (trackerInterval * 60L));
+        }
+
         // Configure session management using global settings
         try {
             // Use default session file paths in downloads directory
@@ -368,6 +379,51 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         aria2Client.connectWebSocket();
 
         LOGGER.info("aria2 RPC server started successfully with session management");
+    }
+
+    /**
+     * Re-applies the configured extra tracker list to every active
+     * BitTorrent download via per-download {@code aria2.changeOption}.
+     * Called by the scheduled tracker refresh job.
+     *
+     * @return the number of downloads the tracker list was applied to
+     */
+    public int refreshTrackers() {
+        String trackerList = trackerListSetting();
+        if (trackerList.isBlank() || aria2Client == null) {
+            return 0;
+        }
+        int applied = 0;
+        for (Download download : activeDownloads.values()) {
+            String gid = download.getGid();
+            if (gid == null) {
+                continue;
+            }
+            try {
+                aria2Client.changeOption(gid, Map.of("bt-tracker", trackerList));
+                applied++;
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to refresh trackers for GID " + gid, e);
+            }
+        }
+        if (applied > 0) {
+            LOGGER.fine("Refreshed trackers on " + applied + " download(s)");
+        }
+        return applied;
+    }
+
+    /**
+     * Reads the configured tracker list, normalizing whitespace/newline
+     * separators to the comma form aria2 expects.
+     */
+    private String trackerListSetting() {
+        String raw = globalSettings.getProperty("tracker.list", "");
+        if (raw.isBlank()) {
+            return "";
+        }
+        return String.join(",", java.util.Arrays.stream(raw.split("[\\s,]+"))
+                .filter(s -> !s.isBlank())
+                .toArray(String[]::new));
     }
 
     /**

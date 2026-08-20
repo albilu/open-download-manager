@@ -65,6 +65,8 @@ public class Download {
     private volatile String errorMessage;
     private volatile DownloadSettings settings; // unified settings object
     private volatile ScheduleSettings scheduleSettings; // scheduling configuration
+    private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
+    private volatile String expectedChecksum; // detected expected hash in hex
 
     /**
      * Creates a new Download instance with a random UUID.
@@ -478,6 +480,37 @@ public class Download {
     public void setErrorMessage(String errorMessage) {
         synchronized (lock) {
             this.errorMessage = errorMessage;
+        }
+    }
+
+    /**
+     * Gets the algorithm of the detected expected checksum, when one was
+     * auto-detected (for example from a sibling .sha256 file).
+     *
+     * @return the algorithm name (sha256, sha512, sha1, md5), or null
+     */
+    public String getChecksumAlgorithm() {
+        return checksumAlgorithm;
+    }
+
+    public void setChecksumAlgorithm(String checksumAlgorithm) {
+        synchronized (lock) {
+            this.checksumAlgorithm = checksumAlgorithm;
+        }
+    }
+
+    /**
+     * Gets the expected checksum hex digest detected for this download.
+     *
+     * @return the expected checksum, or null
+     */
+    public String getExpectedChecksum() {
+        return expectedChecksum;
+    }
+
+    public void setExpectedChecksum(String expectedChecksum) {
+        synchronized (lock) {
+            this.expectedChecksum = expectedChecksum;
         }
     }
 

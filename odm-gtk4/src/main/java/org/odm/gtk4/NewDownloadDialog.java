@@ -61,9 +61,16 @@ public class NewDownloadDialog {
     private final Switch torSwitch;
     private final CheckButton startAutomaticallyCheck;
     private final CheckButton moveTorrentCheck;
+    private final Label checksumLabel;
+    private final CheckButton verifyChecksumCheck;
 
     private Path selectedTorrentFile;
     private Path destinationFolder;
+
+    /** Checksum detected for the current URL (null while unknown/not probed). */
+    private volatile org.manager.download.ChecksumProbe.DetectedChecksum detectedChecksum;
+    /** URL whose sibling checksum files were probed (negative results cached too). */
+    private volatile java.net.URI lastProbedUrl;
 
     public NewDownloadDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
         this.downloadManager = downloadManager;
@@ -93,6 +100,8 @@ public class NewDownloadDialog {
         this.torSwitch = Widgets.require(builder, "tor_switch", Switch.class);
         this.startAutomaticallyCheck = Widgets.require(builder, "start_automatically_check", CheckButton.class);
         this.moveTorrentCheck = Widgets.require(builder, "move_torrent_check", CheckButton.class);
+        this.checksumLabel = Widgets.require(builder, "checksum_label", Label.class);
+        this.verifyChecksumCheck = Widgets.require(builder, "verify_checksum_check", CheckButton.class);
 
         dialog.setTransientFor(parent);
 
@@ -123,6 +132,19 @@ public class NewDownloadDialog {
         dialog.present();
     }
 
+    /**
+     * Prefills the URL field and runs the live analysis, then presents the
+     * dialog. Used by the clipboard confirmation flow.
+     *
+     * @param url the detected URL to offer for download
+     */
+    public void prefillUrl(String url) {
+        if (url != null && !url.isBlank()) {
+            urlEntry.setText(url);
+            analyzeUrl();
+        }
+    }
+
     private void onChooseTorrent() {
         FileDialog fileDialog = new FileDialog();
         fileDialog.setTitle("Select torrent or metalink file");
@@ -148,6 +170,7 @@ public class NewDownloadDialog {
     private void analyzeUrl() {
         String url = urlEntry.getText().trim();
         filesListstore.clear();
+        resetChecksumUi();
         if (url.isEmpty()) {
             return;
         }
@@ -165,9 +188,61 @@ public class NewDownloadDialog {
                             java.nio.charset.StandardCharsets.UTF_8));
                 }
             }
+            probeChecksumAsynchronously(uri);
         } catch (Exception e) {
             // still typing an invalid URL: nothing to analyze
         }
+    }
+
+    /**
+     * Probes sibling checksum files (.sha256/.sha512/.sha1/.md5) for the
+     * entered URL on a worker thread; results update the dialog on the GTK
+     * thread. Negative results are cached per URL so re-typing does not
+     * re-probe. Only URLs that look like direct file downloads are probed.
+     */
+    private void probeChecksumAsynchronously(java.net.URI uri) {
+        String path = uri.getPath();
+        boolean looksLikeFile = path != null && path.lastIndexOf('.') > path.lastIndexOf('/');
+        if (!looksLikeFile || java.util.Objects.equals(uri, lastProbedUrl)) {
+            return;
+        }
+        lastProbedUrl = uri;
+        detectedChecksum = null;
+        java.util.concurrent.CompletableFuture
+                .supplyAsync(() -> org.manager.download.ChecksumProbe.probe(uri)
+                        .orElse(null))
+                .thenAccept(found -> UiThread.marshal(() -> {
+                    // URL may have changed while probing
+                    if (!java.util.Objects.equals(uri, safeCurrentUri())) {
+                        return;
+                    }
+                    detectedChecksum = found;
+                    if (found != null) {
+                        checksumLabel.setLabel(found.algorithm() + ": " + found.checksum());
+                        verifyChecksumCheck.setVisible(true);
+                        verifyChecksumCheck.setActive(true);
+                    }
+                }))
+                .exceptionally(e -> {
+                    LOGGER.log(Level.FINE, "Checksum probe failed for " + uri, e);
+                    return null;
+                });
+    }
+
+    private java.net.URI safeCurrentUri() {
+        try {
+            return new java.net.URI(urlEntry.getText().trim());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Clears the checksum widgets for a new URL being typed. */
+    private void resetChecksumUi() {
+        checksumLabel.setLabel("—");
+        verifyChecksumCheck.setVisible(false);
+        verifyChecksumCheck.setActive(false);
+        detectedChecksum = null;
     }
 
     /** Extracts factual magnet metadata (dn, xl, btih) into the Files tab. */
@@ -288,6 +363,7 @@ public class NewDownloadDialog {
         try {
             Download download = createDownload();
             applyOptions(download);
+            registerChecksumVerification(download);
             if (startAutomaticallyCheck.getActive()) {
                 downloadManager.queueDownload(download);
             }
@@ -303,6 +379,27 @@ public class NewDownloadDialog {
             LOGGER.warning("New download rejected: " + e.getMessage());
             urlEntry.getStyleContext().addClass("error");
         }
+    }
+
+    /**
+     * When a checksum was detected and the user kept "Verify at completion"
+     * checked, stores it on the download and schedules the
+     * {@link org.manager.download.action.ChecksumValidationAction} for
+     * completion time.
+     */
+    private void registerChecksumVerification(Download download) {
+        org.manager.download.ChecksumProbe.DetectedChecksum found = detectedChecksum;
+        if (found == null || !verifyChecksumCheck.getVisible()
+                || !verifyChecksumCheck.getActive()) {
+            return;
+        }
+        download.setChecksumAlgorithm(found.algorithm());
+        download.setExpectedChecksum(found.checksum());
+        downloadManager.addAfterCompletionAction(download,
+                org.manager.download.action.ChecksumValidationAction.fromString(
+                        found.algorithm() + ":" + found.checksum()));
+        LOGGER.info("Checksum verification scheduled for " + download.getName()
+                + " (" + found.algorithm() + ")");
     }
 
     private Download createDownload() {

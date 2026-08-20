@@ -303,6 +303,17 @@ public interface DownloadManager {
     void applyGlobalSettingsToActiveDownloads();
 
     /**
+     * Installs a schedule gate consulted before any download is started: the
+     * predicate receives the download id and returns whether starting it is
+     * allowed right now. Used by the weekly scheduler (uGet-style ranges):
+     * outside the configured ranges downloads stay QUEUED. A null gate
+     * removes the restriction.
+     *
+     * @param gate the gate predicate, or null to allow all starts
+     */
+    void setDownloadGate(java.util.function.Predicate<String> gate);
+
+    /**
      * Saves the current download state to be resumed after restart.
      *
      * @return A future that completes when the state is saved

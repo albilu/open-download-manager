@@ -1,5 +1,6 @@
 package org.manager.download.handler;
 
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -233,6 +234,18 @@ public class DownloadHandlerFactory {
             return null;
         }
 
+        // Socks routing: fresh aria2 downloads whose effective proxy is
+        // socks4/socks5 (per-download fields, global proxy setting, or the
+        // Tor toggle) are routed through proxychains when available. Without
+        // proxychains, plain HTTP(S)/FTP downloads fall back to curl (native
+        // -x socks support); torrents/magnets stay on aria2 (native
+        // all-proxy socks). Downloads already typed PROXYCHAINS/CURL keep
+        // their handler so routing stays stable across later lookups.
+        DownloadHandler socksHandler = routeSocksDownload(download);
+        if (socksHandler != null) {
+            return socksHandler;
+        }
+
         // Get the registered handler for this type
         DownloadHandler handler = handlers.get(download.getType());
 
@@ -251,6 +264,90 @@ public class DownloadHandlerFactory {
         }
 
         return handler;
+    }
+
+    /**
+     * Routes fresh ARIA2 downloads with an effective socks proxy to the
+     * proxychains handler, or to curl when proxychains is unavailable.
+     *
+     * @return a handler, or null when no socks routing applies
+     */
+    private DownloadHandler routeSocksDownload(Download download) {
+        if (download.getType() != Download.Type.ARIA2) {
+            return null;
+        }
+        String proxy = effectiveProxyAddress(download);
+        if (proxy == null || !isSocksProxy(proxy)) {
+            return null;
+        }
+        // Torrents/magnets cannot run through curl; aria2 handles their
+        // socks proxy natively via all-proxy
+        if (isTorrentLike(download)) {
+            return null;
+        }
+
+        DownloadHandler proxychains = handlers.get(Download.Type.PROXYCHAINS);
+        if (proxychains != null) {
+            download.setType(Download.Type.PROXYCHAINS);
+            if (proxychains.canHandle(download)) {
+                LOGGER.info("Routing socks download through proxychains: "
+                        + download.getName());
+                return proxychains;
+            }
+        }
+
+        DownloadHandler curl = handlers.get(Download.Type.CURL);
+        if (curl != null) {
+            download.setType(Download.Type.CURL);
+            if (curl.canHandle(download)) {
+                LOGGER.info("proxychains unavailable; falling back to curl with socks proxy: "
+                        + download.getName());
+                return curl;
+            }
+        }
+
+        // No socks-capable alternative: let the normal path decide
+        return null;
+    }
+
+    /**
+     * Gets the proxy address that applies to this download: its own socks
+     * proxy when configured, otherwise the global proxy when enabled.
+     */
+    private String effectiveProxyAddress(Download download) {
+        if (download.getSettings() != null
+                && download.getSettings().isUseProxy()
+                && download.getSettings().getProxyAddress() != null) {
+            return download.getSettings().getProxyAddress();
+        }
+        if (globalSettings.isGlobalProxyEnabled()
+                && globalSettings.getGlobalProxyAddress() != null) {
+            return globalSettings.getGlobalProxyAddress();
+        }
+        return null;
+    }
+
+    private static boolean isSocksProxy(String address) {
+        String lower = address.toLowerCase();
+        return lower.startsWith("socks4://") || lower.startsWith("socks5://")
+                || lower.startsWith("socks5h://");
+    }
+
+    /**
+     * Checks whether a download is torrent/magnet/metalink work that only
+     * aria2 can perform.
+     */
+    private static boolean isTorrentLike(Download download) {
+        URI uri = download.getUri();
+        if (uri == null || uri.getScheme() == null) {
+            return false;
+        }
+        String scheme = uri.getScheme().toLowerCase();
+        if (scheme.equals("magnet") || scheme.equals("torrent") || scheme.equals("metalink")) {
+            return true;
+        }
+        String path = uri.getPath() != null ? uri.getPath().toLowerCase() : "";
+        return path.endsWith(".torrent") || path.endsWith(".metalink") || path.endsWith(".meta4");
     }
 
     /**

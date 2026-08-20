@@ -162,6 +162,26 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("new-media.ui parses with expected ids")
+    void newMedia() {
+        GtkBuilder builder = UiLoader.load("/ui/new-media.ui");
+        Widgets.require(builder, "new_media_dialog", Window.class);
+        Widgets.require(builder, "media_url_entry", Entry.class);
+        Widgets.require(builder, "fetch_info_button", Button.class);
+        Widgets.require(builder, "media_status_label", Label.class);
+        Widgets.require(builder, "media_info_label", Label.class);
+        Widgets.require(builder, "format_drop", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "audio_only_check", CheckButton.class);
+        Widgets.require(builder, "playlist_check", CheckButton.class);
+        Widgets.require(builder, "subtitles_check", CheckButton.class);
+        Widgets.require(builder, "subtitle_lang_entry", Entry.class);
+        Widgets.require(builder, "cookie_file_chooser", Button.class);
+        Widgets.require(builder, "media_folder_chooser", Button.class);
+        Widgets.require(builder, "media_cancel_button", Button.class);
+        Widgets.require(builder, "media_start_button", Button.class);
+    }
+
+    @Test
     @DisplayName("property.ui parses with 1:1 original ids")
     void property() {
         GtkBuilder builder = UiLoader.load("/ui/property.ui");

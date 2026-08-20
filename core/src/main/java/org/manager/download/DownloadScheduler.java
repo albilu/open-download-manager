@@ -29,6 +29,8 @@ public class DownloadScheduler {
     private final ScheduledExecutorService scheduler;
     private final Map<String, ScheduleSettings> downloadSchedules;
     private final Set<DownloadSchedulerListener> listeners;
+    /** Download ids paused by the scheduler; only these are auto-resumed. */
+    private final Set<String> pausedBySchedule = ConcurrentHashMap.newKeySet();
     private final Object lock = new Object();
 
     private ScheduleSettings globalSchedule;
@@ -415,6 +417,7 @@ public class DownloadScheduler {
             if (download == null) {
                 // Download no longer exists, remove its schedule
                 downloadSchedules.remove(downloadId);
+                pausedBySchedule.remove(downloadId);
                 return;
             }
 
@@ -426,9 +429,10 @@ public class DownloadScheduler {
             ScheduleSettings.SchedulePolicy policy = effectiveSchedule.getPolicy();
 
             if (shouldBeActive) {
-                // Download should be active
-                if (currentStatus == Download.Status.PAUSED && effectiveSchedule.isResumeOnScheduleStart()) {
-                    // Only resume if it was paused by schedule (we need a way to track this)
+                // Download should be active. Only resume downloads that this
+                // scheduler paused: user-paused downloads must stay paused.
+                if (currentStatus == Download.Status.PAUSED && effectiveSchedule.isResumeOnScheduleStart()
+                        && pausedBySchedule.remove(downloadId)) {
                     downloadManager.resumeDownload(download);
                     LOGGER.info("Resumed download " + downloadId + " due to schedule");
                     notifyDownloadResumed(downloadId, effectiveSchedule);
@@ -440,6 +444,7 @@ public class DownloadScheduler {
                         case STRICT -> {
                             if (currentStatus == Download.Status.DOWNLOADING
                                     || currentStatus == Download.Status.QUEUED) {
+                                pausedBySchedule.add(downloadId);
                                 downloadManager.pauseDownload(download);
                                 LOGGER.info("Paused download " + downloadId + " due to schedule (strict policy)");
                                 notifyDownloadPaused(downloadId, effectiveSchedule);
@@ -447,6 +452,7 @@ public class DownloadScheduler {
                         }
                         case GRACEFUL -> {
                             if (currentStatus == Download.Status.QUEUED) {
+                                pausedBySchedule.add(downloadId);
                                 downloadManager.pauseDownload(download);
                                 LOGGER.info(
                                         "Paused queued download " + downloadId + " due to schedule (graceful policy)");

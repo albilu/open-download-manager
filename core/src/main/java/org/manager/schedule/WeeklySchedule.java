@@ -97,6 +97,93 @@ public class WeeklySchedule {
     }
 
     /**
+     * Builds a schedule from a 7x24 hour grid (uGet-style editing surface).
+     * Contiguous active-hour runs become time ranges covering the full hours
+     * (for example hours 9-11 of Monday yield 09:00:00-11:59:59).
+     *
+     * @param hourGrid {@code [7][24]} booleans; row 0 = Monday, row 6 = Sunday
+     * @return a schedule reflecting the grid
+     */
+    public static WeeklySchedule fromHourGrid(boolean[][] hourGrid) {
+        Objects.requireNonNull(hourGrid, "Hour grid cannot be null");
+        WeeklySchedule schedule = new WeeklySchedule();
+        DayOfWeek[] days = DayOfWeek.values();
+        for (int d = 0; d < days.length && d < hourGrid.length; d++) {
+            boolean[] hours = hourGrid[d];
+            if (hours == null) {
+                continue;
+            }
+            int runStart = -1;
+            for (int h = 0; h <= 24; h++) {
+                boolean active = h < 24 && h < hours.length && hours[h];
+                if (active && runStart < 0) {
+                    runStart = h;
+                } else if (!active && runStart >= 0) {
+                    LocalTime end = h >= 24
+                            ? LocalTime.of(23, 59, 59)
+                            : LocalTime.of(h, 0).minusSeconds(1);
+                    schedule.addTimeRange(days[d], new TimeRange(
+                            LocalTime.of(runStart, 0), end));
+                    runStart = -1;
+                }
+            }
+        }
+        return schedule;
+    }
+
+    /**
+     * Encodes an hour grid as 42 lowercase hex characters (168 bits, one per
+     * hour, row 0 = Monday hour 0 first).
+     *
+     * @param hourGrid {@code [7][24]} booleans
+     * @return the hex string
+     */
+    public static String hourGridToString(boolean[][] hourGrid) {
+        StringBuilder hex = new StringBuilder(42);
+        for (int nibble = 0; nibble < 168; nibble += 4) {
+            int d = nibble / 24;
+            int h = nibble % 24;
+            int value = 0;
+            for (int bit = 0; bit < 4 && h + bit < 24; bit++) {
+                if (hourGrid[d][h + bit]) {
+                    value |= 1 << (3 - bit);
+                }
+            }
+            hex.append("0123456789abcdef".charAt(value));
+        }
+        return hex.toString();
+    }
+
+    /**
+     * Decodes a hex hour grid produced by {@link #hourGridToString}.
+     *
+     * @param hex 42 hex characters (or shorter/null for all-inactive)
+     * @return the {@code [7][24]} grid
+     */
+    public static boolean[][] hourGridFromString(String hex) {
+        boolean[][] grid = new boolean[7][24];
+        if (hex == null || hex.isBlank()) {
+            return grid;
+        }
+        for (int nibble = 0; nibble < 168; nibble += 4) {
+            int index = nibble / 4;
+            if (index >= hex.length()) {
+                break;
+            }
+            int value = Character.digit(hex.charAt(index), 16);
+            if (value < 0) {
+                continue;
+            }
+            int d = nibble / 24;
+            int h = nibble % 24;
+            for (int bit = 0; bit < 4 && h + bit < 24; bit++) {
+                grid[d][h + bit] = (value & (1 << (3 - bit))) != 0;
+            }
+        }
+        return grid;
+    }
+
+    /**
      * Creates a business hours schedule (9 AM to 5 PM, Monday to Friday).
      *
      * @return A schedule for standard business hours
