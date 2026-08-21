@@ -1,0 +1,22 @@
+name: Test CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Build Docker image
+              run: docker build -t odm-dev .
+
+            # Full suite: unit, integration, and E2E tests. Tests require aria2,
+            # yt-dlp, httrack, tor and Xvfb — all provided by the project Docker
+            # image (see AGENTS.md).
+            - name: Run tests
+              run: ./docker-build.sh test

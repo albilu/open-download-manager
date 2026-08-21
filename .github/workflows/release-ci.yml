@@ -1,0 +1,44 @@
+name: Release CI
+
+on:
+    push:
+        tags: ['v*']
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Extract version from tag
+              id: version
+              run: |
+                  version=$(echo "${{ github.ref_name }}" | sed 's/^v//')
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+
+            - name: Build Docker image
+              run: docker build -t odm-dev .
+
+            - name: Build packages (.deb/.rpm/.pkg.tar.zst)
+              run: ./docker-build.sh package "${{ steps.version.outputs.version }}"
+
+            - name: Install test (.deb on clean Ubuntu)
+              run: docker run --rm -v "$(pwd)/packaging:/pkgs:ro" ubuntu:24.04 bash -c "apt-get update -qq && apt-get install -y -qq /pkgs/open-download-manager_${{ steps.version.outputs.version }}_amd64.deb && test -x /usr/bin/open-download-manager"
+
+            - name: Create release and attach packages
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ github.ref_name }}
+                  name: ${{ github.ref_name }}
+                  body: |
+                      Packages for ${{ github.ref_name }}:
+
+                      - `open-download-manager_${{ steps.version.outputs.version }}_amd64.deb` — Debian/Ubuntu
+                      - `open-download-manager-${{ steps.version.outputs.version }}-1.x86_64.rpm` — Fedora/RHEL
+                      - `open-download-manager-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst` — Arch Linux
+                  files: |
+                      packaging/*.deb
+                      packaging/*.rpm
+                      packaging/*.pkg.tar.zst

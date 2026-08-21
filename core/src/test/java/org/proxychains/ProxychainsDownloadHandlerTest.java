@@ -29,7 +29,6 @@ import org.manager.download.DownloadListener;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.download.handler.ProxychainsDownloadHandler;
 import org.mockito.Mock;
-import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import org.mockito.MockitoAnnotations;
 import org.tor.TorService;
@@ -288,7 +287,12 @@ class ProxychainsDownloadHandlerTest {
     @Test
     @DisplayName("Should resume download")
     void shouldResumeDownload() {
-        when(mockDownload.getStatus()).thenReturn(Download.Status.PAUSED);
+        // Stub the whole sequence up front (PAUSED, then DOWNLOADING) before any
+        // executor work starts. resumeDownload() submits a nested task via the
+        // executor that keeps invoking mock methods after join() returns, so any
+        // mid-test re-stubbing (when/doReturn) races with that thread and
+        // corrupts Mockito's per-mock last-invocation state.
+        when(mockDownload.getStatus()).thenReturn(Download.Status.PAUSED, Download.Status.DOWNLOADING);
 
         assertDoesNotThrow(() -> {
             handler.initialize().join();
@@ -300,10 +304,7 @@ class ProxychainsDownloadHandlerTest {
             handler.resumeDownload(null).join();
         });
 
-        // Test with non-paused download. doReturn (not when()) because the
-        // handler's executor thread concurrently invokes the void setStatus
-        // on the same mock, which would corrupt when()'s stubbing state.
-        doReturn(Download.Status.DOWNLOADING).when(mockDownload).getStatus();
+        // Test with non-paused download (getStatus now returns DOWNLOADING)
         assertDoesNotThrow(() -> {
             handler.resumeDownload(mockDownload).join();
         });

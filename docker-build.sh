@@ -14,8 +14,21 @@ log() {
     echo -e "${GREEN}[ODM]${NC} $1"
 }
 
+# Ensure the shared Maven cache directory is writable by the container's
+# developer user (uid 1000). Docker resolves bind-mount sources on the host,
+# so on fresh CI runners (and under nested Docker/act) the source is
+# auto-created root-owned, making Maven fail with "Could not create local
+# repository at /home/developer/.m2/repository". Normalize permissions through
+# Docker itself so the path the daemon actually mounts is writable.
+prepare_m2() {
+    mkdir -p "$HOME/.m2"
+    docker run --rm -u 0 -v "$HOME/.m2:/m2" "$IMAGE_NAME" chmod 0777 /m2 2>/dev/null || true
+    chmod 0777 "$HOME/.m2" 2>/dev/null || true
+}
+
 # Run application
 run() {
+    prepare_m2
     log "Running application with GUI..."
     docker run --rm \
         -v "$(pwd):/app" \
@@ -30,6 +43,7 @@ run() {
 
 # Run application in debug mode
 debug() {
+    prepare_m2
     log "Running application in debug mode (port 5005) with GUI..."
     docker run --rm \
         -v "$(pwd):/app" \
@@ -50,6 +64,7 @@ build() {
 
 # Start development container
 dev() {
+    prepare_m2
     log "Starting development container..."
     docker run -it --rm \
         -v "$(pwd):/app" \
@@ -62,6 +77,7 @@ dev() {
 
 # Run tests
 test() {
+    prepare_m2
     log "Running tests..."
     docker run --rm \
         -v "$(pwd):/app" \
@@ -74,6 +90,7 @@ test() {
 
 # Build application
 compile() {
+    prepare_m2
     log "Building application..."
     docker run --rm \
         -v "$(pwd):/app" \
@@ -86,12 +103,14 @@ compile() {
 
 # Create packages
 package() {
-    log "Creating packages..."
+    prepare_m2
+    local version="${1:-0.1.0}"
+    log "Creating packages (version ${version})..."
     docker run --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         $IMAGE_NAME \
-        bash -c "cd /app && packaging/build-packages.sh 0.1.0"
+        bash -c "cd /app && packaging/build-packages.sh ${version}"
 }
 
 # Clean up
@@ -125,7 +144,7 @@ case "${1:-help}" in
     compile) build && compile ;;
     run)     build && run ;;
     debug)   build && debug ;;
-    package) build && package ;;
+    package) shift; build && package "$@" ;;
     clean)   clean ;;
     help)    help ;;
     *)       help ;;
