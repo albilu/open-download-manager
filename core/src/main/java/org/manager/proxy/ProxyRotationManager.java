@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -27,7 +29,10 @@ public class ProxyRotationManager {
     private static final Logger LOGGER = Logger.getLogger(ProxyRotationManager.class.getName());
 
     private final List<Proxy> proxyPool;
-    private final Map<String, Proxy> usedProxies; // Track proxies currently in use
+    // Track proxies currently in use, refcounted by download id: several
+    // downloads may share one proxy, and the proxy only becomes available
+    // again once the LAST holder releases it
+    private final Map<String, Set<String>> usedProxies;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     // Configuration
@@ -196,7 +201,6 @@ public class ProxyRotationManager {
             List<Proxy> availableProxies = healthyProxies.stream()
                     .filter(proxy -> !usedProxies.containsKey(proxy.getAddress()))
                     .collect(Collectors.toList());
-
             if (availableProxies.isEmpty()) {
                 availableProxies = healthyProxies;
             }
@@ -250,20 +254,28 @@ public class ProxyRotationManager {
      */
     public void markProxyInUse(Proxy proxy, String downloadId) {
         if (proxy != null && downloadId != null) {
-            usedProxies.put(proxy.getAddress(), proxy);
+            usedProxies.computeIfAbsent(proxy.getAddress(), k -> ConcurrentHashMap.newKeySet())
+                    .add(downloadId);
             LOGGER.fine("Marked proxy " + proxy.getAddress() + " as in use by download " + downloadId);
         }
     }
 
     /**
-     * Releases a proxy from use.
+     * Releases a proxy from use. The proxy becomes available again only when
+     * the last download using it has released it.
      *
      * @param proxy      The proxy to release
      * @param downloadId ID of the download releasing this proxy
      */
     public void releaseProxy(Proxy proxy, String downloadId) {
         if (proxy != null) {
-            usedProxies.remove(proxy.getAddress());
+            Set<String> holders = usedProxies.get(proxy.getAddress());
+            if (holders != null) {
+                holders.remove(downloadId);
+                if (holders.isEmpty()) {
+                    usedProxies.remove(proxy.getAddress());
+                }
+            }
             LOGGER.fine("Released proxy " + proxy.getAddress() + " from download " + downloadId);
         }
     }
@@ -297,8 +309,11 @@ public class ProxyRotationManager {
         LOGGER.warning("Recorded failure for proxy " + proxy.getAddress() + ": " + error
                 + " (total failures: " + proxy.getFailureCount() + ")");
 
-        // Remove proxy if it has too many failures
+        // Mark the terminal tier first so any holder of this proxy instance
+        // observes BLOCKED (the standalone 10-failure threshold in Proxy was
+        // unreachable: removal happens at maxFailuresBeforeRemoval)
         if (proxy.getFailureCount() >= maxFailuresBeforeRemoval) {
+            proxy.markBlocked();
             lock.writeLock().lock();
             try {
                 removeProxy(proxy);
@@ -307,6 +322,16 @@ public class ProxyRotationManager {
                 lock.writeLock().unlock();
             }
         }
+    }
+
+    /** Whether periodic health checks are enabled. */
+    public boolean isHealthChecksEnabled() {
+        return enableHealthChecks;
+    }
+
+    /** Interval between health checks in minutes. */
+    public long getHealthCheckIntervalMinutes() {
+        return healthCheckIntervalMinutes;
     }
 
     /**

@@ -359,50 +359,68 @@ public class ProxychainsConfig {
                 return this;
             }
 
-            // Parse proxy string (e.g. "socks5://user:pass@127.0.0.1:9050")
-            String[] parts = proxyString.split("://");
-            if (parts.length != 2) {
+            // Parse proxy string (e.g. "socks5://user:pass@127.0.0.1:9050",
+            // "socks5://[2001:db8::1]:1080"). The scheme splits on the FIRST
+            // "://", the userinfo on the LAST "@" (so passwords may contain
+            // '@' or ':'), and a bracketed IPv6 host carries its port after
+            // the closing bracket instead of the last colon.
+            int schemeEnd = proxyString.indexOf("://");
+            if (schemeEnd <= 0) {
                 LOGGER.warning("Invalid proxy string format: " + proxyString);
                 return this;
             }
 
-            // Get proxy type
-            String typeStr = parts[0].toLowerCase();
+            String typeStr = proxyString.substring(0, schemeEnd).toLowerCase();
             ProxyType type = ProxyType.fromString(typeStr);
             if (type == null) {
                 LOGGER.warning("Unknown proxy type: " + typeStr);
                 return this;
             }
 
-            // Parse auth, host and port
-            String hostPart = parts[1];
+            String rest = proxyString.substring(schemeEnd + 3);
             String username = null;
             String password = null;
 
-            // Check if there's auth info
-            if (hostPart.contains("@")) {
-                String[] authHostParts = hostPart.split("@");
-                if (authHostParts.length == 2) {
-                    String[] authParts = authHostParts[0].split(":");
-                    if (authParts.length == 2) {
-                        username = authParts[0];
-                        password = authParts[1];
-                    }
-                    hostPart = authHostParts[1];
+            int atSign = rest.lastIndexOf('@');
+            if (atSign >= 0) {
+                String userInfo = rest.substring(0, atSign);
+                rest = rest.substring(atSign + 1);
+                int colon = userInfo.indexOf(':');
+                if (colon >= 0) {
+                    username = userInfo.substring(0, colon);
+                    password = userInfo.substring(colon + 1); // may itself contain ':'
+                } else {
+                    username = userInfo;
                 }
             }
 
-            // Parse host and port
-            String[] hostPortParts = hostPart.split(":");
-            if (hostPortParts.length != 2) {
-                LOGGER.warning("Invalid host:port format: " + hostPart);
-                return this;
+            String host;
+            int port;
+            if (rest.startsWith("[")) {
+                // [ipv6]:port
+                int bracketEnd = rest.indexOf(']');
+                if (bracketEnd < 0 || bracketEnd + 1 >= rest.length() || rest.charAt(bracketEnd + 1) != ':') {
+                    LOGGER.warning("Invalid bracketed IPv6 proxy (expected [host]:port): " + proxyString);
+                    return this;
+                }
+                host = rest.substring(1, bracketEnd);
+                port = Integer.parseInt(rest.substring(bracketEnd + 2));
+            } else {
+                int lastColon = rest.lastIndexOf(':');
+                if (lastColon <= 0 || lastColon == rest.length() - 1) {
+                    LOGGER.warning("Invalid host:port format: " + rest);
+                    return this;
+                }
+                // A single colon means IPv4/hostname:port; multiple colons
+                // without brackets is a malformed bare IPv6 with no port
+                if (rest.indexOf(':') != lastColon) {
+                    LOGGER.warning("IPv6 proxies must be bracketed ([host]:port): " + proxyString);
+                    return this;
+                }
+                host = rest.substring(0, lastColon);
+                port = Integer.parseInt(rest.substring(lastColon + 1));
             }
 
-            String host = hostPortParts[0];
-            int port = Integer.parseInt(hostPortParts[1]);
-
-            // Add the proxy
             if (username != null && password != null) {
                 addProxy(type, host, port, username, password);
             } else {

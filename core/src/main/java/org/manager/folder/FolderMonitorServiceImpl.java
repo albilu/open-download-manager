@@ -392,7 +392,15 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                     WatchEvent.Kind<?> kind = event.kind();
 
                     if (kind == StandardWatchEventKinds.OVERFLOW) {
-                        LOGGER.warning("Watch event overflow occurred for folder: " + folderPath);
+                        LOGGER.warning("Watch event overflow occurred for folder: " + folderPath
+                                + "; rescanning to recover lost events");
+                        // Events were dropped by the OS: a rescan is the only
+                        // way to catch files that appeared during the overflow
+                        try {
+                            scanFolderInternal(folderPath, settings);
+                        } catch (Exception scanError) {
+                            LOGGER.log(Level.WARNING, "Overflow rescan failed for " + folderPath, scanError);
+                        }
                         continue;
                     }
 
@@ -468,26 +476,17 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             } else if (Files.isRegularFile(filePath)) {
                 scheduleFileProcessing(folderPath, filePath, currentSettings);
             }
-            // Only notify listeners about files that should be processed;
-            // announcedFiles dedupes against later MODIFY announcements
-            if (Files.isRegularFile(filePath) && shouldProcessFile(filePath, currentSettings)
-                    && announcedFiles.add(filePath)) {
-                notifyFileEvent(folderPath, filePath, currentSettings,
-                        listener -> listener.onFileAdded(folderPath, filePath, currentSettings));
-            }
+            // The onFileAdded announcement is made from the debounced task
+            // (see scheduleFileProcessing): announcing at CREATE raced files
+            // still being copied — validation failed, the path was
+            // permanently marked announced, and the download was never
+            // created even though the file later completed.
         } else if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
             if (Files.isRegularFile(filePath)) {
                 scheduleFileProcessing(folderPath, filePath, currentSettings);
             }
-            // Progressive downloads are ineligible at CREATE (file still
-            // empty); announce once when a modification first makes the
-            // file processable.
-            if (Files.isRegularFile(filePath) && shouldProcessFile(filePath, currentSettings)
-                    && announcedFiles.add(filePath)) {
-                notifyFileEvent(folderPath, filePath, currentSettings,
-                        listener -> listener.onFileAdded(folderPath, filePath, currentSettings));
-            }
-            // Only notify listeners about files that should be processed
+            // Only notify listeners about files that should be processed.
+            // The added-announcement itself comes from the debounced task.
             if (Files.isRegularFile(filePath) && shouldProcessFile(filePath, currentSettings)) {
                 notifyFileEvent(folderPath, filePath, currentSettings,
                         listener -> listener.onFileModified(folderPath, filePath, currentSettings));
@@ -529,10 +528,18 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             FolderMonitorSettings currentSettings = folderSettings.get(folderPath);
             if (currentSettings != null && currentSettings.isEnabled()
                     && Files.exists(filePath) && shouldProcessFile(filePath, currentSettings)
-                    && isMonitoring(folderPath)) { // Additional check for monitoring status
+                    && isMonitoring(folderPath)) {
+                // Announce once the file has settled (quiet for the whole
+                // debounce window), then run the file action. Announce first:
+                // the torrent/metalink listener creates the download
+                // synchronously, so it always observes the complete file.
+                if (announcedFiles.add(filePath)) {
+                    notifyFileEvent(folderPath, filePath, currentSettings,
+                            listener -> listener.onFileAdded(folderPath, filePath, currentSettings));
+                }
                 processFile(folderPath, filePath, currentSettings);
             } else {
-                LOGGER.info("Skipping scheduled processing - monitoring stopped or file invalid: " + filePath);
+                LOGGER.fine("Skipping scheduled processing - monitoring stopped or file invalid: " + filePath);
             }
         }, settings.getDebounceDelay().toMillis(), TimeUnit.MILLISECONDS);
 
@@ -934,11 +941,23 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 entries.sort(Map.Entry.comparingByValue());
 
                 int entriesToRemove = processedFiles.size() - (PROCESSED_FILES_MAX_SIZE * 3 / 4); // Remove to 75%
-                                                                                                  // capacity
+                                                                                                   // capacity
                 for (int i = 0; i < entriesToRemove && i < entries.size(); i++) {
                     processedFiles.remove(entries.get(i).getKey());
                     removedBySize++;
                 }
+            }
+
+            // Bound the announce/error tracking sets the same way: entries
+            // are only removed on file deletion or folder stop, so KEEP
+            // actions or externally-moved files would grow them forever
+            if (announcedFiles.size() > PROCESSED_FILES_MAX_SIZE) {
+                LOGGER.warning("Announced-file tracking exceeded " + PROCESSED_FILES_MAX_SIZE
+                        + " entries; clearing (worst case: a still-present file is re-announced once)");
+                announcedFiles.clear();
+            }
+            if (fileErrorReported.size() > PROCESSED_FILES_MAX_SIZE) {
+                fileErrorReported.clear();
             }
 
             lastCleanupTime = currentTime;

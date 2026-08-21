@@ -265,10 +265,20 @@ public abstract class AbstractToolManager implements ToolManager {
     }
 
     protected boolean isInPath(String executable) {
+        Process process = null;
         try {
-            Process process = Runtime.getRuntime().exec(new String[] { "which", executable });
-            return process.waitFor() == 0;
+            process = Runtime.getRuntime().exec(new String[] { "which", executable });
+            // Bounded wait: a wedged `which` (stale NFS mount) must not hang
+            // tool discovery at startup
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
         } catch (Exception e) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
             return false;
         }
     }
@@ -306,15 +316,24 @@ public abstract class AbstractToolManager implements ToolManager {
 
     protected String readProcessOutput(Process process) throws IOException {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            // Copy input stream
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = process.getInputStream().read(buffer)) != -1) {
-                output.write(buffer, 0, bytesRead);
-            }
-            // Copy error stream
-            while ((bytesRead = process.getErrorStream().read(buffer)) != -1) {
-                output.write(buffer, 0, bytesRead);
+            // Drain both streams CONCURRENTLY: reading stdout to EOF before
+            // touching stderr deadlocks a tool that writes more than the
+            // pipe capacity (64K) to stderr first
+            Thread stderrDrain = new Thread(() -> {
+                try {
+                    process.getErrorStream().transferTo(output);
+                } catch (IOException ignored) {
+                    // process died; draining is done
+                }
+            }, "tool-stderr-drain");
+            stderrDrain.setDaemon(true);
+            stderrDrain.start();
+
+            process.getInputStream().transferTo(output);
+            try {
+                stderrDrain.join(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
             return output.toString();
         }

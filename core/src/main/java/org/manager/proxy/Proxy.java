@@ -223,6 +223,16 @@ public class Proxy {
         }
     }
 
+    /**
+     * Marks this proxy permanently blocked. Used by the rotation manager
+     * when it removes a proxy for excessive failures, so holders of the
+     * instance observe the terminal tier (the 10-failure threshold alone is
+     * unreachable when removal happens earlier).
+     */
+    void markBlocked() {
+        this.status = Status.BLOCKED;
+    }
+
     public void reset() {
         this.status = Status.UNKNOWN;
         this.failureCount = 0;

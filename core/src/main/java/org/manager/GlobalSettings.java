@@ -39,36 +39,39 @@ public class GlobalSettings {
     // Properties storage for generic access
     private final Properties properties = new Properties();
 
-    private int maxConcurrentDownloads = 3;
-    private int globalSpeedLimit = 0; // 0 means no limit (in KB/s)
-    private boolean globalProxyEnabled = false;
-    private boolean proxyRotationEnabled = false;
-    private int proxyRotationMaxRetries = 5;
-    private String proxyListFilePath;
-    private String globalProxyAddress = null;
-    private Path defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
-    private boolean saveDownloadHistory = true;
+    // Mutable typed settings: written from UI threads and read from worker/
+    // monitor threads, so every field is volatile (individually-consistent
+    // reads; cross-field atomicity is not required for these knobs)
+    private volatile int maxConcurrentDownloads = 3;
+    private volatile int globalSpeedLimit = 0; // 0 means no limit (in KB/s)
+    private volatile boolean globalProxyEnabled = false;
+    private volatile boolean proxyRotationEnabled = false;
+    private volatile int proxyRotationMaxRetries = 5;
+    private volatile String proxyListFilePath;
+    private volatile String globalProxyAddress = null;
+    private volatile Path defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
+    private volatile boolean saveDownloadHistory = true;
 
     // Clipboard monitoring settings
-    private ClipboardSettings clipboardSettings = new ClipboardSettings();
+    private volatile ClipboardSettings clipboardSettings = new ClipboardSettings();
 
     // Memory management and cleanup settings
-    private int maxDownloadsInMemory = 1000; // 0 for unlimited
-    private int maxCompletedDownloadsToKeep = 500;
-    private long cleanupIntervalHours = 24; // Cleanup every 24 hours
-    private long completedDownloadRetentionDays = 30; // Keep completed downloads for 30 days
-    private long errorDownloadRetentionDays = 7; // Keep error downloads for 7 days
-    private boolean automaticCleanupEnabled = true;
-    private boolean enableLazyLoading = true; // Enable lazy loading for large datasets
-    private int paginationDefaultSize = 50; // Default page size for paginated queries
+    private volatile int maxDownloadsInMemory = 1000; // 0 for unlimited
+    private volatile int maxCompletedDownloadsToKeep = 500;
+    private volatile long cleanupIntervalHours = 24; // Cleanup every 24 hours
+    private volatile long completedDownloadRetentionDays = 30; // Keep completed downloads for 30 days
+    private volatile long errorDownloadRetentionDays = 7; // Keep error downloads for 7 days
+    private volatile boolean automaticCleanupEnabled = true;
+    private volatile boolean enableLazyLoading = true; // Enable lazy loading for large datasets
+    private volatile int paginationDefaultSize = 50; // Default page size for paginated queries
 
     // External tool paths
-    private String aria2Path = "aria2c";
-    private String ytDlpPath = "yt-dlp";
-    private String httrackPath = "httrack";
-    private String curlPath = "curl";
-    private String proxychainsPath = "proxychains";
-    private String torPath = "tor";
+    private volatile String aria2Path = "aria2c";
+    private volatile String ytDlpPath = "yt-dlp";
+    private volatile String httrackPath = "httrack";
+    private volatile String curlPath = "curl";
+    private volatile String proxychainsPath = "proxychains";
+    private volatile String torPath = "tor";
 
     // Tool availability flags - these are read-only and set by the dependency
     // manager
@@ -1000,12 +1003,20 @@ public class GlobalSettings {
 
         if (globalProxyAddress != null) {
             properties.setProperty("globalProxyAddress", globalProxyAddress);
+        } else {
+            // Clear stale keys: leaving them would resurrect the old value
+            // on the next load
+            properties.remove("globalProxyAddress");
         }
         if (proxyListFilePath != null) {
             properties.setProperty("proxyListFilePath", proxyListFilePath);
+        } else {
+            properties.remove("proxyListFilePath");
         }
         if (defaultDownloadDirectory != null) {
             properties.setProperty("defaultDownloadDirectory", defaultDownloadDirectory.toString());
+        } else {
+            properties.remove("defaultDownloadDirectory");
         }
     }
 
@@ -1016,7 +1027,9 @@ public class GlobalSettings {
     private void applyLoadedValues() {
         if (properties.containsKey("maxConcurrentDownloads")) {
             try {
-                maxConcurrentDownloads = Integer.parseInt(properties.getProperty("maxConcurrentDownloads"));
+                // Route through the setter: hand-edited values (9999) must
+                // be clamped exactly like UI input
+                setMaxConcurrentDownloads(Integer.parseInt(properties.getProperty("maxConcurrentDownloads")));
             } catch (NumberFormatException e) {
                 LOGGER.warning("Invalid maxConcurrentDownloads in settings file: "
                         + properties.getProperty("maxConcurrentDownloads"));
@@ -1077,7 +1090,7 @@ public class GlobalSettings {
         }
         if (properties.containsKey("proxyRotationMaxRetries")) {
             try {
-                proxyRotationMaxRetries = Integer.parseInt(properties.getProperty("proxyRotationMaxRetries"));
+                setProxyRotationMaxRetries(Integer.parseInt(properties.getProperty("proxyRotationMaxRetries")));
             } catch (NumberFormatException e) {
                 LOGGER.warning("Invalid proxyRotationMaxRetries in settings file: "
                         + properties.getProperty("proxyRotationMaxRetries"));

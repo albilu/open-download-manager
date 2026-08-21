@@ -332,6 +332,15 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         List<String> extraArgs = new ArrayList<>();
         extraArgs.add("--max-concurrent-downloads=" + globalSettings.getMaxConcurrentDownloads());
 
+        // Honor a configured RPC port (default 6800): the daemon must listen
+        // where the client talks to it, or every RPC call misses
+        int rpcPort = globalSettings.getIntProperty("aria2.rpcPort", 6800);
+        if (rpcPort > 0 && rpcPort != 6800) {
+            extraArgs.add("--rpc-listen-port=" + rpcPort);
+            aria2Client.setRpcUrl("http://localhost:" + rpcPort + "/jsonrpc");
+            LOGGER.info("aria2 RPC port overridden to " + rpcPort);
+        }
+
         // Convert KB/s to B/s for aria2
         long speedLimitBytesPerSec = globalSettings.getGlobalSpeedLimit() * 1024L;
         if (speedLimitBytesPerSec > 0) {

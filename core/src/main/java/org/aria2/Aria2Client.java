@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.java_websocket.client.WebSocketClient;
@@ -44,7 +45,7 @@ public class Aria2Client {
     private static final Logger LOGGER = Logger.getLogger(Aria2Client.class.getName());
 
     private final String aria2cPath;
-    private final String rpcUrl;
+    private volatile String rpcUrl;
     private final String rpcToken;
     /**
      * Secret actually sent with RPC payloads. Equals {@link #rpcToken} when
@@ -1049,6 +1050,18 @@ public class Aria2Client {
     }
 
     /**
+     * Points the client at a different RPC endpoint. The handler uses this
+     * when the configured RPC port differs from the aria2 default (6800).
+     *
+     * @param url the JSON-RPC URL, e.g. {@code http://localhost:6801/jsonrpc}
+     */
+    public void setRpcUrl(String url) {
+        if (url != null && !url.isBlank()) {
+            this.rpcUrl = url;
+        }
+    }
+
+    /**
      * Check if aria2 daemon is running and responsive.
      *
      * @return true if aria2 is running and responsive, false otherwise
@@ -1126,7 +1139,7 @@ public class Aria2Client {
                         handleNotification(json);
                     }
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    LOGGER.log(Level.WARNING, "Failed to process WebSocket message", e);
                 }
             }
 
@@ -1147,8 +1160,7 @@ public class Aria2Client {
 
             @Override
             public void onError(Exception ex) {
-                LOGGER.severe("WebSocket error: " + ex.getMessage());
-                ex.printStackTrace();
+                LOGGER.log(Level.WARNING, "WebSocket error: " + ex.getMessage(), ex);
             }
         };
 
@@ -1298,28 +1310,14 @@ public class Aria2Client {
 
         wsHealthCheckExecutor.scheduleAtFixedRate(() -> {
             try {
-                // Clear stale responses older than 30 seconds
-                List<Integer> staleIds = new ArrayList<>();
-
-                wsResponses.forEach((id, future) -> {
-                    if (future.isDone() || future.isCompletedExceptionally()) {
-                        staleIds.add(id);
-                    }
-                });
-
-                for (Integer id : staleIds) {
-                    CompletableFuture<String> future = wsResponses.remove(id);
-                    if (future != null && !future.isDone() && !future.isCompletedExceptionally()) {
-                        future.completeExceptionally(new TimeoutException("Request timed out"));
-                    }
-                }
-
-                // Check if connection is still alive with a ping
+                // Keepalive ping: detects a silently-dead connection through
+                // the onClose/onError callbacks. (Futures that complete are
+                // already removed in onMessage, so no sweeping is needed.)
                 if (wsClient != null && wsClient.isOpen()) {
                     wsClient.sendPing();
                 }
             } catch (Exception e) {
-                LOGGER.severe("Error in WebSocket health check: " + e.getMessage());
+                LOGGER.fine("WebSocket health check ping failed: " + e.getMessage());
             }
         }, 10, 30, TimeUnit.SECONDS);
     }
@@ -1410,8 +1408,7 @@ public class Aria2Client {
         conn.setDoOutput(true);
 
         try (OutputStream os = conn.getOutputStream()) {
-            os.write(payload.getBytes("UTF-8"));
-            os.flush();
+            os.write(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } catch (IOException e) {
             throw new IOException("Failed to send RPC request: " + e.getMessage(), e);
         }

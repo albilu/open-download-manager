@@ -105,6 +105,12 @@ public class MainWindow {
     private int[] lastStatusCounts = new int[0];
     private int[] lastCategoryCounts = new int[0];
     private int lastTotalCount = -1;
+
+    // Listeners registered with core services; kept as fields so the window
+    // can detach them on final close instead of leaking refresh work forever
+    private DownloadListener windowDownloadListener;
+    private org.manager.download.action.AfterCompletionActionListener windowCompletionListener;
+    private org.manager.clipboard.ClipboardServiceListener windowClipboardListener;
     private Download selectedDownload;
     private String statusFilter = "All Status";
     private String searchText = "";
@@ -175,6 +181,7 @@ public class MainWindow {
                 return true; // suppress the close; tray keeps the app running
             }
             saveWindowState(builder);
+            removeWindowListeners();
             return false; // allow close
         });
 
@@ -215,7 +222,7 @@ public class MainWindow {
         this.infoPanelWidget = Widgets.require(builder, "info_panel_box", org.gnome.gtk.Widget.class);
         menuButton.setMenuModel(buildMainMenu());
 
-        downloadManager.addDownloadListener(new DownloadListener() {
+        windowDownloadListener = new DownloadListener() {
             @Override public void onDownloadStart(Download d) { scheduleRefresh(); }
             @Override public void onDownloadProgress(Download d, float p, long db, long tb, float s) {
                 scheduleRefresh();
@@ -230,11 +237,12 @@ public class MainWindow {
                 scheduleRefresh();
             }
             @Override public void onDownloadCanceled(Download d) { scheduleRefresh(); }
-        });
+        };
+        downloadManager.addDownloadListener(windowDownloadListener);
 
         // Surface after-completion action results (e.g. antivirus threats)
         // in the info bar; callbacks may arrive from worker threads.
-        completionActionManager.addListener(new org.manager.download.action.AfterCompletionActionListener() {
+        windowCompletionListener = new org.manager.download.action.AfterCompletionActionListener() {
             @Override
             public void onActionStart(Download d, org.manager.download.action.AfterCompletionAction a) {
                 // no-op
@@ -269,15 +277,15 @@ public class MainWindow {
                     java.util.List<org.manager.download.action.AfterCompletionAction> failed) {
                 // no-op
             }
-        });
+        };
+        completionActionManager.addListener(windowCompletionListener);
 
         // Clipboard detection flow: in silent mode core creates QUEUED
         // downloads on its own; otherwise pop the new-download dialog with
         // the detected URL prefilled. Callbacks arrive on monitor threads,
         // so everything widget-touching goes through UiThread.
         try {
-            downloadManager.getClipboardService().addServiceListener(
-                    new org.manager.clipboard.ClipboardServiceListener() {
+            windowClipboardListener = new org.manager.clipboard.ClipboardServiceListener() {
                 @Override
                 public void onUrlsDetected(java.util.List<java.net.URI> urls, String content) {
                     // handled by the silent/auto paths in ClipboardService
@@ -299,7 +307,8 @@ public class MainWindow {
                         dialog.present();
                     });
                 }
-            });
+            };
+            downloadManager.getClipboardService().addServiceListener(windowClipboardListener);
             // Restore the persisted silent-mode flag into the core service
             applyClipboardSilentToCore(downloadManager.getGlobalSettings()
                     .getBooleanProperty("ui.clipboardSilent", false));
@@ -313,6 +322,31 @@ public class MainWindow {
 
     public void present() {
         window.present();
+    }
+
+    /**
+     * Detaches every listener this window registered with core services.
+     * Called from the final close path; without it the manager keeps
+     * dispatching refresh work to a dead window forever.
+     */
+    private void removeWindowListeners() {
+        if (windowDownloadListener != null) {
+            downloadManager.removeDownloadListener(windowDownloadListener);
+            windowDownloadListener = null;
+        }
+        if (windowCompletionListener != null) {
+            completionActionManager.removeListener(windowCompletionListener);
+            windowCompletionListener = null;
+        }
+        if (windowClipboardListener != null) {
+            try {
+                downloadManager.getClipboardService().removeServiceListener(windowClipboardListener);
+            } catch (Exception e) {
+                LOGGER.log(java.util.logging.Level.WARNING,
+                        "Failed to remove clipboard service listener", e);
+            }
+            windowClipboardListener = null;
+        }
     }
 
     private void onAddClicked() {
@@ -854,34 +888,49 @@ public class MainWindow {
                 if (file == null || file.getPath() == null) {
                     return;
                 }
-                String html = java.nio.file.Files.readString(java.nio.file.Path.of(file.getPath().toString()));
-                java.util.List<java.net.URI> urls = new java.util.ArrayList<>();
-                java.util.regex.Matcher m = java.util.regex.Pattern
-                        .compile("href\\s*=\\s*[\"']([^\"']+)[\"']", java.util.regex.Pattern.CASE_INSENSITIVE)
-                        .matcher(html);
-                while (m.find()) {
+                java.nio.file.Path path = java.nio.file.Path.of(file.getPath().toString());
+                // File I/O and regex over arbitrarily large documents run OFF
+                // the GTK main loop; only the result goes back to the UI
+                CompletableFuture.supplyAsync(() -> {
                     try {
-                        java.net.URI uri = new java.net.URI(m.group(1));
-                        if (uri.getScheme() != null && (uri.getScheme().startsWith("http"))) {
-                            urls.add(uri);
+                        String html = java.nio.file.Files.readString(path);
+                        java.util.List<java.net.URI> urls = new java.util.ArrayList<>();
+                        java.util.regex.Matcher m = java.util.regex.Pattern
+                                .compile("href\\s*=\\s*[\"']([^\"']+)[\"']",
+                                        java.util.regex.Pattern.CASE_INSENSITIVE)
+                                .matcher(html);
+                        while (m.find()) {
+                            try {
+                                java.net.URI uri = new java.net.URI(m.group(1));
+                                if (uri.getScheme() != null && (uri.getScheme().startsWith("http"))) {
+                                    urls.add(uri);
+                                }
+                            } catch (Exception ignored) {
+                                // non-absolute/invalid href: skip
+                            }
                         }
-                    } catch (Exception ignored) {
-                        // non-absolute/invalid href: skip
+                        int queued = 0;
+                        for (java.net.URI uri : urls) {
+                            try {
+                                downloadManager.queueDownload(downloadManager.createDownload(uri, null));
+                                queued++;
+                            } catch (Exception ignored) {
+                                // skip
+                            }
+                        }
+                        return queued;
+                    } catch (Exception e) {
+                        LOGGER.log(java.util.logging.Level.FINE, "HTML import failed", e);
+                        return -1;
                     }
-                }
-                int queued = 0;
-                for (java.net.URI uri : urls) {
-                    try {
-                        downloadManager.queueDownload(downloadManager.createDownload(uri, null));
-                        queued++;
-                    } catch (Exception ignored) {
-                        // skip
+                }, DETAIL_EXECUTOR).thenAccept(count -> {
+                    if (count == null || count < 0) {
+                        return;
                     }
-                }
-                final int count = queued;
-                UiThread.marshal(() -> {
-                    infoLabel.setLabel("Imported " + count + " link(s) from HTML");
-                    refresh();
+                    UiThread.marshal(() -> {
+                        infoLabel.setLabel("Imported " + count + " link(s) from HTML");
+                        refresh();
+                    });
                 });
             } catch (Exception e) {
                 LOGGER.log(java.util.logging.Level.FINE, "HTML import cancelled or failed", e);
@@ -900,14 +949,24 @@ public class MainWindow {
                 if (file == null || file.getPath() == null) {
                     return;
                 }
+                java.nio.file.Path path = java.nio.file.Path.of(file.getPath().toString());
+                // Snapshot the URL list on the GTK thread (model access),
+                // write the file off it
                 StringBuilder sb = new StringBuilder();
                 for (Download d : downloadManager.getAllDownloads()) {
                     if (d.getUri() != null) {
                         sb.append(d.getUri()).append('\n');
                     }
                 }
-                java.nio.file.Files.writeString(java.nio.file.Path.of(file.getPath().toString()), sb.toString());
-                UiThread.marshal(() -> infoLabel.setLabel("Exported download list"));
+                String contents = sb.toString();
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        java.nio.file.Files.writeString(path, contents);
+                        UiThread.marshal(() -> infoLabel.setLabel("Exported download list"));
+                    } catch (Exception e) {
+                        LOGGER.log(java.util.logging.Level.FINE, "Export failed", e);
+                    }
+                }, DETAIL_EXECUTOR);
             } catch (Exception e) {
                 LOGGER.log(java.util.logging.Level.FINE, "Export cancelled or failed", e);
             }

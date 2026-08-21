@@ -280,6 +280,39 @@ public class PaginatedDownloadRepository {
     }
 
     /**
+     * Gets downloads with cursor-style pagination: the window is exactly
+     * [offset, offset+limit) in the standard newest-first ordering. Unlike
+     * page-number pagination this never duplicates or drops rows for
+     * offsets that are not multiples of the limit.
+     *
+     * @param offset zero-based index of the first row
+     * @param limit  maximum number of rows
+     * @return the requested window
+     */
+    public DownloadPage getAllDownloadsByOffset(int offset, int limit) {
+        if (limit <= 0) {
+            return new DownloadPage(new ArrayList<>(), getTotalCount(), 0, 0);
+        }
+        lock.readLock().lock();
+        try {
+            List<Download> allDownloads = downloads.values().stream()
+                    .sorted(Comparator.comparing(Download::getCreatedAt).reversed())
+                    .collect(Collectors.toList());
+
+            int totalCount = allDownloads.size();
+            int fromIndex = Math.max(0, offset);
+            int toIndex = Math.min(fromIndex + limit, totalCount);
+
+            List<Download> pageDownloads = fromIndex < totalCount
+                    ? new ArrayList<>(allDownloads.subList(fromIndex, toIndex))
+                    : new ArrayList<>();
+            return new DownloadPage(pageDownloads, totalCount, 0, totalCount);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
      * Gets downloads by status with pagination.
      *
      * @param status     The status to filter by

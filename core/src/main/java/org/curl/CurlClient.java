@@ -170,6 +170,20 @@ public class CurlClient {
                 Process process = processBuilder.start();
                 activeProcesses.put(download.getId(), process);
 
+                // Gobble stdout on a daemon thread: the command normally
+                // writes to -o, but if a flag ever routes the document to
+                // stdout an undrained pipe would fill (64K) and deadlock
+                // the transfer
+                Thread stdoutDrain = new Thread(() -> {
+                    try {
+                        process.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
+                    } catch (IOException ignored) {
+                        // process died; draining is done
+                    }
+                }, "curl-stdout-drain");
+                stdoutDrain.setDaemon(true);
+                stdoutDrain.start();
+
                 // Update download status
                 download.setStatus(Download.Status.DOWNLOADING);
                 if (listener != null) {

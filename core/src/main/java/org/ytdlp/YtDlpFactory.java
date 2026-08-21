@@ -113,6 +113,14 @@ public class YtDlpFactory {
         return client;
     }
 
+    /** Creates an unregistered client (registration is the caller's choice). */
+    private YtDlpClient newUnregisteredClient() {
+        YtDlpToolManager ytDlpManager = toolManagerFactory.getYtDlpManager();
+        String managerPath = ytDlpManager != null ? ytDlpManager.getToolPath() : null;
+        String ytDlpPath = managerPath != null && !managerPath.isBlank() ? managerPath : "yt-dlp";
+        return new YtDlpClient(ytDlpPath);
+    }
+
     /**
      * Creates a new YtDlpClient with a specific path.
      *
@@ -287,8 +295,11 @@ public class YtDlpFactory {
             outputPath = getDefaultOutputPath();
         }
 
-        // Create a client for this task
-        YtDlpClient client = createClient();
+        // Create a client for this task, keyed by the task id so the client
+        // is reclaimed together with the task (a per-download client that is
+        // only cleared at factory shutdown leaks a thread pool per download)
+        YtDlpClient client = newUnregisteredClient();
+        clients.put("task-" + taskId, client);
 
         YtDlpDownloadTask task = new YtDlpDownloadTask(taskId, url, settings, outputPath, client);
 
@@ -330,6 +341,12 @@ public class YtDlpFactory {
         YtDlpDownloadTask task = activeTasks.remove(taskId);
         if (task != null) {
             LOGGER.info("Removed YtDlpDownloadTask: " + taskId);
+
+            // Reclaim the task's dedicated client (and its thread pool)
+            YtDlpClient client = clients.remove("task-" + taskId);
+            if (client != null) {
+                client.shutdown();
+            }
             return true;
         }
         return false;

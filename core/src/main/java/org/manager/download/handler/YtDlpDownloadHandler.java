@@ -141,8 +141,10 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         download.setErrorMessage("Download failed: " + throwable.getMessage());
                         notifyDownloadError(download, download.getErrorMessage());
                     }
-                    // Clean up completed task
+                    // Clean up completed task and reclaim its dedicated
+                    // client/thread pool
                     activeDownloadTasks.remove(download.getId());
+                    ytDlpFactory.removeDownloadTask(download.getId());
                 });
 
                 // Update download status
@@ -205,16 +207,49 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 task.cancel();
                 LOGGER.info("Cancelled yt-dlp download: " + download.getId());
             }
+            // Reclaim the factory-side task entry and its client
+            ytDlpFactory.removeDownloadTask(download.getId());
 
             if (deleteFiles && download.getDestination() != null) {
-                // TODO: Implement file deletion for yt-dlp downloads
-                // This is complex since the exact filename is determined by yt-dlp
-                LOGGER.warning("File deletion not yet implemented for yt-dlp downloads");
+                deleteYtDlpOutput(download, task);
             }
 
             download.setStatus(Download.Status.CANCELED);
             notifyDownloadCanceled(download);
         }, executor);
+    }
+
+    private static final java.util.logging.Logger DELETE_LOGGER =
+            java.util.logging.Logger.getLogger(YtDlpDownloadHandler.class.getName());
+
+    /**
+     * Best-effort removal of a canceled yt-dlp download's output. The exact
+     * filename is determined by yt-dlp at runtime; the best available
+     * knowledge is the filename parsed from its output (task.getFilename()),
+     * falling back to the download name. The {@code .part} variant covers
+     * transfers canceled mid-flight.
+     *
+     * @param download the canceled download
+     * @param task the task if it is still known, or null
+     */
+    static void deleteYtDlpOutput(Download download, YtDlpDownloadTask task) {
+        String filename = task != null ? task.getFilename() : null;
+        if (filename == null || filename.isBlank()) {
+            filename = download.getName();
+        }
+        if (filename == null || filename.isBlank() || download.getDestination() == null) {
+            DELETE_LOGGER.warning("Cannot delete yt-dlp output for " + download.getId()
+                    + ": filename unknown");
+            return;
+        }
+        Path base = download.getDestination().resolve(filename);
+        for (Path candidate : new Path[]{base, Path.of(base + ".part")}) {
+            try {
+                java.nio.file.Files.deleteIfExists(candidate);
+            } catch (Exception e) {
+                DELETE_LOGGER.warning("Could not delete yt-dlp output " + candidate + ": " + e.getMessage());
+            }
+        }
     }
 
     /**

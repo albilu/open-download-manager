@@ -459,31 +459,7 @@ public class TorController {
     }
 
     private String tryReadCookieAuth() {
-        // Try to find cookie in any temporary tor data directory first
-        try {
-            Path tempDir = Paths.get(System.getProperty("java.io.tmpdir"));
-            Optional<Path> cookieFile = Files.list(tempDir)
-                    .filter(Files::isDirectory)
-                    .filter(path -> path.getFileName().toString().startsWith("tor-controller-test"))
-                    .map(torDir -> torDir.resolve("control_auth_cookie"))
-                    .filter(Files::exists)
-                    .findFirst();
-
-            if (cookieFile.isPresent()) {
-                try {
-                    byte[] cookieData = Files.readAllBytes(cookieFile.get());
-                    String hexCookie = bytesToHex(cookieData);
-                    LOGGER.info("Found cookie file at: " + cookieFile.get());
-                    return hexCookie;
-                } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to read cookie file: " + cookieFile.get(), e);
-                }
-            }
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to search for cookie files", e);
-        }
-
-        // Common cookie file locations as fallback
+        // Common cookie file locations
         String[] cookiePaths = {
                 System.getProperty("user.home") + "/.tor/control_auth_cookie",
                 "/var/lib/tor/control_auth_cookie"

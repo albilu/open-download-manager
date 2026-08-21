@@ -6,6 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -25,8 +26,13 @@ public class RetryableDownloadHandler implements DownloadHandler {
 
     private static final Logger LOGGER = Logger.getLogger(RetryableDownloadHandler.class.getName());
 
-    // Pattern to extract HTTP status codes from error messages
-    private static final Pattern HTTP_STATUS_PATTERN = Pattern.compile("\\b(\\d{3})\\b");
+    /**
+     * Extracts HTTP status codes ONLY when an HTTP-ish keyword precedes them.
+     * A bare \b\d{3}\b matched any three-digit number — ports, byte counts,
+     * "timed out after 500 ms" — and rotated proxies on non-HTTP failures.
+     */
+    private static final Pattern HTTP_STATUS_PATTERN =
+            Pattern.compile("(?i)(?:http|status|response|server).{0,20}?([1-5]\\d{2})");
 
     private final DownloadHandler delegate;
     private final ProxyRotationManager proxyManager;
@@ -67,7 +73,7 @@ public class RetryableDownloadHandler implements DownloadHandler {
 
     @Override
     public CompletableFuture<String> startDownload(Download download) {
-        return startDownloadWithRetry(download, 0, null);
+        return startDownloadWithRetry(download, 0, null, new AtomicBoolean());
     }
 
     @Override
@@ -112,9 +118,17 @@ public class RetryableDownloadHandler implements DownloadHandler {
 
     /**
      * Starts a download with retry logic and proxy rotation.
+     *
+     * @param download the download to start
+     * @param attemptNumber zero-based attempt index
+     * @param previousProxy the proxy used by the previous attempt, if any
+     * @param failureClaim guards this attempt's failure handling: handlers may
+     *        emit duplicate terminal notifications (and the start future's
+     *        whenComplete can race the listener channel), each of which must
+     *        schedule at most ONE retry
      */
     private CompletableFuture<String> startDownloadWithRetry(Download download, int attemptNumber,
-            Proxy previousProxy) {
+            Proxy previousProxy, AtomicBoolean failureClaim) {
         CompletableFuture<String> future = new CompletableFuture<>();
 
         try {
@@ -129,19 +143,22 @@ public class RetryableDownloadHandler implements DownloadHandler {
                 }
             }
 
-            // Create a wrapper listener to intercept errors
-            RetryListener retryListener = new RetryListener(download, attemptNumber, previousProxy, future);
+            // Create a wrapper listener to intercept errors. It stays
+            // attached after the start future completes: like aria2, the
+            // delegate's future resolves once the transfer is ACCEPTED —
+            // mid-transfer failures (rate limits, 5xx) arrive only through
+            // this listener channel.
+            RetryListener retryListener = new RetryListener(download, attemptNumber, previousProxy,
+                    future, failureClaim);
             delegate.addDownloadListener(retryListener);
 
             // Start the actual download
             delegate.startDownload(download)
                     .whenComplete((gid, throwable) -> {
-                        delegate.removeDownloadListener(retryListener);
-
                         if (throwable != null) {
                             // Handle immediate failures (before download starts)
                             handleDownloadFailure(download, throwable.getMessage(), attemptNumber,
-                                    previousProxy, future);
+                                    previousProxy, future, failureClaim, retryListener);
                         } else if (!future.isDone()) {
                             // Download started successfully
                             Proxy currentProxy = getCurrentProxy(download);
@@ -149,12 +166,14 @@ public class RetryableDownloadHandler implements DownloadHandler {
                                 proxyManager.recordSuccess(currentProxy, 0); // We don't have response time here
                             }
                             future.complete(gid);
+                            // retryListener stays attached for the transfer
                         }
                     });
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Failed to start download attempt " + (attemptNumber + 1), e);
-            handleDownloadFailure(download, e.getMessage(), attemptNumber, previousProxy, future);
+            handleDownloadFailure(download, e.getMessage(), attemptNumber, previousProxy, future,
+                    failureClaim, null);
         }
 
         return future;
@@ -164,7 +183,18 @@ public class RetryableDownloadHandler implements DownloadHandler {
      * Handles download failures and determines if retry is needed.
      */
     private void handleDownloadFailure(Download download, String errorMessage, int attemptNumber,
-            Proxy previousProxy, CompletableFuture<String> future) {
+            Proxy previousProxy, CompletableFuture<String> future, AtomicBoolean failureClaim,
+            RetryListener listenerToRetire) {
+
+        // Exactly-once per attempt: duplicate terminal notifications and the
+        // start-future whenComplete can both reach here for one failure
+        if (!failureClaim.compareAndSet(false, true)) {
+            return;
+        }
+
+        if (listenerToRetire != null) {
+            delegate.removeDownloadListener(listenerToRetire);
+        }
 
         Proxy currentProxy = getCurrentProxy(download);
 
@@ -180,6 +210,7 @@ public class RetryableDownloadHandler implements DownloadHandler {
             // counter on proxy change, otherwise rotation (which changes the
             // proxy every attempt) would retry forever.
             final int nextAttempt = attemptNumber + 1;
+            final AtomicBoolean nextClaim = new AtomicBoolean();
 
             LOGGER.info("Retrying download " + download.getId() + " (attempt " + (nextAttempt + 1)
                     + "/" + (retrySettings.getMaxRetries() + 1) + ") due to: " + errorMessage);
@@ -187,7 +218,7 @@ public class RetryableDownloadHandler implements DownloadHandler {
             // Calculate delay and schedule retry
             Duration delay = retrySettings.calculateRetryDelay(nextAttempt);
             scheduler.schedule(() -> {
-                startDownloadWithRetry(download, nextAttempt, currentProxy)
+                startDownloadWithRetry(download, nextAttempt, currentProxy, nextClaim)
                         .whenComplete((gid, throwable) -> {
                             if (throwable != null) {
                                 future.completeExceptionally(throwable);
@@ -300,14 +331,16 @@ public class RetryableDownloadHandler implements DownloadHandler {
         private final int attemptNumber;
         private final Proxy previousProxy;
         private final CompletableFuture<String> future;
+        private final AtomicBoolean failureClaim;
         private final Instant startTime;
 
         public RetryListener(Download download, int attemptNumber, Proxy previousProxy,
-                CompletableFuture<String> future) {
+                CompletableFuture<String> future, AtomicBoolean failureClaim) {
             this.download = download;
             this.attemptNumber = attemptNumber;
             this.previousProxy = previousProxy;
             this.future = future;
+            this.failureClaim = failureClaim;
             this.startTime = Instant.now();
         }
 
@@ -334,6 +367,9 @@ public class RetryableDownloadHandler implements DownloadHandler {
 
         @Override
         public void onDownloadComplete(Download download) {
+            // This listener's job is done
+            delegate.removeDownloadListener(this);
+
             // Record success for the proxy
             Proxy currentProxy = getCurrentProxy(download);
             if (currentProxy != null) {
@@ -350,14 +386,16 @@ public class RetryableDownloadHandler implements DownloadHandler {
 
         @Override
         public void onDownloadError(Download download, String errorMessage) {
-            // Handle the error through retry logic
-            if (!future.isDone()) {
-                handleDownloadFailure(download, errorMessage, attemptNumber, previousProxy, future);
-            }
+            // Handle the error through retry logic; handleDownloadFailure
+            // removes this listener (and enforces exactly-once claiming)
+            handleDownloadFailure(download, errorMessage, attemptNumber, previousProxy, future,
+                    failureClaim, this);
         }
 
         @Override
         public void onDownloadCanceled(Download download) {
+            delegate.removeDownloadListener(this);
+
             // Release proxy and cancel future
             Proxy currentProxy = getCurrentProxy(download);
             if (currentProxy != null) {

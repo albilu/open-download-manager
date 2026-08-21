@@ -839,10 +839,10 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public List<Download> getDownloads(int offset, int limit) {
-        int pageNumber = offset / limit;
-        int pageSize = limit;
-        PaginatedDownloadRepository.DownloadPage page = downloadRepository.getAllDownloads(pageNumber, pageSize);
-        return page.getDownloads();
+        // Cursor slicing, NOT offset/limit page-number translation: division
+        // returned whole pages and duplicated/dropped rows for non-aligned
+        // offsets
+        return downloadRepository.getAllDownloadsByOffset(offset, limit).getDownloads();
     }
 
     @Override
@@ -859,11 +859,12 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public List<Download> getDownloadsByStatus(Download.Status status, int offset, int limit) {
-        int pageNumber = offset / limit;
-        int pageSize = limit;
-        PaginatedDownloadRepository.DownloadPage page = downloadRepository.getDownloadsByStatus(status, pageNumber,
-                pageSize);
-        return page.getDownloads();
+        // Cursor slicing for status queries too (see getDownloads)
+        List<Download> all = downloadRepository
+                .getDownloadsByStatus(status, 0, Integer.MAX_VALUE).getDownloads();
+        int fromIndex = Math.max(0, Math.min(offset, all.size()));
+        int toIndex = limit >= 0 ? Math.min(fromIndex + limit, all.size()) : all.size();
+        return new java.util.ArrayList<>(all.subList(fromIndex, toIndex));
     }
 
     @Override
@@ -1392,6 +1393,16 @@ public class DownloadManagerImpl implements DownloadManager {
             // download added since launch (shutdown-only persistence did).
             startStateSnapshotJob();
 
+            // Periodic proxy health check: without it, UNHEALTHY proxies are
+            // never reset and BLOCKED never pruned once recorded
+            if (proxyRotationManager.isHealthChecksEnabled()) {
+                long intervalMinutes = Math.max(1, proxyRotationManager.getHealthCheckIntervalMinutes());
+                proxyHealthTask = executorManager.getScheduledExecutor()
+                        .scheduleWithFixedDelay(proxyRotationManager::performHealthCheck,
+                                intervalMinutes, intervalMinutes, TimeUnit.MINUTES);
+                LOGGER.info("Proxy health check scheduled every " + intervalMinutes + " minute(s)");
+            }
+
             // Log tool availability
             Map<String, Map<String, Object>> toolStatus = toolFactory.getStatusReport();
             LOGGER.info("Tool availability: " + toolStatus);
@@ -1447,6 +1458,9 @@ public class DownloadManagerImpl implements DownloadManager {
                     isShuttingDown.set(true);
                     if (stateSnapshotTask != null) {
                         stateSnapshotTask.cancel(false);
+                    }
+                    if (proxyHealthTask != null) {
+                        proxyHealthTask.cancel(false);
                     }
                 });
 
@@ -1691,17 +1705,11 @@ public class DownloadManagerImpl implements DownloadManager {
             DownloadHandlerFactory factory = getHandlerFactory();
             if (factory != null) {
                 DownloadHandler aria2Handler = factory.getHandler(Download.Type.ARIA2);
-                if (aria2Handler != null) {
-                    // Use reflection or interface to access aria2 client
-                    // This assumes aria2 handler has a method to save session
-                    try {
-                        // Try to save aria2 session via RPC
-                        java.lang.reflect.Method saveSessionMethod = aria2Handler.getClass().getMethod("saveSession");
-                        saveSessionMethod.invoke(aria2Handler);
-                        LOGGER.info("Saved aria2 session to: " + aria2SessionFilePath);
-                    } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Could not save aria2 session via handler", e);
-                    }
+                // Typed cast, not reflection: a rename must break at compile
+                // time, not silently at shutdown
+                if (aria2Handler instanceof org.manager.download.handler.Aria2DownloadHandler typed) {
+                    typed.saveSession();
+                    LOGGER.info("Saved aria2 session to: " + aria2SessionFilePath);
                 }
             }
         } catch (Exception e) {
@@ -1719,16 +1727,9 @@ public class DownloadManagerImpl implements DownloadManager {
                 DownloadHandlerFactory factory = getHandlerFactory();
                 if (factory != null) {
                     DownloadHandler aria2Handler = factory.getHandler(Download.Type.ARIA2);
-                    if (aria2Handler != null) {
-                        // Configure aria2 to use session file on startup
-                        try {
-                            java.lang.reflect.Method loadSessionMethod = aria2Handler.getClass()
-                                    .getMethod("loadSession", Path.class);
-                            loadSessionMethod.invoke(aria2Handler, aria2SessionFilePath);
-                            LOGGER.info("Loaded aria2 session from: " + aria2SessionFilePath);
-                        } catch (Exception e) {
-                            LOGGER.log(Level.WARNING, "Could not load aria2 session via handler", e);
-                        }
+                    if (aria2Handler instanceof org.manager.download.handler.Aria2DownloadHandler typed) {
+                        typed.loadSession(aria2SessionFilePath);
+                        LOGGER.info("Loaded aria2 session from: " + aria2SessionFilePath);
                     }
                 }
             }
@@ -2021,6 +2022,8 @@ public class DownloadManagerImpl implements DownloadManager {
     private java.util.concurrent.ScheduledFuture<?> trackerRefreshTask;
     /** Periodic state snapshot so a crash never loses the whole session. */
     private java.util.concurrent.ScheduledFuture<?> stateSnapshotTask;
+    /** Periodic proxy-pool health check (resets UNHEALTHY, prunes BLOCKED). */
+    private java.util.concurrent.ScheduledFuture<?> proxyHealthTask;
 
     /**
      * Starts the periodic tracker refresh when {@code tracker.refreshInterval}

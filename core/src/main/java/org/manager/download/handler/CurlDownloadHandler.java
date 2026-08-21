@@ -139,20 +139,23 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-        return CompletableFuture.runAsync(() -> {
-            if (download == null) {
-                return; // Handle null download gracefully
-            }
+        if (download == null) {
+            return CompletableFuture.completedFuture(null);
+        }
 
-            // If the transfer is actively running, restart it (same mechanism
-            // as pause/resume) so the settings stored on the Download take
-            // effect. Otherwise the stored settings apply on the next start.
-            if (download.getStatus() == Download.Status.DOWNLOADING
-                    || download.getStatus() == Download.Status.CONNECTING) {
-                curlClient.pauseDownload(download, this);
-                curlClient.resumeDownload(download, this);
-            }
-        }, executor);
+        // If the transfer is actively running, restart it (same mechanism
+        // as pause/resume) so the settings stored on the Download take
+        // effect. Otherwise the stored settings apply on the next start.
+        // Chained, NOT fired in parallel: pause and resume submitted as two
+        // independent tasks could interleave on the multi-threaded pool and
+        // resume before the pause completed.
+        if (download.getStatus() == Download.Status.DOWNLOADING
+                || download.getStatus() == Download.Status.CONNECTING) {
+            return CompletableFuture.runAsync(
+                    () -> curlClient.pauseDownload(download, this), executor)
+                    .thenRun(() -> curlClient.resumeDownload(download, this));
+        }
+        return CompletableFuture.completedFuture(null);
     }
 
 }

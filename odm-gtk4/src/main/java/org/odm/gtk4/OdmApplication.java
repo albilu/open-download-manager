@@ -92,6 +92,16 @@ public final class OdmApplication {
                 LOGGER.log(java.util.logging.Level.SEVERE, "onActivate failed", t);
             }
         });
+        // File > Exit destroys the window (bypassing its close handler), so
+        // the app-level shutdown signal is the one reliable teardown hook:
+        // release the tray's session-bus registration and connection
+        app.onShutdown(() -> {
+            StatusNotifierTray tray = trayHolder[0];
+            if (tray != null) {
+                tray.unregister();
+                trayHolder[0] = null;
+            }
+        });
         int status = app.run(args);
         System.exit(status);
     }
