@@ -713,11 +713,13 @@ public class GlobalSettings {
      * @return A new GlobalSettings instance with the same settings
      */
     public GlobalSettings copy() {
-        // GlobalSettings copy = new GlobalSettings();
-        GlobalSettings copy = ApplicationContext.getGlobalSettings();
+        GlobalSettings copy = new GlobalSettings();
         copy.maxConcurrentDownloads = this.maxConcurrentDownloads;
         copy.globalSpeedLimit = this.globalSpeedLimit;
         copy.globalProxyEnabled = this.globalProxyEnabled;
+        copy.proxyRotationEnabled = this.proxyRotationEnabled;
+        copy.proxyRotationMaxRetries = this.proxyRotationMaxRetries;
+        copy.proxyListFilePath = this.proxyListFilePath;
         copy.globalProxyAddress = this.globalProxyAddress;
         copy.defaultDownloadDirectory = this.defaultDownloadDirectory;
         copy.saveDownloadHistory = this.saveDownloadHistory;
@@ -737,6 +739,11 @@ public class GlobalSettings {
         copy.curlPath = this.curlPath;
         copy.proxychainsPath = this.proxychainsPath;
         copy.torPath = this.torPath;
+
+        copy.properties.clear();
+        for (String name : this.properties.stringPropertyNames()) {
+            copy.properties.setProperty(name, this.properties.getProperty(name));
+        }
         // Don't copy transient availability flags
         return copy;
     }
@@ -876,18 +883,36 @@ public class GlobalSettings {
         // Sync current values to properties
         syncToProperties();
 
-        // Persist the Properties bag to the config file
+        // Persist the Properties bag to the config file. Write-then-move so
+        // a crash mid-write can never truncate the live settings file.
         Path file = getConfigFilePath();
+        Path temp = null;
         try {
             Files.createDirectories(file.getParent());
             Map<String, String> serialized = new HashMap<>();
             for (String name : properties.stringPropertyNames()) {
                 serialized.put(name, properties.getProperty(name));
             }
-            MAPPER.writeValue(file.toFile(), serialized);
+            temp = Files.createTempFile(file.getParent(), "settings-", ".tmp");
+            MAPPER.writeValue(temp.toFile(), serialized);
+            try {
+                Files.move(temp, file,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(temp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            temp = null;
             LOGGER.fine("Settings saved to " + file);
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to save settings to " + file, e);
+            if (temp != null) {
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException cleanupError) {
+                    LOGGER.log(Level.WARNING, "Failed to delete temporary settings file " + temp, cleanupError);
+                }
+            }
         }
     }
 

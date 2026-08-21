@@ -8,6 +8,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
+import java.security.SecureRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +46,14 @@ public class Aria2Client {
     private final String aria2cPath;
     private final String rpcUrl;
     private final String rpcToken;
+    /**
+     * Secret actually sent with RPC payloads. Equals {@link #rpcToken} when
+     * one was configured; for a self-launched daemon a random secret is
+     * generated so the RPC endpoint is never unauthenticated.
+     */
+    private volatile String rpcSecret;
+    /** Whether RPC payloads carry {@link #rpcSecret} as the aria2 token. */
+    private volatile boolean sendToken;
     private Process aria2Process;
     private String httpProxy;
     private String configFile;
@@ -56,11 +66,15 @@ public class Aria2Client {
     private boolean useWebSocket = false;
     private WebSocketClient wsClient;
     private final ConcurrentHashMap<Integer, CompletableFuture<String>> wsResponses = new ConcurrentHashMap<>();
-    private int wsRequestId = 1;
+    private final AtomicInteger wsRequestId = new AtomicInteger(1);
     private final List<Aria2NotificationListener> listeners = new CopyOnWriteArrayList<>();
     private List<String> lastExtraArgs;
     private static final int WS_CONNECTION_TIMEOUT = 10000; // 10 seconds timeout
     private static final int WS_RECONNECT_ATTEMPTS = 3;
+    /** HTTP RPC connect timeout; a wedged daemon must not pin callers indefinitely. */
+    private static final int HTTP_CONNECT_TIMEOUT_MS = 5000;
+    /** HTTP RPC read timeout; matches the WebSocket RPC future timeout scale. */
+    private static final int HTTP_READ_TIMEOUT_MS = 30000;
     private ScheduledExecutorService wsHealthCheckExecutor;
     private boolean isReconnecting = false;
     private volatile boolean isShuttingDown = false;
@@ -109,6 +123,8 @@ public class Aria2Client {
         this.aria2cPath = aria2cPath;
         this.rpcUrl = rpcUrl;
         this.rpcToken = rpcToken;
+        this.rpcSecret = rpcToken;
+        this.sendToken = rpcToken != null;
     }
 
     /**
@@ -246,22 +262,22 @@ public class Aria2Client {
     /**
      * Helper to build JSON-RPC payloads.
      */
-    private String buildPayload(String method, Object... params) throws IOException {
+    String buildPayload(String method, Object... params) throws IOException {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("jsonrpc", "2.0");
         map.put("id", 1);
         map.put("method", method);
         if (params != null && params.length > 0) {
             Object[] p = params;
-            if (rpcToken != null) {
+            if (sendToken && rpcSecret != null) {
                 Object[] withToken = new Object[params.length + 1];
-                withToken[0] = "token:" + rpcToken;
+                withToken[0] = "token:" + rpcSecret;
                 System.arraycopy(params, 0, withToken, 1, params.length);
                 p = withToken;
             }
             map.put("params", p);
-        } else if (rpcToken != null) {
-            map.put("params", new Object[] { "token:" + rpcToken });
+        } else if (sendToken && rpcSecret != null) {
+            map.put("params", new Object[] { "token:" + rpcSecret });
         }
         return OBJECT_MAPPER.writeValueAsString(map);
     }
@@ -290,6 +306,8 @@ public class Aria2Client {
             throws IOException, Aria2RpcException {
         URL url = new URL(rpcUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
+        conn.setReadTimeout(HTTP_READ_TIMEOUT_MS);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setDoOutput(true);
@@ -344,25 +362,17 @@ public class Aria2Client {
                 return false;
             }
         }
+
+        // An external daemon may already own the RPC port (e.g. the user
+        // runs their own aria2). Probe it first: if it answers, talk to it
+        // as configured instead of spawning a second, doomed daemon.
+        if (isExternalDaemonRunning()) {
+            LOGGER.info("Using an already-running external aria2 RPC daemon at " + rpcUrl);
+            return true;
+        }
+
         try {
-            List<String> cmd = new ArrayList<>();
-            cmd.add(aria2cPath);
-            cmd.add("--enable-rpc");
-            cmd.add("--rpc-listen-all=true");
-            cmd.add("--daemon=true");
-            if (httpProxy != null && !httpProxy.isEmpty()) {
-                cmd.add("--all-proxy=" + httpProxy);
-            }
-            if (configFile != null && !configFile.isEmpty()) {
-                cmd.add("--conf-path=" + configFile);
-            }
-            if (extraArgs != null) {
-                cmd.addAll(extraArgs);
-                this.lastExtraArgs = new ArrayList<>(extraArgs); // Store for restart
-            } else {
-                this.lastExtraArgs = new ArrayList<>();
-            }
-            ProcessBuilder pb = new ProcessBuilder(cmd);
+            ProcessBuilder pb = new ProcessBuilder(buildRpcLaunchCommand(extraArgs));
             pb.redirectErrorStream(true);
             aria2Process = pb.start();
 
@@ -385,6 +395,70 @@ public class Aria2Client {
             }
             return false;
         }
+    }
+
+    /**
+     * Probes the configured RPC endpoint for a daemon this client did not
+     * launch (e.g. a user-managed aria2). Only considers it external when
+     * this client never generated a secret for its own daemon.
+     */
+    private boolean isExternalDaemonRunning() {
+        if (sendToken && rpcToken == null) {
+            // We already manage a self-launched daemon with a generated
+            // secret; the probe below would send the wrong credentials.
+            return false;
+        }
+        try {
+            getVersion();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Builds the command that launches the self-managed aria2 RPC daemon.
+     * The daemon binds localhost only and requires an RPC secret: a random
+     * one is generated when the caller did not configure a token. Exposed
+     * package-private for the security contract tests.
+     *
+     * @param extraArgs additional aria2c arguments (can be null)
+     * @return the full aria2c command line
+     */
+    List<String> buildRpcLaunchCommand(List<String> extraArgs) {
+        if (rpcToken == null && rpcSecret == null) {
+            rpcSecret = generateRpcSecret();
+            sendToken = true;
+        }
+        List<String> cmd = new ArrayList<>();
+        cmd.add(aria2cPath);
+        cmd.add("--enable-rpc");
+        // Never expose the RPC endpoint beyond localhost: any LAN process
+        // could otherwise add/remove downloads and read filesystem paths.
+        cmd.add("--rpc-listen-all=false");
+        cmd.add("--daemon=true");
+        if (sendToken && rpcSecret != null) {
+            cmd.add("--rpc-secret=" + rpcSecret);
+        }
+        if (httpProxy != null && !httpProxy.isEmpty()) {
+            cmd.add("--all-proxy=" + httpProxy);
+        }
+        if (configFile != null && !configFile.isEmpty()) {
+            cmd.add("--conf-path=" + configFile);
+        }
+        if (extraArgs != null) {
+            cmd.addAll(extraArgs);
+            this.lastExtraArgs = new ArrayList<>(extraArgs); // Store for restart
+        } else {
+            this.lastExtraArgs = new ArrayList<>();
+        }
+        return cmd;
+    }
+
+    /** Generates a random RPC secret for a self-launched daemon. */
+    private static String generateRpcSecret() {
+        SecureRandom random = new SecureRandom();
+        return Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong());
     }
 
     /**
@@ -1082,17 +1156,27 @@ public class Aria2Client {
     }
 
     /**
-     * Disconnect from aria2 WebSocket JSON-RPC server.
+     * Disconnect from aria2 WebSocket JSON-RPC server. Final teardown: latches
+     * the shutdown state so no later reconnection or daemon start happens.
      */
     public void disconnectWebSocket() {
         isShuttingDown = true;
         useWebSocket = false; // Prevent reconnection attempts
+        closeWebSocketSocket("Application shutdown");
+    }
+
+    /**
+     * Closes the WebSocket socket and fails all pending responses without
+     * latching the final shutdown state, so the reconnect path can re-use
+     * it safely.
+     */
+    void closeWebSocketSocket(String reason) {
         stopWebSocketHealthCheck();
 
         if (wsClient != null) {
             try {
                 // Send close frame with normal closure code
-                wsClient.close(1000, "Application shutdown");
+                wsClient.close(1000, reason);
 
                 // Wait briefly for graceful close, then force if needed
                 wsClient.closeBlocking();
@@ -1110,8 +1194,34 @@ public class Aria2Client {
 
         // Clear any pending responses
         wsResponses.forEach((id, future) -> future.completeExceptionally(
-                new IOException("WebSocket disconnected during shutdown")));
+                new IOException("WebSocket disconnected: " + reason)));
         wsResponses.clear();
+    }
+
+    /** Whether the permanent shutdown latch is set. Test/inspection accessor. */
+    boolean isShutdownLatched() {
+        return isShuttingDown;
+    }
+
+    /** Whether WebSocket use has been permanently disabled. Test accessor. */
+    boolean isWebSocketUseDisabled() {
+        return !useWebSocket;
+    }
+
+    /**
+     * Enables the WebSocket transport preference. Test seam: no production
+     * caller currently switches the client to WebSocket RPC.
+     */
+    void enableWebSocketTransport() {
+        useWebSocket = true;
+    }
+
+    /**
+     * Allocates the next WebSocket request id. Shared across arbitrary
+     * caller threads.
+     */
+    int nextWsRequestId() {
+        return wsRequestId.incrementAndGet();
     }
 
     /**
@@ -1205,7 +1315,7 @@ public class Aria2Client {
                     }
 
                     // Try to reconnect
-                    disconnectWebSocket();
+                    closeWebSocketSocket("reconnect");
                     connectWebSocket();
 
                     // If we get here, connection succeeded
@@ -1234,6 +1344,8 @@ public class Aria2Client {
         URL url = new URL(rpcUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 
+        conn.setConnectTimeout(HTTP_CONNECT_TIMEOUT_MS);
+        conn.setReadTimeout(HTTP_READ_TIMEOUT_MS);
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setDoOutput(true);
@@ -1285,7 +1397,7 @@ public class Aria2Client {
             connectWebSocket();
         }
 
-        int id = wsRequestId++;
+        int id = nextWsRequestId();
         String payload = buildPayloadWithId(method, id, params);
         CompletableFuture<String> future = new CompletableFuture<>();
         wsResponses.put(id, future);
@@ -1325,7 +1437,7 @@ public class Aria2Client {
             connectWebSocket();
         }
 
-        int id = wsRequestId++;
+        int id = nextWsRequestId();
         String payload = buildPayloadWithId(method, id, params);
         CompletableFuture<String> future = new CompletableFuture<>();
         wsResponses.put(id, future);
@@ -1367,15 +1479,15 @@ public class Aria2Client {
         map.put("method", method);
         if (params != null && params.length > 0) {
             Object[] p = params;
-            if (rpcToken != null) {
+            if (sendToken && rpcSecret != null) {
                 Object[] withToken = new Object[params.length + 1];
-                withToken[0] = "token:" + rpcToken;
+                withToken[0] = "token:" + rpcSecret;
                 System.arraycopy(params, 0, withToken, 1, params.length);
                 p = withToken;
             }
             map.put("params", p);
-        } else if (rpcToken != null) {
-            map.put("params", new Object[] { "token:" + rpcToken });
+        } else if (sendToken && rpcSecret != null) {
+            map.put("params", new Object[] { "token:" + rpcSecret });
         }
         return OBJECT_MAPPER.writeValueAsString(map);
     }

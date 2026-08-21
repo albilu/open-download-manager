@@ -21,7 +21,9 @@ public class DownloadHandlerFactory {
 
     private static final Logger LOGGER = Logger.getLogger(DownloadHandlerFactory.class.getName());
 
-    private final Map<Download.Type, DownloadHandler> handlers = new HashMap<>();
+    // Read from UI/event/executor threads while registration mutates during
+    // init and shutdownHandlers clears during teardown
+    private final Map<Download.Type, DownloadHandler> handlers = new java.util.concurrent.ConcurrentHashMap<>();
     private final GlobalSettings globalSettings;
     private final DownloadSettingsFactory settingsFactory;
     private final ExecutorService executor;

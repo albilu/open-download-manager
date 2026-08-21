@@ -25,7 +25,9 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
     protected final GlobalSettings globalSettings;
     protected final DownloadSettingsFactory settingsFactory;
     protected final ExecutorService executor;
-    protected boolean initialized = false;
+    // Written on executor threads by initialize()/shutdown(), read by
+    // ensureInitialized() from arbitrary caller threads
+    protected volatile boolean initialized = false;
 
     /**
      * Creates a new AbstractDownloadHandler.

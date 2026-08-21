@@ -7,6 +7,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 import org.gnome.gtk.Application;
 import org.gnome.gtk.ApplicationWindow;
@@ -20,16 +25,15 @@ import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreeModel;
-import java.util.Map;
-import org.gnome.gtk.TreePath;
-import org.gnome.gtk.TreeSelection;
-import org.gnome.gtk.TreeView;
 import org.gnome.gobject.Value;
 import org.javagi.base.Out;
 import org.javagi.gobject.types.Types;
 import org.manager.download.Download;
 import org.manager.download.DownloadListener;
 import org.manager.download.DownloadManager;
+import org.gnome.gtk.TreePath;
+import org.gnome.gtk.TreeSelection;
+import org.gnome.gtk.TreeView;
 
 /**
  * Main window — 1:1 GTK4 port of main-window.glade. Same widget ids and
@@ -208,20 +212,20 @@ public class MainWindow {
         menuButton.setMenuModel(buildMainMenu());
 
         downloadManager.addDownloadListener(new DownloadListener() {
-            @Override public void onDownloadStart(Download d) { UiThread.marshal(MainWindow.this::refresh); }
+            @Override public void onDownloadStart(Download d) { scheduleRefresh(); }
             @Override public void onDownloadProgress(Download d, float p, long db, long tb, float s) {
-                UiThread.marshal(MainWindow.this::refresh);
+                scheduleRefresh();
             }
-            @Override public void onDownloadPause(Download d) { UiThread.marshal(MainWindow.this::refresh); }
-            @Override public void onDownloadResume(Download d) { UiThread.marshal(MainWindow.this::refresh); }
+            @Override public void onDownloadPause(Download d) { scheduleRefresh(); }
+            @Override public void onDownloadResume(Download d) { scheduleRefresh(); }
             @Override public void onDownloadComplete(Download d) {
                 executeCompletionAction(d);
-                UiThread.marshal(MainWindow.this::refresh);
+                scheduleRefresh();
             }
             @Override public void onDownloadError(Download d, String errorMessage) {
-                UiThread.marshal(MainWindow.this::refresh);
+                scheduleRefresh();
             }
-            @Override public void onDownloadCanceled(Download d) { UiThread.marshal(MainWindow.this::refresh); }
+            @Override public void onDownloadCanceled(Download d) { scheduleRefresh(); }
         });
 
         // Surface after-completion action results (e.g. antivirus threats)
@@ -1326,12 +1330,87 @@ public class MainWindow {
         };
     }
 
+    /** Executor for detail-tab RPC fetches; keeps aria2 round trips off the GTK main loop. */
+    private static final ExecutorService DETAIL_EXECUTOR = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "odm-detail-fetch");
+        t.setDaemon(true);
+        return t;
+    });
+
+    /**
+     * Coalesces refresh scheduling: core progress events arrive at up to 1 Hz
+     * per active download, and a full refresh per event floods the GLib idle
+     * queue. While a refresh is already pending, further events are absorbed
+     * into it.
+     */
+    private final AtomicBoolean refreshPending = new AtomicBoolean(false);
+
+    /** Schedules one coalesced refresh on the GTK main loop. Any thread. */
+    private void scheduleRefresh() {
+        if (refreshPending.compareAndSet(false, true)) {
+            UiThread.marshal(() -> {
+                // Clear before running so events arriving during the refresh
+                // schedule a follow-up instead of being dropped
+                refreshPending.set(false);
+                refresh();
+            });
+        }
+    }
+
+    /** Coalesces detail fetches: at most one in flight; the next refresh re-arms it. */
+    private final AtomicBoolean detailFetchPending = new AtomicBoolean(false);
+
+    /** Immutable snapshot fetched off-thread for the trackers/peers/files tabs. */
+    private record DetailTabData(List<List<String>> trackers, List<Map<String, Object>> peers,
+            List<Map<String, Object>> files) {
+    }
+
+    /**
+     * Refreshes the detail tabs. The manager calls underneath perform
+     * synchronous aria2 RPC round trips, so fetching runs off the GTK thread
+     * and only the store population is marshalled back; results are
+     * discarded when the selection changed while the fetch was in flight.
+     */
     private void loadDetailTabs() {
+        Download target = selectedDownload;
+        if (target == null) {
+            trackersStore.clear();
+            peersStore.clear();
+            filesStore.clear();
+            return;
+        }
+        if (!detailFetchPending.compareAndSet(false, true)) {
+            // A fetch is already in flight; the next refresh re-triggers it,
+            // which keeps the idle-queue bounded under 1 Hz progress events.
+            return;
+        }
+        String targetId = target.getId();
+        CompletableFuture.supplyAsync(() -> new DetailTabData(
+                downloadManager.getDownloadTrackers(target),
+                downloadManager.getDownloadPeers(target),
+                downloadManager.getDownloadFiles(target)), DETAIL_EXECUTOR)
+                .whenComplete((data, error) -> {
+                    detailFetchPending.set(false);
+                    if (error != null) {
+                        LOGGER.log(java.util.logging.Level.WARNING,
+                                "Failed to load detail tabs for " + target.getName(), error);
+                        return;
+                    }
+                    UiThread.marshal(() -> {
+                        if (selectedDownload == null || !targetId.equals(selectedDownload.getId())) {
+                            return; // stale fetch: selection moved on
+                        }
+                        populateDetailStores(data);
+                    });
+                });
+    }
+
+    /** Populates the detail tab stores from a fetched snapshot. GTK thread only. */
+    private void populateDetailStores(DetailTabData data) {
         // Trackers
         trackersStore.clear();
-        List<List<String>> trackers = downloadManager.getDownloadTrackers(selectedDownload);
         int tier = 0;
-        for (List<String> urls : trackers) {
+        for (List<String> urls : data.trackers()) {
             for (String url : urls) {
                 TreeIter iter = new TreeIter();
                 trackersStore.append(iter);
@@ -1347,8 +1426,7 @@ public class MainWindow {
 
         // Peers
         peersStore.clear();
-        List<Map<String, Object>> peers = downloadManager.getDownloadPeers(selectedDownload);
-        for (Map<String, Object> peer : peers) {
+        for (Map<String, Object> peer : data.peers()) {
             TreeIter iter = new TreeIter();
             peersStore.append(iter);
             setStr(peersStore, iter, 0, String.valueOf(peer.getOrDefault("peerId", "—")));
@@ -1360,8 +1438,7 @@ public class MainWindow {
 
         // Files
         filesStore.clear();
-        List<Map<String, Object>> files = downloadManager.getDownloadFiles(selectedDownload);
-        for (Map<String, Object> file : files) {
+        for (Map<String, Object> file : data.files()) {
             TreeIter iter = new TreeIter();
             filesStore.append(iter);
             // Seed the checkbox from aria2's own per-file selected flag
@@ -1427,19 +1504,24 @@ public class MainWindow {
 
         boolean wasActive = download.getStatus() == Download.Status.DOWNLOADING
                 && download.getGid() != null;
-        try {
+        // The pause/change/resume chain performs aria2 RPC round trips; run
+        // it off the GTK thread instead of blocking the main loop on join().
+        CompletableFuture.runAsync(() -> {
             if (wasActive) {
                 downloadManager.pauseDownload(download).join();
             }
-            downloadManager.changeSettings(download).join();
-        } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING,
-                    "Failed to apply file selection to " + download.getName(), e);
-        } finally {
-            if (wasActive) {
-                downloadManager.resumeDownload(download);
-            }
-        }
+        }, DETAIL_EXECUTOR)
+                .thenCompose(v -> downloadManager.changeSettings(download))
+                .handle((v, e) -> {
+                    if (e != null) {
+                        LOGGER.log(java.util.logging.Level.WARNING,
+                                "Failed to apply file selection to " + download.getName(), e);
+                    }
+                    return null;
+                })
+                .thenCompose(v -> wasActive
+                        ? downloadManager.resumeDownload(download)
+                        : CompletableFuture.completedFuture(null));
     }
 
     private static long parseLong(Object value, long fallback) {

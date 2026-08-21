@@ -131,7 +131,9 @@ public class YtDlpDownloadTask {
                 }
             };
 
-            downloadFuture = client.download(url, settings, outputPath, callback)
+            // Register the download under the task's own process key so the
+            // cancel path and the client's process registry can never diverge.
+            downloadFuture = client.download(url, settings, outputPath, callback, processId)
                     .whenComplete((result, throwable) -> {
                         if (throwable != null) {
                             if (!cancelled.get()) {
@@ -265,6 +267,16 @@ public class YtDlpDownloadTask {
     // Getters
     public String getTaskId() {
         return taskId;
+    }
+
+    /**
+     * The future of the running (or finished) download, or null before
+     * start. Exposed for lifecycle tests.
+     *
+     * @return the download future
+     */
+    CompletableFuture<String> getDownloadFuture() {
+        return downloadFuture;
     }
 
     public String getUrl() {

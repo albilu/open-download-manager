@@ -64,9 +64,11 @@ public class ExecutorServiceManager {
         this.eventExecutor = Executors.newSingleThreadExecutor(
                 new NamedThreadFactory("odm-events"));
 
-        // Register shutdown hook
-        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "odm-shutdown-hook"));
-
+        // No self-registered JVM shutdown hook here: tearing the pools down
+        // races the ShutdownCoordinator's persistence phase (a rejected
+        // executor would silently lose download state). The coordinator shuts
+        // the pools down in its ordered CLEANUP phase; pool threads are
+        // daemon so no path can hang JVM exit.
         LOGGER.info("ExecutorServiceManager initialized with " + downloadThreads + " download threads");
     }
 
@@ -243,9 +245,10 @@ public class ExecutorServiceManager {
 
         boolean allTerminated = true;
 
-        // Wait for each executor to terminate
+        // Wait for each executor to terminate; the event executor goes last
+        // so queued listener notifications drain before the pools vanish.
         ExecutorService[] executors = {
-                generalPurposeExecutor, scheduledExecutor, downloadExecutor, ioExecutor
+                generalPurposeExecutor, scheduledExecutor, downloadExecutor, ioExecutor, eventExecutor
         };
 
         for (ExecutorService executor : executors) {
@@ -275,6 +278,7 @@ public class ExecutorServiceManager {
         scheduledExecutor.shutdownNow();
         downloadExecutor.shutdownNow();
         ioExecutor.shutdownNow();
+        eventExecutor.shutdownNow();
     }
 
     /**
@@ -308,8 +312,13 @@ public class ExecutorServiceManager {
             String threadName = namePrefix + "-" + counter.incrementAndGet();
             Thread thread = new Thread(group, r, threadName, 0);
 
-            if (thread.isDaemon()) {
-                thread.setDaemon(false);
+            // Daemon threads: the ShutdownCoordinator drains the pools in
+            // its ordered CLEANUP phase during shutdown, and daemon-ness
+            // guarantees no code path can hang JVM exit on a stuck pool
+            // (there is deliberately no self-registered JVM hook here that
+            // could race the coordinator's persistence phase).
+            if (!thread.isDaemon()) {
+                thread.setDaemon(true);
             }
             if (thread.getPriority() != Thread.NORM_PRIORITY) {
                 thread.setPriority(Thread.NORM_PRIORITY);

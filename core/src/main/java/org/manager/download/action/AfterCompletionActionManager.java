@@ -28,7 +28,9 @@ public class AfterCompletionActionManager {
      * Creates a new AfterCompletionActionManager.
      */
     public AfterCompletionActionManager() {
-        this.downloadActions = new HashMap<>();
+        // Written from UI threads while completions execute from worker
+        // threads; a plain HashMap loses entries or throws CME on resize races.
+        this.downloadActions = new java.util.concurrent.ConcurrentHashMap<>();
         this.listeners = new CopyOnWriteArrayList<>();
         this.executorService = Executors.newCachedThreadPool();
     }
@@ -42,7 +44,7 @@ public class AfterCompletionActionManager {
     public void addAction(Download download, AfterCompletionAction action) {
         String downloadId = download.getId();
 
-        downloadActions.computeIfAbsent(downloadId, k -> new ArrayList<>())
+        downloadActions.computeIfAbsent(downloadId, k -> Collections.synchronizedList(new ArrayList<>()))
                 .add(action);
     }
 

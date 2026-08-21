@@ -28,7 +28,9 @@ public abstract class DownloadSettings {
     private int connections = 5;
     private boolean useProxy = false;
     private String proxyAddress = null;
-    private Map<String, String> additionalOptions = new HashMap<>();
+    // Written by settings dialogs and the proxy-rotation wrapper while
+    // handler start paths iterate toMap() concurrently
+    private Map<String, String> additionalOptions = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * Gets the number of connections to use for the download.

@@ -10,7 +10,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -30,7 +29,6 @@ public class ProxyRotationManager {
     private final List<Proxy> proxyPool;
     private final Map<String, Proxy> usedProxies; // Track proxies currently in use
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-    private final Random random = ThreadLocalRandom.current();
 
     // Configuration
     private final int maxFailuresBeforeRemoval;
@@ -421,12 +419,14 @@ public class ProxyRotationManager {
                 .sum();
 
         if (totalWeight <= 0) {
-            // If all proxies have zero weight, select randomly
-            return proxies.get(random.nextInt(proxies.size()));
+            // If all proxies have zero weight, select randomly.
+            // ThreadLocalRandom must be obtained at the use site: an instance
+            // captured into a field is not shareable across threads.
+            return proxies.get(ThreadLocalRandom.current().nextInt(proxies.size()));
         }
 
         // Weighted random selection
-        double randomValue = random.nextDouble() * totalWeight;
+        double randomValue = ThreadLocalRandom.current().nextDouble() * totalWeight;
         double currentWeight = 0;
 
         for (Proxy proxy : proxies) {

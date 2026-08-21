@@ -66,14 +66,26 @@ public final class OdmApplication {
         manager.setDownloadGate(id -> scheduleManager.getScheduler().shouldDownloadBeActive(id));
 
         Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
+        // A second launch of the same app id forwards "activate" to this
+        // primary instance; constructing a new window/tray/listener set on
+        // every activation would stack permanently-leaking duplicates.
+        final MainWindow[] windowHolder = new MainWindow[1];
+        final StatusNotifierTray[] trayHolder = new StatusNotifierTray[1];
         app.onActivate(() -> {
             try {
-                LOGGER.info("onActivate: constructing MainWindow");
-                MainWindow mainWindow = new MainWindow(app, manager, torService, scheduleManager);
-                LOGGER.info("onActivate: MainWindow constructed");
-                // Tray (best-effort: no-op when the session bus is unavailable)
-                StatusNotifierTray tray = new StatusNotifierTray(() -> UiThread.marshal(mainWindow::present));
-                LOGGER.info("onActivate: tray constructed");
+                MainWindow mainWindow = windowHolder[0];
+                if (mainWindow == null) {
+                    LOGGER.info("onActivate: constructing MainWindow");
+                    mainWindow = new MainWindow(app, manager, torService, scheduleManager);
+                    windowHolder[0] = mainWindow;
+                    LOGGER.info("onActivate: MainWindow constructed");
+                }
+                if (trayHolder[0] == null) {
+                    // Tray (best-effort: no-op when the session bus is unavailable)
+                    final MainWindow raised = mainWindow;
+                    trayHolder[0] = new StatusNotifierTray(() -> UiThread.marshal(raised::present));
+                    LOGGER.info("onActivate: tray constructed");
+                }
                 mainWindow.present();
                 LOGGER.info("onActivate: window presented");
             } catch (Throwable t) {

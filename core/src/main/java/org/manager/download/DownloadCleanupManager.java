@@ -260,21 +260,41 @@ public class DownloadCleanupManager {
     }
 
     /**
-     * Enforces the maximum downloads limit by removing oldest non-active
-     * downloads.
+     * Enforces the maximum downloads limit by removing the oldest
+     * non-active downloads — exactly the surplus count, never more. The
+     * user's recent finished history must survive merely hitting the limit.
      *
      * @param maxDownloads The maximum number of downloads to keep
      * @return The number of removed downloads
      */
-    private int enforceMaxDownloadsLimit(int maxDownloads) {
-        if (downloadRepository.getTotalCount() <= maxDownloads) {
+    int enforceMaxDownloadsLimit(int maxDownloads) {
+        int total = downloadRepository.getTotalCount();
+        if (total <= maxDownloads) {
             return 0;
         }
+        int toRemoveCount = total - maxDownloads;
 
-        int toRemoveCount = downloadRepository.getTotalCount() - maxDownloads;
+        // Oldest finished items first (by completion time, falling back to
+        // creation time); active downloads are never eligible.
+        List<Download> toRemove = downloadRepository.getAllDownloads(0, Integer.MAX_VALUE)
+                .getDownloads().stream()
+                .filter(download -> !isActiveDownload(download))
+                .sorted(java.util.Comparator.comparing(
+                        DownloadCleanupManager::historyTimestamp,
+                        java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+                .limit(toRemoveCount)
+                .toList();
+        if (toRemove.isEmpty()) {
+            return 0;
+        }
+        return removeDownloadsByIds(toRemove.stream()
+                .map(Download::getId)
+                .collect(java.util.stream.Collectors.toSet()));
+    }
 
-        // Get non-active downloads sorted by creation time (oldest first)
-        return downloadRepository.removeDownloadsMatching(download -> !isActiveDownload(download));
+    /** Ordering key for history pruning: when the item finished, else when it was added. */
+    private static Instant historyTimestamp(Download download) {
+        return download.getCompletedAt() != null ? download.getCompletedAt() : download.getCreatedAt();
     }
 
     /**

@@ -14,6 +14,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -322,13 +323,24 @@ public class HttrackClient {
      */
     public CompletableFuture<Boolean> isHttrackAvailable() {
         return CompletableFuture.supplyAsync(() -> {
+            Process process = null;
             try {
                 ProcessBuilder processBuilder = new ProcessBuilder(httrackPath, "--version");
                 processBuilder.redirectErrorStream(true);
-                Process process = processBuilder.start();
-                int exitCode = process.waitFor();
-                return exitCode == 0;
+                process = processBuilder.start();
+                // Bounded wait: a hung binary must degrade to "unavailable"
+                // instead of blocking startup availability checks
+                if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    LOGGER.warning("httrack at path '" + httrackPath
+                            + "' did not respond to --version within 10 seconds");
+                    return false;
+                }
+                return process.exitValue() == 0;
             } catch (Exception e) {
+                if (process != null) {
+                    process.destroyForcibly();
+                }
                 LOGGER.log(Level.WARNING, "httrack not available", e);
                 return false;
             }
@@ -505,9 +517,11 @@ public class HttrackClient {
             job.setStatus(HttrackJob.Status.CANCELED);
             notifyJobCanceled(job);
         } catch (IOException e) {
-            // Don't change status if thread was interrupted or if job is already paused
+            // Don't change status if thread was interrupted or if job is
+            // already paused/canceled (intentionally destroyed process)
             synchronized (this) {
-                if (Thread.currentThread().isInterrupted() || job.getStatus() == HttrackJob.Status.PAUSED) {
+                if (Thread.currentThread().isInterrupted() || job.getStatus() == HttrackJob.Status.PAUSED
+                        || job.getStatus() == HttrackJob.Status.CANCELED) {
                     return;
                 }
             }
@@ -554,10 +568,14 @@ public class HttrackClient {
 
     private void handleProcessCompletion(int exitCode, HttrackJob job, boolean totalFailure) {
         synchronized (this) {
-            // Don't process completion if the job is already paused
-            // (paused jobs have their process destroyed intentionally)
-            if (job.getStatus() == HttrackJob.Status.PAUSED) {
-                // Job was paused, don't change its status or remove it
+            // Don't process completion if the job is already paused or
+            // canceled: those are terminal/intentional states whose process
+            // was destroyed on purpose — overwriting them (e.g. CANCELED ->
+            // ERROR from the kill exit code) and firing a spurious error
+            // notification would corrupt the user-visible outcome.
+            if (job.getStatus() == HttrackJob.Status.PAUSED
+                    || job.getStatus() == HttrackJob.Status.CANCELED) {
+                // Job was paused or canceled, don't change its status or remove it
                 return;
             }
 

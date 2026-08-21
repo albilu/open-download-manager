@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
@@ -104,24 +105,34 @@ public class ProxychainsClient {
      * @throws RuntimeException if proxychains is not available
      */
     private void validateProxychainsInstallation() {
+        Process process = null;
         try {
             ProcessBuilder processBuilder = new ProcessBuilder(proxychainsPath, "-h");
             processBuilder.redirectErrorStream(true);
-            Process process = processBuilder.start();
+            process = processBuilder.start();
 
-            // Read output to prevent process hanging
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                while (reader.readLine() != null) {
-                    // Just read the line to consume output
-                }
+            // Bounded wait: a hung binary must fail validation instead of
+            // blocking construction (this runs on startup paths). Draining
+            // output before the wait would itself block forever on a binary
+            // that never closes its stream; -h output is far below the pipe
+            // capacity so no pre-drain is needed.
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new RuntimeException("proxychains at path '" + proxychainsPath
+                        + "' did not respond within 10 seconds");
             }
 
-            int exitCode = process.waitFor();
-
+            int exitCode = process.exitValue();
             if (exitCode != 0 && exitCode != 1) { // Some versions return 1 for help
                 throw new RuntimeException("proxychains command failed with exit code: " + exitCode);
             }
         } catch (IOException | InterruptedException e) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             throw new RuntimeException("Failed to execute proxychains. Make sure it's installed and available in PATH.",
                     e);
         }

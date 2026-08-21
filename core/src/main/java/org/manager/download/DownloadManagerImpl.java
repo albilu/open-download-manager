@@ -75,11 +75,16 @@ public class DownloadManagerImpl implements DownloadManager {
     private static final String ARIA2_SESSION_FILE = "aria2-session.txt";
     private static final String ARIA2_INPUT_FILE = "aria2-input.txt";
 
+    /** Interval of the periodic state snapshot job (5 minutes). */
+    private static final long STATE_SNAPSHOT_INTERVAL_SECONDS = 300;
+
     private final PaginatedDownloadRepository downloadRepository;
     private final Map<String, String> gidToIdMap; // Handler GID -> download ID
     private final Set<DownloadListener> listeners;
     private final ExecutorService eventExecutor;
     private final AtomicInteger runningDownloads;
+    /** Download IDs currently holding a concurrency slot; guards exactly-once release. */
+    private final Set<String> runningDownloadIds;
     private final AtomicBoolean isShuttingDown;
     private final DependencyContainer container;
     private final ExecutorServiceManager executorManager;
@@ -122,6 +127,7 @@ public class DownloadManagerImpl implements DownloadManager {
         this.gidToIdMap = new ConcurrentHashMap<>();
         this.listeners = new CopyOnWriteArraySet<>();
         this.runningDownloads = new AtomicInteger(0);
+        this.runningDownloadIds = ConcurrentHashMap.newKeySet();
         this.isShuttingDown = new AtomicBoolean(false);
         this.objectMapper = createStateObjectMapper();
         this.stateStore = new SqliteDownloadStateStore(
@@ -462,7 +468,20 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // OPTIMIZATION: Store handler reference for cleanup and use reusable listener
             activeHandlers.put(download.getId(), handler);
+            // Handlers are shared per download type and the listener set is a
+            // CopyOnWriteArraySet, so re-adding the reusable listener is
+            // idempotent. It stays attached for the handler's lifetime and is
+            // only removed at manager shutdown; removing it here would detach
+            // the manager from every other running download of the same type.
             handler.addDownloadListener(reusableListener);
+
+            // Claim the concurrency slot before the start attempt so the
+            // release in cleanupDownloadResources is exactly-once even when a
+            // download completes before the returned future resolves, or when
+            // a handler emits duplicate terminal notifications.
+            if (runningDownloadIds.add(download.getId())) {
+                runningDownloads.incrementAndGet();
+            }
 
             // Start the download with the handler
             CompletableFuture<String> future = handler.startDownload(download);
@@ -475,10 +494,6 @@ public class DownloadManagerImpl implements DownloadManager {
                     // indexes stay consistent (bare setStatus leaves the id
                     // in the QUEUED index and breaks status queries).
                     downloadRepository.updateDownloadStatus(download, Download.Status.DOWNLOADING);
-                    // Only increment if this is a new download start, not a restart
-                    int currentCount = runningDownloads.incrementAndGet();
-                    LOGGER.info("Download status set to DOWNLOADING for: " + download.getName()
-                            + " (running count: " + currentCount + ")");
                 } else {
                     LOGGER.warning("Handler returned null GID for download: " + download.getName());
                     downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
@@ -638,8 +653,11 @@ public class DownloadManagerImpl implements DownloadManager {
                     gidToIdMap.values().removeIf(id -> id.equals(download.getId()));
                     // runningDownloads is decremented by the handler's
                     // onDownloadCanceled notification (reusableListener);
-                    // decrementing here as well would double-count.
-                    notifyDownloadCanceled(download);
+                    // this idempotent call covers handlers that fail to
+                    // notify on their cancel path. The canceled event itself
+                    // is emitted by the handler — notifying here as well
+                    // would deliver every cancel twice.
+                    cleanupDownloadResources(download.getId());
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to cancel download: " + download.getName(), e);
@@ -850,6 +868,18 @@ public class DownloadManagerImpl implements DownloadManager {
         return downloadRepository.getCountByStatus(status);
     }
 
+    /**
+     * Number of currently held concurrency slots. Each successful start
+     * attempt claims exactly one slot; it is released exactly once when the
+     * download reaches a terminal state. Exposed for lifecycle contract
+     * tests.
+     *
+     * @return the current running-download count
+     */
+    int getRunningDownloadCount() {
+        return runningDownloads.get();
+    }
+
     @Override
     public CompletableFuture<Void> pauseAllDownloads() {
         return CompletableFuture.runAsync(() -> {
@@ -974,7 +1004,10 @@ public class DownloadManagerImpl implements DownloadManager {
                 LOGGER.info("Saved " + allDownloads.size() + " downloads (including "
                         + activeDownloads.size() + " active) to state database");
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to save download state", e);
+                // Complete exceptionally so shutdown hooks and callers can
+                // detect (and log) a failed persistence instead of assuming
+                // success.
+                throw new RuntimeException("Failed to save download state", e);
             }
         }, executorManager.getGeneralExecutor());
     }
@@ -1352,6 +1385,10 @@ public class DownloadManagerImpl implements DownloadManager {
             // Start the periodic tracker refresh when configured
             startTrackerRefreshJob();
 
+            // Periodic state snapshots: a crash or kill must not lose every
+            // download added since launch (shutdown-only persistence did).
+            startStateSnapshotJob();
+
             // Log tool availability
             Map<String, Map<String, Object>> toolStatus = toolFactory.getStatusReport();
             LOGGER.info("Tool availability: " + toolStatus);
@@ -1403,7 +1440,12 @@ public class DownloadManagerImpl implements DownloadManager {
         shutdownCoordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.PREPARE,
                 "mark-shutting-down",
-                () -> isShuttingDown.set(true));
+                () -> {
+                    isShuttingDown.set(true);
+                    if (stateSnapshotTask != null) {
+                        stateSnapshotTask.cancel(false);
+                    }
+                });
 
         // Phase 2: Handle downloads
         shutdownCoordinator.registerShutdownHook(
@@ -1542,6 +1584,16 @@ public class DownloadManagerImpl implements DownloadManager {
                 ShutdownCoordinator.ShutdownPhase.CLEANUP,
                 "close-state-store",
                 () -> ErrorHandler.executeSafely(stateStore::close, "close state store"));
+
+        // Phase 10: Tear down the shared thread pools LAST, after every hook
+        // that submits work to them (save-state, pause-all, handler shutdown)
+        // has completed. ExecutorServiceManager deliberately registers no JVM
+        // hook of its own: one would race this coordinator and reject the
+        // persistence phase's saveState() execution.
+        shutdownCoordinator.registerShutdownHook(
+                ShutdownCoordinator.ShutdownPhase.CLEANUP,
+                "shutdown-executors",
+                () -> ErrorHandler.executeSafely(executorManager::shutdown, "shutdown executors"));
     }
 
     /**
@@ -1964,6 +2016,8 @@ public class DownloadManagerImpl implements DownloadManager {
 
     /** Handle to the scheduled tracker refresh job, for shutdown cancellation. */
     private java.util.concurrent.ScheduledFuture<?> trackerRefreshTask;
+    /** Periodic state snapshot so a crash never loses the whole session. */
+    private java.util.concurrent.ScheduledFuture<?> stateSnapshotTask;
 
     /**
      * Starts the periodic tracker refresh when {@code tracker.refreshInterval}
@@ -2002,6 +2056,33 @@ public class DownloadManagerImpl implements DownloadManager {
         if (trackerRefreshTask != null) {
             trackerRefreshTask.cancel(false);
             trackerRefreshTask = null;
+        }
+    }
+
+    /**
+     * Starts the periodic state snapshot job. Downloads are otherwise only
+     * persisted at shutdown, so a crash would silently discard the whole
+     * session. Failures never kill the schedule.
+     */
+    private void startStateSnapshotJob() {
+        if (stateSnapshotTask != null) {
+            return;
+        }
+        stateSnapshotTask = executorManager.getScheduledExecutor()
+                .scheduleWithFixedDelay(this::runStateSnapshot,
+                        STATE_SNAPSHOT_INTERVAL_SECONDS, STATE_SNAPSHOT_INTERVAL_SECONDS, TimeUnit.SECONDS);
+        LOGGER.info("State snapshot job scheduled every " + STATE_SNAPSHOT_INTERVAL_SECONDS + " seconds");
+    }
+
+    /** One state snapshot tick; failures never kill the schedule. */
+    private void runStateSnapshot() {
+        if (isShuttingDown.get()) {
+            return;
+        }
+        try {
+            saveState().join();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Periodic state snapshot failed", e);
         }
     }
 
@@ -2100,14 +2181,13 @@ public class DownloadManagerImpl implements DownloadManager {
 
         @Override
         public void onDownloadComplete(Download d) {
-            int currentCount = runningDownloads.decrementAndGet();
-            LOGGER.info("Download completed: " + d.getName()
-                    + " (running count after decrement: " + currentCount + ")");
+            LOGGER.info("Download completed: " + d.getName());
 
             // CRITICAL: Update repository status indices to prevent inconsistency
             downloadRepository.updateDownloadStatus(d, Download.Status.COMPLETED);
 
-            // Clean up resources for this download
+            // Clean up resources for this download (releases the running
+            // slot exactly once; duplicate notifications are no-ops)
             cleanupDownloadResources(d.getId());
 
             notifyDownloadComplete(d);
@@ -2121,14 +2201,13 @@ public class DownloadManagerImpl implements DownloadManager {
 
         @Override
         public void onDownloadError(Download d, String errorMessage) {
-            int currentCount = runningDownloads.decrementAndGet();
-            LOGGER.info("Download error: " + d.getName() + " - " + errorMessage
-                    + " (running count after decrement: " + currentCount + ")");
+            LOGGER.info("Download error: " + d.getName() + " - " + errorMessage);
 
             // CRITICAL: Update repository status indices to prevent inconsistency
             downloadRepository.updateDownloadStatus(d, Download.Status.ERROR);
 
-            // Clean up resources for this download
+            // Clean up resources for this download (releases the running
+            // slot exactly once; duplicate notifications are no-ops)
             cleanupDownloadResources(d.getId());
 
             notifyDownloadError(d, errorMessage);
@@ -2139,14 +2218,13 @@ public class DownloadManagerImpl implements DownloadManager {
 
         @Override
         public void onDownloadCanceled(Download d) {
-            int currentCount = runningDownloads.decrementAndGet();
-            LOGGER.info("Download canceled: " + d.getName()
-                    + " (running count after decrement: " + currentCount + ")");
+            LOGGER.info("Download canceled: " + d.getName());
 
             // CRITICAL: Update repository status indices to prevent inconsistency
             downloadRepository.updateDownloadStatus(d, Download.Status.CANCELED);
 
-            // Clean up resources for this download
+            // Clean up resources for this download (releases the running
+            // slot exactly once; duplicate notifications are no-ops)
             cleanupDownloadResources(d.getId());
 
             notifyDownloadCanceled(d);
@@ -2165,13 +2243,18 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     private void cleanupDownloadResources(String downloadId) {
         try {
-            // Remove handler reference
-            DownloadHandler handler = activeHandlers.remove(downloadId);
-            if (handler != null) {
-                // Remove our listener from the handler to prevent memory leaks
-                handler.removeDownloadListener(reusableListener);
-                LOGGER.fine("Cleaned up handler resources for download: " + downloadId);
+            // Release the concurrency slot exactly once per start attempt.
+            // Terminal events for downloads that never started (e.g. cancel
+            // of a QUEUED download) and duplicate terminal notifications are
+            // both naturally idempotent here.
+            if (runningDownloadIds.remove(downloadId)) {
+                runningDownloads.decrementAndGet();
             }
+
+            // Remove the handler reference. The shared per-type handler keeps
+            // the reusable listener attached: other running downloads of the
+            // same type still deliver their events through it.
+            activeHandlers.remove(downloadId);
 
             // Clean up GID mapping if exists
             gidToIdMap.entrySet().removeIf(entry -> downloadId.equals(entry.getValue()));

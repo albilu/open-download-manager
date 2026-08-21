@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
@@ -88,16 +89,31 @@ public class CurlClient {
      * @throws RuntimeException if curl is not available
      */
     private void validateCurlInstallation() {
+        Process process = null;
         try {
             ProcessBuilder processBuilder = new ProcessBuilder(curlPath, "--version");
             processBuilder.redirectErrorStream(true);
-            Process process = processBuilder.start();
-            int exitCode = process.waitFor();
-
+            process = processBuilder.start();
+            // Bounded wait: a hung binary must fail validation instead of
+            // blocking construction (this runs on startup paths). Output is
+            // only drained after exit — draining before the wait would block
+            // on a binary that never closes its stream.
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new RuntimeException("curl at path '" + curlPath
+                        + "' did not respond to --version within 10 seconds");
+            }
+            int exitCode = process.exitValue();
             if (exitCode != 0) {
                 throw new RuntimeException("curl command failed with exit code: " + exitCode);
             }
         } catch (IOException | InterruptedException e) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             throw new RuntimeException("Failed to execute curl at path: " + curlPath
                     + ". Make sure it's installed and the path is correct.", e);
         }

@@ -26,6 +26,8 @@ public class ShutdownCoordinator {
 
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
     private final AtomicBoolean isShutdownComplete = new AtomicBoolean(false);
+    /** Single-flight guard for {@link #performShutdown()}. */
+    private final AtomicBoolean shutdownEntered = new AtomicBoolean(false);
     private final List<ShutdownHook> shutdownHooks = new ArrayList<>();
     private final Object hooksLock = new Object();
     private final ExecutorService shutdownExecutor;
@@ -223,12 +225,20 @@ public class ShutdownCoordinator {
     }
 
     /**
-     * Performs the actual shutdown process.
+     * Performs the actual shutdown process. Package-private so the JVM
+     * shutdown hook and tests can enter it; single-flight via CAS so the
+     * hook path and {@link #initiateShutdown()} can never execute the hook
+     * sequence twice concurrently.
      */
-    private void performShutdown() {
+    void performShutdown() {
+        if (!shutdownEntered.compareAndSet(false, true)) {
+            // Another thread is already running the shutdown sequence.
+            return;
+        }
         if (isShutdownComplete.get()) {
             return;
         }
+        isShuttingDown.set(true);
 
         long startTime = System.currentTimeMillis();
         LOGGER.info("Starting shutdown process...");
@@ -276,7 +286,7 @@ public class ShutdownCoordinator {
                         phaseResults.toArray(new CompletableFuture[0]));
 
                 try {
-                    phaseCompletion.get(60, TimeUnit.SECONDS); // 60 seconds per phase
+                    phaseCompletion.get(Math.max(1, shutdownTimeoutSeconds), TimeUnit.SECONDS);
                     totalExecuted.addAndGet(phaseHooks.size());
                     LOGGER.info("Completed shutdown phase: " + phaseName);
                 } catch (TimeoutException e) {

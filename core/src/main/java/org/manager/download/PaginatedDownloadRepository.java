@@ -36,6 +36,14 @@ public class PaginatedDownloadRepository {
 
     // Cache for frequently accessed queries
     private final Map<String, CachedQueryResult> queryCache;
+    /**
+     * Guards every queryCache access. The repository read lock permits
+     * concurrent readers, but the cache is an access-order LinkedHashMap
+     * whose get() relinks entries and whose put() evicts — unsynchronized
+     * concurrent access corrupts the internal list (lost entries, cycles
+     * that hang later iterations).
+     */
+    private final Object cacheLock = new Object();
     private static final int MAX_CACHE_SIZE = 100;
     private static final long CACHE_TTL_MS = 30000; // 30 seconds
 
@@ -245,7 +253,7 @@ public class PaginatedDownloadRepository {
         lock.readLock().lock();
         try {
             String cacheKey = "all_" + pageNumber + "_" + pageSize;
-            CachedQueryResult cached = queryCache.get(cacheKey);
+            CachedQueryResult cached = cacheLookup(cacheKey);
 
             if (cached != null && !cached.isExpired()) {
                 cacheHits++;
@@ -266,7 +274,7 @@ public class PaginatedDownloadRepository {
                     : new ArrayList<>();
 
             // Cache the result
-            queryCache.put(cacheKey, new CachedQueryResult(pageDownloads, totalCount));
+            cacheStore(cacheKey, new CachedQueryResult(pageDownloads, totalCount));
 
             return new DownloadPage(pageDownloads, totalCount, pageNumber, pageSize);
         } finally {
@@ -286,7 +294,7 @@ public class PaginatedDownloadRepository {
         lock.readLock().lock();
         try {
             String cacheKey = "status_" + status + "_" + pageNumber + "_" + pageSize;
-            CachedQueryResult cached = queryCache.get(cacheKey);
+            CachedQueryResult cached = cacheLookup(cacheKey);
 
             if (cached != null && !cached.isExpired()) {
                 cacheHits++;
@@ -314,7 +322,7 @@ public class PaginatedDownloadRepository {
                     : new ArrayList<>();
 
             // Cache the result
-            queryCache.put(cacheKey, new CachedQueryResult(pageDownloads, totalCount));
+            cacheStore(cacheKey, new CachedQueryResult(pageDownloads, totalCount));
 
             return new DownloadPage(pageDownloads, totalCount, pageNumber, pageSize);
         } finally {
@@ -335,7 +343,7 @@ public class PaginatedDownloadRepository {
         lock.readLock().lock();
         try {
             String cacheKey = "time_" + from + "_" + to + "_" + pageNumber + "_" + pageSize;
-            CachedQueryResult cached = queryCache.get(cacheKey);
+            CachedQueryResult cached = cacheLookup(cacheKey);
 
             if (cached != null && !cached.isExpired()) {
                 cacheHits++;
@@ -362,7 +370,7 @@ public class PaginatedDownloadRepository {
                     : new ArrayList<>();
 
             // Cache the result
-            queryCache.put(cacheKey, new CachedQueryResult(pageDownloads, totalCount));
+            cacheStore(cacheKey, new CachedQueryResult(pageDownloads, totalCount));
 
             return new DownloadPage(pageDownloads, totalCount, pageNumber, pageSize);
         } finally {
@@ -531,8 +539,33 @@ public class PaginatedDownloadRepository {
      * operation.
      */
     private void invalidateCache() {
-        queryCache.clear();
+        synchronized (cacheLock) {
+            queryCache.clear();
+        }
         fullInvalidations++;
+    }
+
+    /**
+     * Looks up a cached query result under the cache lock. get() on an
+     * access-order LinkedHashMap relinks entries, so lookups must serialize
+     * with stores and invalidations even though the caller holds only the
+     * (shared) repository read lock.
+     */
+    private CachedQueryResult cacheLookup(String cacheKey) {
+        synchronized (cacheLock) {
+            return queryCache.get(cacheKey);
+        }
+    }
+
+    /**
+     * Stores a query result under the cache lock. put() inserts and may
+     * evict the eldest entry; it must serialize with every other cache
+     * access.
+     */
+    private void cacheStore(String cacheKey, CachedQueryResult result) {
+        synchronized (cacheLock) {
+            queryCache.put(cacheKey, result);
+        }
     }
 
     /**
@@ -545,22 +578,24 @@ public class PaginatedDownloadRepository {
     private void invalidateCacheForAdd(Download download) {
         Set<String> keysToRemove = new HashSet<>();
 
-        for (String cacheKey : queryCache.keySet()) {
-            // Invalidate "all" queries (they include all downloads)
-            if (cacheKey.startsWith("all_")) {
-                keysToRemove.add(cacheKey);
-            } // Invalidate status queries for the download's status
-            else if (cacheKey.startsWith("status_" + download.getStatus() + "_")) {
-                keysToRemove.add(cacheKey);
-            } // Invalidate time range queries that include the download's creation time
-            else if (cacheKey.startsWith("time_")) {
-                if (timeRangeIncludesDownload(cacheKey, download)) {
+        synchronized (cacheLock) {
+            for (String cacheKey : queryCache.keySet()) {
+                // Invalidate "all" queries (they include all downloads)
+                if (cacheKey.startsWith("all_")) {
                     keysToRemove.add(cacheKey);
+                } // Invalidate status queries for the download's status
+                else if (cacheKey.startsWith("status_" + download.getStatus() + "_")) {
+                    keysToRemove.add(cacheKey);
+                } // Invalidate time range queries that include the download's creation time
+                else if (cacheKey.startsWith("time_")) {
+                    if (timeRangeIncludesDownload(cacheKey, download)) {
+                        keysToRemove.add(cacheKey);
+                    }
                 }
             }
-        }
 
-        keysToRemove.forEach(queryCache::remove);
+            keysToRemove.forEach(queryCache::remove);
+        }
         selectiveInvalidations++;
         LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for add operation");
     }
@@ -574,22 +609,24 @@ public class PaginatedDownloadRepository {
     private void invalidateCacheForRemove(Download download) {
         Set<String> keysToRemove = new HashSet<>();
 
-        for (String cacheKey : queryCache.keySet()) {
-            // Invalidate "all" queries (they include all downloads)
-            if (cacheKey.startsWith("all_")) {
-                keysToRemove.add(cacheKey);
-            } // Invalidate status queries for the download's status
-            else if (cacheKey.startsWith("status_" + download.getStatus() + "_")) {
-                keysToRemove.add(cacheKey);
-            } // Invalidate time range queries that include the download's creation time
-            else if (cacheKey.startsWith("time_")) {
-                if (timeRangeIncludesDownload(cacheKey, download)) {
+        synchronized (cacheLock) {
+            for (String cacheKey : queryCache.keySet()) {
+                // Invalidate "all" queries (they include all downloads)
+                if (cacheKey.startsWith("all_")) {
                     keysToRemove.add(cacheKey);
+                } // Invalidate status queries for the download's status
+                else if (cacheKey.startsWith("status_" + download.getStatus() + "_")) {
+                    keysToRemove.add(cacheKey);
+                } // Invalidate time range queries that include the download's creation time
+                else if (cacheKey.startsWith("time_")) {
+                    if (timeRangeIncludesDownload(cacheKey, download)) {
+                        keysToRemove.add(cacheKey);
+                    }
                 }
             }
-        }
 
-        keysToRemove.forEach(queryCache::remove);
+            keysToRemove.forEach(queryCache::remove);
+        }
         selectiveInvalidations++;
         LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for remove operation");
     }
@@ -605,19 +642,21 @@ public class PaginatedDownloadRepository {
     private void invalidateCacheForStatusChange(Download.Status oldStatus, Download.Status newStatus) {
         Set<String> keysToRemove = new HashSet<>();
 
-        for (String cacheKey : queryCache.keySet()) {
-            // Invalidate "all" queries (ordering might change)
-            if (cacheKey.startsWith("all_")) {
-                keysToRemove.add(cacheKey);
-            } // Invalidate status queries for both old and new status
-            else if (cacheKey.startsWith("status_" + oldStatus + "_")
-                    || cacheKey.startsWith("status_" + newStatus + "_")) {
-                keysToRemove.add(cacheKey);
+        synchronized (cacheLock) {
+            for (String cacheKey : queryCache.keySet()) {
+                // Invalidate "all" queries (ordering might change)
+                if (cacheKey.startsWith("all_")) {
+                    keysToRemove.add(cacheKey);
+                } // Invalidate status queries for both old and new status
+                else if (cacheKey.startsWith("status_" + oldStatus + "_")
+                        || cacheKey.startsWith("status_" + newStatus + "_")) {
+                    keysToRemove.add(cacheKey);
+                }
+                // Time range queries are not affected by status changes alone
             }
-            // Time range queries are not affected by status changes alone
-        }
 
-        keysToRemove.forEach(queryCache::remove);
+            keysToRemove.forEach(queryCache::remove);
+        }
         selectiveInvalidations++;
         LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for status change: " + oldStatus
                 + " -> " + newStatus);
@@ -670,34 +709,36 @@ public class PaginatedDownloadRepository {
                 .map(Download::getStatus)
                 .collect(Collectors.toSet());
 
-        for (String cacheKey : queryCache.keySet()) {
-            // Invalidate "all" queries (they include all downloads)
-            if (cacheKey.startsWith("all_")) {
-                keysToRemove.add(cacheKey);
-            } // Invalidate status queries for affected statuses
-            else if (cacheKey.startsWith("status_")) {
-                String statusPart = cacheKey.substring(7); // Remove "status_" prefix
-                String statusName = statusPart.split("_")[0];
-                try {
-                    Download.Status status = Download.Status.valueOf(statusName);
-                    if (affectedStatuses.contains(status)) {
+        synchronized (cacheLock) {
+            for (String cacheKey : queryCache.keySet()) {
+                // Invalidate "all" queries (they include all downloads)
+                if (cacheKey.startsWith("all_")) {
+                    keysToRemove.add(cacheKey);
+                } // Invalidate status queries for affected statuses
+                else if (cacheKey.startsWith("status_")) {
+                    String statusPart = cacheKey.substring(7); // Remove "status_" prefix
+                    String statusName = statusPart.split("_")[0];
+                    try {
+                        Download.Status status = Download.Status.valueOf(statusName);
+                        if (affectedStatuses.contains(status)) {
+                            keysToRemove.add(cacheKey);
+                        }
+                    } catch (IllegalArgumentException e) {
+                        // Invalid status in cache key, remove to be safe
                         keysToRemove.add(cacheKey);
                     }
-                } catch (IllegalArgumentException e) {
-                    // Invalid status in cache key, remove to be safe
-                    keysToRemove.add(cacheKey);
-                }
-            } // Invalidate time range queries that include any of the removed downloads
-            else if (cacheKey.startsWith("time_")) {
-                boolean shouldInvalidate = removedDownloads.stream()
-                        .anyMatch(download -> timeRangeIncludesDownload(cacheKey, download));
-                if (shouldInvalidate) {
-                    keysToRemove.add(cacheKey);
+                } // Invalidate time range queries that include any of the removed downloads
+                else if (cacheKey.startsWith("time_")) {
+                    boolean shouldInvalidate = removedDownloads.stream()
+                            .anyMatch(download -> timeRangeIncludesDownload(cacheKey, download));
+                    if (shouldInvalidate) {
+                        keysToRemove.add(cacheKey);
+                    }
                 }
             }
-        }
 
-        keysToRemove.forEach(queryCache::remove);
+            keysToRemove.forEach(queryCache::remove);
+        }
         selectiveInvalidations++;
         LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for bulk remove of "
                 + removedDownloads.size() + " downloads");

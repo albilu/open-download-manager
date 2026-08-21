@@ -117,7 +117,7 @@ class YtDlpDownloadTaskTest {
     void testStartDownload() throws Exception {
         CompletableFuture<String> mockFuture = CompletableFuture.completedFuture("downloaded-file.mp4");
         when(mockClient.download(eq(TEST_URL), eq(mockSettings), eq(tempOutputPath),
-                any(YtDlpClient.ProgressCallback.class)))
+                any(YtDlpClient.ProgressCallback.class), anyString()))
                 .thenReturn(mockFuture);
 
         CompletableFuture<String> result = downloadTask.start();
@@ -131,7 +131,7 @@ class YtDlpDownloadTaskTest {
 
         // Verify client interaction (minimal verification)
         verify(mockClient).download(eq(TEST_URL), eq(mockSettings), eq(tempOutputPath),
-                any(YtDlpClient.ProgressCallback.class));
+                any(YtDlpClient.ProgressCallback.class), anyString());
     }
 
     @Test
@@ -139,13 +139,13 @@ class YtDlpDownloadTaskTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testMultipleStartCalls() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         CompletableFuture<String> future1 = downloadTask.start();
         CompletableFuture<String> future2 = downloadTask.start();
 
         assertSame(future1, future2);
-        verify(mockClient, times(1)).download(any(), any(), any(), any());
+        verify(mockClient, times(1)).download(any(), any(), any(), any(), anyString());
     }
 
     @Test
@@ -196,7 +196,7 @@ class YtDlpDownloadTaskTest {
     void testCancelDownload() throws Exception {
         // Start download first
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
         when(mockClient.cancelDownload(anyString())).thenReturn(true);
 
         downloadTask.start();
@@ -212,7 +212,7 @@ class YtDlpDownloadTaskTest {
     void testCancelCompletedDownload() throws Exception {
         // Simulate completed download
         CompletableFuture<String> mockFuture = CompletableFuture.completedFuture("file.mp4");
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
         // Simulate completion by setting status directly
@@ -242,7 +242,7 @@ class YtDlpDownloadTaskTest {
     void testPauseDownload() throws Exception {
         // Start download first
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
         when(mockClient.cancelDownload(anyString())).thenReturn(true);
 
         downloadTask.start();
@@ -273,7 +273,7 @@ class YtDlpDownloadTaskTest {
     void testResumeDownload() throws Exception {
         // Start, then pause
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
         when(mockClient.cancelDownload(anyString())).thenReturn(true);
 
         downloadTask.start();
@@ -302,7 +302,7 @@ class YtDlpDownloadTaskTest {
     @DisplayName("Should handle progress updates correctly")
     void testProgressUpdates() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
 
@@ -323,7 +323,7 @@ class YtDlpDownloadTaskTest {
     @DisplayName("Should calculate estimated time remaining correctly")
     void testEstimatedTimeRemaining() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
 
@@ -389,7 +389,7 @@ class YtDlpDownloadTaskTest {
     @DisplayName("Should handle download start callback")
     void testDownloadStartCallback() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
 
@@ -404,7 +404,7 @@ class YtDlpDownloadTaskTest {
     @DisplayName("Should handle download completion callback")
     void testDownloadCompletionCallback() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
 
@@ -422,7 +422,7 @@ class YtDlpDownloadTaskTest {
     @DisplayName("Should handle download error callback")
     void testDownloadErrorCallback() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
 
@@ -439,7 +439,7 @@ class YtDlpDownloadTaskTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testDownloadFutureException() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
 
@@ -458,7 +458,7 @@ class YtDlpDownloadTaskTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testNoErrorStatusWhenCancelled() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
         downloadTask.cancel();
@@ -495,7 +495,7 @@ class YtDlpDownloadTaskTest {
     @DisplayName("Should update toString after state changes")
     void testToStringUpdates() throws Exception {
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         downloadTask.start();
         simulateDownloadStart("test.mp4");
@@ -521,7 +521,7 @@ class YtDlpDownloadTaskTest {
 
         // Start the task
         CompletableFuture<String> mockFuture = new CompletableFuture<>();
-        when(mockClient.download(any(), any(), any(), any())).thenReturn(mockFuture);
+        when(mockClient.download(any(), any(), any(), any(), anyString())).thenReturn(mockFuture);
 
         Instant beforeStart = Instant.now();
         task.start();
@@ -595,10 +595,10 @@ class YtDlpDownloadTaskTest {
 
     private YtDlpClient.ProgressCallback captureProgressCallback() throws Exception {
         // Capture the progress callback passed to the download method
-        verify(mockClient, atLeastOnce()).download(any(), any(), any(), any(YtDlpClient.ProgressCallback.class));
+        verify(mockClient, atLeastOnce()).download(any(), any(), any(), any(YtDlpClient.ProgressCallback.class), anyString());
         org.mockito.ArgumentCaptor<YtDlpClient.ProgressCallback> captor = org.mockito.ArgumentCaptor
                 .forClass(YtDlpClient.ProgressCallback.class);
-        verify(mockClient, atLeastOnce()).download(any(), any(), any(), captor.capture());
+        verify(mockClient, atLeastOnce()).download(any(), any(), any(), captor.capture(), anyString());
         return captor.getValue();
     }
 

@@ -358,13 +358,24 @@ public class YtDlpClient {
      * @return true if yt-dlp is available, false otherwise
      */
     public boolean isAvailable() {
+        Process process = null;
         try {
             ProcessBuilder pb = new ProcessBuilder(ytDlpPath, "--version");
             pb.redirectErrorStream(true);
-            Process process = pb.start();
-            int exitCode = process.waitFor();
-            return exitCode == 0;
+            process = pb.start();
+            // Bounded wait: this probe runs on startup paths where a hung
+            // binary must degrade to "unavailable", not block forever
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                LOGGER.warning("yt-dlp at path '" + ytDlpPath
+                        + "' did not respond to --version within 10 seconds");
+                return false;
+            }
+            return process.exitValue() == 0;
         } catch (Exception e) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
             LOGGER.log(Level.WARNING, "yt-dlp not available", e);
             return false;
         }
@@ -580,8 +591,26 @@ public class YtDlpClient {
      */
     public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
             ProgressCallback callback) {
+        return download(url, settings, outputPath, callback,
+                "ytdlp-" + System.currentTimeMillis());
+    }
+
+    /**
+     * Downloads a video with a caller-controlled process key. The caller
+     * (e.g. YtDlpDownloadTask) uses the same key for cancelDownload, so the
+     * registry entry and the cancel key can never diverge.
+     *
+     * @param url        The video URL
+     * @param settings   The download settings
+     * @param outputPath The output directory
+     * @param callback   Progress callback (optional)
+     * @param processId  Registry key used for cancelDownload; must be unique
+     *                   per started process
+     * @return CompletableFuture that completes when download finishes
+     */
+    public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
+            ProgressCallback callback, String processId) {
         return CompletableFuture.supplyAsync(() -> {
-            String processId = "ytdlp-" + System.currentTimeMillis();
             try {
                 // Build command
                 List<String> command = buildDownloadCommand(url, settings, outputPath);
@@ -605,7 +634,8 @@ public class YtDlpClient {
                 String filename = null;
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
-                    while ((line = reader.readLine()) != null) {
+                    while (!Thread.currentThread().isInterrupted()
+                            && (line = reader.readLine()) != null) {
                         LOGGER.fine("yt-dlp output: " + line);
 
                         // Extract filename if not yet known
@@ -650,6 +680,16 @@ public class YtDlpClient {
                 activeProcesses.remove(processId);
             }
         }, executor);
+    }
+
+    /**
+     * Number of currently registered download processes. Exposed for
+     * lifecycle tests.
+     *
+     * @return the active process count
+     */
+    int getActiveProcessCount() {
+        return activeProcesses.size();
     }
 
     /**
