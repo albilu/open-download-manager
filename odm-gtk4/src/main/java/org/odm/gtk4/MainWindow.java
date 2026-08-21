@@ -111,6 +111,8 @@ public class MainWindow {
     private DownloadListener windowDownloadListener;
     private org.manager.download.action.AfterCompletionActionListener windowCompletionListener;
     private org.manager.clipboard.ClipboardServiceListener windowClipboardListener;
+    /** Optional app-provided exit sequence (graceful shutdown UI). */
+    private Runnable finalCloseDelegate;
     private Download selectedDownload;
     private String statusFilter = "All Status";
     private String searchText = "";
@@ -182,6 +184,13 @@ public class MainWindow {
             }
             saveWindowState(builder);
             removeWindowListeners();
+            if (finalCloseDelegate != null) {
+                // Hand the exit sequence to the app (graceful shutdown with
+                // a progress dialog); it disposes the window when done
+                window.setVisible(false);
+                finalCloseDelegate.run();
+                return true; // suppress the default close
+            }
             return false; // allow close
         });
 
@@ -322,6 +331,24 @@ public class MainWindow {
 
     public void present() {
         window.present();
+    }
+
+    /**
+     * Installs an override for the app-exit sequence. When set, the final
+     * close (window close or File &gt; Exit) hides the window and runs this
+     * delegate instead of ending immediately — OdmApplication uses it to
+     * show the shutdown progress dialog while the core shuts down
+     * gracefully. The delegate must eventually call {@link #dispose()}.
+     *
+     * @param delegate the exit sequence, or null to restore default behavior
+     */
+    public void setFinalCloseDelegate(Runnable delegate) {
+        this.finalCloseDelegate = delegate;
+    }
+
+    /** Really destroys the window (bypasses the close-request handler). */
+    public void dispose() {
+        window.destroy();
     }
 
     /**
@@ -604,7 +631,13 @@ public class MainWindow {
         // close-request handler), so geometry must be saved explicitly first.
         addAction("quit", () -> {
             saveWindowState(uiBuilder);
-            window.destroy();
+            removeWindowListeners();
+            if (finalCloseDelegate != null) {
+                window.setVisible(false);
+                finalCloseDelegate.run();
+            } else {
+                window.destroy();
+            }
         });
 
         // Edit

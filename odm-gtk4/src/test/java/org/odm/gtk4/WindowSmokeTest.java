@@ -212,6 +212,16 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("start-shutdown.ui parses with 1:1 original ids")
+    void startShutdown() {
+        GtkBuilder builder = UiLoader.load("/ui/start-shutdown.ui");
+        Widgets.require(builder, "startup_shutdown_dialog", Window.class);
+        Widgets.require(builder, "odm_logo_image", org.gnome.gtk.Image.class);
+        Widgets.require(builder, "status_message_label", Label.class);
+        Widgets.require(builder, "progress_bar", ProgressBar.class);
+    }
+
+    @Test
     @DisplayName("import-list.ui parses with 1:1 original ids")
     void importListStructure() {
         GtkBuilder builder = UiLoader.load("/ui/import-list.ui");

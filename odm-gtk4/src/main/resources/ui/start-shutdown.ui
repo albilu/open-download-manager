@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkWindow" id="startup_shutdown_dialog">
+    <property name="modal">true</property>
+    <property name="decorated">false</property>
+    <property name="resizable">false</property>
+    <child>
+      <object class="GtkBox" id="dialog_vbox">
+        <property name="orientation">vertical</property>
+        <property name="spacing">10</property>
+        <property name="margin-start">24</property>
+        <property name="margin-end">24</property>
+        <property name="margin-top">24</property>
+        <property name="margin-bottom">24</property>
+        <child>
+          <object class="GtkImage" id="odm_logo_image">
+            <property name="icon-name">folder-download-symbolic</property>
+            <property name="pixel-size">64</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="status_message_label">
+            <property name="label">Starting...</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkProgressBar" id="progress_bar">
+            <property name="width-request">320</property>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
