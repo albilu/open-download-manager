@@ -75,7 +75,12 @@ public class CurlClient {
      */
     public CurlClient(String curlPath) {
         this.curlPath = curlPath;
-        this.executorService = Executors.newCachedThreadPool();
+        // Daemon threads: a missed shutdown() must never keep the JVM alive
+        this.executorService = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "curl-client");
+            t.setDaemon(true);
+            return t;
+        });
         this.activeProcesses = new ConcurrentHashMap<>();
         this.activeDownloads = new ConcurrentHashMap<>();
 
@@ -375,19 +380,25 @@ public class CurlClient {
         if (!(download.getSettings() instanceof CurlSettings)) {
             Map<String, String> options = download.getOptions();
             if (options != null) {
+                Map<String, String> legacyCurl = new java.util.LinkedHashMap<>();
                 for (Map.Entry<String, String> entry : options.entrySet()) {
                     if (entry.getKey().startsWith("curl.")) {
-                        String option = entry.getKey().substring(5); // Remove "curl." prefix
+                        legacyCurl.put(entry.getKey().substring(5), entry.getValue());
+                    }
+                }
+                // Imported settings are untrusted: only allowlisted curl
+                // flags survive (--config and friends execute or redirect)
+                for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
+                        .filter(org.manager.tools.ToolOptionFilter.Tool.CURL, legacyCurl)
+                        .entrySet()) {
+                    // Skip progress-bar option since we need numerical progress output for parsing
+                    if ("progress-bar".equals(entry.getKey())) {
+                        continue;
+                    }
 
-                        // Skip progress-bar option since we need numerical progress output for parsing
-                        if ("progress-bar".equals(option)) {
-                            continue;
-                        }
-
-                        command.add("--" + option);
-                        if (entry.getValue() != null && !entry.getValue().isEmpty()) {
-                            command.add(entry.getValue());
-                        }
+                    command.add("--" + entry.getKey());
+                    if (entry.getValue() != null && !entry.getValue().isEmpty()) {
+                        command.add(entry.getValue());
                     }
                 }
             }

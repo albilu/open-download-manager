@@ -35,6 +35,8 @@ public class TorLeakChecker {
     private static final String TOR_CHECK_URL = "https://check.torproject.org/api/ip";
     private static final String IP_CHECK_URL = "https://api.ipify.org";
     private static final String DNS_LEAK_TEST_URL = "https://www.dnsleaktest.com/api/ip";
+    private static final Pattern TOR_CHECK_IP_PATTERN = Pattern.compile("\"IP\":\"([^\"]+)\"");
+    private static final Pattern TOR_CHECK_COUNTRY_PATTERN = Pattern.compile("\"Country\":\"([^\"]+)\"");
     private static final List<String> DNS_TEST_DOMAINS = Arrays.asList(
             "google.com",
             "cloudflare.com",
@@ -204,8 +206,21 @@ public class TorLeakChecker {
             // Get IP through Tor
             String torIp = fetchUrlContent(IP_CHECK_URL, true);
 
-            boolean isSecure = torIp != null && (directIp == null || !torIp.equals(directIp));
-            String message = isSecure ? "IP properly masked through Tor" : "IP leak detected";
+            // Fail closed: a verdict requires both IPs to be known and
+            // different. Treating an unknown direct IP as "secure" would
+            // give false confidence in exactly the situations (blocked
+            // direct egress, captive portal) where leaks hide.
+            boolean isSecure = torIp != null && directIp != null && !torIp.equals(directIp);
+            String message;
+            if (torIp == null) {
+                message = "Tor IP could not be determined";
+            } else if (directIp == null) {
+                message = "Direct IP unknown — cannot verify, treated as unsafe";
+            } else if (isSecure) {
+                message = "IP properly masked through Tor";
+            } else {
+                message = "IP leak detected";
+            }
 
             return new IpLeakResult(isSecure, message, directIp, torIp);
 
@@ -273,14 +288,12 @@ public class TorLeakChecker {
                 isUsingTor = response.contains("\"IsTor\":true") || response.contains("\"IsTor\": true");
 
                 // Extract exit node info if available
-                Pattern ipPattern = Pattern.compile("\"IP\":\"([^\"]+)\"");
-                Matcher ipMatcher = ipPattern.matcher(response);
+                Matcher ipMatcher = TOR_CHECK_IP_PATTERN.matcher(response);
                 if (ipMatcher.find()) {
                     exitNode = ipMatcher.group(1);
                 }
 
-                Pattern countryPattern = Pattern.compile("\"Country\":\"([^\"]+)\"");
-                Matcher countryMatcher = countryPattern.matcher(response);
+                Matcher countryMatcher = TOR_CHECK_COUNTRY_PATTERN.matcher(response);
                 if (countryMatcher.find()) {
                     country = countryMatcher.group(1);
                 }
@@ -325,25 +338,39 @@ public class TorLeakChecker {
     }
 
     private String resolveDnsThroughTor(String domain) {
+        Socket socket = null;
         try {
-            // Create a socket through Tor proxy and attempt resolution
-            // This is a simplified approach - in practice, we'd need to implement
-            // SOCKS5 DNS resolution or use Tor's DNS port
-            Socket socket = new Socket();
+            // The socket must be created WITH the SOCKS proxy: connecting the
+            // hostname through the proxy makes the proxy (Tor) resolve the
+            // name. A plain socket here would resolve and connect DIRECTLY —
+            // the exact leak this checker exists to detect.
             Proxy proxy = new Proxy(Proxy.Type.SOCKS,
                     new InetSocketAddress(socksProxyHost, socksProxyPort));
+            socket = new Socket(proxy);
 
-            // Try to connect to the domain through Tor
-            // If successful, it means DNS resolution worked through Tor
+            // Connect to the domain through Tor. SOCKS5 carries the hostname
+            // to the proxy, so no local DNS resolution happens.
             socket.connect(new InetSocketAddress(domain, 80), 5000);
-            String resolvedIp = ((InetSocketAddress) socket.getRemoteSocketAddress()).getAddress().getHostAddress();
-            socket.close();
-
+            String resolvedIp = ((InetSocketAddress) socket.getRemoteSocketAddress())
+                    .getAddress().getHostAddress();
             return resolvedIp;
         } catch (Exception e) {
             // DNS resolution through Tor failed or not properly configured
             return null;
+        } finally {
+            if (socket != null) {
+                try {
+                    socket.close();
+                } catch (Exception closeError) {
+                    LOGGER.fine("Error closing SOCKS probe socket: " + closeError.getMessage());
+                }
+            }
         }
+    }
+
+    /** Test seam for the SOCKS-routing contract. */
+    void resolveDnsThroughTorForTest(String domain) {
+        resolveDnsThroughTor(domain);
     }
 
     private String buildResultMessage(IpLeakResult ipResult, DnsLeakResult dnsResult, TorNetworkResult torResult) {

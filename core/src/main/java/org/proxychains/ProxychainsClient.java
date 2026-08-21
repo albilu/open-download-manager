@@ -90,7 +90,12 @@ public class ProxychainsClient {
     public ProxychainsClient(String proxychainsPath, String configPath) {
         this.proxychainsPath = proxychainsPath;
         this.configPath = configPath;
-        this.executorService = Executors.newCachedThreadPool();
+        // Daemon threads: a missed shutdown() must never keep the JVM alive
+        this.executorService = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "proxychains-client");
+            t.setDaemon(true);
+            return t;
+        });
         this.activeProcesses = new ConcurrentHashMap<>();
         this.gidMap = new ConcurrentHashMap<>();
         this.activeDownloads = new ConcurrentHashMap<>();
@@ -252,7 +257,8 @@ public class ProxychainsClient {
                             new InputStreamReader(finalProcess.getErrorStream()))) {
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            LOGGER.info("[ARIA2 STDERR]: " + line);
+                            // Per-line tool output at 1+ lines/second: FINE
+                            LOGGER.fine("[ARIA2 STDERR]: " + line);
                             processAria2Output(line, download, listener);
                         }
                     } catch (IOException e) {
@@ -267,7 +273,8 @@ public class ProxychainsClient {
                     String line;
 
                     while ((line = reader.readLine()) != null) {
-                        LOGGER.info("[ARIA2 STDOUT]: " + line);
+                        // Per-line tool output at 1+ lines/second: FINE
+                        LOGGER.fine("[ARIA2 STDOUT]: " + line);
                         processAria2Output(line, download, listener);
                     }
                 }
@@ -319,9 +326,10 @@ public class ProxychainsClient {
      * @param line The output line containing the GID
      * @return The extracted GID or null if not found
      */
+    private static final Pattern GID_PATTERN = Pattern.compile("GID#([0-9a-f]+)");
+
     private String extractGid(String line) {
-        Pattern pattern = Pattern.compile("GID#([0-9a-f]+)");
-        Matcher matcher = pattern.matcher(line);
+        Matcher matcher = GID_PATTERN.matcher(line);
         if (matcher.find()) {
             return matcher.group(1);
         }
@@ -425,13 +433,20 @@ public class ProxychainsClient {
         command.add("-o");
         command.add(outputFile.getFileName().toString());
 
-        // Add any custom options
+        // Add any custom options; imported settings are untrusted, so only
+        // allowlisted aria2 options survive (--on-download-* hooks execute
+        // arbitrary commands)
         if (options != null) {
+            Map<String, String> aria2Options = new java.util.LinkedHashMap<>();
             for (Map.Entry<String, String> entry : options.entrySet()) {
                 if (entry.getKey().startsWith("aria2.")) {
-                    String option = entry.getKey().substring(6); // Remove "aria2." prefix
-                    command.add("--" + option + "=" + entry.getValue());
+                    aria2Options.put(entry.getKey().substring(6), entry.getValue());
                 }
+            }
+            for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
+                    .filter(org.manager.tools.ToolOptionFilter.Tool.ARIA2, aria2Options)
+                    .entrySet()) {
+                command.add("--" + entry.getKey() + "=" + entry.getValue());
             }
         }
 
@@ -449,56 +464,39 @@ public class ProxychainsClient {
     }
 
     /**
-     * Pauses a download by sending a pause signal to the aria2c process.
+     * Pauses a download by terminating the wrapped aria2c process. A
+     * standalone aria2c launched through proxychains has no RPC channel, so
+     * there is nothing to send a pause command to: SIGTERM lets aria2c save
+     * its .aria2 control file and exit, and resume restarts the transfer
+     * where it left off (aria2c continues partial downloads by default).
      *
      * @param download The download to pause
      * @param listener Listener for download events
      */
     public void pauseDownload(Download download, DownloadListener listener) {
-        String gid = gidMap.get(download.getId());
-        Process process = activeProcesses.get(download.getId());
+        Process process = activeProcesses.remove(download.getId());
 
         if (process != null) {
+            // Graceful terminate (SIGTERM: aria2c saves its control file),
+            // escalating to a hard kill if it ignores the signal
+            process.destroy();
             try {
-                if (gid != null) {
-                    // Try to pause aria2c download with GID
-                    List<String> command = new ArrayList<>();
-                    command.add("aria2c");
-                    command.add("--force-pause");
-                    command.add("gid=" + gid);
-
-                    ProcessBuilder pauseBuilder = new ProcessBuilder(command);
-                    pauseBuilder.start().waitFor();
-                } else {
-                    // If GID is not available, kill the process
-                    process.destroy();
+                if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    process.waitFor(5, TimeUnit.SECONDS);
                 }
-
-                activeProcesses.remove(download.getId());
-
-                download.setStatus(Download.Status.PAUSED);
-                if (listener != null) {
-                    listener.onDownloadPause(download);
-                }
-            } catch (IOException | InterruptedException e) {
-                LOGGER.log(Level.SEVERE, "Failed to pause download", e);
-                // Force kill if gentle pause fails
-                process.destroy();
-                activeProcesses.remove(download.getId());
-
-                download.setStatus(Download.Status.PAUSED);
-                if (listener != null) {
-                    listener.onDownloadPause(download);
-                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                process.destroyForcibly();
             }
-        } else {
-            // Process not spawned yet (pause raced the asynchronous start):
-            // the download is trivially paused; reflect it so a subsequent
-            // resume works and listeners learn about the pause
-            download.setStatus(Download.Status.PAUSED);
-            if (listener != null) {
-                listener.onDownloadPause(download);
-            }
+        }
+
+        // Process not spawned (yet) is fine too: the download is trivially
+        // paused; reflect it so a subsequent resume works and listeners
+        // learn about the pause
+        download.setStatus(Download.Status.PAUSED);
+        if (listener != null) {
+            listener.onDownloadPause(download);
         }
     }
 
@@ -583,22 +581,43 @@ public class ProxychainsClient {
      *
      * @return true if proxychains is available, false otherwise
      */
+    /**
+     * Checks whether a proxychains binary is available. Debian-family
+     * systems install the binary as {@code proxychains4} only; probing the
+     * legacy name alone reported false negatives exactly there.
+     *
+     * @return true when either variant answers
+     */
     public static boolean isProxychainsAvailable() {
+        return isProxychainsAvailable("proxychains4") || isProxychainsAvailable("proxychains");
+    }
+
+    /**
+     * Checks whether the given proxychains binary answers {@code -h}.
+     * Package-private for deterministic availability tests.
+     *
+     * @param binary the binary name or path to probe
+     * @return true when the binary runs and exits with a help-style code
+     */
+    static boolean isProxychainsAvailable(String binary) {
+        Process process = null;
         try {
-            ProcessBuilder processBuilder = new ProcessBuilder("proxychains", "-h");
+            ProcessBuilder processBuilder = new ProcessBuilder(binary, "-h");
             processBuilder.redirectErrorStream(true);
-            Process process = processBuilder.start();
+            process = processBuilder.start();
 
-            // Read output to prevent process hanging
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                while (reader.readLine() != null) {
-                    // Just read the line to consume output
-                }
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
             }
-
-            int exitCode = process.waitFor();
-            return exitCode == 0 || exitCode == 1; // Some versions return 1 for help
+            return process.exitValue() == 0 || process.exitValue() == 1; // Some versions return 1 for help
         } catch (IOException | InterruptedException e) {
+            if (process != null) {
+                process.destroyForcibly();
+            }
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             return false;
         }
     }
@@ -619,15 +638,16 @@ public class ProxychainsClient {
             }
         }
 
-        // Also log lines that might contain progress info for debugging
+        // Progress-summary lines arrive every second (--summary-interval=1);
+        // keep them out of INFO or a single download floods the log
         if (line.contains("#") || line.contains("%") || line.contains("DL:")) {
-            LOGGER.info("[POTENTIAL PROGRESS]: " + line);
+            LOGGER.fine("[POTENTIAL PROGRESS]: " + line);
         }
 
         // Parse progress information
         Matcher progressMatcher = ARIA2_PROGRESS_PATTERN.matcher(line);
         if (progressMatcher.find()) {
-            LOGGER.info("[PROGRESS MATCHED]: " + line);
+            LOGGER.fine("[PROGRESS MATCHED]: " + line);
             String gid = progressMatcher.group(1);
             // Store the GID for this download
             gidMap.put(download.getId(), gid);

@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -30,7 +29,6 @@ public class PaginatedDownloadRepository {
 
     private final Map<String, Download> downloads;
     private final Map<Download.Status, Set<String>> statusIndex;
-    private final TreeMap<Instant, Set<String>> timeIndex;
     private final ReadWriteLock lock;
     private final GlobalSettings globalSettings;
 
@@ -131,7 +129,6 @@ public class PaginatedDownloadRepository {
     public PaginatedDownloadRepository(GlobalSettings globalSettings) {
         this.downloads = new ConcurrentHashMap<>();
         this.statusIndex = new ConcurrentHashMap<>();
-        this.timeIndex = new TreeMap<>();
         this.lock = new ReentrantReadWriteLock();
         this.globalSettings = globalSettings;
         this.queryCache = new LinkedHashMap<String, CachedQueryResult>(MAX_CACHE_SIZE + 1, 0.75f, true) {
@@ -500,13 +497,6 @@ public class PaginatedDownloadRepository {
         if (statusSet != null) {
             statusSet.add(download.getId());
         }
-
-        // Update time index
-        Instant createdAt = download.getCreatedAt();
-        if (createdAt != null) {
-            timeIndex.computeIfAbsent(createdAt, k -> ConcurrentHashMap.newKeySet())
-                    .add(download.getId());
-        }
     }
 
     /**
@@ -518,18 +508,6 @@ public class PaginatedDownloadRepository {
         // Remove from status index
         for (Set<String> statusSet : statusIndex.values()) {
             statusSet.remove(download.getId());
-        }
-
-        // Remove from time index
-        Instant createdAt = download.getCreatedAt();
-        if (createdAt != null) {
-            Set<String> timeSet = timeIndex.get(createdAt);
-            if (timeSet != null) {
-                timeSet.remove(download.getId());
-                if (timeSet.isEmpty()) {
-                    timeIndex.remove(createdAt);
-                }
-            }
         }
     }
 
@@ -752,7 +730,6 @@ public class PaginatedDownloadRepository {
         try {
             downloads.clear();
             statusIndex.values().forEach(Set::clear);
-            timeIndex.clear();
             invalidateCache(); // Full invalidation is appropriate when clearing all
             LOGGER.info("Cleared all downloads from repository");
         } finally {

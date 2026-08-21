@@ -282,6 +282,15 @@ public class TorService {
     }
 
     /**
+     * Whether the managed tor process is currently running.
+     *
+     * @return true if the service reports a running tor process
+     */
+    public boolean isRunning() {
+        return isRunning.get();
+    }
+
+    /**
      * Adds a service listener.
      *
      * @param listener The listener to add

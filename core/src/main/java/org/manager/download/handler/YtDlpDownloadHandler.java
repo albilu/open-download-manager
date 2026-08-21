@@ -130,8 +130,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 // Store the task
                 activeDownloadTasks.put(download.getId(), task);
 
-                // Set up progress monitoring
-                setupProgressMonitoring(task, download);
+                // Receive progress as pushed events from the parsing thread
+                // (no dedicated monitor thread per download)
+                installProgressListener(task, download);
 
                 // Start the download
                 task.start().whenComplete((result, throwable) -> {
@@ -222,66 +223,55 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
      * @param task The download task
      * @param download The download object to update
      */
-    private void setupProgressMonitoring(YtDlpDownloadTask task, Download download) {
-        // Start a monitoring thread
-        executor.submit(() -> {
-            try {
-                while (!task.isDone() && !task.isCancelled()) {
-                    // Update download stats from task
-                    long totalBytes = task.getTotalBytes();
-                    long downloadedBytes = task.getDownloadedBytes();
-                    float speed = task.getSpeed();
-                    float progress = task.getProgress();
-
-                    if (totalBytes > 0) {
-                        download.setSize(totalBytes);
-                    }
-                    if (downloadedBytes > 0) {
-                        download.setDownloaded(downloadedBytes);
-                    }
-                    if (speed > 0) {
-                        download.setSpeed(speed);
-                    }
-
-                    // Update status based on task status
-                    YtDlpDownloadTask.Status taskStatus = task.getStatus();
-                    switch (taskStatus) {
-                        case DOWNLOADING -> {
-                            if (download.getStatus() != Download.Status.DOWNLOADING) {
-                                download.setStatus(Download.Status.DOWNLOADING);
-                            }
-                            // Notify progress
-                            notifyDownloadProgress(download, progress, downloadedBytes, totalBytes, speed);
-                        }
-                        case COMPLETED -> {
-                            download.setStatus(Download.Status.COMPLETED);
-                            download.setDownloaded(download.getSize());
-                            notifyDownloadComplete(download);
-                            return; // Exit monitoring
-                        }
-                        case ERROR -> {
-                            download.setStatus(Download.Status.ERROR);
-                            String errorMsg = task.getErrorMessage();
-                            if (errorMsg != null) {
-                                download.setErrorMessage(errorMsg);
-                            }
-                            notifyDownloadError(download, download.getErrorMessage());
-                            return; // Exit monitoring
-                        }
-                        case CANCELED -> {
-                            download.setStatus(Download.Status.CANCELED);
-                            notifyDownloadCanceled(download);
-                            return; // Exit monitoring
-                        }
-                    }
-
-                    // Sleep before next update
-                    Thread.sleep(1000);
+    /**
+     * Installs the push-based progress bridge: the yt-dlp output parser
+     * already produces these events, so they are routed straight into the
+     * download model and listener notifications. This replaces the old
+     * per-download monitor thread that polled task fields the callback had
+     * just written.
+     */
+    private void installProgressListener(YtDlpDownloadTask task, Download download) {
+        task.setProgressListener(new org.ytdlp.YtDlpClient.ProgressCallback() {
+            @Override
+            public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
+                if (totalBytes > 0) {
+                    download.setSize(totalBytes);
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in progress monitoring", e);
+                if (downloadedBytes > 0) {
+                    download.setDownloaded(downloadedBytes);
+                }
+                download.setSpeed(speed);
+                if (download.getStatus() != Download.Status.DOWNLOADING) {
+                    download.setStatus(Download.Status.DOWNLOADING);
+                }
+                notifyDownloadProgress(download, percentage, downloadedBytes, totalBytes, speed);
+            }
+
+            @Override
+            public void onStart(String filename) {
+                if (filename != null && !filename.isBlank()
+                        && (download.getName() == null || download.getName().isBlank())) {
+                    download.setName(filename);
+                }
+                download.setStatus(Download.Status.DOWNLOADING);
+            }
+
+            @Override
+            public void onComplete(String filename) {
+                download.setStatus(Download.Status.COMPLETED);
+                if (download.getSize() > 0) {
+                    download.setDownloaded(download.getSize());
+                }
+                notifyDownloadComplete(download);
+            }
+
+            @Override
+            public void onError(String error) {
+                download.setStatus(Download.Status.ERROR);
+                if (error != null && !error.isBlank()) {
+                    download.setErrorMessage(error);
+                }
+                notifyDownloadError(download, download.getErrorMessage());
             }
         });
     }

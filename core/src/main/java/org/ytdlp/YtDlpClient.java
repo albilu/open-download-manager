@@ -856,8 +856,13 @@ public class YtDlpClient {
             }
         }
 
-        // Add any additional options
-        for (Map.Entry<String, String> entry : settings.getAdditionalOptions().entrySet()) {
+        // Add any additional options; imported settings are untrusted, so
+        // only allowlisted keys may become yt-dlp flags (--exec & friends
+        // execute commands)
+        for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
+                .filter(org.manager.tools.ToolOptionFilter.Tool.YTDLP,
+                        settings.getAdditionalOptions())
+                .entrySet()) {
             // Skip aria2c options as they're handled above
             if (!entry.getKey().equals("use-aria2c") && !entry.getKey().equals("aria2c-args")) {
                 command.add("--" + entry.getKey());

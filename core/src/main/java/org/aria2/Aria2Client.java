@@ -977,20 +977,68 @@ public class Aria2Client {
     }
 
     // Implement system.multicall
-    public List<Map<String, Object>> systemMulticall(List<Map<String, Object>> calls)
+    public List<List<Object>> systemMulticall(List<Map<String, Object>> calls)
             throws IOException, Aria2RpcException {
         if (useWebSocket) {
             try {
-                return sendRpcWebSocket("system.multicall", new TypeReference<List<Map<String, Object>>>() {
-                }, calls).result;
+                return sendRpcWebSocketRaw("system.multicall",
+                        new TypeReference<List<List<Object>>>() {
+                        }, calls).result;
+            } catch (IOException | Aria2RpcException e) {
+                throw e;
             } catch (Exception e) {
                 throw new IOException(e);
             }
         } else {
-            String payload = buildPayload("system.multicall", calls);
-            return sendRpcHttp(payload, new TypeReference<List<Map<String, Object>>>() {
+            String payload = buildMulticallPayload(calls);
+            return sendRpcHttp(payload, new TypeReference<List<List<Object>>>() {
             }).result;
         }
+    }
+
+    /**
+     * Builds the wire payload for {@code system.multicall}. aria2 expects
+     * params[0] to be the calls array — the RPC token belongs INSIDE each
+     * inner call's params, never on the outer params.
+     *
+     * @param calls the inner method calls
+     * @return the JSON-RPC payload
+     * @throws IOException if serialization fails
+     */
+    String buildMulticallPayload(List<Map<String, Object>> calls) throws IOException {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("jsonrpc", "2.0");
+        map.put("id", 1);
+        map.put("method", "system.multicall");
+        // aria2 expects params[0] to be the ARRAY of calls
+        map.put("params", List.of(calls));
+        return OBJECT_MAPPER.writeValueAsString(map);
+    }
+
+    /**
+     * Builds the inner {@code aria2.tellStatus} calls for a batch progress
+     * poll, authenticating each call with this client's token as aria2
+     * requires.
+     *
+     * @param gids the download GIDs to poll
+     * @param keys the status keys to request
+     * @return one call map per gid
+     */
+    public List<Map<String, Object>> tellStatusMulticallCalls(List<String> gids, String[] keys) {
+        List<Map<String, Object>> calls = new ArrayList<>(gids.size());
+        for (String gid : gids) {
+            List<Object> params = new ArrayList<>(3);
+            if (sendToken && rpcSecret != null) {
+                params.add("token:" + rpcSecret);
+            }
+            params.add(gid);
+            params.add(keys);
+            Map<String, Object> call = new LinkedHashMap<>();
+            call.put("methodName", "aria2.tellStatus");
+            call.put("params", params);
+            calls.add(call);
+        }
+        return calls;
     }
 
     /**
@@ -1203,6 +1251,17 @@ public class Aria2Client {
         return isShuttingDown;
     }
 
+    /**
+     * The RPC secret this client authenticates with (its own generated one
+     * for a self-launched daemon, or the configured token). Same-process
+     * access only — never logged or exported.
+     *
+     * @return the RPC secret, or null when unauthenticated
+     */
+    public String getRpcSecret() {
+        return sendToken ? rpcSecret : null;
+    }
+
     /** Whether WebSocket use has been permanently disabled. Test accessor. */
     boolean isWebSocketUseDisabled() {
         return !useWebSocket;
@@ -1388,6 +1447,52 @@ public class Aria2Client {
     /**
      * Send a JSON-RPC request over WebSocket and parse the response.
      */
+    /**
+     * Sends a pre-built JSON-RPC payload over WebSocket. For methods such as
+     * system.multicall whose params must not receive the automatic outer
+     * token that {@link #buildPayload} injects.
+     */
+    private <T> Aria2RpcResponse<T> sendRpcWebSocketRaw(String method, TypeReference<T> typeRef,
+            List<Map<String, Object>> calls) throws Exception {
+        if (isShuttingDown) {
+            throw new IOException("Cannot send WebSocket RPC during shutdown");
+        }
+        if (wsClient == null || !wsClient.isOpen()) {
+            connectWebSocket();
+        }
+
+        int id = nextWsRequestId();
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("jsonrpc", "2.0");
+        map.put("id", id);
+        map.put("method", method);
+        // aria2 expects params[0] to be the ARRAY of calls
+        map.put("params", List.of(calls));
+        String payload = OBJECT_MAPPER.writeValueAsString(map);
+
+        CompletableFuture<String> future = new CompletableFuture<>();
+        wsResponses.put(id, future);
+        try {
+            wsClient.send(payload);
+            String response = future.get(30, TimeUnit.SECONDS);
+            Aria2RpcResponse<T> rpcResponse = parseRpcResponse(response, typeRef);
+            if (rpcResponse.error != null) {
+                throw new Aria2RpcException(rpcResponse.error.code, rpcResponse.error.message);
+            }
+            return rpcResponse;
+        } catch (TimeoutException e) {
+            wsResponses.remove(id);
+            throw new IOException("RPC request timed out", e);
+        } catch (InterruptedException e) {
+            wsResponses.remove(id);
+            Thread.currentThread().interrupt();
+            throw new IOException("RPC request interrupted", e);
+        } catch (ExecutionException e) {
+            wsResponses.remove(id);
+            throw new IOException("RPC execution error", e.getCause() != null ? e.getCause() : e);
+        }
+    }
+
     private <T> Aria2RpcResponse<T> sendRpcWebSocket(String method, Class<T> resultType, Object... params)
             throws Exception {
         if (isShuttingDown) {

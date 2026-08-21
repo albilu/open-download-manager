@@ -693,6 +693,8 @@ public class DownloadManagerImpl implements DownloadManager {
 
     /** Queued downloads ordered by queue position (then creation time). */
     private List<Download> queuedDownloadsByPosition() {
+        // Status-indexed query touches only QUEUED ids instead of
+        // materializing and sorting the full download list
         return downloadRepository.getDownloadsByStatus(Download.Status.QUEUED, 0, Integer.MAX_VALUE)
                 .getDownloads()
                 .stream()
@@ -704,7 +706,10 @@ public class DownloadManagerImpl implements DownloadManager {
 
     /** Next queue position for a newly queued download. */
     private int nextQueuePosition() {
-        return downloadRepository.getAllDownloads(0, Integer.MAX_VALUE).getDownloads().stream()
+        // Max over QUEUED positions only: queue positions of finished
+        // history are irrelevant and scanning all downloads sorted the
+        // entire repository on every queue operation
+        return queuedDownloadsByPosition().stream()
                 .mapToInt(Download::getQueuePosition)
                 .max()
                 .orElse(0) + 1;
@@ -763,15 +768,13 @@ public class DownloadManagerImpl implements DownloadManager {
         Optional<Download> nextQueued = queuedDownloads.isEmpty() ? Optional.empty()
                 : Optional.of(queuedDownloads.get(0));
 
-        // Enhanced logging to diagnose infinite loop
-        LOGGER.info("Checking for queued downloads - Found: " + queuedDownloads.size()
+        // Per-tick diagnostics only: this runs on every completion/queue event
+        LOGGER.fine("Checking for queued downloads - Found: " + queuedDownloads.size()
                 + ", Running: " + runningDownloads.get()
                 + ", Max concurrent: " + getGlobalSettings().getMaxConcurrentDownloads());
-
-        // If we found queued downloads, log their details
-        if (!queuedDownloads.isEmpty()) {
+        if (LOGGER.isLoggable(Level.FINE) && !queuedDownloads.isEmpty()) {
             for (Download d : queuedDownloads) {
-                LOGGER.info("Found queued download: " + d.getName()
+                LOGGER.fine("Found queued download: " + d.getName()
                         + " (actual status: " + d.getStatus() + ", GID: " + d.getGid() + ")");
             }
         }

@@ -101,6 +101,10 @@ public class MainWindow {
     private final DownloadManager downloadManager;
 
     private List<Download> rowSnapshot = new ArrayList<>();
+    /** Last filter-store counts; filter stores rebuild only when these change. */
+    private int[] lastStatusCounts = new int[0];
+    private int[] lastCategoryCounts = new int[0];
+    private int lastTotalCount = -1;
     private Download selectedDownload;
     private String statusFilter = "All Status";
     private String searchText = "";
@@ -486,6 +490,7 @@ public class MainWindow {
         schedule.append("Weekdays", "win.schedule::weekday");
         schedule.append("Never (paused)", "win.schedule::never");
         edit.appendSubmenu("Schedule", schedule);
+        edit.append("New Tor Identity", "win.tor-new-identity");
         edit.append("Preferences", "win.preferences");
         menu.appendSubmenu("Edit", edit);
 
@@ -578,6 +583,7 @@ public class MainWindow {
                 downloadManager.getGlobalSettings().getProperty("scheduler.preset", "always"),
                 this::applySchedulePreset);
         addAction("preferences", this::onSettingsClicked);
+        addAction("tor-new-identity", this::onTorNewIdentity);
 
         // View
         addStatefulAction("left-panel", true, leftPanelWidget::setVisible);
@@ -980,6 +986,7 @@ public class MainWindow {
                     downloadManager.getGlobalSettings().setGlobalProxyAddress("socks5://127.0.0.1:9050");
                     // Reconfigure running downloads to use the new proxy
                     downloadManager.applyGlobalSettingsToActiveDownloads();
+                    verifyTorCircuit();
                 } else {
                     LOGGER.warning("Tor failed to start");
                     UiThread.marshal(() -> torSwitchSet(false));
@@ -993,6 +1000,85 @@ public class MainWindow {
             LOGGER.info("Tor stopped");
         }
         return false; // let the switch apply its new state
+    }
+
+    /**
+     * Runs the Tor leak checker (IP + DNS + exit-node verification) in the
+     * background once Tor reports ready and surfaces the verdict in the info
+     * bar. This is the user-facing wiring of TorLeakChecker: without it the
+     * SOCKS port being open says nothing about actual circuit health.
+     */
+    private void verifyTorCircuit() {
+        TorLeakHolder.checker = new org.tor.TorLeakChecker(
+                "127.0.0.1", torService.getSocksPort(), 5000, 5000);
+        TorLeakHolder.checker.performLeakCheck()
+                .whenComplete((result, error) -> {
+                    try {
+                        if (TorLeakHolder.checker != null) {
+                            TorLeakHolder.checker.shutdown();
+                        }
+                    } catch (Exception ignore) {
+                        // shutdown is best-effort
+                    }
+                    String message;
+                    if (error != null) {
+                        message = "Tor leak check failed: " + error.getMessage();
+                    } else if (result == null) {
+                        message = "Tor leak check returned no result";
+                    } else {
+                        message = (result.isSecure ? "Tor secure — " : "TOR LEAK CHECK FAILED — ")
+                                + result.message;
+                    }
+                    LOGGER.info("Tor leak check: " + message);
+                    UiThread.marshal(() -> infoLabel.setLabel(message));
+                });
+    }
+
+    /** Holder for the transient leak-checker instance. */
+    private static final class TorLeakHolder {
+
+        static volatile org.tor.TorLeakChecker checker;
+    }
+
+    /**
+     * Requests a new Tor circuit (NEWNYM) through the control port. Wired to
+     * the "New Tor Identity" menu action; no-op with an info-bar notice when
+     * Tor is not running or the control port is unavailable.
+     */
+    private void onTorNewIdentity() {
+        if (!torService.isRunning()) {
+            infoLabel.setLabel("Tor is not running");
+            return;
+        }
+        int controlPort;
+        try {
+            controlPort = torService.getControlPort();
+        } catch (Exception e) {
+            controlPort = 9051;
+        }
+        org.tor.TorController controller = new org.tor.TorController(
+                "127.0.0.1", controlPort, "", 5000);
+        controller.connect()
+                .thenCompose(connected -> connected
+                        ? controller.changeIp()
+                        : CompletableFuture.completedFuture(false))
+                .whenComplete((changed, error) -> {
+                    String message;
+                    if (error != null) {
+                        message = "New Tor identity failed: " + error.getMessage();
+                    } else if (Boolean.TRUE.equals(changed)) {
+                        message = "New Tor identity requested";
+                    } else {
+                        message = "New Tor identity unavailable (control port closed?)";
+                    }
+                    LOGGER.info(message);
+                    try {
+                        controller.disconnect();
+                    } catch (Exception ignore) {
+                        // best-effort
+                    }
+                    UiThread.marshal(() -> infoLabel.setLabel(message));
+                });
     }
 
     private void torSwitchSet(boolean active) {
@@ -1168,50 +1254,75 @@ public class MainWindow {
         };
     }
 
-    /** Rebuilds the stores. GTK thread only. */
+    /**
+     * Refreshes the download view. Progress ticks (the dominant event rate)
+     * update existing rows in place, preserving the tree selection; only
+     * structural changes (add/remove/reorder/filter switch) rebuild the
+     * store. Filter stores are rebuilt only when their counts actually
+     * changed. GTK thread only.
+     */
     private void refresh() {
+        // One repository pass feeds rows, filter counts and global progress
         List<Download> downloads = downloadManager.getAllDownloads();
-        int[] counts = computeCounts(downloads);
 
-        rebuildFilterStore(statusStore, STATUS_FILTERS, counts, downloads.size(), statusFilter);
-        rebuildFilterStore(categoryStore, CATEGORIES, computeCategoryCounts(downloads),
-                downloads.size(), categoryFilter);
+        // Global progress totals over ALL downloads (not just filtered rows)
+        long totalBytes = 0;
+        long doneBytes = 0;
+        int[] counts = null;
+        int[] categoryCounts = null;
 
-        downloadsStore.clear();
-        rowSnapshot = new ArrayList<>();
-        int row = 0;
+        List<Download> display = new ArrayList<>(downloads.size());
         double totalDownSpeed = 0;
         double totalUpSpeed = 0;
         int totalSeeders = 0;
         boolean anyActive = false;
         for (Download download : downloads) {
-            if (!activeMatches(download)) continue;
-            TreeIter iter = new TreeIter();
-            downloadsStore.append(iter);
-            rowSnapshot.add(download);
-            setStr(downloadsStore, iter, COL_NUMBER, String.valueOf(row + 1));
-            setStr(downloadsStore, iter, COL_NAME, download.getName());
-            setStr(downloadsStore, iter, COL_COMPLETE, formatSize(download.getDownloaded()));
-            setStr(downloadsStore, iter, COL_SIZE, formatSize(download.getSize()));
-            setInt(downloadsStore, iter, COL_PROGRESS, (int) download.getProgress());
-            setStr(downloadsStore, iter, COL_ELAPSED, formatElapsed(download));
-            setStr(downloadsStore, iter, COL_LEFT,
-                    formatSize(Math.max(0, download.getSize() - download.getDownloaded())));
-            setStr(downloadsStore, iter, COL_SPEED, formatSize((long) download.getSpeed()) + "/s");
-            setStr(downloadsStore, iter, COL_UP_SPEED, "—");
-            setStr(downloadsStore, iter, COL_RETRY, "—");
-            setStr(downloadsStore, iter, COL_START,
-                    download.getCreatedAt() != null ? DATE_FORMAT.format(download.getCreatedAt()) : "—");
-            setStr(downloadsStore, iter, COL_END,
-                    download.getCompletedAt() != null ? DATE_FORMAT.format(download.getCompletedAt()) : "—");
-            setStr(downloadsStore, iter, COL_TOR_ICON, engineIconName(download));
+            totalBytes += download.getSize();
+            doneBytes += download.getDownloaded();
+            if (activeMatches(download)) {
+                display.add(download);
+            }
             if (download.getStatus() == Download.Status.DOWNLOADING) {
                 totalDownSpeed += download.getSpeed();
                 totalUpSpeed += download.getUploadSpeed();
                 totalSeeders += download.getSeeders();
                 anyActive = true;
             }
-            row++;
+        }
+
+        if (!java.util.Arrays.equals(counts = computeCounts(downloads), lastStatusCounts)
+                || downloads.size() != lastTotalCount) {
+            lastStatusCounts = counts;
+            lastTotalCount = downloads.size();
+            rebuildFilterStore(statusStore, STATUS_FILTERS, counts, downloads.size(), statusFilter);
+            categoryCounts = computeCategoryCounts(downloads);
+            lastCategoryCounts = categoryCounts;
+            rebuildFilterStore(categoryStore, CATEGORIES, categoryCounts, downloads.size(), categoryFilter);
+        }
+
+        // In-place row updates when the visible id sequence is unchanged;
+        // full rebuild only when the structure changed
+        if (rowStructureMatches(display)) {
+            TreeIter iter = new TreeIter();
+            if (downloadsStore.getIterFirst(iter)) {
+                int row = 0;
+                do {
+                    if (row < display.size()) {
+                        updateRowCells(downloadsStore, iter, row, display.get(row));
+                    }
+                    row++;
+                } while (downloadsStore.iterNext(iter));
+            }
+        } else {
+            downloadsStore.clear();
+            rowSnapshot = new ArrayList<>(display.size());
+            TreeIter iter = new TreeIter();
+            for (int row = 0; row < display.size(); row++) {
+                Download download = display.get(row);
+                downloadsStore.append(iter);
+                rowSnapshot.add(download);
+                updateRowCells(downloadsStore, iter, row, download);
+            }
         }
 
         infoLabel.setLabel(downloads.size() + " download(s)");
@@ -1220,19 +1331,47 @@ public class MainWindow {
         dhtStatusLabel.setLabel(totalSeeders > 0 ? "DHT: " + totalSeeders + " seed(s)" : "DHT: —");
         activitySpinner.setSpinning(anyActive);
 
-        // Global progress: overall completion across all downloads
-        long totalBytes = 0;
-        long doneBytes = 0;
-        for (Download download : downloadManager.getAllDownloads()) {
-            totalBytes += download.getSize();
-            doneBytes += download.getDownloaded();
-        }
         globalProgressStore.clear();
         TreeIter progressIter = new TreeIter();
         globalProgressStore.append(progressIter);
         setInt(globalProgressStore, progressIter, 0,
                 totalBytes > 0 ? (int) (doneBytes * 100 / totalBytes) : 0);
         updateInfoPanel();
+    }
+
+    /** Whether the store's current row sequence matches the new display list. */
+    private boolean rowStructureMatches(List<Download> display) {
+        if (rowSnapshot == null || rowSnapshot.size() != display.size()) {
+            return false;
+        }
+        for (int i = 0; i < display.size(); i++) {
+            String a = rowSnapshot.get(i) == null ? null : rowSnapshot.get(i).getId();
+            String b = display.get(i) == null ? null : display.get(i).getId();
+            if (!java.util.Objects.equals(a, b)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Writes all cells of one download row (shared by update and rebuild paths). */
+    private void updateRowCells(ListStore store, TreeIter iter, int row, Download download) {
+        setStr(store, iter, COL_NUMBER, String.valueOf(row + 1));
+        setStr(store, iter, COL_NAME, download.getName());
+        setStr(store, iter, COL_COMPLETE, formatSize(download.getDownloaded()));
+        setStr(store, iter, COL_SIZE, formatSize(download.getSize()));
+        setInt(store, iter, COL_PROGRESS, (int) download.getProgress());
+        setStr(store, iter, COL_ELAPSED, formatElapsed(download));
+        setStr(store, iter, COL_LEFT,
+                formatSize(Math.max(0, download.getSize() - download.getDownloaded())));
+        setStr(store, iter, COL_SPEED, formatSize((long) download.getSpeed()) + "/s");
+        setStr(store, iter, COL_UP_SPEED, "—");
+        setStr(store, iter, COL_RETRY, "—");
+        setStr(store, iter, COL_START,
+                download.getCreatedAt() != null ? DATE_FORMAT.format(download.getCreatedAt()) : "—");
+        setStr(store, iter, COL_END,
+                download.getCompletedAt() != null ? DATE_FORMAT.format(download.getCompletedAt()) : "—");
+        setStr(store, iter, COL_TOR_ICON, engineIconName(download));
     }
 
     private int[] computeCounts(List<Download> downloads) {

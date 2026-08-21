@@ -108,7 +108,12 @@ public class HttrackClient {
         this.activeJobs = new ConcurrentHashMap<>();
         this.monitoringFutures = new ConcurrentHashMap<>();
         this.listeners = new CopyOnWriteArrayList<>();
-        this.executorService = Executors.newCachedThreadPool();
+        // Daemon threads: a missed shutdown() must never keep the JVM alive
+        this.executorService = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "httrack-client");
+            t.setDaemon(true);
+            return t;
+        });
         this.jobIdCounter = new AtomicInteger(0);
     }
 
@@ -466,8 +471,12 @@ public class HttrackClient {
             command.add(String.join(",", filters));
         }
 
-        // Add additional options
-        for (Map.Entry<String, String> entry : settings.getAdditionalOptions().entrySet()) {
+        // Add additional options; imported settings are untrusted, so only
+        // allowlisted flags survive (the '#' filter-command flag can execute)
+        for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
+                .filter(org.manager.tools.ToolOptionFilter.Tool.HTTRACK,
+                        settings.getAdditionalOptions())
+                .entrySet()) {
             if (entry.getValue() == null || entry.getValue().isEmpty()) {
                 command.add("-" + entry.getKey());
             } else {

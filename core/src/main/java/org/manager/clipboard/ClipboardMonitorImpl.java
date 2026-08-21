@@ -32,7 +32,14 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
 
     private static final Logger LOGGER = Logger.getLogger(ClipboardMonitorImpl.class.getName());
 
-    private final Clipboard systemClipboard;
+    /**
+     * Resolved lazily: constructing the AWT toolkit drags in X11/Wayland
+     * native libraries and fails outright in headless environments, which
+     * must not happen just because the manager was constructed — only when
+     * clipboard access is actually requested.
+     */
+    private volatile Clipboard systemClipboard;
+
     private final List<ClipboardListener> listeners;
     private final AtomicBoolean monitoring;
     private final AtomicReference<String> lastClipboardContent;
@@ -43,16 +50,31 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
     private long monitoringInterval = 500; // Default 500ms
 
     /**
-     * Creates a new clipboard monitor instance.
+     * Creates a new clipboard monitor instance. No AWT/X11 initialization
+     * happens here — see {@link #getSystemClipboard()}.
      */
     public ClipboardMonitorImpl() {
-        this.systemClipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
         this.listeners = new CopyOnWriteArrayList<>();
         this.monitoring = new AtomicBoolean(false);
         this.lastClipboardContent = new AtomicReference<>("");
         this.silentMode = new AtomicBoolean(false);
 
         LOGGER.info("ClipboardMonitor initialized");
+    }
+
+    /** The AWT system clipboard, initialized on first use. */
+    private Clipboard getSystemClipboard() {
+        Clipboard clipboard = this.systemClipboard;
+        if (clipboard == null) {
+            synchronized (this) {
+                clipboard = this.systemClipboard;
+                if (clipboard == null) {
+                    clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+                    this.systemClipboard = clipboard;
+                }
+            }
+        }
+        return clipboard;
     }
 
     @Override
@@ -173,11 +195,11 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
     @Override
     public String getCurrentClipboardContent() {
         try {
-            if (!systemClipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)) {
+            if (!getSystemClipboard().isDataFlavorAvailable(DataFlavor.stringFlavor)) {
                 return null;
             }
 
-            Transferable contents = systemClipboard.getContents(null);
+            Transferable contents = getSystemClipboard().getContents(null);
             if (contents != null && contents.isDataFlavorSupported(DataFlavor.stringFlavor)) {
                 String text = (String) contents.getTransferData(DataFlavor.stringFlavor);
                 return text != null ? text.trim() : null;
@@ -331,7 +353,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
     public void setClipboardContent(String text) {
         try {
             StringSelection selection = new StringSelection(text != null ? text : "");
-            systemClipboard.setContents(selection, null);
+            getSystemClipboard().setContents(selection, null);
             LOGGER.fine("Clipboard content set programmatically");
         } catch (IllegalStateException e) {
             LOGGER.log(Level.WARNING, "Error setting clipboard content", e);

@@ -59,6 +59,35 @@ public class YtDlpDownloadTask {
     private volatile String processId;
 
     /**
+     * Optional receiver of pushed progress events. The internal client
+     * callback updates the task state and then forwards here, so consumers
+     * (the download handler) get progress on the parsing thread instead of
+     * polling task fields from a dedicated monitor thread.
+     */
+    private volatile ProgressCallback progressListener;
+
+    /**
+     * Installs a receiver for pushed progress events. Call before
+     * {@link #start()}.
+     *
+     * @param listener the listener, or null to remove
+     */
+    public void setProgressListener(ProgressCallback listener) {
+        this.progressListener = listener;
+    }
+
+    private void forwardToListener(java.util.function.Consumer<ProgressCallback> dispatch) {
+        ProgressCallback listener = this.progressListener;
+        if (listener != null) {
+            try {
+                dispatch.accept(listener);
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Progress listener failed", e);
+            }
+        }
+    }
+
+    /**
      * Creates a new YtDlpDownloadTask.
      *
      * @param taskId     Unique identifier for this task
@@ -105,6 +134,7 @@ public class YtDlpDownloadTask {
                 @Override
                 public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
                     updateProgress(percentage, downloadedBytes, totalBytes, speed);
+                    forwardToListener(l -> l.onProgress(percentage, downloadedBytes, totalBytes, speed));
                 }
 
                 @Override
@@ -112,6 +142,7 @@ public class YtDlpDownloadTask {
                     YtDlpDownloadTask.this.filename.set(filename);
                     status.set(Status.DOWNLOADING);
                     LOGGER.info("Download started for task " + taskId + ": " + filename);
+                    forwardToListener(l -> l.onStart(filename));
                 }
 
                 @Override
@@ -121,6 +152,7 @@ public class YtDlpDownloadTask {
                     completedAt = Instant.now();
                     progress.set(100.0f);
                     LOGGER.info("Download completed for task " + taskId + ": " + filename);
+                    forwardToListener(l -> l.onComplete(filename));
                 }
 
                 @Override
@@ -128,6 +160,7 @@ public class YtDlpDownloadTask {
                     errorMessage.set(error);
                     status.set(Status.ERROR);
                     LOGGER.log(Level.SEVERE, "Download error for task " + taskId + ": " + error);
+                    forwardToListener(l -> l.onError(error));
                 }
             };
 

@@ -97,7 +97,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
     private final Aria2Client aria2Client;
     private final Map<String, String> gidToIdMap; // aria2 GID -> download ID
-    private final Map<String, ScheduledFuture<?>> pollTasks; // GID -> polling task
+    private final java.util.Set<String> pollTasks; // GIDs currently polled by the batch task
+    /** The single shared batch-poll task covering every GID in pollTasks. */
+    private volatile ScheduledFuture<?> batchPollTask;
     private final Map<String, Download> activeDownloads; // download ID -> Download object
     private final ScheduledExecutorService progressPoller;
     private final AtomicBoolean isShuttingDown;
@@ -125,7 +127,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         this.gidToIdMap = new ConcurrentHashMap<>();
         this.activeDownloads = new ConcurrentHashMap<>();
         this.progressPoller = Executors.newScheduledThreadPool(1);
-        this.pollTasks = new ConcurrentHashMap<>();
+        this.pollTasks = ConcurrentHashMap.newKeySet();
         this.isShuttingDown = new AtomicBoolean(false);
         this.objectMapper = new ObjectMapper();
     }
@@ -135,6 +137,16 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // This handler primarily supports HTTP downloads
         // but also handles FTP, BitTorrent, and Magnet
         return Download.Type.ARIA2;
+    }
+
+    /**
+     * The handler's aria2 client. Same-process access for verification and
+     * detail queries that bypass the handler's coarse API.
+     *
+     * @return the live client instance
+     */
+    public Aria2Client getAria2Client() {
+        return aria2Client;
     }
 
     @Override
@@ -545,7 +557,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
-     * Starts polling for progress updates for a download.
+     * Starts polling for progress updates for a download. All GIDs share a
+     * single poller tick that batches every active download into ONE
+     * {@code system.multicall} round trip — per-download scheduling costs N
+     * sequential RPCs per second and one hung response stalls them all.
      *
      * @param gid The aria2 GID of the download
      */
@@ -554,15 +569,21 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             return;
         }
 
-        ScheduledFuture<?> task = progressPoller.scheduleAtFixedRate(() -> {
-            try {
-                pollDownloadProgress(gid);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error polling download progress for GID " + gid, e);
-            }
-        }, 0, PROGRESS_POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        pollTasks.add(gid);
+        ensureBatchPollingScheduled();
+    }
 
-        pollTasks.put(gid, task);
+    /** Schedules the shared batch poll task once, for however many GIDs are active. */
+    private synchronized void ensureBatchPollingScheduled() {
+        if (batchPollTask == null && !pollTasks.isEmpty() && !isShuttingDown.get()) {
+            batchPollTask = progressPoller.scheduleAtFixedRate(() -> {
+                try {
+                    pollAllDownloadsProgress();
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error polling download progress", e);
+                }
+            }, 0, PROGRESS_POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        }
     }
 
     /**
@@ -571,9 +592,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @param gid The aria2 GID of the download
      */
     private void stopProgressPolling(String gid) {
-        ScheduledFuture<?> task = pollTasks.remove(gid);
-        if (task != null) {
-            task.cancel(false);
+        pollTasks.remove(gid);
+    }
+
+    /** Cancels the shared batch task when the last GID goes away. */
+    private synchronized void maybeStopBatchPolling() {
+        if (batchPollTask != null && pollTasks.isEmpty()) {
+            batchPollTask.cancel(false);
+            batchPollTask = null;
         }
     }
 
@@ -581,12 +607,78 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * Stops all progress polling tasks.
      */
     private void stopAllProgressPolling() {
-        for (String gid : new ArrayList<>(pollTasks.keySet())) {
-            stopProgressPolling(gid);
+        synchronized (this) {
+            if (batchPollTask != null) {
+                batchPollTask.cancel(false);
+                batchPollTask = null;
+            }
         }
+        pollTasks.clear();
 
         // Clear all download references
         activeDownloads.clear();
+    }
+
+    /**
+     * One poll tick: batches every active GID into a single
+     * {@code system.multicall} round trip, falling back to per-GID
+     * tellStatus if the batch request fails (so one bad GID cannot stop
+     * every download's updates).
+     */
+    private void pollAllDownloadsProgress() {
+        if (isShuttingDown.get() || pollTasks.isEmpty()) {
+            maybeStopBatchPolling();
+            return;
+        }
+
+        List<String> gids = new ArrayList<>(pollTasks);
+        try {
+            List<Map<String, Object>> calls = aria2Client.tellStatusMulticallCalls(
+                    gids, REQUIRED_STATUS_KEYS);
+            List<List<Object>> results = aria2Client.systemMulticall(calls);
+
+            if (results == null || results.size() != gids.size()) {
+                throw new IOException("Unexpected multicall result shape: "
+                        + (results == null ? "null" : results.size()));
+            }
+            for (int i = 0; i < gids.size(); i++) {
+                dispatchPollResult(gids.get(i), results.get(i));
+            }
+        } catch (Exception batchError) {
+            LOGGER.log(Level.WARNING,
+                    "Multicall progress poll failed; falling back to per-download polling", batchError);
+            for (String gid : gids) {
+                pollDownloadProgress(gid);
+            }
+        } finally {
+            maybeStopBatchPolling();
+        }
+    }
+
+    /**
+     * Unwraps one multicall entry ({@code [[status]]} or
+     * {@code [{"error":...}]}) and routes it through the regular progress
+     * pipeline.
+     */
+    private void dispatchPollResult(String gid, List<Object> multicallEntry) {
+        try {
+            if (multicallEntry == null || multicallEntry.isEmpty()) {
+                return;
+            }
+            Object status = multicallEntry.get(0);
+            if (status instanceof Map<?, ?> statusMap) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> typed = (Map<String, Object>) status;
+                String downloadId = gidToIdMap.get(gid);
+                if (downloadId != null) {
+                    processProgressUpdate(downloadId, gid, typed);
+                }
+            }
+            // An error entry or missing GID mapping is silently skipped; the
+            // per-GID fallback in pollDownloadProgress handles persistent failures
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error processing multicall result for GID " + gid, e);
+        }
     }
 
     /**
@@ -700,7 +792,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             return;
         }
 
-        LOGGER.info("Aria2 status update - GID: " + gid + ", Download: " + download.getName()
+        // Per-tick diagnostics (1 Hz per download): FINE so a busy queue
+        // does not generate a log line per second per download
+        LOGGER.fine("Aria2 status update - GID: " + gid + ", Download: " + download.getName()
                 + ", Current status: " + download.getStatus() + ", Aria2 status: " + aria2Status);
 
         switch (aria2Status) {
