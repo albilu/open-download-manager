@@ -400,27 +400,32 @@ public class MainWindow {
         }
     }
 
+    /** Context menu built once and reused; the actions re-read the selection at click time. */
+    private PopupMenu contextMenu;
+
     private void showContextMenu() {
         onDownloadSelectionChanged();
         if (selectedDownload == null) return;
         // 1:1 port of download_context_menu from the original glade
-        new PopupMenu()
-                .add("Open", () -> openSelected("file"))
-                .add("Open Folder", () -> openSelected("folder"))
-                .separator()
-                .add("Pause", this::onPauseClicked)
-                .add("Resume", this::onResumeClicked)
-                .add("Start", () -> downloadManager.startDownload(selectedDownload))
-                .separator()
-                .add("Copy Magnet URI", this::copyMagnetUri)
-                .add("Change Destination…", this::changeDestination)
-                .add("Verify Data", this::verifyData)
-                .add("Properties", this::onPropertiesClicked)
-                .separator()
-                .add("Delete", this::onDeleteClicked)
-                .add("Delete with Files", () ->
-                        downloadManager.cancelDownload(selectedDownload, true))
-                .popup();
+        if (contextMenu == null) {
+            contextMenu = new PopupMenu()
+                    .add("Open", () -> openSelected("file"))
+                    .add("Open Folder", () -> openSelected("folder"))
+                    .separator()
+                    .add("Pause", this::onPauseClicked)
+                    .add("Resume", this::onResumeClicked)
+                    .add("Start", () -> downloadManager.startDownload(selectedDownload))
+                    .separator()
+                    .add("Copy Magnet URI", this::copyMagnetUri)
+                    .add("Change Destination…", this::changeDestination)
+                    .add("Verify Data", this::verifyData)
+                    .add("Properties", this::onPropertiesClicked)
+                    .separator()
+                    .add("Delete", this::onDeleteClicked)
+                    .add("Delete with Files", () ->
+                            downloadManager.cancelDownload(selectedDownload, true));
+        }
+        contextMenu.popup();
     }
 
     /** Copies the selected download's magnet URI (or builds one from its info hash). */
@@ -583,15 +588,18 @@ public class MainWindow {
                 () -> UiThread.marshal(this::refresh)).present());
         addAction("import-html", this::onImportHtml);
         addAction("export-file", this::onExportList);
-        addStatefulAction("offline", false, active -> {
-            downloadManager.getGlobalSettings().setProperty("ui.offline", String.valueOf(active));
-            if (active) {
-                downloadManager.pauseAllDownloads();
-            } else {
-                downloadManager.resumeAllDownloads();
-            }
-            UiThread.marshal(this::refresh);
-        });
+        addStatefulAction("offline",
+                downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false),
+                active -> {
+                    downloadManager.getGlobalSettings().setProperty("ui.offline", String.valueOf(active));
+                    downloadManager.getGlobalSettings().save();
+                    if (active) {
+                        downloadManager.pauseAllDownloads();
+                    } else {
+                        downloadManager.resumeAllDownloads();
+                    }
+                    UiThread.marshal(this::refresh);
+                });
         // File -> Exit performs a normal exit (destroy() bypasses the
         // close-request handler), so geometry must be saved explicitly first.
         addAction("quit", () -> {
@@ -607,6 +615,7 @@ public class MainWindow {
                 active -> {
                     downloadManager.getGlobalSettings().setProperty("ui.clipboardSilent",
                             String.valueOf(active));
+                    downloadManager.getGlobalSettings().save();
                     applyClipboardSilentToCore(active);
                 });
         addRadioAction("completion", completionActionKey(), this::onCompletionActionChosen);
@@ -1002,11 +1011,6 @@ public class MainWindow {
                 + "\nErrors: " + errors + "\n\nDownloaded: " + formatSize(doneSize)
                 + " / " + formatSize(totalSize));
         stats.present();
-    }
-
-    private void menuButtonRefresh() {
-        // Rebuild the main menu so toggle-state labels stay current
-        menuButton.setMenuModel(buildMainMenu());
     }
 
     private void applySchedulePreset(String preset) {

@@ -281,8 +281,8 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
      */
     protected void setDefaultDestinationIfNeeded(Download download) {
         if (download != null && download.getDestination() == null) {
-            System.out
-                    .println("Setting default download directory to: " + globalSettings.getDefaultDownloadDirectory());
+            LOGGER.fine("Setting default download directory to: "
+                    + globalSettings.getDefaultDownloadDirectory());
             download.setDestination(globalSettings.getDefaultDownloadDirectory());
         }
     }

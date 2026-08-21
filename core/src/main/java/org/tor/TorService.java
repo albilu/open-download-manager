@@ -432,10 +432,15 @@ public class TorService {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null && !isShuttingDown.get()) {
-                    LOGGER.warning("Tor stderr: " + line);
-
-                    // All stderr output is considered an error condition
-                    notifyListeners(TorServiceEvent.ERROR);
+                    // tor routinely writes warnings to stderr; only [err]
+                    // lines are error conditions — treating every line as
+                    // ERROR produced event storms for ordinary notices
+                    if (line.contains("[err]")) {
+                        LOGGER.warning("Tor stderr: " + line);
+                        notifyListeners(TorServiceEvent.ERROR);
+                    } else {
+                        LOGGER.fine("Tor stderr: " + line);
+                    }
                 }
             } catch (IOException e) {
                 if (!isShuttingDown.get()) {

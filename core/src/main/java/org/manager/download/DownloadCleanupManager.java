@@ -238,8 +238,13 @@ public class DownloadCleanupManager {
             return 0;
         }
 
-        List<Download> toRemove = completedDownloads.subList(keepCount, completedDownloads.size());
-        return downloadRepository.removeDownloadsMatching(download -> toRemove.contains(download));
+        // Remove by id set: a List.contains predicate inside the repository's
+        // full scan made this quadratic in completed-download count
+        Set<String> removeIds = completedDownloads.subList(keepCount, completedDownloads.size())
+                .stream()
+                .map(Download::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        return removeDownloadsByIds(removeIds);
     }
 
     /**

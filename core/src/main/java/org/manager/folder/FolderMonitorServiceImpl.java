@@ -741,9 +741,10 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         // Try to use system trash if available (Linux-specific)
         String userHome = System.getProperty("user.home");
         Path trashDir = Paths.get(userHome, ".local/share/Trash/files");
+        Path trashInfoDir = Paths.get(userHome, ".local/share/Trash/info");
 
         if (!Files.exists(trashDir)) {
-            // Create trash directory if it doesn't exist
+            // Create trash directory if it exists
             Files.createDirectories(trashDir);
         }
 
@@ -764,7 +765,29 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             counter++;
         }
 
-        Files.move(filePath, trashPath, StandardCopyOption.REPLACE_EXISTING);
+        // Write the .trashinfo FIRST (freedesktop spec): file managers treat
+        // a trashed file without it as unknown junk and may purge it
+        try {
+            Files.createDirectories(trashInfoDir);
+            String trashInfo = "[Trash Info]\nPath="
+                    + filePath.toAbsolutePath().toString().replace("\n", "%0A")
+                    + "\nDeletionDate="
+                    + java.time.LocalDateTime.now()
+                            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+                    + "\n";
+            Files.writeString(trashInfoDir.resolve(trashPath.getFileName() + ".trashinfo"), trashInfo);
+        } catch (IOException infoError) {
+            LOGGER.log(Level.WARNING, "Failed to write .trashinfo for " + filePath, infoError);
+        }
+
+        // ATOMIC_MOVE with no REPLACE_EXISTING: the existence loop above was
+        // a TOCTOU — a concurrent writer could claim the target between the
+        // check and the move, and REPLACE_EXISTING would silently clobber it
+        try {
+            Files.move(filePath, trashPath, StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+            Files.move(filePath, trashPath);
+        }
     }
 
     private void notifyListeners(ListenerAction action) {

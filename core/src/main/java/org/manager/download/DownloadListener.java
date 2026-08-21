@@ -23,6 +23,19 @@ public interface DownloadListener {
     void onDownloadStart(Download download);
 
     /**
+     * Called when a download is placed in the queue without being started
+     * (limit reached or outside the active schedule). Distinct from
+     * {@link #onDownloadStart}: consumers must be able to tell "queued"
+     * from "started". Defaults to forwarding to onDownloadStart so
+     * existing listeners keep their previous behavior.
+     *
+     * @param download The download that was queued
+     */
+    default void onDownloadQueued(Download download) {
+        onDownloadStart(download);
+    }
+
+    /**
      * Called when download progress is updated.
      *
      * @param download The download with updated progress

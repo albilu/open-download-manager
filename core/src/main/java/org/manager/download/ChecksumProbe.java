@@ -82,21 +82,23 @@ public final class ChecksumProbe {
         return Optional.empty();
     }
 
+    /** Shared, redirect-following client: a new HttpClient per probe wasted a connection pool per call. */
+    private static final HttpClient SHARED_CLIENT = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
+
     /**
      * Fetches a sibling checksum file and extracts the digest for the base
      * filename when the file lists multiple entries.
      */
     private static Optional<String> fetchAndParse(URI sibling, String algorithm) {
         try {
-            HttpClient client = HttpClient.newBuilder()
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .connectTimeout(Duration.ofSeconds(5))
-                    .build();
             HttpRequest request = HttpRequest.newBuilder(sibling)
                     .timeout(Duration.ofSeconds(8))
                     .GET()
                     .build();
-            HttpResponse<InputStream> response = client.send(request,
+            HttpResponse<InputStream> response = SHARED_CLIENT.send(request,
                     HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 return Optional.empty();

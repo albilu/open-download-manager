@@ -890,13 +890,21 @@ public class DownloadManagerImpl implements DownloadManager {
             List<Download> activeDownloads = downloadRepository
                     .getDownloadsByStatus(Download.Status.DOWNLOADING, 0, Integer.MAX_VALUE).getDownloads();
 
-            for (Download download : activeDownloads) {
-                try {
-                    pauseDownload(download).join();
-                } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Failed to pause download: " + download.getName(), e);
-                }
+            if (activeDownloads.isEmpty()) {
+                return;
             }
+
+            // Pause concurrently and join once: sequential joins made the
+            // total wall time the SUM of every pause round trip, which could
+            // exceed the shutdown phase budget with many active downloads
+            List<CompletableFuture<Void>> pauses = new java.util.ArrayList<>(activeDownloads.size());
+            for (Download download : activeDownloads) {
+                pauses.add(pauseDownload(download).exceptionally(e -> {
+                    LOGGER.log(Level.WARNING, "Failed to pause download: " + download.getName(), e);
+                    return null;
+                }));
+            }
+            CompletableFuture.allOf(pauses.toArray(new CompletableFuture[0])).join();
         }, executorManager.getGeneralExecutor());
     }
 
@@ -916,7 +924,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 if (count >= remainingSlots) {
                     // If we've reached the limit, queue the rest
                     downloadRepository.updateDownloadStatus(download, Download.Status.QUEUED);
-                    notifyDownloadStart(download);
+                    notifyDownloadQueued(download);
                 } else {
                     // Otherwise, resume it immediately
                     try {
@@ -1217,6 +1225,10 @@ public class DownloadManagerImpl implements DownloadManager {
 
     private void notifyDownloadStart(Download download) {
         fireEvent(l -> l.onDownloadStart(download));
+    }
+
+    private void notifyDownloadQueued(Download download) {
+        fireEvent(l -> l.onDownloadQueued(download));
     }
 
     private void notifyDownloadProgress(Download download, float progress, long downloadedBytes, long totalBytes,
@@ -1676,7 +1688,9 @@ public class DownloadManagerImpl implements DownloadManager {
             download.setStatus(Download.Status.QUEUED);
             download.setQueuePosition(nextQueuePosition());
             downloadRepository.addDownload(download);
-            notifyDownloadStart(download);
+            // Queued, not started: consumers must be able to distinguish
+            // (limit reached / outside schedule) from an actual start
+            notifyDownloadQueued(download);
 
             // Start the download if we are under the concurrent limit and
             // the schedule allows downloading right now (uGet-style ranges:
@@ -1748,8 +1762,16 @@ public class DownloadManagerImpl implements DownloadManager {
 
         CompletableFuture.runAsync(() -> {
             try {
-                // Wait a moment for handlers to fully initialize
-                Thread.sleep(2000);
+                // Gate on actual handler readiness instead of a fixed 2s
+                // sleep: too short on slow disks meant failed resumes, too
+                // long meant pointless startup delay. Bounded at 60s.
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                while (!org.manager.ApplicationContext.isComponentInitialized(
+                        org.manager.StartupCoordinator.DOWNLOAD_HANDLER_FACTORY)
+                        && System.nanoTime() < deadline
+                        && !isShuttingDown.get()) {
+                    Thread.sleep(100);
+                }
 
                 int resumedCount = 0;
                 for (String downloadId : activeDownloadsBeforeExit) {

@@ -378,7 +378,8 @@ public class ErrorHandler {
         Level logLevel = dme.isRecoverable() ? Level.WARNING : Level.SEVERE;
         String message = String.format("Operation failed: %s - %s", operationContext, dme.getDetailedMessage());
 
-        LOGGER.log(logLevel, message, exception);
+        // Honor the caller's logger; fall back to this class's logger
+        (logger != null ? logger : LOGGER).log(logLevel, message, exception);
     }
 
     /**

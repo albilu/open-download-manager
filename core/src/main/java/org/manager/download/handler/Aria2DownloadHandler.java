@@ -535,7 +535,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Gracefully shutdown aria2 RPC server FIRST (this will close connections properly)
         try {
             aria2Client.shutdown(); // Graceful RPC shutdown
-            Thread.sleep(2000); // Give it time to shutdown gracefully
             LOGGER.info("Aria2 RPC graceful shutdown completed");
         } catch (Exception e) {
             LOGGER.log(java.util.logging.Level.WARNING, "Graceful aria2 shutdown failed, forcing disconnect", e);
@@ -544,12 +543,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Then disconnect WebSocket (should not trigger reconnection now)
         try {
             aria2Client.disconnectWebSocket();
-            Thread.sleep(500); // Allow WebSocket to close cleanly
+            LOGGER.info("Aria2 WebSocket disconnected");
         } catch (Exception e) {
             LOGGER.log(java.util.logging.Level.WARNING, "Error disconnecting WebSocket", e);
         }
 
-        // Finally force stop the process if still running
+        // Finally stop the process: polls daemon state with a bounded wait
+        // (no fixed sleeps) and escalates to destroy on timeout
         try {
             aria2Client.stopAria2c();
         } catch (Exception e) {
@@ -1157,18 +1157,20 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @throws IOException on connection failure, non-2xx response, empty body,
      *             or a body exceeding {@link #MAX_REMOTE_DESCRIPTOR_BYTES}
      */
+    /** Shared, redirect-following client: a new HttpClient per fetch wasted a connection pool per call. */
+    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(Duration.ofSeconds(30))
+            .build();
+
     private static byte[] fetchRemoteBytes(URI uri) throws IOException {
-        HttpClient client = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
         HttpRequest request = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(60))
                 .GET()
                 .build();
         HttpResponse<InputStream> response;
         try {
-            response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted while fetching " + uri, e);

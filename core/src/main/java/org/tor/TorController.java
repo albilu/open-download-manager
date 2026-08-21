@@ -191,9 +191,9 @@ public class TorController {
 
                 if (response != null && response.startsWith("250")) {
                     LOGGER.info("New IP requested successfully");
-
-                    // Wait a bit for the new circuit to be established
-                    Thread.sleep(2000);
+                    // No fixed sleep: the 250 OK already acknowledges the
+                    // NEWNYM signal, and circuit building is asynchronous —
+                    // a caller that needs the new IP polls for it
                     return true;
                 } else {
                     LOGGER.warning("Failed to request new IP: " + response);
@@ -303,7 +303,10 @@ public class TorController {
 
                 LOGGER.info("Setting configuration: " + option + " = " + value);
 
-                String command = String.format("SETCONF %s=%s", option, value);
+                // Quoted string per the control-port spec: values with
+                // spaces, backslashes, or quotes must be escaped, otherwise
+                // the command is truncated at the first space (or exploited)
+                String command = String.format("SETCONF %s=%s", option, quoteControlString(value));
                 String response = sendCommand(command);
 
                 if (response != null && response.startsWith("250")) {
@@ -481,6 +484,19 @@ public class TorController {
         }
 
         return null;
+    }
+
+    /**
+     * Escapes and quotes a value for the Tor control port (quoted-string
+     * per control-spec: backslash and double-quote are escaped, the result
+     * is wrapped in double quotes).
+     */
+    private static String quoteControlString(String value) {
+        if (value == null) {
+            return "\"\"";
+        }
+        String escaped = value.replace("\\", "\\\\").replace("\"", "\\\"");
+        return '"' + escaped + '"';
     }
 
     private String bytesToHex(byte[] bytes) {

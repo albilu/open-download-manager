@@ -425,7 +425,10 @@ public class YtDlpFactory {
 
         // Need to refresh availability info
         try {
-            YtDlpClient testClient = createClient();
+            // Unregistered probe client: registering it in the clients map
+            // (only cleared at shutdown) would leak one client + thread pool
+            // per 30s cache window
+            YtDlpClient testClient = newUnregisteredClient();
             try {
                 boolean available = testClient.isAvailable();
                 boolean aria2cAvailable = available ? testClient.isAria2cAvailable() : false;

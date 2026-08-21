@@ -394,6 +394,15 @@ public class DownloadScheduler {
      */
     private void checkSchedules() {
         try {
+            // Fast path: with no per-download schedules and an unrestricted
+            // global schedule, every download is active at all times and this
+            // tick has nothing to do. Without this, each tick copied the
+            // schedule tree twice per download (thousands of copies for a
+            // large list) for a guaranteed "active" verdict.
+            if (downloadSchedules.isEmpty() && !globalSchedule.hasRestrictions()) {
+                return;
+            }
+
             LOGGER.fine("Checking schedules for all downloads");
 
             // Get all downloads from the manager
