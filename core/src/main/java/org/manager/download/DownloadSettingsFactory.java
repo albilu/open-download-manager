@@ -181,8 +181,10 @@ public class DownloadSettingsFactory {
         YtDlpSettings settings = new YtDlpSettings();
         GlobalSettings g = getGlobalSettings();
 
-        // Defaults, overridable from the Settings dialog (ytdlp.* properties)
-        settings.setConnections(1); // yt-dlp manages connections internally
+        // Defaults, overridable from the Settings dialog (ytdlp.* properties).
+        // connections maps to yt-dlp's --concurrent-fragments; 1 (yt-dlp's
+        // own default) means the flag is omitted.
+        settings.setConnections(1);
         settings.setFormat(g.getProperty("ytdlp.videoFormat", "best").isEmpty()
                 ? "best" : g.getProperty("ytdlp.videoFormat", "best"));
         settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.writeThumbnail", false));

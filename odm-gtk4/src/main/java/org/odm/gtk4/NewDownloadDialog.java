@@ -443,8 +443,18 @@ public class NewDownloadDialog {
             download.setProxyAddress(proxy.toString());
         }
 
+        // Uniform connection handling: the shared "max connections" field
+        // drives segmentation for every engine — aria2 per-server
+        // connections, yt-dlp concurrent fragments, HTTrack sockets (-c).
+        // curl intentionally stays single-connection: it is the plain
+        // fallback engine.
+        int connections = (int) maxConnectionsSpin.getValue();
+        if (download.getSettings() != null) {
+            download.getSettings().setConnections(connections);
+        }
+
         if (download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
-            aria2Settings.setMaxConnectionPerServer((int) maxConnectionsSpin.getValue());
+            aria2Settings.setMaxConnectionPerServer(connections);
             int downKb = (int) maxDownloadSpeedSpin.getValue();
             if (downKb > 0) {
                 aria2Settings.setOption("max-download-limit", String.valueOf(downKb * 1024L));

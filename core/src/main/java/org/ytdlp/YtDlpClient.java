@@ -699,7 +699,7 @@ public class YtDlpClient {
     /**
      * Builds the yt-dlp command with settings.
      */
-    private List<String> buildDownloadCommand(String url, YtDlpSettings settings, Path outputPath) {
+    List<String> buildDownloadCommand(String url, YtDlpSettings settings, Path outputPath) {
         List<String> command = new ArrayList<>();
         command.add(ytDlpPath);
 
@@ -795,20 +795,24 @@ public class YtDlpClient {
             command.add("--geo-bypass");
         }
 
-        // Add aria2c external downloader if configured
-        if (settings.getOption("use-aria2c") != null && "true".equals(settings.getOption("use-aria2c"))) {
+        // Concurrent fragment downloads from the shared connections field
+        if (settings.getConnections() > 1) {
+            command.add("--concurrent-fragments");
+            command.add(String.valueOf(settings.getConnections()));
+        }
+
+        // Add aria2c external downloader if configured. The dedicated
+        // useAria2c flag is authoritative: the old wiring consulted the
+        // additional-options map ("use-aria2c"), which setUseAria2c(true)
+        // never populated, so the external downloader never engaged.
+        if (settings.isUseAria2c()) {
             command.add("--external-downloader");
             command.add("aria2c");
 
-            // Add aria2c specific arguments
-            String aria2cArgs = settings.getOption("aria2c-args");
+            String aria2cArgs = settings.buildAria2cArgs();
             if (aria2cArgs != null && !aria2cArgs.isEmpty()) {
                 command.add("--external-downloader-args");
                 command.add(aria2cArgs);
-            } else {
-                // Default aria2c arguments for optimal performance
-                command.add("--external-downloader-args");
-                command.add("-x 16 -s 16 -k 1M");
             }
         }
 

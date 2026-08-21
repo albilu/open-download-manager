@@ -1,5 +1,7 @@
 package org.ytdlp;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -200,6 +202,67 @@ class YtDlpClientTest {
         assertEquals("best", settings.getFormat());
         assertTrue(settings.isEmbedThumbnail());
         assertTrue(settings.isExtractAudio());
+    }
+
+    @Test
+    @DisplayName("useAria2c flag must engage the external aria2c downloader")
+    void testUseAria2cFlagEngagesExternalDownloader() {
+        YtDlpSettings settings = new YtDlpSettings()
+                .setUseAria2c(true)
+                .setAria2cConnections(8)
+                .setAria2cSplitConnections(4);
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        int downloaderIndex = command.indexOf("--external-downloader");
+        assertTrue(downloaderIndex >= 0, "--external-downloader must be present");
+        assertEquals("aria2c", command.get(downloaderIndex + 1));
+
+        int argsIndex = command.indexOf("--external-downloader-args");
+        assertTrue(argsIndex >= 0, "--external-downloader-args must be present");
+        String args = command.get(argsIndex + 1);
+        assertTrue(args.contains("-x 8"), "args must carry aria2cConnections: " + args);
+        assertTrue(args.contains("-s 4"), "args must carry aria2cSplitConnections: " + args);
+
+        // The old wiring consulted the additional-options map and never fired;
+        // make sure no synthetic --use-aria2c flag leaks into the command
+        assertFalse(command.contains("--use-aria2c"));
+        assertFalse(command.contains("--aria2c-args"));
+    }
+
+    @Test
+    @DisplayName("External downloader must stay off unless useAria2c is set")
+    void testExternalDownloaderOmittedByDefault() {
+        YtDlpSettings settings = new YtDlpSettings();
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        assertFalse(command.contains("--external-downloader"));
+        assertFalse(command.contains("--external-downloader-args"));
+    }
+
+    @Test
+    @DisplayName("Shared connections field maps to --concurrent-fragments")
+    void testConnectionsMapToConcurrentFragments() {
+        YtDlpSettings settings = new YtDlpSettings();
+        settings.setConnections(6);
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        int index = command.indexOf("--concurrent-fragments");
+        assertTrue(index >= 0, "--concurrent-fragments must be present");
+        assertEquals("6", command.get(index + 1));
+    }
+
+    @Test
+    @DisplayName("Single connection omits --concurrent-fragments")
+    void testSingleConnectionOmitsConcurrentFragments() {
+        YtDlpSettings settings = new YtDlpSettings();
+        settings.setConnections(1);
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        assertFalse(command.contains("--concurrent-fragments"));
     }
 
     @ParameterizedTest

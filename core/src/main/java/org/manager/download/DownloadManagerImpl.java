@@ -52,7 +52,6 @@ import org.manager.util.ExecutorServiceManager;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationContext;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -72,6 +71,7 @@ public class DownloadManagerImpl implements DownloadManager {
     private static final Logger LOGGER = Logger.getLogger(DownloadManagerImpl.class.getName());
     private static final int DEFAULT_MAX_CONCURRENT_DOWNLOADS = 5;
     private static final String STATE_FILE = "odm-state.json";
+    private static final String STATE_DB_FILE = "odm-state.db";
     private static final String ARIA2_SESSION_FILE = "aria2-session.txt";
     private static final String ARIA2_INPUT_FILE = "aria2-input.txt";
 
@@ -84,6 +84,7 @@ public class DownloadManagerImpl implements DownloadManager {
     private final DependencyContainer container;
     private final ExecutorServiceManager executorManager;
     private final ObjectMapper objectMapper;
+    private final SqliteDownloadStateStore stateStore;
     private final DownloadCleanupManager cleanupManager;
     private final ShutdownCoordinator shutdownCoordinator;
     private final ClipboardService clipboardService;
@@ -100,7 +101,6 @@ public class DownloadManagerImpl implements DownloadManager {
 
     // Backward compatibility fields
     private Path defaultDownloadDirectory;
-    private Path stateFilePath;
     private Path aria2SessionFilePath;
     private Path aria2InputFilePath;
     private final Set<String> activeDownloadsBeforeExit = ConcurrentHashMap.newKeySet();
@@ -124,6 +124,10 @@ public class DownloadManagerImpl implements DownloadManager {
         this.runningDownloads = new AtomicInteger(0);
         this.isShuttingDown = new AtomicBoolean(false);
         this.objectMapper = createStateObjectMapper();
+        this.stateStore = new SqliteDownloadStateStore(
+                xdgDataDirectory().resolve(STATE_DB_FILE),
+                xdgDataDirectory().resolve(STATE_FILE),
+                this.objectMapper);
 
         // OPTIMIZATION: Initialize efficient listener management
         this.activeHandlers = new ConcurrentHashMap<>();
@@ -182,7 +186,6 @@ public class DownloadManagerImpl implements DownloadManager {
         // ODM state lives in the XDG data dir, not inside the user's
         // Downloads folder. aria2's own session/input files stay with the
         // download directory.
-        this.stateFilePath = xdgDataDirectory().resolve(STATE_FILE);
         this.aria2SessionFilePath = defaultDownloadDirectory.resolve(ARIA2_SESSION_FILE);
         this.aria2InputFilePath = defaultDownloadDirectory.resolve(ARIA2_INPUT_FILE);
 
@@ -951,7 +954,6 @@ public class DownloadManagerImpl implements DownloadManager {
     public CompletableFuture<Void> saveState() {
         return CompletableFuture.runAsync(() -> {
             try {
-                Map<String, Object> state = new HashMap<>();
                 List<Download> allDownloads = downloadRepository.getAllDownloads(0, Integer.MAX_VALUE).getDownloads();
 
                 // Track currently active downloads for auto-resume
@@ -960,25 +962,17 @@ public class DownloadManagerImpl implements DownloadManager {
                         .map(Download::getId)
                         .collect(Collectors.toSet());
 
-                // Save all downloads (including completed/canceled). Global
-                // settings are NOT part of the state file: they persist
-                // through GlobalSettings.save()/load() in settings.json.
-                state.put("downloads", allDownloads);
-                state.put("activeDownloadsBeforeExit", activeDownloads);
-
-                // Create parent directories if they don't exist
-                if (stateFilePath.getParent() != null) {
-                    Files.createDirectories(stateFilePath.getParent());
-                }
-
-                // Write state to file
-                objectMapper.writeValue(stateFilePath.toFile(), state);
+                // Persist the full list (including completed/canceled) to the
+                // SQLite store. Global settings are NOT part of the state:
+                // they persist through GlobalSettings.save()/load() in
+                // settings.json.
+                stateStore.save(allDownloads, activeDownloads);
 
                 // Save aria2 session if available
                 saveAria2Session();
 
                 LOGGER.info("Saved " + allDownloads.size() + " downloads (including "
-                        + activeDownloads.size() + " active) to state file");
+                        + activeDownloads.size() + " active) to state database");
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to save download state", e);
             }
@@ -989,26 +983,13 @@ public class DownloadManagerImpl implements DownloadManager {
     public CompletableFuture<Void> loadState() {
         return CompletableFuture.runAsync(() -> {
             try {
-                if (Files.exists(stateFilePath)) {
-                    // Read state from file
-                    Map<String, Object> state = objectMapper.readValue(stateFilePath.toFile(),
-                            new TypeReference<Map<String, Object>>() {
-                            });
+                SqliteDownloadStateStore.StateSnapshot snapshot = stateStore.load();
 
-                    // Load active downloads set for auto-resume
-                    Set<String> activeDownloadsIds = new HashSet<>();
-                    if (state.containsKey("activeDownloadsBeforeExit")) {
-                        activeDownloadsIds = objectMapper.convertValue(
-                                state.get("activeDownloadsBeforeExit"), new TypeReference<Set<String>>() {
-                                });
-                        activeDownloadsBeforeExit.addAll(activeDownloadsIds);
-                    }
+                Set<String> activeDownloadsIds = snapshot.activeIds();
+                activeDownloadsBeforeExit.addAll(activeDownloadsIds);
 
-                    // Load downloads
-                    List<Download> savedDownloads = objectMapper.convertValue(
-                            state.get("downloads"), new TypeReference<List<Download>>() {
-                            });
-
+                List<Download> savedDownloads = snapshot.downloads();
+                if (!savedDownloads.isEmpty()) {
                     // Add loaded downloads to our map
                     for (Download download : savedDownloads) {
                         // Make sure we have settings for this download
@@ -1026,13 +1007,15 @@ public class DownloadManagerImpl implements DownloadManager {
                             downloadRepository.updateDownloadStatus(download, Download.Status.PAUSED);
                         }
                     }
+                }
 
-                    // Load aria2 session if available
-                    loadAria2Session();
+                // Load aria2 session if available
+                loadAria2Session();
 
-                    // Auto-resume previously active downloads
-                    autoResumeActiveDownloads();
+                // Auto-resume previously active downloads
+                autoResumeActiveDownloads();
 
+                if (!savedDownloads.isEmpty()) {
                     LOGGER.info("Loaded " + savedDownloads.size() + " downloads from saved state, "
                             + activeDownloadsIds.size() + " were active before exit");
                 }
@@ -1043,10 +1026,10 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     /**
-     * Builds the ObjectMapper used for odm-state.json persistence. It handles
+     * Builds the ObjectMapper used for state persistence. It handles
      * the Java time types used by {@link Download}, serializes {@link Path}s
-     * as plain strings, and tolerates unknown properties so state files
-     * written by newer versions still load. Package-private for testing.
+     * as plain strings, and tolerates unknown properties so state written
+     * by newer versions still loads. Package-private for testing.
      */
     static ObjectMapper createStateObjectMapper() {
         SimpleModule pathModule = new SimpleModule("PathAsString");
@@ -1228,7 +1211,7 @@ public class DownloadManagerImpl implements DownloadManager {
      * Resolves the XDG data directory for ODM state files, honoring
      * XDG_DATA_HOME and defaulting to ~/.local/share/odm.
      *
-     * @return the directory in which to store odm-state.json
+     * @return the directory in which to store the state database
      */
     private static Path xdgDataDirectory() {
         String xdgDataHome = System.getenv("XDG_DATA_HOME");
@@ -1553,6 +1536,12 @@ public class DownloadManagerImpl implements DownloadManager {
                 "shutdown-container",
                 () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown container"),
                         "shutdown container"));
+
+        // Phase 9: Close the SQLite state database after every save is done
+        shutdownCoordinator.registerShutdownHook(
+                ShutdownCoordinator.ShutdownPhase.CLEANUP,
+                "close-state-store",
+                () -> ErrorHandler.executeSafely(stateStore::close, "close state store"));
     }
 
     /**
