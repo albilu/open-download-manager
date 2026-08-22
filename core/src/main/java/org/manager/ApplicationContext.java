@@ -223,12 +223,14 @@ public final class ApplicationContext {
 
     // ================== Startup Coordination Methods ==================
     /**
-     * Gets the startup coordinator for advanced startup management.
+     * Gets the startup coordinator for advanced startup management. Routes
+     * through the factory so callers observe the CURRENT generation's
+     * coordinator (the coordinator is per-generation state).
      *
-     * @return The StartupCoordinator instance
+     * @return The active StartupCoordinator instance
      */
     public static StartupCoordinator getStartupCoordinator() {
-        return StartupCoordinator.getInstance();
+        return ApplicationFactory.getInstance().getStartupCoordinator();
     }
 
     /**

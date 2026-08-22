@@ -52,11 +52,11 @@ public class ApplicationFactory {
      * Private constructor to enforce singleton pattern.
      */
     private ApplicationFactory() {
-        this.startupCoordinator = StartupCoordinator.getInstance();
-        // A new factory generation starts a new lifecycle: clear a stale
-        // shutdown flag left by a previous generation on the shared
-        // coordinator singleton (it would block all initialization)
-        this.startupCoordinator.clearShutdownInitiated();
+        // A coordinator PER factory generation: the coordinator tracks this
+        // generation's lifecycle only, so no stale flags can leak across a
+        // reset (the old cross-generation singleton needed
+        // clearShutdownInitiated to paper over exactly that)
+        this.startupCoordinator = new StartupCoordinator();
         LOGGER.fine("ApplicationFactory instance created");
     }
 
@@ -101,6 +101,15 @@ public class ApplicationFactory {
         } finally {
             coreLock.writeLock().unlock();
         }
+    }
+
+    /**
+     * Gets this generation's startup coordinator.
+     *
+     * @return the coordinator owned by this factory instance
+     */
+    public StartupCoordinator getStartupCoordinator() {
+        return startupCoordinator;
     }
 
     /**
@@ -461,19 +470,17 @@ public class ApplicationFactory {
     private void shutdownCoreServices() {
         coreLock.writeLock().lock();
         try {
-            // Shutdown DownloadManager first (has dependencies on others)
+            // DownloadManagerFactory is the manager's single owner: it shuts
+            // the instance down (bounded) and clears its own cache. The old
+            // two-owner dance (local shutdown + reset() "lockstep") is gone.
             if (downloadManager != null) {
                 try {
-                    downloadManager.shutdown().get(30, java.util.concurrent.TimeUnit.SECONDS);
+                    DownloadManagerFactory.shutdown();
                     LOGGER.info("DownloadManager shut down successfully");
                 } catch (Exception e) {
                     LOGGER.warning("Error shutting down DownloadManager: " + e.getMessage());
                 }
                 downloadManager = null;
-                // Keep DownloadManagerFactory's static singleton in lockstep:
-                // otherwise a later getDownloadManager() would hand back this
-                // already-shut-down instance
-                DownloadManagerFactory.reset();
             }
 
             // Shutdown ToolManagerFactory

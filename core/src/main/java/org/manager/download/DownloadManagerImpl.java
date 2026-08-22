@@ -150,16 +150,13 @@ public class DownloadManagerImpl implements DownloadManager {
         this.downloadRepository = new PaginatedDownloadRepository(getGlobalSettings());
         this.cleanupManager = new DownloadCleanupManager(this.downloadRepository, getGlobalSettings());
         this.shutdownCoordinator = new ShutdownCoordinator();
+        // The clipboard service stays owned by THIS manager (its shutdown
+        // hook drains it). The old constructor self-registered the service
+        // into the global ApplicationContext — a domain object mutating the
+        // application factory from its constructor, and a cross-generation
+        // leak vector; explicit registrants use the factory API directly.
         this.clipboardService = ClipboardFactory.createClipboardService(this,
                 clipboardSettingsOrDefault());
-
-        // Register clipboard service with centralized factory for lifecycle management
-        try {
-            org.manager.ApplicationContext.registerClipboardService(this.clipboardService);
-        } catch (Exception e) {
-            // ApplicationContext might not be available in some contexts (e.g., tests)
-            // This is non-critical for core functionality
-        }
 
         // Initialize folder monitoring services
         try {
@@ -169,15 +166,6 @@ public class DownloadManagerImpl implements DownloadManager {
             this.metaLinkFolderMonitor = new MetaLinkFolderMonitor(this, folderMonitorService, defaultDownloadDirectory);
             this.metaLinkFolderMonitoringEnabled = new AtomicBoolean(false);
             this.proxyRotationManager = new org.manager.proxy.ProxyRotationManager();
-
-            // Register folder monitor service with centralized factory for lifecycle
-            // management
-            try {
-                org.manager.ApplicationContext.registerFolderMonitorService(this.folderMonitorService);
-            } catch (Exception e) {
-                // ApplicationContext might not be available in some contexts (e.g., tests)
-                // This is non-critical for core functionality
-            }
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize folder monitoring service", e);
         }

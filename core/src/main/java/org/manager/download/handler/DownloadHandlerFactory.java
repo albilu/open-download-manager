@@ -47,7 +47,10 @@ public class DownloadHandlerFactory {
         this.settingsFactory = settingsFactory;
         this.executor = executor;
         this.toolManagerFactory = toolManagerFactory;
-        this.startupCoordinator = StartupCoordinator.getInstance();
+        // Generation-scoped coordinator (per ApplicationFactory) so a reset
+        // generation's handler initialization cannot be blocked by stale
+        // flags from an earlier one
+        this.startupCoordinator = org.manager.ApplicationContext.getStartupCoordinator();
     }
 
     /**

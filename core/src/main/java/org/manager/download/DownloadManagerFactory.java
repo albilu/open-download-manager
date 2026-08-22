@@ -114,31 +114,29 @@ public class DownloadManagerFactory {
     }
 
     /**
-     * Shuts down the singleton instance and releases resources.
-     * Should be called when the application is shutting down.
+     * Shuts down the singleton instance and releases resources, with a
+     * bounded wait. Should be called when the application is shutting down;
+     * this is the SINGLE owner of the manager instance (ApplicationFactory
+     * delegates here), so no separate reset/lockstep bookkeeping exists.
      */
     public static synchronized void shutdown() {
         if (instance != null) {
-            instance.shutdown().join();
-            instance = null;
+            try {
+                instance.shutdown().get(30, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.ExecutionException e) {
+                java.util.logging.Logger.getLogger(DownloadManagerFactory.class.getName())
+                        .warning("DownloadManager shutdown failed: " + e.getCause());
+            } catch (Exception e) {
+                java.util.logging.Logger.getLogger(DownloadManagerFactory.class.getName())
+                        .warning("DownloadManager shutdown interrupted or timed out: " + e.getMessage());
+            } finally {
+                instance = null;
+            }
         }
         if (container != null) {
             container.shutdown();
             container = null;
         }
-    }
-
-    /**
-     * Clears the singleton reference WITHOUT shutting the instance down.
-     * The caller is responsible for (already having performed) the shutdown;
-     * this keeps the factory in lockstep with an owner that has just shut
-     * the manager down (e.g. ApplicationFactory.shutdownCoreServices), so a
-     * later getInstance() creates a fresh instance instead of returning a
-     * dead one.
-     */
-    public static synchronized void reset() {
-        instance = null;
-        container = null;
     }
 
     /**

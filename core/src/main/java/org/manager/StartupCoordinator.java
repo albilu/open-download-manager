@@ -22,8 +22,6 @@ public final class StartupCoordinator {
     private static final Logger LOGGER = Logger.getLogger(StartupCoordinator.class.getName());
 
     // Singleton instance
-    private static volatile StartupCoordinator instance;
-    private static final Object INSTANCE_LOCK = new Object();
 
     // Component tracking
     private final Set<String> initializedComponents = ConcurrentHashMap.newKeySet();
@@ -58,22 +56,13 @@ public final class StartupCoordinator {
     /**
      * Private constructor to enforce singleton pattern.
      */
-    private StartupCoordinator() {
-        LOGGER.fine("StartupCoordinator instance created");
-    }
-
     /**
-     * Gets the singleton instance.
+     * Creates a coordinator for one application generation. Owned by its
+     * {@link ApplicationFactory}; lifecycle flags can never leak across
+     * factory generations because a new factory starts a fresh coordinator.
      */
-    public static StartupCoordinator getInstance() {
-        if (instance == null) {
-            synchronized (INSTANCE_LOCK) {
-                if (instance == null) {
-                    instance = new StartupCoordinator();
-                }
-            }
-        }
-        return instance;
+    StartupCoordinator() {
+        LOGGER.fine("StartupCoordinator instance created");
     }
 
     /**
@@ -235,12 +224,6 @@ public final class StartupCoordinator {
      * stale shutdown flag from an earlier generation would otherwise block
      * every future component initialization.
      */
-    public void clearShutdownInitiated() {
-        if (shutdownInitiated.compareAndSet(true, false)) {
-            LOGGER.fine("Cleared stale shutdown coordination flag for a new factory generation");
-        }
-    }
-
     /**
      * Gets startup duration in milliseconds. Returns -1 if startup is not
      * complete.
@@ -344,17 +327,6 @@ public final class StartupCoordinator {
             LOGGER.fine("StartupCoordinator reset completed");
         } finally {
             coordinationLock.unlock();
-        }
-    }
-
-    /**
-     * Resets the singleton instance (for testing purposes).
-     */
-    public static synchronized void resetInstance() {
-        if (instance != null) {
-            instance.reset();
-            instance = null;
-            LOGGER.fine("StartupCoordinator singleton instance reset");
         }
     }
 

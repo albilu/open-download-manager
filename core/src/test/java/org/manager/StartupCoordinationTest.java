@@ -26,11 +26,11 @@ class StartupCoordinationTest {
 
     @BeforeEach
     void setUp() {
-        // Reset singletons for each test
+        // Reset singletons for each test; the coordinator is per-generation
+        // state owned by the factory (no cross-generation singleton)
         ApplicationFactory.resetInstance();
-        StartupCoordinator.resetInstance();
         factory = ApplicationFactory.getInstance();
-        coordinator = StartupCoordinator.getInstance();
+        coordinator = factory.getStartupCoordinator();
     }
 
     @AfterEach
@@ -41,7 +41,6 @@ class StartupCoordinationTest {
             // Ignore cleanup errors in tests
         }
         ApplicationFactory.resetInstance();
-        StartupCoordinator.resetInstance();
     }
 
     @Nested
