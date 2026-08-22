@@ -146,70 +146,28 @@ public class Aria2Client {
      * Add a URI via JSON-RPC (returns GID).
      */
     public String addUriRpc(String url) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.addUri", String.class, (Object) new String[] { url }).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.addUri", (Object) new String[] { url });
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.addUri", String.class, (Object) new String[] { url });
     }
 
     /**
      * Pause a download by GID.
      */
     public String pause(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.pause", String.class, gid).result;
-            } catch (Aria2RpcException e) {
-                throw e; // Re-throw Aria2RpcException as-is
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.pause", gid);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.pause", String.class, gid);
     }
 
     /**
      * Resume a download by GID.
      */
     public String unpause(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.unpause", String.class, gid).result;
-            } catch (Aria2RpcException e) {
-                throw e; // Re-throw Aria2RpcException as-is
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.unpause", gid);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.unpause", String.class, gid);
     }
 
     /**
      * Remove a download by GID.
      */
     public String remove(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.remove", String.class, gid).result;
-            } catch (Aria2RpcException e) {
-                throw e; // Re-throw Aria2RpcException as-is
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.remove", gid);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.remove", String.class, gid);
     }
 
     /**
@@ -234,30 +192,10 @@ public class Aria2Client {
      * @throws Aria2RpcException if an RPC error occurs
      */
     public String tellStatus(String gid, String[] keys) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                if (keys == null || keys.length == 0) {
-                    Object result = sendRpcWebSocket("aria2.tellStatus", Object.class, gid).result;
-                    return OBJECT_MAPPER.writeValueAsString(result);
-                } else {
-                    Object result = sendRpcWebSocket("aria2.tellStatus", Object.class, gid, keys).result;
-                    return OBJECT_MAPPER.writeValueAsString(result);
-                }
-            } catch (Aria2RpcException e) {
-                throw e; // Re-throw Aria2RpcException as-is
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload;
-            if (keys == null || keys.length == 0) {
-                payload = buildPayload("aria2.tellStatus", gid);
-            } else {
-                payload = buildPayload("aria2.tellStatus", gid, keys);
-            }
-            Object result = sendRpcHttp(payload, Object.class).result;
-            return OBJECT_MAPPER.writeValueAsString(result);
-        }
+        Object result = (keys == null || keys.length == 0)
+                ? call("aria2.tellStatus", Object.class, gid)
+                : call("aria2.tellStatus", Object.class, gid, keys);
+        return OBJECT_MAPPER.writeValueAsString(result);
     }
 
     /**
@@ -592,16 +530,7 @@ public class Aria2Client {
         params.add(torrentBase64);
         params.add(uris != null ? uris : new ArrayList<>());
         params.add(opts);
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.addTorrent", String.class, params.toArray()).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.addTorrent", params.toArray());
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.addTorrent", String.class, params.toArray());
     }
 
     /**
@@ -615,16 +544,7 @@ public class Aria2Client {
         params.add(metalinkBase64);
         params.add(options != null ? options : new LinkedHashMap<>());
         List<?> gids;
-        if (useWebSocket) {
-            try {
-                gids = sendRpcWebSocket("aria2.addMetalink", List.class, params.toArray()).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.addMetalink", params.toArray());
-            gids = sendRpcHttp(payload, List.class).result;
-        }
+        gids = call("aria2.addMetalink", List.class, params.toArray());
         if (gids == null || gids.isEmpty()) {
             throw new IOException("aria2.addMetalink returned no GIDs");
         }
@@ -635,346 +555,132 @@ public class Aria2Client {
      * Force remove a download by GID.
      */
     public String forceRemove(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.forceRemove", String.class, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.forceRemove", gid);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.forceRemove", String.class, gid);
     }
 
     /**
      * Pause all downloads.
      */
     public String pauseAll() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.pauseAll", String.class).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.pauseAll");
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.pauseAll", String.class);
     }
 
     /**
      * Force pause a download by GID.
      */
     public String forcePause(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.forcePause", String.class, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.forcePause", gid);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.forcePause", String.class, gid);
     }
 
     /**
      * Force pause all downloads.
      */
     public String forcePauseAll() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.forcePauseAll", String.class).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.forcePauseAll");
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.forcePauseAll", String.class);
     }
 
     /**
      * Unpause all downloads.
      */
     public String unpauseAll() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.unpauseAll", String.class).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.unpauseAll");
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.unpauseAll", String.class);
     }
 
     /**
      * Change position of a download in the queue.
      */
     public String changePosition(String gid, int pos, String how) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.changePosition", String.class, gid, pos, how).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.changePosition", gid, pos, how);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.changePosition", String.class, gid, pos, how);
     }
 
     /**
      * Change options for a specific download by GID.
      */
     public String changeOption(String gid, Map<String, Object> options) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.changeOption", String.class, gid, options).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.changeOption", gid, options);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.changeOption", String.class, gid, options);
     }
 
     /**
      * Change global options for aria2.
      */
     public String changeGlobalOption(Map<String, Object> options) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.changeGlobalOption", String.class, options).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.changeGlobalOption", options);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.changeGlobalOption", String.class, options);
     }
 
     /**
      * Shutdown aria2c daemon.
      */
     public String shutdown() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.shutdown", String.class).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.shutdown");
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.shutdown", String.class);
     }
 
     /**
      * Force shutdown aria2c daemon.
      */
     public String forceShutdown() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.forceShutdown", String.class).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.forceShutdown");
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.forceShutdown", String.class);
     }
 
     /**
      * Save session to file.
      */
     public String saveSession() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.saveSession", String.class).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.saveSession");
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.saveSession", String.class);
     }
 
     // Implement aria2.getUris
     public List<String> getUris(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getUris", List.class, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getUris", gid);
-            return sendRpcHttp(payload, List.class).result;
-        }
+        return call("aria2.getUris", List.class, gid);
     }
 
     // Implement aria2.getFiles
     public List<Map<String, Object>> getFiles(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getFiles", new TypeReference<List<Map<String, Object>>>() {
-                }, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getFiles", gid);
-            return sendRpcHttp(payload, new TypeReference<List<Map<String, Object>>>() {
-            }).result;
-        }
+        return call("aria2.getFiles", new TypeReference<List<Map<String, Object>>>() {{}}, gid);
     }
 
     // Implement aria2.getPeers
     public List<Map<String, Object>> getPeers(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getPeers", new TypeReference<List<Map<String, Object>>>() {
-                }, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getPeers", gid);
-            return sendRpcHttp(payload, new TypeReference<List<Map<String, Object>>>() {
-            }).result;
-        }
+        return call("aria2.getPeers", new TypeReference<List<Map<String, Object>>>() {{}}, gid);
     }
 
     // Implement aria2.getServers
     public List<Map<String, Object>> getServers(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getServers", new TypeReference<List<Map<String, Object>>>() {
-                }, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getServers", gid);
-            return sendRpcHttp(payload, new TypeReference<List<Map<String, Object>>>() {
-            }).result;
-        }
+        return call("aria2.getServers", new TypeReference<List<Map<String, Object>>>() {{}}, gid);
     }
 
     // Implement aria2.getOption
     public Map<String, Object> getOption(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getOption", new TypeReference<Map<String, Object>>() {
-                }, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getOption", gid);
-            return sendRpcHttp(payload, new TypeReference<Map<String, Object>>() {
-            }).result;
-        }
+        return call("aria2.getOption", new TypeReference<Map<String, Object>>() {{}}, gid);
     }
 
     // Implement aria2.getGlobalOption
     public Map<String, Object> getGlobalOption() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getGlobalOption", new TypeReference<Map<String, Object>>() {
-                }).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getGlobalOption");
-            return sendRpcHttp(payload, new TypeReference<Map<String, Object>>() {
-            }).result;
-        }
+        return call("aria2.getGlobalOption", new TypeReference<Map<String, Object>>() {{}});
     }
 
     // Implement aria2.getGlobalStat
     public Map<String, Object> getGlobalStat() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getGlobalStat", new TypeReference<Map<String, Object>>() {
-                }).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getGlobalStat");
-            return sendRpcHttp(payload, new TypeReference<Map<String, Object>>() {
-            }).result;
-        }
+        return call("aria2.getGlobalStat", new TypeReference<Map<String, Object>>() {{}});
     }
 
     // Implement aria2.purgeDownloadResult
     public String purgeDownloadResult() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.purgeDownloadResult", String.class).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.purgeDownloadResult");
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.purgeDownloadResult", String.class);
     }
 
     // Implement aria2.removeDownloadResult
     public String removeDownloadResult(String gid) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.removeDownloadResult", String.class, gid).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.removeDownloadResult", gid);
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return call("aria2.removeDownloadResult", String.class, gid);
     }
 
     // Implement aria2.getVersion
     public Map<String, Object> getVersion() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getVersion", new TypeReference<Map<String, Object>>() {
-                }).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getVersion");
-            return sendRpcHttp(payload, new TypeReference<Map<String, Object>>() {
-            }).result;
-        }
+        return call("aria2.getVersion", new TypeReference<Map<String, Object>>() {{}});
     }
 
     // Implement aria2.getSessionInfo
     public Map<String, Object> getSessionInfo() throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                return sendRpcWebSocket("aria2.getSessionInfo", new TypeReference<Map<String, Object>>() {
-                }).result;
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload = buildPayload("aria2.getSessionInfo");
-            return sendRpcHttp(payload, new TypeReference<Map<String, Object>>() {
-            }).result;
-        }
+        return call("aria2.getSessionInfo", new TypeReference<Map<String, Object>>() {{}});
     }
 
     // Implement system.multicall
@@ -1490,6 +1196,43 @@ public class Aria2Client {
         }
     }
 
+    /**
+     * Dispatches an RPC over the configured transport (WebSocket when
+     * enabled, HTTP otherwise) and unwraps the result. Every aria2 method
+     * funnels through one of the {@code call} overloads so error semantics
+     * are uniform: {@link Aria2RpcException} (with the daemon's error code)
+     * propagates as-is, transport failures surface as {@link IOException}.
+     */
+    private <T> T call(String method, Class<T> resultType, Object... params)
+            throws IOException, Aria2RpcException {
+        if (useWebSocket) {
+            try {
+                return sendRpcWebSocket(method, resultType, params).result;
+            } catch (IOException | Aria2RpcException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IOException(method + " failed", e);
+            }
+        }
+        return sendRpcHttp(buildPayload(method, params), resultType).result;
+    }
+
+    /** {@code call} for generic result types (maps, lists). */
+    @SuppressWarnings("unchecked")
+    private <T> T call(String method, TypeReference<T> typeRef, Object... params)
+            throws IOException, Aria2RpcException {
+        if (useWebSocket) {
+            try {
+                return sendRpcWebSocket(method, typeRef, params).result;
+            } catch (IOException | Aria2RpcException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IOException(method + " failed", e);
+            }
+        }
+        return sendRpcHttp(buildPayload(method, params), typeRef).result;
+    }
+
     private <T> Aria2RpcResponse<T> sendRpcWebSocket(String method, Class<T> resultType, Object... params)
             throws Exception {
         if (isShuttingDown) {
@@ -1607,25 +1350,9 @@ public class Aria2Client {
      * @return the GID of the download
      */
     public String addUriRpc(String[] uris, Map<String, Object> options) throws IOException, Aria2RpcException {
-        if (useWebSocket) {
-            try {
-                if (options != null && !options.isEmpty()) {
-                    return sendRpcWebSocket("aria2.addUri", String.class, uris, options).result;
-                } else {
-                    return sendRpcWebSocket("aria2.addUri", String.class, (Object) uris).result;
-                }
-            } catch (Exception e) {
-                throw new IOException(e);
-            }
-        } else {
-            String payload;
-            if (options != null && !options.isEmpty()) {
-                payload = buildPayload("aria2.addUri", uris, options);
-            } else {
-                payload = buildPayload("aria2.addUri", (Object) uris);
-            }
-            return sendRpcHttp(payload, String.class).result;
-        }
+        return (options != null && !options.isEmpty())
+                ? call("aria2.addUri", String.class, uris, options)
+                : call("aria2.addUri", String.class, (Object) uris);
     }
 
     /**
