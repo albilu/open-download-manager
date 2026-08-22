@@ -1,5 +1,6 @@
 package org.ytdlp;
 
+import org.manager.tools.ExternalProcessRegistry;
 import org.manager.tools.ToolPaths;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -49,7 +50,7 @@ public class YtDlpClient {
 
     private final String ytDlpPath;
     private final ExecutorService executor;
-    private final Map<String, Process> activeProcesses;
+    private final org.manager.tools.ExternalProcessRegistry activeProcesses;
 
     /**
      * Creates a new YtDlpClient with default yt-dlp path from
@@ -72,7 +73,7 @@ public class YtDlpClient {
             t.setDaemon(true);
             return t;
         });
-        this.activeProcesses = new ConcurrentHashMap<>();
+        this.activeProcesses = new org.manager.tools.ExternalProcessRegistry("yt-dlp");
     }
 
     /**
@@ -605,7 +606,7 @@ public class YtDlpClient {
 
                 LOGGER.info("Starting yt-dlp download: " + String.join(" ", command));
                 Process process = pb.start();
-                activeProcesses.put(processId, process);
+                activeProcesses.register(processId, process);
 
                 // Monitor progress
                 String filename = null;
@@ -676,30 +677,17 @@ public class YtDlpClient {
      * @return true if the process was found and canceled, false otherwise
      */
     public boolean cancelDownload(String processId) {
-        Process process = activeProcesses.remove(processId);
-        if (process != null && process.isAlive()) {
-            process.destroyForcibly();
-            try {
-                process.waitFor(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return true;
-        }
-        return false;
+        // Uniform termination: SIGTERM (yt-dlp cleans up .part files),
+        // then bounded SIGKILL. The old path went straight to SIGKILL.
+        return activeProcesses.terminate(processId, 5);
     }
 
     /**
      * Shuts down the client and cleanup resources.
      */
     public void shutdown() {
-        // Cancel all active processes
-        activeProcesses.values().forEach(process -> {
-            if (process.isAlive()) {
-                process.destroyForcibly();
-            }
-        });
-        activeProcesses.clear();
+        // Cancel all active processes (SIGTERM -> bounded wait -> SIGKILL)
+        activeProcesses.terminateAll(5);
 
         // Shutdown executor
         executor.shutdown();

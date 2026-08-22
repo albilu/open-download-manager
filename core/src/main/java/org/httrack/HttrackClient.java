@@ -1,5 +1,6 @@
 package org.httrack;
 
+import org.manager.tools.ExternalProcessRegistry;
 import org.manager.tools.ToolPaths;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -55,7 +56,7 @@ public class HttrackClient {
     }
 
     private final String httrackPath;
-    private final Map<String, Process> activeProcesses;
+    private final org.manager.tools.ExternalProcessRegistry activeProcesses;
     private final Map<String, HttrackJob> activeJobs;
     private final Map<String, Future<?>> monitoringFutures;
     private final List<HttrackNotificationListener> listeners;
@@ -78,7 +79,7 @@ public class HttrackClient {
      */
     public HttrackClient(String httrackPath) {
         this.httrackPath = httrackPath;
-        this.activeProcesses = new ConcurrentHashMap<>();
+        this.activeProcesses = new org.manager.tools.ExternalProcessRegistry("httrack");
         this.activeJobs = new ConcurrentHashMap<>();
         this.monitoringFutures = new ConcurrentHashMap<>();
         this.listeners = new CopyOnWriteArrayList<>();
@@ -140,7 +141,7 @@ public class HttrackClient {
                 }
 
                 Process process = processBuilder.start();
-                activeProcesses.put(jobId, process);
+                activeProcesses.register(jobId, process);
 
                 // Update job status
                 job.setStatus(HttrackJob.Status.RUNNING);
@@ -169,11 +170,11 @@ public class HttrackClient {
     public CompletableFuture<Void> pauseJob(String jobId) {
         return CompletableFuture.runAsync(() -> {
             synchronized (this) {
-                Process process = activeProcesses.get(jobId);
+                boolean hadProcess = activeProcesses.get(jobId) != null;
                 HttrackJob job = activeJobs.get(jobId);
                 Future<?> monitoringFuture = monitoringFutures.get(jobId);
 
-                if (process != null && job != null) {
+                if (hadProcess && job != null) {
                     // Cancel the monitoring thread first to prevent it from overriding our status
                     if (monitoringFuture != null) {
                         monitoringFuture.cancel(true);
@@ -184,9 +185,9 @@ public class HttrackClient {
                     // Set the status to paused first, then destroy the process
                     job.setStatus(HttrackJob.Status.PAUSED);
 
-                    // Then destroy the process and remove it
-                    process.destroy();
-                    activeProcesses.remove(jobId);
+                    // Then terminate the process (SIGTERM, bounded
+                    // escalation) and drop the registration
+                    activeProcesses.terminate(jobId, 5);
 
                     notifyJobPaused(job);
                     LOGGER.info("Paused httrack job: " + jobId);
@@ -220,7 +221,7 @@ public class HttrackClient {
                     }
 
                     Process process = processBuilder.start();
-                    activeProcesses.put(jobId, process);
+                    activeProcesses.register(jobId, process);
 
                     job.setStatus(HttrackJob.Status.RUNNING);
                     notifyJobResumed(job);

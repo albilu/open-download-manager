@@ -1,5 +1,6 @@
 package org.curl;
 
+import org.manager.tools.ExternalProcessRegistry;
 import org.manager.tools.ToolPaths;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -38,7 +39,7 @@ public class CurlClient {
 
     private final String curlPath;
     private final ExecutorService executorService;
-    private final Map<String, Process> activeProcesses;
+    private final org.manager.tools.ExternalProcessRegistry activeProcesses;
     private final Map<String, Download> activeDownloads;
 
     /**
@@ -62,7 +63,7 @@ public class CurlClient {
             t.setDaemon(true);
             return t;
         });
-        this.activeProcesses = new ConcurrentHashMap<>();
+        this.activeProcesses = new org.manager.tools.ExternalProcessRegistry("curl");
         this.activeDownloads = new ConcurrentHashMap<>();
 
         // Validate that curl is available
@@ -149,7 +150,7 @@ public class CurlClient {
                 // processBuilder.redirectErrorStream(true);
 
                 Process process = processBuilder.start();
-                activeProcesses.put(download.getId(), process);
+                activeProcesses.register(download.getId(), process);
 
                 // Gobble stdout on a daemon thread: the command normally
                 // writes to -o, but if a flag ever routes the document to
@@ -412,11 +413,7 @@ public class CurlClient {
      * @param listener Listener for download events
      */
     public void pauseDownload(Download download, DownloadListener listener) {
-        Process process = activeProcesses.get(download.getId());
-        if (process != null) {
-            process.destroy();
-            activeProcesses.remove(download.getId());
-
+        if (activeProcesses.terminate(download.getId(), 5)) {
             download.setStatus(Download.Status.PAUSED);
             if (listener != null) {
                 listener.onDownloadPause(download);
@@ -449,11 +446,7 @@ public class CurlClient {
      * @param deleteFile Whether to delete the partial file
      */
     public void cancelDownload(Download download, DownloadListener listener, boolean deleteFile) {
-        Process process = activeProcesses.get(download.getId());
-        if (process != null) {
-            process.destroy();
-            activeProcesses.remove(download.getId());
-        }
+        activeProcesses.terminate(download.getId(), 5);
 
         // Delete partial file if requested
         if (deleteFile && download.getDestination() != null) {
@@ -478,13 +471,8 @@ public class CurlClient {
      * Shuts down the client and cancels all active downloads.
      */
     public void shutdown() {
-        // Stop all active processes
-        for (Process process : activeProcesses.values()) {
-            process.destroy();
-        }
-
-        // Clear maps
-        activeProcesses.clear();
+        // Stop all active processes (SIGTERM -> bounded wait -> SIGKILL)
+        activeProcesses.terminateAll(5);
         activeDownloads.clear();
 
         // Shutdown executor

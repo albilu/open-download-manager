@@ -1,5 +1,6 @@
 package org.proxychains;
 
+import org.manager.tools.ExternalProcessRegistry;
 import org.manager.tools.ToolPaths;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -40,7 +41,7 @@ public class ProxychainsClient {
     private final String proxychainsPath;
     private final String configPath;
     private final ExecutorService executorService;
-    private final Map<String, Process> activeProcesses;
+    private final org.manager.tools.ExternalProcessRegistry activeProcesses;
     private final Map<String, String> gidMap; // Download ID -> aria2 GID
     private final Map<String, Download> activeDownloads;
 
@@ -70,7 +71,7 @@ public class ProxychainsClient {
             t.setDaemon(true);
             return t;
         });
-        this.activeProcesses = new ConcurrentHashMap<>();
+        this.activeProcesses = new org.manager.tools.ExternalProcessRegistry("proxychains");
         this.gidMap = new ConcurrentHashMap<>();
         this.activeDownloads = new ConcurrentHashMap<>();
 
@@ -217,7 +218,7 @@ public class ProxychainsClient {
                 LOGGER.info("Executing command: " + String.join(" ", command));
                 process = processBuilder.start();
                 final Process finalProcess = process; // Make final for lambda usage
-                activeProcesses.put(download.getId(), process);
+                activeProcesses.register(download.getId(), process);
 
                 // Update download status
                 download.setStatus(Download.Status.DOWNLOADING);
@@ -448,22 +449,9 @@ public class ProxychainsClient {
      * @param listener Listener for download events
      */
     public void pauseDownload(Download download, DownloadListener listener) {
-        Process process = activeProcesses.remove(download.getId());
-
-        if (process != null) {
-            // Graceful terminate (SIGTERM: aria2c saves its control file),
-            // escalating to a hard kill if it ignores the signal
-            process.destroy();
-            try {
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                    process.waitFor(5, TimeUnit.SECONDS);
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                process.destroyForcibly();
-            }
-        }
+        // Graceful terminate (SIGTERM: aria2c saves its control file),
+        // escalating to a hard kill if it ignores the signal
+        activeProcesses.terminate(download.getId(), 5);
 
         // Process not spawned (yet) is fine too: the download is trivially
         // paused; reflect it so a subsequent resume works and listeners
@@ -500,11 +488,7 @@ public class ProxychainsClient {
      * @param deleteFile Whether to delete the partial file
      */
     public void cancelDownload(Download download, DownloadListener listener, boolean deleteFile) {
-        Process process = activeProcesses.get(download.getId());
-        if (process != null) {
-            process.destroy();
-            activeProcesses.remove(download.getId());
-        }
+        activeProcesses.terminate(download.getId(), 5);
 
         // Remove GID mapping
         gidMap.remove(download.getId());
@@ -536,13 +520,8 @@ public class ProxychainsClient {
      * Shuts down the client and cancels all active downloads.
      */
     public void shutdown() {
-        // Stop all active processes
-        for (Process process : activeProcesses.values()) {
-            process.destroy();
-        }
-
-        // Clear maps
-        activeProcesses.clear();
+        // Stop all active processes (SIGTERM -> bounded wait -> SIGKILL)
+        activeProcesses.terminateAll(5);
         gidMap.clear();
         activeDownloads.clear();
 
