@@ -28,6 +28,26 @@ public class ClipboardFactory {
     }
 
     /**
+     * Optional override for the monitor implementation. A toolkit-native
+     * host (e.g. the GTK app) installs its provider before core
+     * initialization so the default AWT polling monitor — which materializes
+     * the whole clipboard string every poll and drags X11 into the process —
+     * is never constructed.
+     */
+    private static volatile java.util.function.Supplier<ClipboardMonitor> monitorProvider;
+
+    /**
+     * Installs an alternative ClipboardMonitor provider. Must be called
+     * before the download manager is created (it builds the clipboard
+     * service in its constructor).
+     *
+     * @param provider the provider, or null to restore the AWT default
+     */
+    public static void setMonitorProvider(java.util.function.Supplier<ClipboardMonitor> provider) {
+        monitorProvider = provider;
+    }
+
+    /**
      * Creates a new clipboard monitor with the specified settings.
      *
      * @param settings The clipboard settings to apply
@@ -35,7 +55,9 @@ public class ClipboardFactory {
      *         settings
      */
     public static ClipboardMonitor createClipboardMonitor(ClipboardSettings settings) {
-        ClipboardMonitorImpl monitor = new ClipboardMonitorImpl();
+        ClipboardMonitor monitor = monitorProvider != null
+                ? monitorProvider.get()
+                : new ClipboardMonitorImpl();
 
         if (settings != null) {
             monitor.setSilentMode(settings.isSilentMode());

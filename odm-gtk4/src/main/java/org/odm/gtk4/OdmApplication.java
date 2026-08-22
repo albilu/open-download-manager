@@ -122,6 +122,11 @@ public final class OdmApplication {
     private static CompletableFuture<CoreRefs> initializeCoreInBackground(StartShutdownDialog progress) {
         return CompletableFuture.supplyAsync(() -> {
             progress.setMessage("Loading settings and discovering tools…");
+            // Toolkit-native clipboard BEFORE the manager is built: it
+            // constructs the clipboard service in its constructor, and the
+            // default AWT monitor would poll-materialize the whole clipboard
+            // twice a second and drag X11 into the GTK process
+            org.manager.clipboard.ClipboardFactory.setMonitorProvider(GdkClipboardMonitor::new);
             ApplicationContext.initialize();
             DownloadManager manager = ApplicationContext.getDownloadManager();
 

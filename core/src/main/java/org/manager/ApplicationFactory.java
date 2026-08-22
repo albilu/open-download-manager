@@ -479,6 +479,12 @@ public class ApplicationFactory {
             // Shutdown ToolManagerFactory
             shutdownToolManagerFactory();
 
+            // End the shared executor generation with this factory
+            // generation: a fresh factory must not be handed a dead
+            // ExecutorServiceManager (init -> shutdown -> init cycles,
+            // e.g. in tests, used to fail with "has been shut down")
+            org.manager.util.ExecutorServiceManager.resetInstance();
+
             // Clear GlobalSettings
             globalSettings = null;
         } finally {

@@ -202,16 +202,18 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 // Get any additional options for this download
                 Map<String, String> options = getDownloadOptions(download.getId());
 
-                // Submit the download task to the executor service
-                Future<?> task = executor.submit(() -> {
-                    proxychainsClient.startDownload(download, this, options);
-                });
-
-                // Store the task for future reference
-                activeTasks.put(download.getId(), task);
+                // The client spawns the transfer on its own (daemon) pool
+                // and returns immediately — one short pool task total. The
+                // old inner executor.submit was a second pool hop that
+                // tracked a Future too short-lived to ever cancel anything
+                // (real cancellation goes through the client's process
+                // registry via cancelDownload).
+                activeTasks.put(download.getId(), java.util.concurrent.CompletableFuture.completedFuture(null));
+                proxychainsClient.startDownload(download, this, options);
 
                 return download.getId(); // Return download ID as the GID equivalent
             } catch (Exception e) {
+                activeTasks.remove(download.getId());
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage("Failed to start proxychains download: " + e.getMessage());
                 notifyDownloadError(download, download.getErrorMessage());

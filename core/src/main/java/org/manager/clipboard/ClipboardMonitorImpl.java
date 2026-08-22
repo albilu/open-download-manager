@@ -46,6 +46,8 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
     private final AtomicBoolean silentMode;
 
     private ScheduledExecutorService scheduledExecutor;
+    /** Listener-work executor: keeps URL extraction off the poll thread. */
+    private java.util.concurrent.ExecutorService processingExecutor;
     private ScheduledFuture<?> monitoringTask;
     private long monitoringInterval = 500; // Default 500ms
 
@@ -83,10 +85,17 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
             if (monitoring.compareAndSet(false, true)) {
                 LOGGER.info("Starting clipboard monitoring with interval: " + monitoringInterval + "ms");
 
-                // Initialize the executor if not already created
+                // Initialize the executors if not already created
                 if (scheduledExecutor == null || scheduledExecutor.isShutdown()) {
                     scheduledExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
                         Thread t = new Thread(r, "ClipboardMonitor");
+                        t.setDaemon(true);
+                        return t;
+                    });
+                }
+                if (processingExecutor == null || processingExecutor.isShutdown()) {
+                    processingExecutor = Executors.newSingleThreadExecutor(r -> {
+                        Thread t = new Thread(r, "ClipboardProcessor");
                         t.setDaemon(true);
                         return t;
                     });
@@ -125,7 +134,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
                     monitoringTask = null;
                 }
 
-                // Shutdown the executor
+                // Shutdown the executors
                 if (scheduledExecutor != null && !scheduledExecutor.isShutdown()) {
                     scheduledExecutor.shutdown();
                     try {
@@ -135,6 +144,17 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         scheduledExecutor.shutdownNow();
+                    }
+                }
+                if (processingExecutor != null && !processingExecutor.isShutdown()) {
+                    processingExecutor.shutdown();
+                    try {
+                        if (!processingExecutor.awaitTermination(1, TimeUnit.SECONDS)) {
+                            processingExecutor.shutdownNow();
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        processingExecutor.shutdownNow();
                     }
                 }
 
@@ -252,8 +272,16 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
 
             LOGGER.fine("Clipboard content changed");
 
-            // Process the new content
-            processClipboardContent(currentContent);
+            // Process the new content OFF the poll thread: URL extraction
+            // over large payloads and listener work (download creation)
+            // would otherwise silently stretch the polling cadence
+            processingExecutor.submit(() -> {
+                try {
+                    processClipboardContent(currentContent);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error processing clipboard content", e);
+                }
+            });
 
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error during clipboard check", e);

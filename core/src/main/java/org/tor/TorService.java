@@ -408,15 +408,16 @@ public class TorService {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null && !isShuttingDown.get()) {
+                    // One line, one log record (FINE for the verbatim tor
+                    // output; INFO is reserved for lifecycle events)
                     LOGGER.fine("Tor stdout: " + line);
-                    LOGGER.info(line);
 
                     // Notify listeners of important events
                     if (line.contains("Bootstrapped 100%")) {
                         notifyListeners(TorServiceEvent.BOOTSTRAP_COMPLETE);
                     } else if (line.contains("Bootstrapped")) {
                         notifyListeners(TorServiceEvent.BOOTSTRAP_PROGRESS);
-                    } else if (line.contains("[err]") || line.contains("[warn]")) {
+                    } else if (line.contains("[err]")) {
                         notifyListeners(TorServiceEvent.ERROR);
                     }
                 }

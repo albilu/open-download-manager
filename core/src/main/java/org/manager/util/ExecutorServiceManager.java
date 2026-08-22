@@ -89,6 +89,24 @@ public class ExecutorServiceManager {
     }
 
     /**
+     * Ends this manager's generation: shuts the pools down (if still live)
+     * and clears the singleton so the next {@link #getInstance()} creates a
+     * fresh manager. Called when a whole application generation ends
+     * (ApplicationFactory.shutdown) — a fresh factory generation must not be
+     handed a dead executor manager. Threads are daemon, so a leaked
+     * generation cannot hang the JVM.
+     */
+    public static void resetInstance() {
+        synchronized (instanceLock) {
+            ExecutorServiceManager current = instance;
+            if (current != null) {
+                current.shutdown();
+                instance = null;
+            }
+        }
+    }
+
+    /**
      * Gets the general purpose executor for async operations.
      *
      * @return The general purpose executor

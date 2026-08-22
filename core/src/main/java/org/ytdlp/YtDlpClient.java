@@ -34,6 +34,9 @@ public class YtDlpClient {
     // Progress patterns for parsing yt-dlp output
     private static final Pattern PROGRESS_PATTERN = Pattern.compile(
             "\\[download\\]\\s+(\\d+\\.?\\d*)%\\s+of\\s+~?([\\d\\.]+)([KMG]?i?B).*?at\\s+([\\d\\.]+)([KMG]?i?B)/s");
+    /** Speed in the template's human-readable prefix: "at 1.23MiB/s". */
+    private static final Pattern SPEED_SUFFIX_PATTERN = Pattern.compile(
+            "at\\s+([\\d\\.]+)\\s*([KMG]?i?B)/s");
     private static final Pattern FILE_SIZE_PATTERN = Pattern.compile(
             "\\[info\\].*?filesize:\\s*([\\d\\.]+)\\s*([KMG]?i?B)");
     private static final Pattern TITLE_PATTERN = Pattern.compile(
@@ -748,8 +751,15 @@ public class YtDlpClient {
         command.add("-o");
         command.add(outputTemplate);
 
-        // Progress and logging
+        // Progress and logging. The template emits machine-parsable lines
+        // with EXACT downloaded/total byte counts; the legacy "[download]
+        // 42.3% of ~10.00MiB" output only carries rounded values, and
+        // deriving downloadedBytes from percent x total drifted.
         command.add("--newline");
+        command.add("--progress-template");
+        command.add("download:[download] %(progress._percent_str)s of "
+                + "%(progress._total_bytes_estimate_str)s at %(progress._speed_str)s "
+                + "|odmbytes|%(progress.downloaded_bytes)s|%(progress.total_bytes_estimate)s");
         if (settings.isVerboseOutput()) {
             command.add("--verbose");
         }
@@ -976,9 +986,40 @@ public class YtDlpClient {
     }
 
     /**
-     * Parses progress information from yt-dlp output.
+     * Parses progress information from yt-dlp output. Prefers the exact
+     * byte counts from the {@code |odmbytes|downloaded|total} suffix of the
+     * custom progress template; falls back to the legacy rounded-output
+     * regex (older yt-dlp without --progress-template).
      */
     private void parseProgress(String line, ProgressCallback callback) {
+        int exactMarker = line.indexOf("|odmbytes|");
+        if (exactMarker >= 0) {
+            try {
+                String[] parts = line.substring(exactMarker + "|odmbytes|".length()).split("\\|");
+                long downloadedBytes = Long.parseLong(parts[0].trim());
+                String totalRaw = parts.length > 1 ? parts[1].trim() : "";
+                // total_bytes_estimate is "NA"/empty until yt-dlp knows
+                long totalBytes = totalRaw.isEmpty() || "NA".equals(totalRaw) || "None".equals(totalRaw)
+                        ? 0 : Long.parseLong(totalRaw);
+
+                // Percentage and speed still come from the human-readable
+                // prefix when present
+                float percentage = totalBytes > 0
+                        ? (float) (downloadedBytes * 100.0 / totalBytes) : 0;
+                float speedBps = 0;
+                Matcher speedMatcher = SPEED_SUFFIX_PATTERN.matcher(line.substring(0, exactMarker));
+                if (speedMatcher.find()) {
+                    speedBps = convertToBytes(Float.parseFloat(speedMatcher.group(1)),
+                            speedMatcher.group(2));
+                }
+
+                callback.onProgress(percentage, downloadedBytes, totalBytes, speedBps);
+                return;
+            } catch (NumberFormatException e) {
+                // Fall through to the legacy parser
+            }
+        }
+
         Matcher matcher = PROGRESS_PATTERN.matcher(line);
         if (matcher.find()) {
             try {
@@ -998,6 +1039,11 @@ public class YtDlpClient {
                 // Ignore parsing errors
             }
         }
+    }
+
+    /** Test seam for the progress-line parser. */
+    void parseProgressForTest(String line, ProgressCallback callback) {
+        parseProgress(line, callback);
     }
 
     /**

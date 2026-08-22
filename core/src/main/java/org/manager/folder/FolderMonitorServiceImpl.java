@@ -85,7 +85,27 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             return t;
         });
         initializeStatistics();
-        startMonitoringLoop();
+    }
+
+    /**
+     * Starts the monitoring loop and the cleanup schedule on first use.
+     * Constructors must stay cheap: the manager builds this service eagerly,
+     * and the loop thread + hourly cleanup ran even when no folder was ever
+     * monitored.
+     */
+    private synchronized void ensureMonitoringLoopStarted() {
+        if (running.get()) {
+            return;
+        }
+        running.set(true);
+        monitoringTask = executorService.submit(this::monitoringLoop);
+        // Schedule periodic cleanup of processed files (with the loop)
+        scheduledExecutorService.scheduleAtFixedRate(
+                this::cleanupProcessedFiles,
+                PROCESSED_FILES_CLEANUP_INTERVAL_MS,
+                PROCESSED_FILES_CLEANUP_INTERVAL_MS,
+                TimeUnit.MILLISECONDS);
+        LOGGER.info("Folder monitoring service started");
     }
 
     private void initializeStatistics() {
@@ -93,19 +113,6 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         statistics.put("errors", 0L);
         statistics.put("monitoredFolders", 0);
         statistics.put("startTime", System.currentTimeMillis());
-
-        // Schedule periodic cleanup of processed files
-        scheduledExecutorService.scheduleAtFixedRate(
-                this::cleanupProcessedFiles,
-                PROCESSED_FILES_CLEANUP_INTERVAL_MS,
-                PROCESSED_FILES_CLEANUP_INTERVAL_MS,
-                TimeUnit.MILLISECONDS);
-    }
-
-    private void startMonitoringLoop() {
-        running.set(true);
-        monitoringTask = executorService.submit(this::monitoringLoop);
-        LOGGER.info("Folder monitoring service started");
     }
 
     @Override
@@ -127,6 +134,9 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 WatchKey watchKey = registerFolder(folderPath, settings);
                 watchKeys.put(folderPath, watchKey);
                 folderSettings.put(folderPath, settings.copy());
+
+                // The loop starts with the first monitored folder (lazy)
+                ensureMonitoringLoopStarted();
 
                 // Process existing files if enabled
                 if (settings.isProcessExistingFiles()) {

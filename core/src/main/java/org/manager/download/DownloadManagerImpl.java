@@ -1415,9 +1415,11 @@ public class DownloadManagerImpl implements DownloadManager {
                 LOGGER.info("Proxy health check scheduled every " + intervalMinutes + " minute(s)");
             }
 
-            // Log tool availability
-            Map<String, Map<String, Object>> toolStatus = toolFactory.getStatusReport();
-            LOGGER.info("Tool availability: " + toolStatus);
+            // Tool availability is already logged from the async
+            // checkAllToolsAsync() in initializeDependencies; the old
+            // synchronous getStatusReport() here spawned six sequential
+            // --version subprocesses just to log, stalling startup
+            // (versions stay available on demand via getStatusReport()).
 
             return null;
         } catch (Exception e) {
