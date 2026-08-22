@@ -130,8 +130,6 @@ public class MainWindow {
     private final ListStore globalProgressStore;
     private final org.tor.TorService torService;
     private final org.manager.schedule.ScheduleManager scheduleManager;
-    private final org.manager.download.action.AfterCompletionActionManager completionActionManager =
-            new org.manager.download.action.AfterCompletionActionManager();
     private org.manager.download.action.AfterCompletionAction completionAction;
     /** Builder reference kept for window-state persistence from menu actions. */
     private final GtkBuilder uiBuilder;
@@ -287,7 +285,7 @@ public class MainWindow {
                 // no-op
             }
         };
-        completionActionManager.addListener(windowCompletionListener);
+        downloadManager.addAfterCompletionActionListener(windowCompletionListener);
 
         // Clipboard detection flow: in silent mode core creates QUEUED
         // downloads on its own; otherwise pop the new-download dialog with
@@ -362,7 +360,7 @@ public class MainWindow {
             windowDownloadListener = null;
         }
         if (windowCompletionListener != null) {
-            completionActionManager.removeListener(windowCompletionListener);
+            downloadManager.removeAfterCompletionActionListener(windowCompletionListener);
             windowCompletionListener = null;
         }
         if (windowClipboardListener != null) {
@@ -1063,9 +1061,11 @@ public class MainWindow {
         if (completionAction == null) {
             return;
         }
-        completionActionManager.clearActions(download);
-        completionActionManager.addAction(download, completionAction);
-        completionActionManager.executeActions(download)
+        // Single mechanism: register through the core facade (idempotent per
+        // instance, additive with per-download actions set elsewhere such as
+        // the new-download dialog) and execute through it as well
+        downloadManager.addAfterCompletionAction(download, completionAction);
+        downloadManager.executeAfterCompletionActions(download)
                 .exceptionally(e -> {
                     LOGGER.log(java.util.logging.Level.WARNING,
                             "Completion action failed for " + download.getName(), e);

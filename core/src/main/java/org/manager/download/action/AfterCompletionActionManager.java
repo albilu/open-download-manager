@@ -44,8 +44,16 @@ public class AfterCompletionActionManager {
     public void addAction(Download download, AfterCompletionAction action) {
         String downloadId = download.getId();
 
-        downloadActions.computeIfAbsent(downloadId, k -> Collections.synchronizedList(new ArrayList<>()))
-                .add(action);
+        List<AfterCompletionAction> actions = downloadActions.computeIfAbsent(downloadId,
+                k -> Collections.synchronizedList(new ArrayList<>()));
+        // Idempotent per instance: registering the same action twice (e.g. a
+        // UI re-adding its global completion action on a repeated event)
+        // must not double-execute it
+        synchronized (actions) {
+            if (!actions.contains(action)) {
+                actions.add(action);
+            }
+        }
     }
 
     /**
