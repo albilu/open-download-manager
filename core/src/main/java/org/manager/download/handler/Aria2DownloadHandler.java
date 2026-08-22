@@ -1328,43 +1328,34 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         @Override
         public void onDownloadStart(String gid) {
-            String downloadId = gidToIdMap.get(gid);
-            if (downloadId != null) {
-                // This is handled by startDownload method
-            }
+            // start transitions are driven by startDownload's own RPC reply
         }
 
         @Override
         public void onDownloadPause(String gid) {
-            String downloadId = gidToIdMap.get(gid);
-            if (downloadId != null) {
-                // This is handled by pauseDownload method
+            if (gidToIdMap.get(gid) != null) {
+                requestImmediatePoll(gid);
             }
         }
 
         @Override
         public void onDownloadStop(String gid) {
-            String downloadId = gidToIdMap.get(gid);
-            if (downloadId != null) {
-                // Handle download stop event
+            if (gidToIdMap.get(gid) != null) {
+                requestImmediatePoll(gid);
             }
         }
 
         @Override
         public void onDownloadComplete(String gid) {
-            String downloadId = gidToIdMap.get(gid);
-            if (downloadId != null) {
-                // Handle download complete event
-                stopProgressPolling(gid);
+            if (gidToIdMap.get(gid) != null) {
+                requestImmediatePoll(gid);
             }
         }
 
         @Override
         public void onDownloadError(String gid, Aria2RpcError error) {
-            String downloadId = gidToIdMap.get(gid);
-            if (downloadId != null) {
-                // Handle download error event
-                stopProgressPolling(gid);
+            if (gidToIdMap.get(gid) != null) {
+                requestImmediatePoll(gid);
             }
         }
 
@@ -1373,9 +1364,26 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             onDownloadComplete(gid);
         }
 
-//        @Override
-//        public void onDownloadProgress(String gid, long numFiles, Map<String, Object> status) {
-//            // This is not used - progress is handled by our polling mechanism
-//        }
+        /**
+         * Turns a daemon push into an immediate status poll, so terminal and
+         * pause transitions surface instantly instead of waiting for the
+         * next 1s batch tick. MUST run off the WS reader thread: the poll
+         * performs a synchronous RPC whose response is delivered by that
+         * very thread — polling inline would self-deadlock until timeout.
+         */
+        private void requestImmediatePoll(String gid) {
+            try {
+                progressPoller.execute(() -> {
+                    try {
+                        pollDownloadProgress(gid);
+                    } catch (Exception e) {
+                        LOGGER.log(java.util.logging.Level.WARNING,
+                                "Notification-triggered poll failed for GID " + gid, e);
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException shuttingDown) {
+                // poller already stopped; the batch tick is gone with it
+            }
+        }
     }
 }

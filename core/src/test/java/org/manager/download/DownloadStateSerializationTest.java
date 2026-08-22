@@ -81,15 +81,6 @@ class DownloadStateSerializationTest {
     }
 
     @Test
-    void scheduleSettingsRoundTrip() throws Exception {
-        Download original = new Download(URI.create("https://example.com/scheduled"));
-        original.setScheduleSettings(new org.manager.schedule.ScheduleSettings());
-
-        Download restored = roundTrip(original);
-        assertNotNull(restored.getScheduleSettings());
-    }
-
-    @Test
     void unknownPropertiesAreTolerated() throws Exception {
         Download original = new Download(URI.create("https://example.com/future"));
         String json = mapper.writeValueAsString(original);

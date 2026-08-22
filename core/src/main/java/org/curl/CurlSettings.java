@@ -69,6 +69,21 @@ public class CurlSettings extends DownloadSettings {
         return this;
     }
 
+    // ===== ExternalToolSettings bridge =====
+
+    @Override
+    public int getMaxRetries() {
+        return getRetryCount();
+    }
+
+    @Override
+    public CurlSettings setMaxRetries(int maxRetries) {
+        if (maxRetries > 0) {
+            setRetryCount(maxRetries);
+        }
+        return this;
+    }
+
     /**
      * Checks if redirects should be followed.
      *

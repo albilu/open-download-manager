@@ -125,9 +125,8 @@ class SqliteDownloadStateStoreTest {
     }
 
     @Test
-    void scheduleAndChecksumFieldsRoundTrip() {
+    void checksumFieldsRoundTrip() {
         Download original = new Download(URI.create("https://example.com/scheduled.iso"));
-        original.setScheduleSettings(new org.manager.schedule.ScheduleSettings());
         original.setChecksumAlgorithm("sha256");
         original.setExpectedChecksum("deadbeef");
 
@@ -135,7 +134,6 @@ class SqliteDownloadStateStoreTest {
             store.save(List.of(original), Set.of());
             Download restored = store.load().downloads().get(0);
 
-            assertNotNull(restored.getScheduleSettings());
             assertEquals("sha256", restored.getChecksumAlgorithm());
             assertEquals("deadbeef", restored.getExpectedChecksum());
         }
@@ -325,7 +323,6 @@ class SqliteDownloadStateStoreTest {
             assertNull(restored.getGid());
             assertNull(restored.getStartedAt());
             assertNull(restored.getErrorMessage());
-            assertNull(restored.getScheduleSettings());
             assertEquals(Download.Status.QUEUED, restored.getStatus());
             assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());
         }

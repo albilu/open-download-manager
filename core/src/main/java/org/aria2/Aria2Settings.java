@@ -50,6 +50,144 @@ public class Aria2Settings extends DownloadSettings {
         return this;
     }
 
+    // ===== ExternalToolSettings bridge: aria2-native option names =====
+    // Units: aria2 stores limits in BYTES and delays in SECONDS; the seam
+    // speaks KiB/s. Connections bridge to the typed aria2 field so
+    // toRpcOptions/toMap keep flowing them to the daemon.
+
+    @Override
+    public int getMaxConnections() {
+        return getMaxConnectionPerServer();
+    }
+
+    @Override
+    public Aria2Settings setMaxConnections(int maxConnections) {
+        return setMaxConnectionPerServer(Math.max(1, maxConnections));
+    }
+
+    @Override
+    public int getDownloadLimitKB() {
+        String bytes = getOption("max-download-limit");
+        if (bytes == null) {
+            return 0;
+        }
+        try {
+            long b = Long.parseLong(bytes);
+            return b <= 0 ? 0 : (int) Math.ceil(b / 1024.0);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    @Override
+    public Aria2Settings setDownloadLimitKB(int kibPerSecond) {
+        setOption("max-download-limit", kibPerSecond > 0 ? String.valueOf(kibPerSecond * 1024L) : "0");
+        return this;
+    }
+
+    @Override
+    public int getUploadLimitKB() {
+        String bytes = getOption("max-upload-limit");
+        if (bytes == null) {
+            return 0;
+        }
+        try {
+            long b = Long.parseLong(bytes);
+            return b <= 0 ? 0 : (int) Math.ceil(b / 1024.0);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    @Override
+    public Aria2Settings setUploadLimitKB(int kibPerSecond) {
+        if (kibPerSecond > 0) {
+            setOption("max-upload-limit", String.valueOf(kibPerSecond * 1024L));
+        }
+        return this;
+    }
+
+    @Override
+    public int getMaxRetries() {
+        String tries = getOption("max-tries");
+        if (tries == null) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(tries);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    @Override
+    public Aria2Settings setMaxRetries(int maxRetries) {
+        if (maxRetries > 0) {
+            setOption("max-tries", String.valueOf(maxRetries));
+        }
+        return this;
+    }
+
+    @Override
+    public int getRetryDelaySeconds() {
+        String wait = getOption("retry-wait");
+        if (wait == null) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(wait);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    @Override
+    public Aria2Settings setRetryDelaySeconds(int seconds) {
+        if (seconds > 0) {
+            setOption("retry-wait", String.valueOf(seconds));
+        }
+        return this;
+    }
+
+    @Override
+    public String getReferer() {
+        return getOption("referer");
+    }
+
+    @Override
+    public Aria2Settings setReferer(String referer) {
+        if (referer != null && !referer.isBlank()) {
+            setOption("referer", referer.trim());
+        }
+        return this;
+    }
+
+    @Override
+    public String getUserAgent() {
+        return getOption("user-agent");
+    }
+
+    @Override
+    public Aria2Settings setUserAgent(String userAgent) {
+        if (userAgent != null && !userAgent.isBlank()) {
+            setOption("user-agent", userAgent.trim());
+        }
+        return this;
+    }
+
+    @Override
+    public String getCookieHeader() {
+        return getOption("header");
+    }
+
+    @Override
+    public Aria2Settings setCookieHeader(String cookieHeader) {
+        if (cookieHeader != null && !cookieHeader.isBlank()) {
+            setOption("header", cookieHeader.trim());
+        }
+        return this;
+    }
+
     /**
      * Checks if downloads should be continued from where they left off.
      *

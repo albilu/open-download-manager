@@ -712,4 +712,76 @@ class Aria2IntegrationTest {
             executor.shutdownNow();
         }
     }
+
+    @Test
+    @DisplayName("WS notification drives an immediate poll: completion surfaces without waiting for the batch tick")
+    @Timeout(120)
+    void notificationDrivenCompletionDetected() throws Exception {
+        // Own server: the class's shared MockWebServer queue carries
+        // unconsumed (large/throttled) responses from earlier tests, which
+        // this request would inherit and hang on
+        okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer();
+        server.setDispatcher(new okhttp3.mockwebserver.Dispatcher() {
+            @Override
+            public okhttp3.mockwebserver.MockResponse dispatch(okhttp3.mockwebserver.RecordedRequest request) {
+                byte[] body = new byte[1024 * 1024];
+                okio.Buffer buffer = new okio.Buffer().write(body);
+                return new okhttp3.mockwebserver.MockResponse()
+                        .setResponseCode(200)
+                        .setHeader("Content-Length", String.valueOf(body.length))
+                        .setBody(buffer);
+            }
+        });
+        server.start();
+        String url = server.url("/download/one-mb.bin").toString();
+
+        ExecutorService executor = Executors.newCachedThreadPool();
+        GlobalSettings globalSettings = new GlobalSettings();
+        globalSettings.setDefaultDownloadDirectory(downloadDir);
+        DownloadSettingsFactory settingsFactory = new DownloadSettingsFactory(globalSettings);
+        Aria2DownloadHandler handler = new Aria2DownloadHandler(
+                globalSettings, settingsFactory, executor, ApplicationContext.getToolManagerFactory());
+
+        try {
+            handler.initialize().join();
+
+            java.util.List<String> events = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+            CountDownLatch completed = new CountDownLatch(1);
+            org.manager.download.DownloadListener listener =
+                    new org.manager.download.DownloadListener() {
+                        @Override public void onDownloadStart(Download d) { events.add("start"); }
+                        @Override public void onDownloadProgress(Download d, float p, long db, long tb, float s) { }
+                        @Override public void onDownloadPause(Download d) { events.add("pause"); }
+                        @Override public void onDownloadResume(Download d) { events.add("resume"); }
+                        @Override public void onDownloadComplete(Download d) {
+                            events.add("complete");
+                            completed.countDown();
+                        }
+                        @Override public void onDownloadError(Download d, String errorMessage) {
+                            events.add("error:" + errorMessage);
+                        }
+                        @Override public void onDownloadCanceled(Download d) { events.add("cancel"); }
+                    };
+            handler.addDownloadListener(listener);
+
+            Download download = new Download(URI.create(url));
+            download.setDestination(downloadDir);
+            String gid = handler.startDownload(download).get(30, TimeUnit.SECONDS);
+            assertNotNull(gid);
+
+            assertTrue(completed.await(60, TimeUnit.SECONDS),
+                    "completion must be delivered (WS push -> immediate poll -> listener); "
+                            + "events=" + events + " finalStatus=" + download.getStatus()
+                            + " err=" + download.getErrorMessage()
+                            + " downloaded=" + download.getDownloaded() + "/" + download.getSize());
+
+            handler.removeDownloadListener(listener);
+            // No cancel: the transfer already completed and aria2 removed the
+            // GID, so a cancel RPC would fail by design
+        } finally {
+            handler.shutdown().join();
+            executor.shutdownNow();
+            server.shutdown();
+        }
+    }
 }

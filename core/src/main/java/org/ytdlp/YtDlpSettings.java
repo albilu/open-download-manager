@@ -323,6 +323,54 @@ public class YtDlpSettings extends DownloadSettings {
         return this;
     }
 
+    // ===== ExternalToolSettings bridge =====
+
+    @Override
+    public int getDownloadLimitKB() {
+        return isLimitRate() ? getRateLimit() : 0;
+    }
+
+    @Override
+    public YtDlpSettings setDownloadLimitKB(int kibPerSecond) {
+        if (kibPerSecond > 0) {
+            setLimitRate(true);
+            setRateLimit(kibPerSecond);
+        } else {
+            setLimitRate(false);
+        }
+        return this;
+    }
+
+    // "user-agent"/"referer" are allowlisted yt-dlp options, so storing
+    // them under those keys flows them onto the command line directly
+    @Override
+    public String getUserAgent() {
+        String value = getOption("user-agent");
+        return value != null ? value : super.getUserAgent();
+    }
+
+    @Override
+    public YtDlpSettings setUserAgent(String userAgent) {
+        if (userAgent != null && !userAgent.isBlank()) {
+            setOption("user-agent", userAgent.trim());
+        }
+        return this;
+    }
+
+    @Override
+    public String getReferer() {
+        String value = getOption("referer");
+        return value != null ? value : super.getReferer();
+    }
+
+    @Override
+    public YtDlpSettings setReferer(String referer) {
+        if (referer != null && !referer.isBlank()) {
+            setOption("referer", referer.trim());
+        }
+        return this;
+    }
+
     /**
      * Checks if unavailable fragments should be skipped.
      *

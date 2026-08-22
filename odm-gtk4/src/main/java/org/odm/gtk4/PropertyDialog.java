@@ -89,65 +89,54 @@ public class PropertyDialog {
     }
 
     private void loadCurrentSettings() {
-        if (download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
-            maxConnectionsSpin.setValue(aria2Settings.getMaxConnectionPerServer());
-            String downLimit = aria2Settings.getOption("max-download-limit");
-            if (downLimit != null) {
-                maxDownloadSpeedSpin.setValue(Long.parseLong(downLimit) / 1024.0);
-            }
-            String upLimit = aria2Settings.getOption("max-upload-limit");
-            if (upLimit != null) {
-                maxUploadSpeedSpin.setValue(Long.parseLong(upLimit) / 1024.0);
-            }
-            String retry = aria2Settings.getOption("max-tries");
-            if (retry != null) {
-                retryLimitSpin.setValue(Integer.parseInt(retry));
-            }
-            String retryWait = aria2Settings.getOption("retry-wait");
-            if (retryWait != null) {
-                retryAfterSpin.setValue(Integer.parseInt(retryWait));
-            }
-            String referer = aria2Settings.getOption("referer");
-            if (referer != null) {
-                referrerEntry.setText(referer);
-            }
-            String ua = aria2Settings.getOption("user-agent");
-            if (ua != null) {
-                userAgentEntry.setText(ua);
-            }
-            String cookieHeader = aria2Settings.getOption("header");
-            if (cookieHeader != null && cookieHeader.startsWith("Cookie: ")) {
-                cookieEntry.setText(cookieHeader.substring("Cookie: ".length()));
-            }
+        // Engine-neutral seam: works for every engine (aria2 options,
+        // typed curl/httrack/yt-dlp fields, or persisted-neutral defaults)
+        org.manager.download.ExternalToolSettings settings =
+                download.getSettings();
+        maxConnectionsSpin.setValue(settings.getMaxConnections());
+        maxDownloadSpeedSpin.setValue(settings.getDownloadLimitKB());
+        maxUploadSpeedSpin.setValue(settings.getUploadLimitKB());
+        if (settings.getMaxRetries() > 0) {
+            retryLimitSpin.setValue(settings.getMaxRetries());
+        }
+        if (settings.getRetryDelaySeconds() > 0) {
+            retryAfterSpin.setValue(settings.getRetryDelaySeconds());
+        }
+        if (settings.getReferer() != null) {
+            referrerEntry.setText(settings.getReferer());
+        }
+        if (settings.getUserAgent() != null) {
+            userAgentEntry.setText(settings.getUserAgent());
+        }
+        if (settings.getCookieHeader() != null && settings.getCookieHeader().startsWith("Cookie: ")) {
+            cookieEntry.setText(settings.getCookieHeader().substring("Cookie: ".length()));
         }
     }
 
     private void onApply() {
-        if (download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
-            aria2Settings.setMaxConnectionPerServer((int) maxConnectionsSpin.getValue());
-            int downKb = (int) maxDownloadSpeedSpin.getValue();
-            aria2Settings.setOption("max-download-limit", downKb > 0 ? String.valueOf(downKb * 1024L) : "0");
-            int upKb = (int) maxUploadSpeedSpin.getValue();
-            if (upKb > 0) {
-                aria2Settings.setOption("max-upload-limit", String.valueOf(upKb * 1024L));
-            }
-            int retry = (int) retryLimitSpin.getValue();
-            if (retry > 0) {
-                aria2Settings.setOption("max-tries", String.valueOf(retry));
-            }
-            int retryWait = (int) retryAfterSpin.getValue();
-            if (retryWait > 0) {
-                aria2Settings.setOption("retry-wait", String.valueOf(retryWait));
-            }
-            if (!referrerEntry.getText().isBlank()) {
-                aria2Settings.setOption("referer", referrerEntry.getText().trim());
-            }
-            if (!userAgentEntry.getText().isBlank()) {
-                aria2Settings.setOption("user-agent", userAgentEntry.getText().trim());
-            }
-            if (!cookieEntry.getText().isBlank()) {
-                aria2Settings.setOption("header", "Cookie: " + cookieEntry.getText().trim());
-            }
+        org.manager.download.ExternalToolSettings settings = download.getSettings();
+        settings.setMaxConnections((int) maxConnectionsSpin.getValue());
+        settings.setDownloadLimitKB((int) maxDownloadSpeedSpin.getValue());
+        int upKb = (int) maxUploadSpeedSpin.getValue();
+        if (upKb > 0) {
+            settings.setUploadLimitKB(upKb);
+        }
+        int retry = (int) retryLimitSpin.getValue();
+        if (retry > 0) {
+            settings.setMaxRetries(retry);
+        }
+        int retryWait = (int) retryAfterSpin.getValue();
+        if (retryWait > 0) {
+            settings.setRetryDelaySeconds(retryWait);
+        }
+        if (!referrerEntry.getText().isBlank()) {
+            settings.setReferer(referrerEntry.getText().trim());
+        }
+        if (!userAgentEntry.getText().isBlank()) {
+            settings.setUserAgent(userAgentEntry.getText().trim());
+        }
+        if (!cookieEntry.getText().isBlank()) {
+            settings.setCookieHeader("Cookie: " + cookieEntry.getText().trim());
         }
         downloadManager.changeSettings(download)
                 .thenRun(() -> LOGGER.info("Applied settings to download: " + download.getName()))

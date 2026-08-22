@@ -10,7 +10,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import org.manager.schedule.ScheduleSettings;
 
 /**
  * Represents a download task in the download manager.
@@ -64,7 +63,6 @@ public class Download {
     private volatile Instant completedAt;
     private volatile String errorMessage;
     private volatile DownloadSettings settings; // unified settings object
-    private volatile ScheduleSettings scheduleSettings; // scheduling configuration
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
     private volatile String expectedChecksum; // detected expected hash in hex
 
@@ -594,52 +592,6 @@ public class Download {
     }
 
     /**
-     * Gets the schedule settings for this download.
-     *
-     * @return The schedule settings, or null if not set
-     */
-    public ScheduleSettings getScheduleSettings() {
-        return scheduleSettings;
-    }
-
-    /**
-     * Sets the schedule settings for this download.
-     *
-     * @param scheduleSettings The schedule settings to set
-     * @return This download for method chaining
-     */
-    public Download setScheduleSettings(ScheduleSettings scheduleSettings) {
-        synchronized (lock) {
-            this.scheduleSettings = scheduleSettings;
-        }
-        return this;
-    }
-
-    /**
-     * Checks if this download has schedule settings configured.
-     *
-     * @return true if schedule settings are configured, false otherwise
-     */
-    public boolean hasScheduleSettings() {
-        return scheduleSettings != null;
-    }
-
-    /**
-     * Checks if this download should be active based on its schedule settings.
-     * If no schedule settings are configured, returns true (always active).
-     *
-     * @return true if the download should be active now, false otherwise
-     */
-    public boolean shouldBeActiveNow() {
-        synchronized (lock) {
-            if (scheduleSettings == null) {
-                return true; // No schedule restrictions
-            }
-            return scheduleSettings.isActiveNow();
-        }
-    }
-
-    /**
      * Checks if proxy should be used for this download.
      *
      * @return true if proxy should be used, false otherwise
@@ -701,13 +653,11 @@ public class Download {
 
     @Override
     public String toString() {
-        String scheduleInfo = scheduleSettings != null ? ", scheduled=true" : "";
         return "Download{"
                 + "id='" + id + '\''
                 + ", name='" + name + '\''
                 + ", status=" + status
                 + ", progress=" + progress + "%"
-                + scheduleInfo
                 + '}';
     }
 }

@@ -276,6 +276,19 @@ public class HttrackSettings extends DownloadSettings {
         return this;
     }
 
+    // ===== ExternalToolSettings bridge =====
+
+    @Override
+    public int getDownloadLimitKB() {
+        return getMaxRate();
+    }
+
+    @Override
+    public HttrackSettings setDownloadLimitKB(int kibPerSecond) {
+        setMaxRate(Math.max(0, kibPerSecond));
+        return this;
+    }
+
     /**
      * Gets the number of concurrent connections.
      *

@@ -23,7 +23,7 @@ import java.util.Map;
     @JsonSubTypes.Type(value = org.proxychains.ProxychainsSettings.class, name = "proxychains"),
     @JsonSubTypes.Type(value = org.manager.proxy.ProxyAwareDownloadSettings.class, name = "proxy-aware")
 })
-public abstract class DownloadSettings {
+public abstract class DownloadSettings implements ExternalToolSettings {
 
     private int connections = 5;
     private boolean useProxy = false;
@@ -31,6 +31,134 @@ public abstract class DownloadSettings {
     // Written by settings dialogs and the proxy-rotation wrapper while
     // handler start paths iterate toMap() concurrently
     private Map<String, String> additionalOptions = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // Engine-neutral storage keys for the ExternalToolSettings defaults.
+    // The "odm." prefix keeps them out of tool command lines (the option
+    // filter drops unknown keys); engine subclasses that CAN bridge a value
+    // to native options override the accessor instead of storing here.
+    private static final String KEY_LIMIT_KB = "odm.download-limit-kb";
+    private static final String KEY_UPLOAD_LIMIT_KB = "odm.upload-limit-kb";
+    private static final String KEY_MAX_RETRIES = "odm.max-retries";
+    private static final String KEY_RETRY_DELAY = "odm.retry-delay-seconds";
+    private static final String KEY_REFERER = "odm.referer";
+    private static final String KEY_USER_AGENT = "odm.user-agent";
+    private static final String KEY_COOKIE = "odm.cookie-header";
+
+    private int optInt(String key, int fallback) {
+        String value = additionalOptions.get(key);
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private void optIntPut(String key, int value) {
+        if (value > 0) {
+            additionalOptions.put(key, String.valueOf(value));
+        } else {
+            additionalOptions.remove(key);
+        }
+    }
+
+    private void optPut(String key, String value) {
+        if (value == null || value.isBlank()) {
+            additionalOptions.remove(key);
+        } else {
+            additionalOptions.put(key, value);
+        }
+    }
+
+    @Override
+    public int getMaxConnections() {
+        return getConnections();
+    }
+
+    @Override
+    public DownloadSettings setMaxConnections(int maxConnections) {
+        setConnections(Math.max(1, maxConnections));
+        return this;
+    }
+
+    @Override
+    public int getDownloadLimitKB() {
+        return optInt(KEY_LIMIT_KB, 0);
+    }
+
+    @Override
+    public DownloadSettings setDownloadLimitKB(int kibPerSecond) {
+        optIntPut(KEY_LIMIT_KB, Math.max(0, kibPerSecond));
+        return this;
+    }
+
+    @Override
+    public int getUploadLimitKB() {
+        return optInt(KEY_UPLOAD_LIMIT_KB, 0);
+    }
+
+    @Override
+    public DownloadSettings setUploadLimitKB(int kibPerSecond) {
+        optIntPut(KEY_UPLOAD_LIMIT_KB, Math.max(0, kibPerSecond));
+        return this;
+    }
+
+    @Override
+    public int getMaxRetries() {
+        return optInt(KEY_MAX_RETRIES, 0);
+    }
+
+    @Override
+    public DownloadSettings setMaxRetries(int maxRetries) {
+        optIntPut(KEY_MAX_RETRIES, Math.max(0, maxRetries));
+        return this;
+    }
+
+    @Override
+    public int getRetryDelaySeconds() {
+        return optInt(KEY_RETRY_DELAY, 0);
+    }
+
+    @Override
+    public DownloadSettings setRetryDelaySeconds(int seconds) {
+        optIntPut(KEY_RETRY_DELAY, Math.max(0, seconds));
+        return this;
+    }
+
+    @Override
+    public String getReferer() {
+        return additionalOptions.get(KEY_REFERER);
+    }
+
+    @Override
+    public DownloadSettings setReferer(String referer) {
+        optPut(KEY_REFERER, referer);
+        return this;
+    }
+
+    @Override
+    public String getUserAgent() {
+        return additionalOptions.get(KEY_USER_AGENT);
+    }
+
+    @Override
+    public DownloadSettings setUserAgent(String userAgent) {
+        optPut(KEY_USER_AGENT, userAgent);
+        return this;
+    }
+
+    @Override
+    public String getCookieHeader() {
+        return additionalOptions.get(KEY_COOKIE);
+    }
+
+    @Override
+    public DownloadSettings setCookieHeader(String cookieHeader) {
+        optPut(KEY_COOKIE, cookieHeader);
+        return this;
+    }
 
     /**
      * Gets the number of connections to use for the download.

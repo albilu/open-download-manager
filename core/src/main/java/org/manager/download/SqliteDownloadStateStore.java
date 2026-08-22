@@ -31,7 +31,7 @@ import java.util.logging.Logger;
  * only what is needed to rebuild the in-memory list.
  *
  * <p>Scalar {@link Download} fields map to dedicated columns. The polymorphic
- * {@link DownloadSettings} subtree and {@link org.manager.schedule.ScheduleSettings}
+ * {@link DownloadSettings} subtree
  * are stored as JSON text using the shared state mapper, which already records
  * the concrete subtype through its {@code @type} property.</p>
  *
@@ -327,9 +327,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         download.setStartedAt(readInstant(rs, "started_at"));
         download.setCompletedAt(readInstant(rs, "completed_at"));
         download.setErrorMessage(rs.getString("error_message"));
-        download.setScheduleSettings(readJson(rs, "schedule_settings",
-                new TypeReference<org.manager.schedule.ScheduleSettings>() {
-                }));
+        // schedule_settings column: legacy of the model-side scheduling
+        // removed from Download; schedules live in the scheduler (and are
+        // persisted inside its own settings), so the column is ignored
         download.setChecksumAlgorithm(rs.getString("checksum_algorithm"));
         download.setExpectedChecksum(rs.getString("expected_checksum"));
         try {
@@ -369,9 +369,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(20, formatInstant(download.getCompletedAt()));
         insert.setString(21, download.getErrorMessage());
         insert.setString(22, mapper.writeValueAsString(download.getSettings()));
-        insert.setString(23, download.getScheduleSettings() == null
-                ? null
-                : mapper.writeValueAsString(download.getScheduleSettings()));
+        insert.setString(23, null); // schedule_settings: legacy, no longer populated
         insert.setString(24, download.getChecksumAlgorithm());
         insert.setString(25, download.getExpectedChecksum());
         insert.setInt(26, activeBeforeExit ? 1 : 0);

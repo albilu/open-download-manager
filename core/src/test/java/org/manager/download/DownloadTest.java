@@ -390,50 +390,6 @@ class DownloadTest {
         }
     }
 
-    @Nested
-    @DisplayName("Schedule Management Tests")
-    class ScheduleManagementTests {
-
-        @Test
-        @DisplayName("Should set and get schedule settings")
-        void shouldSetAndGetScheduleSettings() {
-            ScheduleSettings scheduleSettings = new ScheduleSettings();
-            download.setScheduleSettings(scheduleSettings);
-
-            assertEquals(scheduleSettings, download.getScheduleSettings());
-            assertTrue(download.hasScheduleSettings());
-        }
-
-        @Test
-        @DisplayName("Should support method chaining for schedule settings")
-        void shouldSupportMethodChainingForScheduleSettings() {
-            ScheduleSettings scheduleSettings = new ScheduleSettings();
-            Download result = download.setScheduleSettings(scheduleSettings);
-
-            assertSame(download, result);
-            assertEquals(scheduleSettings, download.getScheduleSettings());
-        }
-
-        @Test
-        @DisplayName("Should return true when no schedule settings")
-        void shouldReturnTrueWhenNoScheduleSettings() {
-            assertFalse(download.hasScheduleSettings());
-            assertTrue(download.shouldBeActiveNow());
-        }
-
-        @Test
-        @DisplayName("Should delegate to schedule settings for activity check")
-        void shouldDelegateToScheduleSettingsForActivityCheck() {
-            // This is a simplified test - in real implementation,
-            // ScheduleSettings would have time-based logic
-            ScheduleSettings mockSchedule = new ScheduleSettings();
-            download.setScheduleSettings(mockSchedule);
-
-            // Since we can't easily mock the time-based logic without the full implementation,
-            // we just verify the schedule settings are used
-            assertTrue(download.hasScheduleSettings());
-        }
-    }
 
     @Nested
     @DisplayName("Thread Safety Tests")
@@ -707,22 +663,6 @@ class DownloadTest {
             assertTrue(result.contains("DOWNLOADING"));
             assertTrue(result.contains("25.0%"));
             assertTrue(result.contains(download.getId()));
-        }
-
-        @Test
-        @DisplayName("Should include schedule info in toString when present")
-        void shouldIncludeScheduleInfoInToStringWhenPresent() {
-            download.setScheduleSettings(new ScheduleSettings());
-
-            String result = download.toString();
-            assertTrue(result.contains("scheduled=true"));
-        }
-
-        @Test
-        @DisplayName("Should not include schedule info when not present")
-        void shouldNotIncludeScheduleInfoWhenNotPresent() {
-            String result = download.toString();
-            assertFalse(result.contains("scheduled"));
         }
 
         @Test
