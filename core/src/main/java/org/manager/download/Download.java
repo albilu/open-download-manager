@@ -106,7 +106,7 @@ public class Download {
         // (m3u8/DASH/fragmented MP4) are handled by the yt-dlp engine, while
         // everything else (including direct media file links, which benefit
         // from aria2 multi-connection) goes to aria2.
-        if (org.ytdlp.YtDlpUrlUtils.isMediaUrl(uri.toString())) {
+        if (MediaUrlDetector.isMediaUrl(uri.toString())) {
             this.type = Type.YOUTUBE; // Use yt-dlp handler for media URLs
         } else {
             String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
@@ -119,8 +119,9 @@ public class Download {
             }
         }
 
-        // Initialize settings based on type
-        initSettings();
+        // Settings initialize lazily (getSettings) or via the manager's
+        // injected factory (initSettings(factory)) — the model must not
+        // eagerly reach into the application singleton for them
 
         // Try to get filename from URI path
         String path = uri.getPath();
@@ -150,7 +151,7 @@ public class Download {
         // download.type = Type.TORRENT;
         download.type = Type.ARIA2;
         download.destination = destination;
-        download.initSettings(); // Initialize settings based on type
+        // Settings initialize lazily via getSettings()
         return download;
     }
 
@@ -169,7 +170,7 @@ public class Download {
         download.uri = metaLinkPath.toUri();
         download.type = Type.ARIA2;
         download.destination = destination;
-        download.initSettings(); // Initialize settings based on type
+        // Settings initialize lazily via getSettings()
         return download;
     }
 

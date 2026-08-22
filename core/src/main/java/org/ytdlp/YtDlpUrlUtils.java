@@ -17,49 +17,6 @@ import java.util.regex.Pattern;
 public class YtDlpUrlUtils {
 
     // Common video platforms supported by yt-dlp
-    private static final Set<String> SUPPORTED_DOMAINS = new HashSet<>(Arrays.asList(
-        // YouTube
-        "youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com",
-
-        // Popular video platforms
-        "vimeo.com", "www.vimeo.com",
-        "dailymotion.com", "www.dailymotion.com",
-        "twitch.tv", "www.twitch.tv", "clips.twitch.tv",
-        "tiktok.com", "www.tiktok.com", "vm.tiktok.com",
-        "instagram.com", "www.instagram.com",
-        "facebook.com", "www.facebook.com", "fb.watch",
-        "twitter.com", "www.twitter.com", "x.com",
-        "reddit.com", "www.reddit.com", "v.redd.it",
-
-        // Media platforms
-        "soundcloud.com", "www.soundcloud.com",
-        "bandcamp.com",
-        "archive.org", "www.archive.org",
-        "metacafe.com", "www.metacafe.com",
-        "liveleak.com", "www.liveleak.com",
-
-        // News and media
-        "cnn.com", "www.cnn.com",
-        "bbc.co.uk", "www.bbc.co.uk", "bbc.com", "www.bbc.com",
-        "reuters.com", "www.reuters.com",
-        "vice.com", "www.vice.com",
-
-        // Streaming platforms
-        "crunchyroll.com", "www.crunchyroll.com",
-        "funimation.com", "www.funimation.com",
-        "netflix.com", "www.netflix.com",
-
-        // Educational
-        "coursera.org", "www.coursera.org",
-        "udemy.com", "www.udemy.com",
-        "khanacademy.org", "www.khanacademy.org",
-
-        // Adult content (commonly supported)
-        "pornhub.com", "www.pornhub.com",
-        "xvideos.com", "www.xvideos.com",
-        "xhamster.com", "www.xhamster.com"
-    ));
-
     // Regex patterns for common video URL structures
     private static final Pattern YOUTUBE_VIDEO_PATTERN = Pattern.compile(
         "(?:youtube\\.com\\/(?:[^\\/]+\\/.+\\/|(?:v|e(?:mbed)?)\\/|.*[?&]v=)|youtu\\.be\\/)([^\"&?\\/\\s]{11})"
@@ -79,12 +36,6 @@ public class YtDlpUrlUtils {
 
     private static final Pattern TWITCH_PATTERN = Pattern.compile(
         "twitch\\.tv\\/(?:videos\\/)?([^\\s\\/]+)"
-    );
-
-    // Streaming media manifests and segments (HLS playlists, DASH manifests,
-    // fragmented MP4) that require yt-dlp instead of plain HTTP downloading.
-    private static final Pattern MEDIA_MANIFEST_PATTERN = Pattern.compile(
-        ".*\\.(m3u8|mpd|m4s)([?&#].*)?$"
     );
 
     /**
@@ -149,24 +100,7 @@ public class YtDlpUrlUtils {
      * @return true when the host is a known media platform
      */
     public static boolean isKnownMediaHost(String url) {
-        if (url == null || url.trim().isEmpty()) {
-            return false;
-        }
-        try {
-            String host = new URI(url).getHost();
-            if (host == null) {
-                return false;
-            }
-            host = host.toLowerCase();
-            for (String domain : SUPPORTED_DOMAINS) {
-                if (host.equals(domain) || host.endsWith("." + domain)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (URISyntaxException e) {
-            return false;
-        }
+        return org.manager.download.MediaUrlDetector.isKnownMediaHost(url);
     }
 
     /**
@@ -177,15 +111,7 @@ public class YtDlpUrlUtils {
      * @return true when the URL is a media manifest or segment
      */
     public static boolean isMediaManifestUrl(String url) {
-        if (url == null || url.trim().isEmpty()) {
-            return false;
-        }
-        try {
-            String path = new URI(url).getPath();
-            return path != null && MEDIA_MANIFEST_PATTERN.matcher(path.toLowerCase()).matches();
-        } catch (URISyntaxException e) {
-            return false;
-        }
+        return org.manager.download.MediaUrlDetector.isMediaManifestUrl(url);
     }
 
     /**
@@ -198,7 +124,7 @@ public class YtDlpUrlUtils {
      * @return true when the URL should be handled by yt-dlp
      */
     public static boolean isMediaUrl(String url) {
-        return isKnownMediaHost(url) || isMediaManifestUrl(url);
+        return org.manager.download.MediaUrlDetector.isMediaUrl(url);
     }
 
     /**
@@ -220,9 +146,9 @@ public class YtDlpUrlUtils {
                 return false;
             }
 
-            // Check against known supported domains
-            host = host.toLowerCase();
-            if (SUPPORTED_DOMAINS.contains(host)) {
+            // Check against known supported domains (superset probe via
+            // the core detector: exact and subdomain matches)
+            if (org.manager.download.MediaUrlDetector.isKnownMediaHost(url)) {
                 return true;
             }
 
@@ -355,7 +281,7 @@ public class YtDlpUrlUtils {
         }
 
         // Check if it's a supported domain but not specifically categorized
-        if (SUPPORTED_DOMAINS.contains(host)) {
+        if (org.manager.download.MediaUrlDetector.isKnownMediaHost(url)) {
             return Platform.GENERIC;
         }
 
