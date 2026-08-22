@@ -25,36 +25,13 @@ public class CurlUtils {
     }
 
     /**
-     * Gets the curl path using the ToolManagerFactory.
-     *
-     * @return The curl executable path
-     */
-    private static String getCurlPath() {
-        try {
-            ToolManagerFactory factory = ApplicationContext.getToolManagerFactory();
-            if (factory != null) {
-                CurlToolManager curlManager = factory.getCurlManager();
-                if (curlManager != null) {
-                    return curlManager.getToolPath();
-                }
-            }
-
-            // Final fallback - try system curl
-            return "curl";
-        } catch (Exception e) {
-            // Final fallback - try system curl
-            return "curl";
-        }
-    }
-
-    /**
      * Checks if curl is installed and available on the system using the tool manager.
      *
      * @return true if curl is available, false otherwise
      */
     public static boolean isCurlAvailable() {
         try {
-            String curlPath = getCurlPath();
+            String curlPath = org.manager.tools.ToolPaths.curl();
             return isCurlAvailable(curlPath);
         } catch (RuntimeException e) {
             return false;
@@ -85,7 +62,7 @@ public class CurlUtils {
      */
     public static String getCurlVersion() {
         try {
-            String curlPath = getCurlPath();
+            String curlPath = org.manager.tools.ToolPaths.curl();
             return getCurlVersion(curlPath);
         } catch (RuntimeException e) {
             return null;
@@ -128,7 +105,7 @@ public class CurlUtils {
      */
     public static boolean isFeatureSupported(String feature) {
         try {
-            String curlPath = getCurlPath();
+            String curlPath = org.manager.tools.ToolPaths.curl();
             return isFeatureSupported(curlPath, feature);
         } catch (RuntimeException e) {
             return false;
@@ -172,7 +149,7 @@ public class CurlUtils {
      */
     public static List<String> getSupportedProtocols() {
         try {
-            String curlPath = getCurlPath();
+            String curlPath = org.manager.tools.ToolPaths.curl();
             return getSupportedProtocols(curlPath);
         } catch (RuntimeException e) {
             return new ArrayList<>();
@@ -226,7 +203,7 @@ public class CurlUtils {
      */
     @Deprecated(forRemoval = true)
     public static List<String> buildCurlCommand(String url, String outputPath, boolean useProxy, String proxyAddress) {
-        String curlPath = getCurlPath();
+        String curlPath = org.manager.tools.ToolPaths.curl();
         return buildCurlCommand(curlPath, url, outputPath, useProxy, proxyAddress);
     }
 
@@ -288,7 +265,7 @@ public class CurlUtils {
      */
     public static List<String> getHeaders(String url) {
         try {
-            String curlPath = getCurlPath();
+            String curlPath = org.manager.tools.ToolPaths.curl();
             return getHeaders(curlPath, url);
         } catch (RuntimeException e) {
             return null;

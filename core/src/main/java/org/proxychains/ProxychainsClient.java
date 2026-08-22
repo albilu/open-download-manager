@@ -1,5 +1,6 @@
 package org.proxychains;
 
+import org.manager.tools.ToolPaths;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -44,40 +45,13 @@ public class ProxychainsClient {
     private final Map<String, Download> activeDownloads;
 
     /**
-     * Gets the ToolManagerFactory instance using ApplicationContext.
-     */
-    private static ToolManagerFactory getToolManagerFactory() {
-        return ApplicationContext.getToolManagerFactory();
-    }
-
-    /**
      * Creates a new ProxychainsClient with the default proxychains command path
      * from ToolManagerFactory.
      */
     public ProxychainsClient() {
-        this(getProxychainsPath(), null);
+        this(ToolPaths.proxychains(), null);
     }
 
-    /**
-     * Gets the proxychains path using the ToolManagerFactory.
-     */
-    private static String getProxychainsPath() {
-        try {
-            ToolManagerFactory factory = getToolManagerFactory();
-            if (factory != null) {
-                ProxychainsToolManager proxychainsManager = factory.getProxychainsManager();
-                if (proxychainsManager != null) {
-                    return proxychainsManager.getToolPath();
-                }
-            }
-
-            // Final fallback - try system proxychains4
-            return "proxychains4";
-        } catch (Exception e) {
-            // Final fallback - try system proxychains4
-            return "proxychains4";
-        }
-    }
 
     /**
      * Creates a new ProxychainsClient with the specified proxychains command

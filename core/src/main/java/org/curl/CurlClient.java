@@ -1,5 +1,6 @@
 package org.curl;
 
+import org.manager.tools.ToolPaths;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -44,29 +45,9 @@ public class CurlClient {
      * Creates a new CurlClient with default curl path from ToolManagerFactory.
      */
     public CurlClient() {
-        this(getCurlPath());
+        this(ToolPaths.curl());
     }
 
-    /**
-     * Gets the curl path using the ToolManagerFactory.
-     */
-    private static String getCurlPath() {
-        try {
-            ToolManagerFactory factory = ApplicationContext.getToolManagerFactory();
-            if (factory != null) {
-                CurlToolManager curlManager = factory.getCurlManager();
-                if (curlManager != null) {
-                    return curlManager.getToolPath();
-                }
-            }
-
-            // Final fallback - try system curl
-            return "curl";
-        } catch (Exception e) {
-            // Final fallback - try system curl
-            return "curl";
-        }
-    }
 
     /**
      * Creates a new CurlClient with the specified curl command path.

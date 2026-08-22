@@ -1,5 +1,6 @@
 package org.ytdlp;
 
+import org.manager.tools.ToolPaths;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,40 +52,13 @@ public class YtDlpClient {
     private final Map<String, Process> activeProcesses;
 
     /**
-     * Gets the ToolManagerFactory instance using ApplicationContext.
-     */
-    private static ToolManagerFactory getToolManagerFactory() {
-        return ApplicationContext.getToolManagerFactory();
-    }
-
-    /**
      * Creates a new YtDlpClient with default yt-dlp path from
      * ToolManagerFactory.
      */
     public YtDlpClient() {
-        this(getYtDlpPath());
+        this(ToolPaths.ytDlp());
     }
 
-    /**
-     * Gets the yt-dlp path using the ToolManagerFactory.
-     */
-    private static String getYtDlpPath() {
-        try {
-            ToolManagerFactory factory = getToolManagerFactory();
-            if (factory != null) {
-                YtDlpToolManager ytDlpManager = factory.getYtDlpManager();
-                if (ytDlpManager != null) {
-                    return ytDlpManager.getToolPath();
-                }
-            }
-
-            // Final fallback - try system yt-dlp
-            return "yt-dlp";
-        } catch (Exception e) {
-            // Final fallback - try system yt-dlp
-            return "yt-dlp";
-        }
-    }
 
     /**
      * Creates a new YtDlpClient with specified yt-dlp path.

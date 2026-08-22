@@ -1,5 +1,6 @@
 package org.aria2;
 
+import org.manager.tools.ToolPaths;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -81,40 +82,13 @@ public class Aria2Client {
     private volatile boolean isShuttingDown = false;
 
     /**
-     * Gets the ToolManagerFactory instance using ApplicationContext.
-     */
-    private static ToolManagerFactory getToolManagerFactory() {
-        return ApplicationContext.getToolManagerFactory();
-    }
-
-    /**
      * Creates a new Aria2Client with the default aria2c path from
      * ToolManagerFactory.
      */
     public Aria2Client() {
-        this(getAria2Path());
+        this(ToolPaths.aria2c());
     }
 
-    /**
-     * Gets the aria2c path using the ToolManagerFactory.
-     */
-    private static String getAria2Path() {
-        try {
-            ToolManagerFactory factory = getToolManagerFactory();
-            if (factory != null) {
-                Aria2ToolManager aria2Manager = factory.getAria2Manager();
-                if (aria2Manager != null) {
-                    return aria2Manager.getToolPath();
-                }
-            }
-
-            // Final fallback - try system aria2c
-            return "aria2c";
-        } catch (Exception e) {
-            // Final fallback - try system aria2c
-            return "aria2c";
-        }
-    }
 
     public Aria2Client(String aria2cPath) {
         this(aria2cPath, "http://localhost:6800/jsonrpc", null);

@@ -1,5 +1,6 @@
 package org.httrack;
 
+import org.manager.tools.ToolPaths;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -62,40 +63,13 @@ public class HttrackClient {
     private final AtomicInteger jobIdCounter;
 
     /**
-     * Gets the ToolManagerFactory instance using ApplicationContext.
-     */
-    private static ToolManagerFactory getToolManagerFactory() {
-        return ApplicationContext.getToolManagerFactory();
-    }
-
-    /**
      * Creates a new HttrackClient with default httrack path from
      * ToolManagerFactory.
      */
     public HttrackClient() {
-        this(getHttrackPath());
+        this(ToolPaths.httrack());
     }
 
-    /**
-     * Gets the httrack path using the ToolManagerFactory.
-     */
-    private static String getHttrackPath() {
-        try {
-            ToolManagerFactory factory = getToolManagerFactory();
-            if (factory != null) {
-                HttrackToolManager httrackManager = factory.getHttrackManager();
-                if (httrackManager != null) {
-                    return httrackManager.getToolPath();
-                }
-            }
-
-            // Final fallback - try system httrack
-            return "httrack";
-        } catch (Exception e) {
-            // Final fallback - try system httrack
-            return "httrack";
-        }
-    }
 
     /**
      * Creates a new HttrackClient with specified httrack executable path.
