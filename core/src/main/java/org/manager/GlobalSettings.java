@@ -15,6 +15,13 @@ import org.manager.clipboard.ClipboardSettings;
 /**
  * Global settings that apply to the entire download manager. These settings are
  * system-wide and affect all downloads.
+ *
+ * <p>Typed settings live in cohesive role groups ({@link ConcurrencySettings},
+ * {@link ProxySettings}, {@link CleanupPolicy}, {@link ToolPathSettings}) that
+ * each own their defaults, clamping, copy, and persistence key set; the
+ * free-form bag of engine/UI keys is owned by {@link CustomProperties}. The
+ * persisted layout is the flat {@code settings.json} key-value map — group
+ * membership is purely internal and must never change the JSON keys.
  */
 public class GlobalSettings {
 
@@ -36,45 +43,22 @@ public class GlobalSettings {
         return base.resolve(CONFIG_DIR).resolve(SETTINGS_FILE);
     }
 
-    // Properties storage for generic access
-    private final Properties properties = new Properties();
+    private final ConcurrencySettings concurrency = new ConcurrencySettings();
+    private final ProxySettings proxy = new ProxySettings();
+    private final CleanupPolicy cleanup = new CleanupPolicy();
+    private final ToolPathSettings toolPaths = new ToolPathSettings();
 
-    // Mutable typed settings: written from UI threads and read from worker/
-    // monitor threads, so every field is volatile (individually-consistent
-    // reads; cross-field atomicity is not required for these knobs)
-    private volatile int maxConcurrentDownloads = 3;
-    private volatile int globalSpeedLimit = 0; // 0 means no limit (in KB/s)
-    private volatile boolean globalProxyEnabled = false;
-    private volatile boolean proxyRotationEnabled = false;
-    private volatile int proxyRotationMaxRetries = 5;
-    private volatile String proxyListFilePath;
-    private volatile String globalProxyAddress = null;
+    /** Free-form bag for engine/UI keys ({@code aria2.*}, {@code ui.*}, ...). */
+    private final CustomProperties custom = new CustomProperties();
+
     private volatile Path defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
     private volatile boolean saveDownloadHistory = true;
 
     // Clipboard monitoring settings
     private volatile ClipboardSettings clipboardSettings = new ClipboardSettings();
 
-    // Memory management and cleanup settings
-    private volatile int maxDownloadsInMemory = 1000; // 0 for unlimited
-    private volatile int maxCompletedDownloadsToKeep = 500;
-    private volatile long cleanupIntervalHours = 24; // Cleanup every 24 hours
-    private volatile long completedDownloadRetentionDays = 30; // Keep completed downloads for 30 days
-    private volatile long errorDownloadRetentionDays = 7; // Keep error downloads for 7 days
-    private volatile boolean automaticCleanupEnabled = true;
-    private volatile boolean enableLazyLoading = true; // Enable lazy loading for large datasets
-    private volatile int paginationDefaultSize = 50; // Default page size for paginated queries
-
-    // External tool paths
-    private volatile String aria2Path = "aria2c";
-    private volatile String ytDlpPath = "yt-dlp";
-    private volatile String httrackPath = "httrack";
-    private volatile String curlPath = "curl";
-    private volatile String proxychainsPath = "proxychains";
-    private volatile String torPath = "tor";
-
     // Tool availability flags - these are read-only and set by the dependency
-    // manager
+    // manager. Runtime-only: never copied or persisted.
     private transient boolean aria2Available = false;
     private transient boolean ytDlpAvailable = false;
     private transient boolean httrackAvailable = false;
@@ -82,13 +66,17 @@ public class GlobalSettings {
     private transient boolean proxychainsAvailable = false;
     private transient boolean torAvailable = false;
 
+    // ------------------------------------------------------------------
+    // Concurrency
+    // ------------------------------------------------------------------
+
     /**
      * Gets the maximum number of concurrent downloads allowed.
      *
      * @return The maximum number of concurrent downloads
      */
     public int getMaxConcurrentDownloads() {
-        return maxConcurrentDownloads;
+        return concurrency.maxConcurrentDownloads;
     }
 
     /**
@@ -98,7 +86,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setMaxConcurrentDownloads(int maxConcurrentDownloads) {
-        this.maxConcurrentDownloads = Math.clamp(maxConcurrentDownloads, 1, 20);
+        concurrency.setMaxConcurrentDownloads(maxConcurrentDownloads);
         return this;
     }
 
@@ -108,7 +96,7 @@ public class GlobalSettings {
      * @return The global speed limit in KB/s
      */
     public int getGlobalSpeedLimit() {
-        return globalSpeedLimit;
+        return concurrency.globalSpeedLimit;
     }
 
     /**
@@ -118,9 +106,13 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setGlobalSpeedLimit(int globalSpeedLimit) {
-        this.globalSpeedLimit = Math.max(0, globalSpeedLimit);
+        concurrency.setGlobalSpeedLimit(globalSpeedLimit);
         return this;
     }
+
+    // ------------------------------------------------------------------
+    // Proxy
+    // ------------------------------------------------------------------
 
     /**
      * Checks if global proxy is enabled.
@@ -128,7 +120,38 @@ public class GlobalSettings {
      * @return true if global proxy is enabled, false otherwise
      */
     public boolean isGlobalProxyEnabled() {
-        return globalProxyEnabled;
+        return proxy.globalProxyEnabled;
+    }
+
+    /**
+     * Sets whether to enable global proxy.
+     *
+     * @param globalProxyEnabled true to enable global proxy, false otherwise
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setGlobalProxyEnabled(boolean globalProxyEnabled) {
+        proxy.setGlobalProxyEnabled(globalProxyEnabled);
+        return this;
+    }
+
+    /**
+     * Gets the global proxy address.
+     *
+     * @return The global proxy address
+     */
+    public String getGlobalProxyAddress() {
+        return proxy.globalProxyAddress;
+    }
+
+    /**
+     * Sets the global proxy address.
+     *
+     * @param globalProxyAddress The global proxy address
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setGlobalProxyAddress(String globalProxyAddress) {
+        proxy.setGlobalProxyAddress(globalProxyAddress);
+        return this;
     }
 
     /**
@@ -139,7 +162,7 @@ public class GlobalSettings {
      * @return true if proxy rotation is enabled
      */
     public boolean isProxyRotationEnabled() {
-        return proxyRotationEnabled;
+        return proxy.proxyRotationEnabled;
     }
 
     /**
@@ -149,7 +172,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setProxyRotationEnabled(boolean proxyRotationEnabled) {
-        this.proxyRotationEnabled = proxyRotationEnabled;
+        proxy.setProxyRotationEnabled(proxyRotationEnabled);
         return this;
     }
 
@@ -160,7 +183,7 @@ public class GlobalSettings {
      * @return the maximum retry count
      */
     public int getProxyRotationMaxRetries() {
-        return proxyRotationMaxRetries;
+        return proxy.proxyRotationMaxRetries;
     }
 
     /**
@@ -171,7 +194,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setProxyRotationMaxRetries(int proxyRotationMaxRetries) {
-        this.proxyRotationMaxRetries = Math.clamp(proxyRotationMaxRetries, 0, 20);
+        proxy.setProxyRotationMaxRetries(proxyRotationMaxRetries);
         return this;
     }
 
@@ -183,7 +206,7 @@ public class GlobalSettings {
      * @return the proxy list file path, or null if unset
      */
     public String getProxyListFilePath() {
-        return proxyListFilePath;
+        return proxy.proxyListFilePath;
     }
 
     /**
@@ -193,40 +216,13 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setProxyListFilePath(String proxyListFilePath) {
-        this.proxyListFilePath = proxyListFilePath;
+        proxy.setProxyListFilePath(proxyListFilePath);
         return this;
     }
 
-    /**
-     * Sets whether to enable global proxy.
-     *
-     * @param globalProxyEnabled true to enable global proxy, false otherwise
-     * @return This settings object for chaining
-     */
-    public GlobalSettings setGlobalProxyEnabled(boolean globalProxyEnabled) {
-        this.globalProxyEnabled = globalProxyEnabled;
-        return this;
-    }
-
-    /**
-     * Gets the global proxy address.
-     *
-     * @return The global proxy address
-     */
-    public String getGlobalProxyAddress() {
-        return globalProxyAddress;
-    }
-
-    /**
-     * Sets the global proxy address.
-     *
-     * @param globalProxyAddress The global proxy address
-     * @return This settings object for chaining
-     */
-    public GlobalSettings setGlobalProxyAddress(String globalProxyAddress) {
-        this.globalProxyAddress = globalProxyAddress;
-        return this;
-    }
+    // ------------------------------------------------------------------
+    // Downloads / history
+    // ------------------------------------------------------------------
 
     /**
      * Gets the default download directory.
@@ -288,6 +284,10 @@ public class GlobalSettings {
         return this;
     }
 
+    // ------------------------------------------------------------------
+    // Cleanup policy
+    // ------------------------------------------------------------------
+
     /**
      * Gets the maximum number of downloads to keep in memory.
      *
@@ -295,7 +295,7 @@ public class GlobalSettings {
      *         unlimited)
      */
     public int getMaxDownloadsInMemory() {
-        return maxDownloadsInMemory;
+        return cleanup.maxDownloadsInMemory;
     }
 
     /**
@@ -306,7 +306,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setMaxDownloadsInMemory(int maxDownloadsInMemory) {
-        this.maxDownloadsInMemory = Math.clamp(maxDownloadsInMemory, 10, 10000);
+        cleanup.setMaxDownloadsInMemory(maxDownloadsInMemory);
         return this;
     }
 
@@ -316,7 +316,7 @@ public class GlobalSettings {
      * @return The maximum number of completed downloads to keep
      */
     public int getMaxCompletedDownloadsToKeep() {
-        return maxCompletedDownloadsToKeep;
+        return cleanup.maxCompletedDownloadsToKeep;
     }
 
     /**
@@ -327,7 +327,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setMaxCompletedDownloadsToKeep(int maxCompletedDownloadsToKeep) {
-        this.maxCompletedDownloadsToKeep = Math.max(0, maxCompletedDownloadsToKeep);
+        cleanup.setMaxCompletedDownloadsToKeep(maxCompletedDownloadsToKeep);
         return this;
     }
 
@@ -337,7 +337,7 @@ public class GlobalSettings {
      * @return The cleanup interval in hours
      */
     public long getCleanupIntervalHours() {
-        return cleanupIntervalHours;
+        return cleanup.cleanupIntervalHours;
     }
 
     /**
@@ -347,7 +347,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setCleanupIntervalHours(long cleanupIntervalHours) {
-        this.cleanupIntervalHours = Math.max(1, cleanupIntervalHours);
+        cleanup.setCleanupIntervalHours(cleanupIntervalHours);
         return this;
     }
 
@@ -357,7 +357,7 @@ public class GlobalSettings {
      * @return The retention period for completed downloads in days
      */
     public long getCompletedDownloadRetentionDays() {
-        return completedDownloadRetentionDays;
+        return cleanup.completedDownloadRetentionDays;
     }
 
     /**
@@ -368,7 +368,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setCompletedDownloadRetentionDays(long completedDownloadRetentionDays) {
-        this.completedDownloadRetentionDays = Math.max(1, completedDownloadRetentionDays);
+        cleanup.setCompletedDownloadRetentionDays(completedDownloadRetentionDays);
         return this;
     }
 
@@ -378,7 +378,7 @@ public class GlobalSettings {
      * @return The retention period for error downloads in days
      */
     public long getErrorDownloadRetentionDays() {
-        return errorDownloadRetentionDays;
+        return cleanup.errorDownloadRetentionDays;
     }
 
     /**
@@ -389,7 +389,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setErrorDownloadRetentionDays(long errorDownloadRetentionDays) {
-        this.errorDownloadRetentionDays = Math.max(1, errorDownloadRetentionDays);
+        cleanup.setErrorDownloadRetentionDays(errorDownloadRetentionDays);
         return this;
     }
 
@@ -399,7 +399,7 @@ public class GlobalSettings {
      * @return true if automatic cleanup is enabled, false otherwise
      */
     public boolean isAutomaticCleanupEnabled() {
-        return automaticCleanupEnabled;
+        return cleanup.automaticCleanupEnabled;
     }
 
     /**
@@ -410,7 +410,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setAutomaticCleanupEnabled(boolean automaticCleanupEnabled) {
-        this.automaticCleanupEnabled = automaticCleanupEnabled;
+        cleanup.setAutomaticCleanupEnabled(automaticCleanupEnabled);
         return this;
     }
 
@@ -420,7 +420,7 @@ public class GlobalSettings {
      * @return true if lazy loading is enabled, false otherwise
      */
     public boolean isEnableLazyLoading() {
-        return enableLazyLoading;
+        return cleanup.enableLazyLoading;
     }
 
     /**
@@ -430,7 +430,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setEnableLazyLoading(boolean enableLazyLoading) {
-        this.enableLazyLoading = enableLazyLoading;
+        cleanup.setEnableLazyLoading(enableLazyLoading);
         return this;
     }
 
@@ -440,7 +440,7 @@ public class GlobalSettings {
      * @return The default pagination size
      */
     public int getPaginationDefaultSize() {
-        return paginationDefaultSize;
+        return cleanup.paginationDefaultSize;
     }
 
     /**
@@ -450,22 +450,21 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setPaginationDefaultSize(int paginationDefaultSize) {
-        this.paginationDefaultSize = Math.clamp(paginationDefaultSize, 10, 1000);
+        cleanup.setPaginationDefaultSize(paginationDefaultSize);
         return this;
     }
 
-    /**
-     * Creates a copy of these settings.
-     *
-     * @return A new GlobalSettings instance with the same settings
-     */
+    // ------------------------------------------------------------------
+    // Tool paths
+    // ------------------------------------------------------------------
+
     /**
      * Gets the path to aria2c executable.
      *
      * @return The path to aria2c executable
      */
     public String getAria2Path() {
-        return aria2Path;
+        return toolPaths.aria2Path;
     }
 
     /**
@@ -475,7 +474,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setAria2Path(String aria2Path) {
-        this.aria2Path = aria2Path;
+        toolPaths.setAria2Path(aria2Path);
         return this;
     }
 
@@ -485,7 +484,7 @@ public class GlobalSettings {
      * @return The path to yt-dlp executable
      */
     public String getYtDlpPath() {
-        return ytDlpPath;
+        return toolPaths.ytDlpPath;
     }
 
     /**
@@ -495,7 +494,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setYtDlpPath(String ytDlpPath) {
-        this.ytDlpPath = ytDlpPath;
+        toolPaths.setYtDlpPath(ytDlpPath);
         return this;
     }
 
@@ -505,7 +504,7 @@ public class GlobalSettings {
      * @return The path to httrack executable
      */
     public String getHttrackPath() {
-        return httrackPath;
+        return toolPaths.httrackPath;
     }
 
     /**
@@ -515,7 +514,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setHttrackPath(String httrackPath) {
-        this.httrackPath = httrackPath;
+        toolPaths.setHttrackPath(httrackPath);
         return this;
     }
 
@@ -525,7 +524,7 @@ public class GlobalSettings {
      * @return The path to curl executable
      */
     public String getCurlPath() {
-        return curlPath;
+        return toolPaths.curlPath;
     }
 
     /**
@@ -535,7 +534,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setCurlPath(String curlPath) {
-        this.curlPath = curlPath;
+        toolPaths.setCurlPath(curlPath);
         return this;
     }
 
@@ -545,7 +544,7 @@ public class GlobalSettings {
      * @return The path to proxychains executable
      */
     public String getProxychainsPath() {
-        return proxychainsPath;
+        return toolPaths.proxychainsPath;
     }
 
     /**
@@ -555,7 +554,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setProxychainsPath(String proxychainsPath) {
-        this.proxychainsPath = proxychainsPath;
+        toolPaths.setProxychainsPath(proxychainsPath);
         return this;
     }
 
@@ -565,7 +564,7 @@ public class GlobalSettings {
      * @return The path to tor executable
      */
     public String getTorPath() {
-        return torPath;
+        return toolPaths.torPath;
     }
 
     /**
@@ -575,7 +574,7 @@ public class GlobalSettings {
      * @return This settings object for chaining
      */
     public GlobalSettings setTorPath(String torPath) {
-        this.torPath = torPath;
+        toolPaths.setTorPath(torPath);
         return this;
     }
 
@@ -700,14 +699,7 @@ public class GlobalSettings {
      * @return A map of tool names to paths
      */
     public Map<String, String> getToolPaths() {
-        Map<String, String> paths = new HashMap<>();
-        paths.put("aria2", aria2Path);
-        paths.put("yt-dlp", ytDlpPath);
-        paths.put("httrack", httrackPath);
-        paths.put("curl", curlPath);
-        paths.put("proxychains", proxychainsPath);
-        paths.put("tor", torPath);
-        return paths;
+        return toolPaths.asMap();
     }
 
     /**
@@ -717,39 +709,22 @@ public class GlobalSettings {
      */
     public GlobalSettings copy() {
         GlobalSettings copy = new GlobalSettings();
-        copy.maxConcurrentDownloads = this.maxConcurrentDownloads;
-        copy.globalSpeedLimit = this.globalSpeedLimit;
-        copy.globalProxyEnabled = this.globalProxyEnabled;
-        copy.proxyRotationEnabled = this.proxyRotationEnabled;
-        copy.proxyRotationMaxRetries = this.proxyRotationMaxRetries;
-        copy.proxyListFilePath = this.proxyListFilePath;
-        copy.globalProxyAddress = this.globalProxyAddress;
+        copy.concurrency.copyFrom(concurrency);
+        copy.proxy.copyFrom(proxy);
+        copy.cleanup.copyFrom(cleanup);
+        copy.toolPaths.copyFrom(toolPaths);
         copy.defaultDownloadDirectory = this.defaultDownloadDirectory;
         copy.saveDownloadHistory = this.saveDownloadHistory;
         copy.clipboardSettings = this.clipboardSettings != null ? this.clipboardSettings.copy()
                 : new ClipboardSettings();
-        copy.maxDownloadsInMemory = this.maxDownloadsInMemory;
-        copy.maxCompletedDownloadsToKeep = this.maxCompletedDownloadsToKeep;
-        copy.cleanupIntervalHours = this.cleanupIntervalHours;
-        copy.completedDownloadRetentionDays = this.completedDownloadRetentionDays;
-        copy.errorDownloadRetentionDays = this.errorDownloadRetentionDays;
-        copy.automaticCleanupEnabled = this.automaticCleanupEnabled;
-        copy.enableLazyLoading = this.enableLazyLoading;
-        copy.paginationDefaultSize = this.paginationDefaultSize;
-        copy.aria2Path = this.aria2Path;
-        copy.ytDlpPath = this.ytDlpPath;
-        copy.httrackPath = this.httrackPath;
-        copy.curlPath = this.curlPath;
-        copy.proxychainsPath = this.proxychainsPath;
-        copy.torPath = this.torPath;
-
-        copy.properties.clear();
-        for (String name : this.properties.stringPropertyNames()) {
-            copy.properties.setProperty(name, this.properties.getProperty(name));
-        }
+        copy.custom.copyFrom(custom);
         // Don't copy transient availability flags
         return copy;
     }
+
+    // ------------------------------------------------------------------
+    // Generic property access
+    // ------------------------------------------------------------------
 
     /**
      * Gets an integer property value. This method provides generic access to
@@ -762,17 +737,17 @@ public class GlobalSettings {
     public int getIntProperty(String propertyName, int defaultValue) {
         return switch (propertyName) {
             case "maxConcurrentDownloads" ->
-                maxConcurrentDownloads;
+                concurrency.maxConcurrentDownloads;
             case "globalSpeedLimit" ->
-                globalSpeedLimit;
+                concurrency.globalSpeedLimit;
             case "maxDownloadsInMemory" ->
-                maxDownloadsInMemory;
+                cleanup.maxDownloadsInMemory;
             case "maxCompletedDownloadsToKeep" ->
-                maxCompletedDownloadsToKeep;
+                cleanup.maxCompletedDownloadsToKeep;
             case "paginationDefaultSize" ->
-                paginationDefaultSize;
+                cleanup.paginationDefaultSize;
             default -> {
-                String value = properties.getProperty(propertyName);
+                String value = custom.get(propertyName, null);
                 if (value != null) {
                     try {
                         yield Integer.parseInt(value);
@@ -796,15 +771,15 @@ public class GlobalSettings {
     public boolean getBooleanProperty(String propertyName, boolean defaultValue) {
         return switch (propertyName) {
             case "globalProxyEnabled" ->
-                globalProxyEnabled;
+                proxy.globalProxyEnabled;
             case "saveDownloadHistory" ->
                 saveDownloadHistory;
             case "automaticCleanupEnabled" ->
-                automaticCleanupEnabled;
+                cleanup.automaticCleanupEnabled;
             case "enableLazyLoading" ->
-                enableLazyLoading;
+                cleanup.enableLazyLoading;
             default -> {
-                String value = properties.getProperty(propertyName);
+                String value = custom.get(propertyName, null);
                 if (value != null) {
                     yield Boolean.parseBoolean(value);
                 }
@@ -824,23 +799,23 @@ public class GlobalSettings {
     public String getProperty(String propertyName, String defaultValue) {
         return switch (propertyName) {
             case "globalProxyAddress" ->
-                globalProxyAddress != null ? globalProxyAddress : defaultValue;
+                proxy.globalProxyAddress != null ? proxy.globalProxyAddress : defaultValue;
             case "defaultDownloadDirectory" ->
                 defaultDownloadDirectory != null ? defaultDownloadDirectory.toString() : defaultValue;
             case "aria2Path" ->
-                aria2Path;
+                toolPaths.aria2Path;
             case "ytDlpPath" ->
-                ytDlpPath;
+                toolPaths.ytDlpPath;
             case "httrackPath" ->
-                httrackPath;
+                toolPaths.httrackPath;
             case "curlPath" ->
-                curlPath;
+                toolPaths.curlPath;
             case "proxychainsPath" ->
-                proxychainsPath;
+                toolPaths.proxychainsPath;
             case "torPath" ->
-                torPath;
+                toolPaths.torPath;
             default ->
-                properties.getProperty(propertyName, defaultValue);
+                custom.get(propertyName, defaultValue);
         };
     }
 
@@ -873,28 +848,39 @@ public class GlobalSettings {
             case "torPath" ->
                 setTorPath(value);
             default ->
-                properties.setProperty(propertyName, value);
+                custom.set(propertyName, value);
         }
     }
 
+    // ------------------------------------------------------------------
+    // Persistence
+    // ------------------------------------------------------------------
+
     /**
      * Saves the settings to ${XDG_CONFIG_HOME:~/.config}/odm/settings.json so
-     * they persist across restarts. The Properties bag is synced first, then
-     * serialized with Jackson.
+     * they persist across restarts.
      */
     public void save() {
+        save(getConfigFilePath());
+    }
+
+    /**
+     * Saves the settings to the given file. The Properties bag is synced
+     * first, then serialized with Jackson. Write-then-move so a crash
+     * mid-write can never truncate the live settings file.
+     *
+     * @param file the target settings file
+     */
+    void save(Path file) {
         // Sync current values to properties
         syncToProperties();
 
-        // Persist the Properties bag to the config file. Write-then-move so
-        // a crash mid-write can never truncate the live settings file.
-        Path file = getConfigFilePath();
         Path temp = null;
         try {
             Files.createDirectories(file.getParent());
             Map<String, String> serialized = new HashMap<>();
-            for (String name : properties.stringPropertyNames()) {
-                serialized.put(name, properties.getProperty(name));
+            for (String name : custom.names()) {
+                serialized.put(name, custom.get(name, null));
             }
             temp = Files.createTempFile(file.getParent(), "settings-", ".tmp");
             MAPPER.writeValue(temp.toFile(), serialized);
@@ -924,7 +910,16 @@ public class GlobalSettings {
      * this instance. Does nothing if the file does not exist.
      */
     public void load() {
-        Path file = getConfigFilePath();
+        load(getConfigFilePath());
+    }
+
+    /**
+     * Loads settings from the given file into this instance. Does nothing if
+     * the file does not exist.
+     *
+     * @param file the settings file to read
+     */
+    void load(Path file) {
         if (!Files.exists(file)) {
             LOGGER.fine("No settings file found at " + file + ", keeping defaults");
             return;
@@ -933,7 +928,7 @@ public class GlobalSettings {
             Map<String, String> serialized = MAPPER.readValue(file.toFile(),
                     new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {
                     });
-            serialized.forEach((key, value) -> properties.setProperty(key, value));
+            serialized.forEach(custom::set);
             applyLoadedValues();
             LOGGER.fine("Settings loaded from " + file);
         } catch (IOException e) {
@@ -953,70 +948,36 @@ public class GlobalSettings {
         if (other == null || other == this) {
             return;
         }
-        this.maxConcurrentDownloads = other.maxConcurrentDownloads;
-        this.globalSpeedLimit = other.globalSpeedLimit;
-        this.globalProxyEnabled = other.globalProxyEnabled;
-        this.proxyRotationEnabled = other.proxyRotationEnabled;
-        this.proxyRotationMaxRetries = other.proxyRotationMaxRetries;
-        this.proxyListFilePath = other.proxyListFilePath;
-        this.globalProxyAddress = other.globalProxyAddress;
+        this.concurrency.copyFrom(other.concurrency);
+        this.proxy.copyFrom(other.proxy);
+        this.cleanup.copyFrom(other.cleanup);
+        this.toolPaths.copyFrom(other.toolPaths);
         this.defaultDownloadDirectory = other.defaultDownloadDirectory;
         this.saveDownloadHistory = other.saveDownloadHistory;
         this.clipboardSettings = other.clipboardSettings;
-        this.maxDownloadsInMemory = other.maxDownloadsInMemory;
-        this.maxCompletedDownloadsToKeep = other.maxCompletedDownloadsToKeep;
-        this.cleanupIntervalHours = other.cleanupIntervalHours;
-        this.completedDownloadRetentionDays = other.completedDownloadRetentionDays;
-        this.errorDownloadRetentionDays = other.errorDownloadRetentionDays;
-        this.automaticCleanupEnabled = other.automaticCleanupEnabled;
-        this.enableLazyLoading = other.enableLazyLoading;
-        this.paginationDefaultSize = other.paginationDefaultSize;
-        this.aria2Path = other.aria2Path;
-        this.ytDlpPath = other.ytDlpPath;
-        this.httrackPath = other.httrackPath;
-        this.curlPath = other.curlPath;
-        this.proxychainsPath = other.proxychainsPath;
-        this.torPath = other.torPath;
 
-        properties.clear();
-        for (String name : other.properties.stringPropertyNames()) {
-            properties.setProperty(name, other.properties.getProperty(name));
-        }
+        this.custom.copyFrom(other.custom);
     }
 
     /**
      * Syncs the typed fields into the Properties bag so that generic property
-     * access and persistence see the current values.
+     * access and persistence see the current values. Each group owns exactly
+     * its own persisted key set.
      */
     private void syncToProperties() {
-        properties.setProperty("maxConcurrentDownloads", String.valueOf(maxConcurrentDownloads));
-        properties.setProperty("globalSpeedLimit", String.valueOf(globalSpeedLimit));
-        properties.setProperty("globalProxyEnabled", String.valueOf(globalProxyEnabled));
-        properties.setProperty("saveDownloadHistory", String.valueOf(saveDownloadHistory));
-        properties.setProperty("automaticCleanupEnabled", String.valueOf(automaticCleanupEnabled));
-        properties.setProperty("enableLazyLoading", String.valueOf(enableLazyLoading));
-        properties.setProperty("maxDownloadsInMemory", String.valueOf(maxDownloadsInMemory));
-        properties.setProperty("maxCompletedDownloadsToKeep", String.valueOf(maxCompletedDownloadsToKeep));
-        properties.setProperty("paginationDefaultSize", String.valueOf(paginationDefaultSize));
-        properties.setProperty("proxyRotationEnabled", String.valueOf(proxyRotationEnabled));
-        properties.setProperty("proxyRotationMaxRetries", String.valueOf(proxyRotationMaxRetries));
+        concurrency.syncTo(custom);
+        proxy.syncTo(custom);
+        cleanup.syncTo(custom);
+        // toolPaths are runtime-only today (no persisted keys) — deliberately
+        // not synced; changing that is a format change requiring a fixture bump
 
-        if (globalProxyAddress != null) {
-            properties.setProperty("globalProxyAddress", globalProxyAddress);
+        custom.set("saveDownloadHistory", String.valueOf(saveDownloadHistory));
+        if (defaultDownloadDirectory != null) {
+            custom.set("defaultDownloadDirectory", defaultDownloadDirectory.toString());
         } else {
             // Clear stale keys: leaving them would resurrect the old value
             // on the next load
-            properties.remove("globalProxyAddress");
-        }
-        if (proxyListFilePath != null) {
-            properties.setProperty("proxyListFilePath", proxyListFilePath);
-        } else {
-            properties.remove("proxyListFilePath");
-        }
-        if (defaultDownloadDirectory != null) {
-            properties.setProperty("defaultDownloadDirectory", defaultDownloadDirectory.toString());
-        } else {
-            properties.remove("defaultDownloadDirectory");
+            custom.remove("defaultDownloadDirectory");
         }
     }
 
@@ -1025,79 +986,345 @@ public class GlobalSettings {
      * Called after loading a settings file.
      */
     private void applyLoadedValues() {
-        if (properties.containsKey("maxConcurrentDownloads")) {
-            try {
-                // Route through the setter: hand-edited values (9999) must
-                // be clamped exactly like UI input
-                setMaxConcurrentDownloads(Integer.parseInt(properties.getProperty("maxConcurrentDownloads")));
-            } catch (NumberFormatException e) {
-                LOGGER.warning("Invalid maxConcurrentDownloads in settings file: "
-                        + properties.getProperty("maxConcurrentDownloads"));
+        concurrency.applyLoaded(custom);
+        proxy.applyLoaded(custom);
+        cleanup.applyLoaded(custom);
+
+        if (custom.containsKey("defaultDownloadDirectory")) {
+            defaultDownloadDirectory = Paths.get(custom.get("defaultDownloadDirectory", null));
+        }
+        if (custom.containsKey("saveDownloadHistory")) {
+            saveDownloadHistory = Boolean.parseBoolean(custom.get("saveDownloadHistory", null));
+        }
+    }
+
+    // ==================================================================
+    // Role groups
+    // ==================================================================
+
+    /**
+     * Engine transfer limits: concurrent-download cap and the global speed
+     * limit. Fields are volatile: written from UI threads, read from
+     * worker/monitor threads (individually-consistent reads; cross-field
+     * atomicity is not required for these knobs).
+     */
+    static final class ConcurrencySettings {
+        private volatile int maxConcurrentDownloads = 3;
+        private volatile int globalSpeedLimit = 0; // 0 means no limit (in KB/s)
+
+        void setMaxConcurrentDownloads(int value) {
+            this.maxConcurrentDownloads = Math.clamp(value, 1, 20);
+        }
+
+        void setGlobalSpeedLimit(int value) {
+            this.globalSpeedLimit = Math.max(0, value);
+        }
+
+        void copyFrom(ConcurrencySettings other) {
+            this.maxConcurrentDownloads = other.maxConcurrentDownloads;
+            this.globalSpeedLimit = other.globalSpeedLimit;
+        }
+
+        void syncTo(CustomProperties bag) {
+            bag.set("maxConcurrentDownloads", String.valueOf(maxConcurrentDownloads));
+            bag.set("globalSpeedLimit", String.valueOf(globalSpeedLimit));
+        }
+
+        void applyLoaded(CustomProperties bag) {
+            if (bag.containsKey("maxConcurrentDownloads")) {
+                try {
+                    // Route through the setter: hand-edited values (9999) must
+                    // be clamped exactly like UI input
+                    setMaxConcurrentDownloads(Integer.parseInt(bag.get("maxConcurrentDownloads", null)));
+                } catch (NumberFormatException e) {
+                    LOGGER.warning("Invalid maxConcurrentDownloads in settings file: "
+                            + bag.get("maxConcurrentDownloads", null));
+                }
+            }
+            if (bag.containsKey("globalSpeedLimit")) {
+                try {
+                    globalSpeedLimit = Integer.parseInt(bag.get("globalSpeedLimit", null));
+                } catch (NumberFormatException e) {
+                    LOGGER.warning("Invalid globalSpeedLimit in settings file: "
+                            + bag.get("globalSpeedLimit", null));
+                }
             }
         }
-        if (properties.containsKey("globalSpeedLimit")) {
-            try {
-                globalSpeedLimit = Integer.parseInt(properties.getProperty("globalSpeedLimit"));
-            } catch (NumberFormatException e) {
-                LOGGER.warning("Invalid globalSpeedLimit in settings file: "
-                        + properties.getProperty("globalSpeedLimit"));
+    }
+
+    /** Global proxy plus proxy-rotation configuration. */
+    static final class ProxySettings {
+        private volatile boolean globalProxyEnabled = false;
+        private volatile String globalProxyAddress = null;
+        private volatile boolean proxyRotationEnabled = false;
+        private volatile int proxyRotationMaxRetries = 5;
+        private volatile String proxyListFilePath;
+
+        void setGlobalProxyEnabled(boolean value) {
+            this.globalProxyEnabled = value;
+        }
+
+        void setGlobalProxyAddress(String value) {
+            this.globalProxyAddress = value;
+        }
+
+        void setProxyRotationEnabled(boolean value) {
+            this.proxyRotationEnabled = value;
+        }
+
+        void setProxyRotationMaxRetries(int value) {
+            this.proxyRotationMaxRetries = Math.clamp(value, 0, 20);
+        }
+
+        void setProxyListFilePath(String value) {
+            this.proxyListFilePath = value;
+        }
+
+        void copyFrom(ProxySettings other) {
+            this.globalProxyEnabled = other.globalProxyEnabled;
+            this.globalProxyAddress = other.globalProxyAddress;
+            this.proxyRotationEnabled = other.proxyRotationEnabled;
+            this.proxyRotationMaxRetries = other.proxyRotationMaxRetries;
+            this.proxyListFilePath = other.proxyListFilePath;
+        }
+
+        void syncTo(CustomProperties bag) {
+            bag.set("globalProxyEnabled", String.valueOf(globalProxyEnabled));
+            bag.set("proxyRotationEnabled", String.valueOf(proxyRotationEnabled));
+            bag.set("proxyRotationMaxRetries", String.valueOf(proxyRotationMaxRetries));
+
+            if (globalProxyAddress != null) {
+                bag.set("globalProxyAddress", globalProxyAddress);
+            } else {
+                // Clear stale keys: leaving them would resurrect the old value
+                // on the next load
+                bag.remove("globalProxyAddress");
+            }
+            if (proxyListFilePath != null) {
+                bag.set("proxyListFilePath", proxyListFilePath);
+            } else {
+                bag.remove("proxyListFilePath");
             }
         }
-        if (properties.containsKey("globalProxyEnabled")) {
-            globalProxyEnabled = Boolean.parseBoolean(properties.getProperty("globalProxyEnabled"));
-        }
-        if (properties.containsKey("globalProxyAddress")) {
-            globalProxyAddress = properties.getProperty("globalProxyAddress");
-        }
-        if (properties.containsKey("defaultDownloadDirectory")) {
-            defaultDownloadDirectory = Paths.get(properties.getProperty("defaultDownloadDirectory"));
-        }
-        if (properties.containsKey("saveDownloadHistory")) {
-            saveDownloadHistory = Boolean.parseBoolean(properties.getProperty("saveDownloadHistory"));
-        }
-        if (properties.containsKey("automaticCleanupEnabled")) {
-            automaticCleanupEnabled = Boolean.parseBoolean(properties.getProperty("automaticCleanupEnabled"));
-        }
-        if (properties.containsKey("enableLazyLoading")) {
-            enableLazyLoading = Boolean.parseBoolean(properties.getProperty("enableLazyLoading"));
-        }
-        if (properties.containsKey("maxDownloadsInMemory")) {
-            try {
-                maxDownloadsInMemory = Integer.parseInt(properties.getProperty("maxDownloadsInMemory"));
-            } catch (NumberFormatException e) {
-                LOGGER.warning("Invalid maxDownloadsInMemory in settings file: "
-                        + properties.getProperty("maxDownloadsInMemory"));
+
+        void applyLoaded(CustomProperties bag) {
+            if (bag.containsKey("globalProxyEnabled")) {
+                globalProxyEnabled = Boolean.parseBoolean(bag.get("globalProxyEnabled", null));
+            }
+            if (bag.containsKey("globalProxyAddress")) {
+                globalProxyAddress = bag.get("globalProxyAddress", null);
+            }
+            if (bag.containsKey("proxyRotationEnabled")) {
+                proxyRotationEnabled = Boolean.parseBoolean(bag.get("proxyRotationEnabled", null));
+            }
+            if (bag.containsKey("proxyRotationMaxRetries")) {
+                try {
+                    setProxyRotationMaxRetries(Integer.parseInt(bag.get("proxyRotationMaxRetries", null)));
+                } catch (NumberFormatException e) {
+                    LOGGER.warning("Invalid proxyRotationMaxRetries in settings file: "
+                            + bag.get("proxyRotationMaxRetries", null));
+                }
+            }
+            if (bag.containsKey("proxyListFilePath")) {
+                proxyListFilePath = bag.get("proxyListFilePath", null);
             }
         }
-        if (properties.containsKey("maxCompletedDownloadsToKeep")) {
-            try {
-                maxCompletedDownloadsToKeep = Integer.parseInt(properties.getProperty("maxCompletedDownloadsToKeep"));
-            } catch (NumberFormatException e) {
-                LOGGER.warning("Invalid maxCompletedDownloadsToKeep in settings file: "
-                        + properties.getProperty("maxCompletedDownloadsToKeep"));
+    }
+
+    /**
+     * Memory-management and cleanup policy: in-memory/pagination limits,
+     * retention windows, and cleanup toggles. Note that today only the
+     * toggles and numeric limits below marked in {@link #syncTo} persist;
+     * the retention windows are runtime-only.
+     */
+    static final class CleanupPolicy {
+        private volatile int maxDownloadsInMemory = 1000; // 0 for unlimited
+        private volatile int maxCompletedDownloadsToKeep = 500;
+        private volatile long cleanupIntervalHours = 24; // Cleanup every 24 hours
+        private volatile long completedDownloadRetentionDays = 30; // Keep completed downloads for 30 days
+        private volatile long errorDownloadRetentionDays = 7; // Keep error downloads for 7 days
+        private volatile boolean automaticCleanupEnabled = true;
+        private volatile boolean enableLazyLoading = true; // Enable lazy loading for large datasets
+        private volatile int paginationDefaultSize = 50; // Default page size for paginated queries
+
+        void setMaxDownloadsInMemory(int value) {
+            this.maxDownloadsInMemory = Math.clamp(value, 10, 10000);
+        }
+
+        void setMaxCompletedDownloadsToKeep(int value) {
+            this.maxCompletedDownloadsToKeep = Math.max(0, value);
+        }
+
+        void setCleanupIntervalHours(long value) {
+            this.cleanupIntervalHours = Math.max(1, value);
+        }
+
+        void setCompletedDownloadRetentionDays(long value) {
+            this.completedDownloadRetentionDays = Math.max(1, value);
+        }
+
+        void setErrorDownloadRetentionDays(long value) {
+            this.errorDownloadRetentionDays = Math.max(1, value);
+        }
+
+        void setAutomaticCleanupEnabled(boolean value) {
+            this.automaticCleanupEnabled = value;
+        }
+
+        void setEnableLazyLoading(boolean value) {
+            this.enableLazyLoading = value;
+        }
+
+        void setPaginationDefaultSize(int value) {
+            this.paginationDefaultSize = Math.clamp(value, 10, 1000);
+        }
+
+        void copyFrom(CleanupPolicy other) {
+            this.maxDownloadsInMemory = other.maxDownloadsInMemory;
+            this.maxCompletedDownloadsToKeep = other.maxCompletedDownloadsToKeep;
+            this.cleanupIntervalHours = other.cleanupIntervalHours;
+            this.completedDownloadRetentionDays = other.completedDownloadRetentionDays;
+            this.errorDownloadRetentionDays = other.errorDownloadRetentionDays;
+            this.automaticCleanupEnabled = other.automaticCleanupEnabled;
+            this.enableLazyLoading = other.enableLazyLoading;
+            this.paginationDefaultSize = other.paginationDefaultSize;
+        }
+
+        void syncTo(CustomProperties bag) {
+            bag.set("automaticCleanupEnabled", String.valueOf(automaticCleanupEnabled));
+            bag.set("enableLazyLoading", String.valueOf(enableLazyLoading));
+            bag.set("maxDownloadsInMemory", String.valueOf(maxDownloadsInMemory));
+            bag.set("maxCompletedDownloadsToKeep", String.valueOf(maxCompletedDownloadsToKeep));
+            bag.set("paginationDefaultSize", String.valueOf(paginationDefaultSize));
+        }
+
+        void applyLoaded(CustomProperties bag) {
+            if (bag.containsKey("automaticCleanupEnabled")) {
+                automaticCleanupEnabled = Boolean.parseBoolean(bag.get("automaticCleanupEnabled", null));
+            }
+            if (bag.containsKey("enableLazyLoading")) {
+                enableLazyLoading = Boolean.parseBoolean(bag.get("enableLazyLoading", null));
+            }
+            if (bag.containsKey("maxDownloadsInMemory")) {
+                try {
+                    maxDownloadsInMemory = Integer.parseInt(bag.get("maxDownloadsInMemory", null));
+                } catch (NumberFormatException e) {
+                    LOGGER.warning("Invalid maxDownloadsInMemory in settings file: "
+                            + bag.get("maxDownloadsInMemory", null));
+                }
+            }
+            if (bag.containsKey("maxCompletedDownloadsToKeep")) {
+                try {
+                    maxCompletedDownloadsToKeep = Integer.parseInt(bag.get("maxCompletedDownloadsToKeep", null));
+                } catch (NumberFormatException e) {
+                    LOGGER.warning("Invalid maxCompletedDownloadsToKeep in settings file: "
+                            + bag.get("maxCompletedDownloadsToKeep", null));
+                }
+            }
+            if (bag.containsKey("paginationDefaultSize")) {
+                try {
+                    paginationDefaultSize = Integer.parseInt(bag.get("paginationDefaultSize", null));
+                } catch (NumberFormatException e) {
+                    LOGGER.warning("Invalid paginationDefaultSize in settings file: "
+                            + bag.get("paginationDefaultSize", null));
+                }
             }
         }
-        if (properties.containsKey("paginationDefaultSize")) {
-            try {
-                paginationDefaultSize = Integer.parseInt(properties.getProperty("paginationDefaultSize"));
-            } catch (NumberFormatException e) {
-                LOGGER.warning("Invalid paginationDefaultSize in settings file: "
-                        + properties.getProperty("paginationDefaultSize"));
+    }
+
+    /**
+     * External tool executable paths. Runtime-only today: the paths are not
+     * persisted to settings.json (see {@link #syncToProperties}); they are
+     * resolved through the ToolPaths seam and may be overridden per session.
+     */
+    static final class ToolPathSettings {
+        private volatile String aria2Path = "aria2c";
+        private volatile String ytDlpPath = "yt-dlp";
+        private volatile String httrackPath = "httrack";
+        private volatile String curlPath = "curl";
+        private volatile String proxychainsPath = "proxychains";
+        private volatile String torPath = "tor";
+
+        void setAria2Path(String value) {
+            this.aria2Path = value;
+        }
+
+        void setYtDlpPath(String value) {
+            this.ytDlpPath = value;
+        }
+
+        void setHttrackPath(String value) {
+            this.httrackPath = value;
+        }
+
+        void setCurlPath(String value) {
+            this.curlPath = value;
+        }
+
+        void setProxychainsPath(String value) {
+            this.proxychainsPath = value;
+        }
+
+        void setTorPath(String value) {
+            this.torPath = value;
+        }
+
+        Map<String, String> asMap() {
+            Map<String, String> paths = new HashMap<>();
+            paths.put("aria2", aria2Path);
+            paths.put("yt-dlp", ytDlpPath);
+            paths.put("httrack", httrackPath);
+            paths.put("curl", curlPath);
+            paths.put("proxychains", proxychainsPath);
+            paths.put("tor", torPath);
+            return paths;
+        }
+
+        void copyFrom(ToolPathSettings other) {
+            this.aria2Path = other.aria2Path;
+            this.ytDlpPath = other.ytDlpPath;
+            this.httrackPath = other.httrackPath;
+            this.curlPath = other.curlPath;
+            this.proxychainsPath = other.proxychainsPath;
+            this.torPath = other.torPath;
+        }
+    }
+
+    /**
+     * The free-form property bag holding every key that is not a typed
+     * setting: engine options ({@code aria2.*}, {@code ytdlp.*}), UI state
+     * ({@code ui.*}), scheduler/tracker/antivirus/folder configuration, and
+     * the synchronized typed keys while saving/loading. Owns its own copy
+     * semantics.
+     */
+    static final class CustomProperties {
+        private final Properties properties = new Properties();
+
+        String get(String name, String defaultValue) {
+            return properties.getProperty(name, defaultValue);
+        }
+
+        void set(String name, String value) {
+            properties.setProperty(name, value);
+        }
+
+        void remove(String name) {
+            properties.remove(name);
+        }
+
+        boolean containsKey(String name) {
+            return properties.containsKey(name);
+        }
+
+        java.util.Set<String> names() {
+            return properties.stringPropertyNames();
+        }
+
+        void copyFrom(CustomProperties other) {
+            properties.clear();
+            for (String name : other.names()) {
+                properties.setProperty(name, other.properties.getProperty(name));
             }
-        }
-        if (properties.containsKey("proxyRotationEnabled")) {
-            proxyRotationEnabled = Boolean.parseBoolean(properties.getProperty("proxyRotationEnabled"));
-        }
-        if (properties.containsKey("proxyRotationMaxRetries")) {
-            try {
-                setProxyRotationMaxRetries(Integer.parseInt(properties.getProperty("proxyRotationMaxRetries")));
-            } catch (NumberFormatException e) {
-                LOGGER.warning("Invalid proxyRotationMaxRetries in settings file: "
-                        + properties.getProperty("proxyRotationMaxRetries"));
-            }
-        }
-        if (properties.containsKey("proxyListFilePath")) {
-            proxyListFilePath = properties.getProperty("proxyListFilePath");
         }
     }
 }
