@@ -37,12 +37,16 @@ class FolderMonitorDescriptorStagingTest {
 
     private FolderMonitorServiceImpl folderMonitorService;
 
+    /** Temp staging root: tests must never write into the real ODM data dir. */
+    private Path stagingRoot;
+
     @TempDir
     Path tempDir;
 
     @BeforeEach
     void setUp() throws IOException {
-        folderMonitorService = new FolderMonitorServiceImpl();
+        stagingRoot = tempDir.resolve("descriptor-staging");
+        folderMonitorService = new FolderMonitorServiceImpl(stagingRoot);
     }
 
     @AfterEach
@@ -112,39 +116,104 @@ class FolderMonitorDescriptorStagingTest {
     @DisplayName("Announced descriptors live beneath the staging root under their original name")
     @Timeout(20)
     void announcedDescriptorLivesBeneathStagingRootWithOriginalNameSuffix() throws Exception {
-        Path stagingRoot = tempDir.resolve("descriptor-staging");
-        FolderMonitorServiceImpl stagingService = new FolderMonitorServiceImpl(stagingRoot);
+        Path watchFolder = tempDir.resolve("inbox");
+        Files.createDirectories(watchFolder);
+        Path source = watchFolder.resolve("movie.torrent");
+        byte[] originalBytes = validTorrentBytes("movie.bin");
+        Files.write(source, originalBytes);
+
+        AtomicReference<Path> announced = new AtomicReference<>();
+        folderMonitorService.addFolderMonitorListener(new FolderMonitorListener() {
+            @Override
+            public void onFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
+                announced.set(filePath);
+            }
+        });
+
+        FolderMonitorSettings settings = new FolderMonitorSettings()
+                .setFileExtensions(Set.of(".torrent"))
+                .setFileAction(FolderMonitorSettings.FileAction.DELETE);
+
+        folderMonitorService.scanFolder(watchFolder, settings).get(5, TimeUnit.SECONDS);
+
+        Path descriptor = announced.get();
+        assertNotNull(descriptor, "listener must have been notified");
+        assertTrue(descriptor.toAbsolutePath().normalize()
+                        .startsWith(stagingRoot.toAbsolutePath().normalize()),
+                "announced descriptor must be staged beneath the exclusive root: " + descriptor);
+        assertTrue(descriptor.getFileName().toString().endsWith("movie.torrent"),
+                "staged name must preserve the original file name");
+        assertArrayEquals(originalBytes, Files.readAllBytes(descriptor));
+    }
+
+    @Test
+    @DisplayName("Failed announce is retried after repair; the original survives until announce succeeds")
+    @Timeout(30)
+    void failedAnnounceIsRetriedAfterRepairAndOriginalSurvivesUntilSuccess() throws Exception {
+        // Sabotage the staging root so the first announcement fails
+        Path retryStagingRoot = tempDir.resolve("retry-staging-root");
+        Files.writeString(retryStagingRoot, "not a directory", StandardCharsets.UTF_8);
+
+        FolderMonitorServiceImpl retryService = new FolderMonitorServiceImpl(retryStagingRoot);
         try {
-            Path watchFolder = tempDir.resolve("inbox");
+            Path watchFolder = tempDir.resolve("watch");
             Files.createDirectories(watchFolder);
             Path source = watchFolder.resolve("movie.torrent");
             byte[] originalBytes = validTorrentBytes("movie.bin");
-            Files.write(source, originalBytes);
 
+            CountDownLatch failureReported = new CountDownLatch(1);
             AtomicReference<Path> announced = new AtomicReference<>();
-            stagingService.addFolderMonitorListener(new FolderMonitorListener() {
+            retryService.addFolderMonitorListener(new FolderMonitorListener() {
                 @Override
                 public void onFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
                     announced.set(filePath);
+                }
+
+                @Override
+                public void onFileProcessingError(Path folderPath, Path filePath, Throwable error,
+                        FolderMonitorSettings settings) {
+                    failureReported.countDown();
                 }
             });
 
             FolderMonitorSettings settings = new FolderMonitorSettings()
                     .setFileExtensions(Set.of(".torrent"))
-                    .setFileAction(FolderMonitorSettings.FileAction.DELETE);
+                    .setFileAction(FolderMonitorSettings.FileAction.DELETE)
+                    .setDebounceDelay(Duration.ofMillis(200))
+                    .setProcessExistingFiles(false);
 
-            stagingService.scanFolder(watchFolder, settings).get(5, TimeUnit.SECONDS);
+            retryService.startMonitoring(watchFolder, settings).get(5, TimeUnit.SECONDS);
 
+            // First round: staging fails, no announcement, original kept
+            Files.write(source, originalBytes);
+            assertTrue(failureReported.await(10, TimeUnit.SECONDS),
+                    "the staging failure must be reported");
+            assertNull(announced.get(), "no announcement may happen while staging fails");
+            assertTrue(Files.exists(source), "the original must survive the failed round");
+
+            // Repair staging, then touch the file so a MODIFY event triggers
+            // a new debounce round
+            Files.delete(retryStagingRoot);
+            Files.createDirectories(retryStagingRoot);
+            Files.write(source, originalBytes, java.nio.file.StandardOpenOption.APPEND);
+
+            // Second round: the announcement must be RETRIED with the staged
+            // path, and only then may the disposition consume the original
+            await().atMost(Duration.ofSeconds(15))
+                    .until(() -> announced.get() != null);
             Path descriptor = announced.get();
-            assertNotNull(descriptor, "listener must have been notified");
             assertTrue(descriptor.toAbsolutePath().normalize()
-                            .startsWith(stagingRoot.toAbsolutePath().normalize()),
-                    "announced descriptor must be staged beneath the exclusive root: " + descriptor);
-            assertTrue(descriptor.getFileName().toString().endsWith("movie.torrent"),
-                    "staged name must preserve the original file name");
-            assertArrayEquals(originalBytes, Files.readAllBytes(descriptor));
+                            .startsWith(retryStagingRoot.toAbsolutePath().normalize()),
+                    "retried announcement must use a staged copy: " + descriptor);
+            await().atMost(Duration.ofSeconds(5))
+                    .until(() -> !Files.exists(source));
+            byte[] stagedBytes = Files.readAllBytes(descriptor);
+            assertEquals(originalBytes.length * 2, stagedBytes.length,
+                    "the staged copy must hold the bytes as of the successful round");
+            assertArrayEquals(originalBytes,
+                    java.util.Arrays.copyOfRange(stagedBytes, 0, originalBytes.length));
         } finally {
-            stagingService.shutdown().get(5, TimeUnit.SECONDS);
+            retryService.shutdown().get(5, TimeUnit.SECONDS);
         }
     }
 

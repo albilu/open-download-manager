@@ -30,7 +30,7 @@ class ValidateTests {
 
     @BeforeEach
     void setUp() throws IOException {
-        folderMonitorService = new FolderMonitorServiceImpl();
+        folderMonitorService = new FolderMonitorServiceImpl(tempDir.resolve("test-descriptor-staging"));
     }
 
     @AfterEach

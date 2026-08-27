@@ -17,6 +17,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import com.github.stefanbirkner.systemlambda.SystemLambda;
 import org.manager.ApplicationContext;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
@@ -73,75 +74,83 @@ class Aria2StagedDescriptorDeletionIntegrationTest {
     @DisplayName("Successful ingestion removes only ODM-managed staged files")
     @Timeout(120)
     void successfulIngestionRemovesOnlyManagedStagedFiles() throws Exception {
-        Path downloadDir = tempDir.resolve("downloads");
-        Files.createDirectories(downloadDir);
+        // XDG_DATA_HOME into the temp dir keeps the staging root hermetic
+        // while still exercising the real production resolution
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", tempDir.toString()).execute(() -> {
+            Path downloadDir = tempDir.resolve("downloads");
+            Files.createDirectories(downloadDir);
 
-        // ODM-managed descriptor: staged beneath the exclusive staging root
-        Path stagingRoot = DescriptorStaging.stagingRoot();
-        Files.createDirectories(stagingRoot);
-        Path staged = stagingRoot.resolve(UUID.randomUUID() + "-watched.torrent");
-        byte[] stagedBytes = validTorrentBytes("staged-payload.bin");
-        Files.write(staged, stagedBytes);
+            // ODM-managed descriptor: staged beneath the exclusive staging root
+            Path stagingRoot = DescriptorStaging.stagingRoot();
+            Files.createDirectories(stagingRoot);
+            Path staged = stagingRoot.resolve(UUID.randomUUID() + "-watched.torrent");
+            byte[] stagedBytes = validTorrentBytes("staged-payload.bin");
+            Files.write(staged, stagedBytes);
 
-        // User-owned descriptor: manually selected, outside the staging root
-        Path manual = tempDir.resolve("manually-selected.torrent");
-        byte[] manualBytes = validTorrentBytes("manual-payload.bin");
-        Files.write(manual, manualBytes);
+            // User-owned descriptor: manually selected, outside the staging root
+            Path manual = tempDir.resolve("manually-selected.torrent");
+            byte[] manualBytes = validTorrentBytes("manual-payload.bin");
+            Files.write(manual, manualBytes);
 
-        Aria2DownloadHandler handler = newHandler(downloadDir);
-        try {
-            handler.initialize().get(30, TimeUnit.SECONDS);
+            Aria2DownloadHandler handler = newHandler(downloadDir);
+            try {
+                handler.initialize().get(30, TimeUnit.SECONDS);
 
-            String stagedGid = handler.startDownload(Download.fromTorrent(staged, downloadDir))
-                    .get(30, TimeUnit.SECONDS);
-            assertNotNull(stagedGid, "aria2 must accept the staged torrent");
+                String stagedGid = handler.startDownload(Download.fromTorrent(staged, downloadDir))
+                        .get(30, TimeUnit.SECONDS);
+                assertNotNull(stagedGid, "aria2 must accept the staged torrent");
 
-            String manualGid = handler.startDownload(Download.fromTorrent(manual, downloadDir))
-                    .get(30, TimeUnit.SECONDS);
-            assertNotNull(manualGid, "aria2 must accept the manual torrent");
+                String manualGid = handler.startDownload(Download.fromTorrent(manual, downloadDir))
+                        .get(30, TimeUnit.SECONDS);
+                assertNotNull(manualGid, "aria2 must accept the manual torrent");
 
-            // Deletion is tied to successful ingestion and happens before the
-            // start future completes
-            assertFalse(Files.exists(staged),
-                    "successfully ingested staged descriptor must be removed");
-            assertTrue(Files.exists(manual),
-                    "manually selected descriptor must never be auto-deleted");
-            assertArrayEquals(manualBytes, Files.readAllBytes(manual));
-        } finally {
-            handler.shutdown().get(30, TimeUnit.SECONDS);
-        }
+                // Deletion is tied to successful ingestion and happens before the
+                // start future completes
+                assertFalse(Files.exists(staged),
+                        "successfully ingested staged descriptor must be removed");
+                assertTrue(Files.exists(manual),
+                        "manually selected descriptor must never be auto-deleted");
+                assertArrayEquals(manualBytes, Files.readAllBytes(manual));
+            } finally {
+                handler.shutdown().get(30, TimeUnit.SECONDS);
+            }
+        });
     }
 
     @Test
     @DisplayName("Failed ingestion keeps the staged descriptor")
     @Timeout(120)
     void failedIngestionKeepsStagedDescriptor() throws Exception {
-        Path downloadDir = tempDir.resolve("downloads");
-        Files.createDirectories(downloadDir);
+        // XDG_DATA_HOME into the temp dir keeps the staging root hermetic
+        // while still exercising the real production resolution
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", tempDir.toString()).execute(() -> {
+            Path downloadDir = tempDir.resolve("downloads");
+            Files.createDirectories(downloadDir);
 
-        Path stagingRoot = DescriptorStaging.stagingRoot();
-        Files.createDirectories(stagingRoot);
-        Path staged = stagingRoot.resolve(UUID.randomUUID() + "-broken.torrent");
-        byte[] garbage = "this is not bencode and aria2 must reject it".getBytes(StandardCharsets.UTF_8);
-        Files.write(staged, garbage);
+            Path stagingRoot = DescriptorStaging.stagingRoot();
+            Files.createDirectories(stagingRoot);
+            Path staged = stagingRoot.resolve(UUID.randomUUID() + "-broken.torrent");
+            byte[] garbage = "this is not bencode and aria2 must reject it".getBytes(StandardCharsets.UTF_8);
+            Files.write(staged, garbage);
 
-        Aria2DownloadHandler handler = newHandler(downloadDir);
-        try {
-            handler.initialize().get(30, TimeUnit.SECONDS);
-
-            boolean rejected = false;
+            Aria2DownloadHandler handler = newHandler(downloadDir);
             try {
-                handler.startDownload(Download.fromTorrent(staged, downloadDir)).get(30, TimeUnit.SECONDS);
-            } catch (Exception expected) {
-                rejected = true;
-            }
-            assertTrue(rejected, "aria2 must reject a non-bencode torrent");
+                handler.initialize().get(30, TimeUnit.SECONDS);
 
-            assertTrue(Files.exists(staged),
-                    "a failed ingestion must keep the staged descriptor so the input is not lost");
-            assertArrayEquals(garbage, Files.readAllBytes(staged));
-        } finally {
-            handler.shutdown().get(30, TimeUnit.SECONDS);
-        }
+                boolean rejected = false;
+                try {
+                    handler.startDownload(Download.fromTorrent(staged, downloadDir)).get(30, TimeUnit.SECONDS);
+                } catch (Exception expected) {
+                    rejected = true;
+                }
+                assertTrue(rejected, "aria2 must reject a non-bencode torrent");
+
+                assertTrue(Files.exists(staged),
+                        "a failed ingestion must keep the staged descriptor so the input is not lost");
+                assertArrayEquals(garbage, Files.readAllBytes(staged));
+            } finally {
+                handler.shutdown().get(30, TimeUnit.SECONDS);
+            }
+        });
     }
 }

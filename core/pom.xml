@@ -145,6 +145,9 @@
                          later classes in the same JVM. Fork each class for isolation. -->
                     <forkCount>1</forkCount>
                     <reuseForks>false</reuseForks>
+                    <!-- system-lambda mutates the process environment through
+                         reflection; JDK 17+ requires java.util to be opened -->
+                    <argLine>@{argLine} --add-opens=java.base/java.util=ALL-UNNAMED</argLine>
                     <!-- Real external-tool / network suites are excluded from
                          the default (hermetic) run; enable with -Pintegration.
                          The $ patterns cover @Nested runner classes, which

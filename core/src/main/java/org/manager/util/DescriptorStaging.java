@@ -63,6 +63,15 @@ public final class DescriptorStaging {
         try (OutputStream out = Files.newOutputStream(staged,
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             Files.copy(source, out);
+        } catch (IOException copyFailure) {
+            // A partial staged file is not a durable descriptor; remove it
+            // best-effort so consumers never see truncated input
+            try {
+                Files.deleteIfExists(staged);
+            } catch (IOException cleanupFailure) {
+                copyFailure.addSuppressed(cleanupFailure);
+            }
+            throw copyFailure;
         }
         return staged;
     }

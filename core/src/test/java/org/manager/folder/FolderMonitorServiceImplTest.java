@@ -49,7 +49,9 @@ class FolderMonitorServiceImplTest {
     @BeforeEach
     void setUp() throws IOException {
         closeable = MockitoAnnotations.openMocks(this);
-        folderMonitorService = new FolderMonitorServiceImpl();
+        // Temp staging root: processing .torrent fixtures must not write
+        // into the real ODM data directory
+        folderMonitorService = new FolderMonitorServiceImpl(tempDir.resolve("test-descriptor-staging"));
     }
 
     @AfterEach

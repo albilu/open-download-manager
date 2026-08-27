@@ -388,7 +388,9 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             announcedFiles.add(file);
             // A failed announcement (staging or listener dispatch) must not
             // proceed to the disposition: the original stays in place and
-            // the error was already reported
+            // the error was already reported. Un-mark the file so a later
+            // event retries the announcement instead of skipping straight
+            // to the disposition.
             if (announceFileAdded(folderPath, file, settings)) {
                 try {
                     processFile(folderPath, file, settings);
@@ -397,6 +399,8 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                     errorCount.incrementAndGet();
                     notifyListeners(listener -> listener.onFileProcessingError(folderPath, file, e, settings));
                 }
+            } else {
+                announcedFiles.remove(file);
             }
         }
         updateStatistics();
@@ -572,6 +576,11 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                     // must not proceed to the disposition: the original
                     // stays in place and the error was already reported
                     if (!announceFileAdded(folderPath, filePath, currentSettings)) {
+                        // Un-mark the file so a later event retries the
+                        // announcement: staying marked would skip straight
+                        // to the disposition on the next round, destroying
+                        // the original without ever creating the download
+                        announcedFiles.remove(filePath);
                         return;
                     }
                 }

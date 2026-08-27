@@ -73,8 +73,10 @@ class TorrentFolderMonitorIntegrationTest {
         when(mockDownloadManager.createTorrentDownload(any(Path.class), any(Path.class))).thenReturn(mockDownload);
         when(mockDownloadManager.queueDownload(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
 
-        // Create real folder monitor service
-        folderMonitorService = new FolderMonitorServiceImpl();
+        // Create real folder monitor service (temp staging root: staging
+        // watched .torrent fixtures must not write into the real ODM data
+        // directory)
+        folderMonitorService = new FolderMonitorServiceImpl(tempDir.resolve("test-descriptor-staging"));
 
         // Create torrent folder monitor with real service
         torrentFolderMonitor = new TorrentFolderMonitor(

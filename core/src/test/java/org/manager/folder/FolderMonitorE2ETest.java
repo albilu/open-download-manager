@@ -84,8 +84,9 @@ class FolderMonitorE2ETest {
         when(mockDownloadManager.createMetaLinkDownload(any(java.net.URI.class), any(Path.class))).thenReturn(mockMetaLinkDownload);
         when(mockDownloadManager.queueDownload(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
 
-        // Create services
-        folderMonitorService = new FolderMonitorServiceImpl();
+        // Create services (temp staging root: processing .torrent fixtures
+        // must not write into the real ODM data directory)
+        folderMonitorService = new FolderMonitorServiceImpl(tempDir.resolve("test-descriptor-staging"));
         torrentFolderMonitor = new TorrentFolderMonitor(mockDownloadManager, folderMonitorService, downloadsDir);
         metaLinkFolderMonitor = new MetaLinkFolderMonitor(mockDownloadManager, folderMonitorService, downloadsDir);
     }

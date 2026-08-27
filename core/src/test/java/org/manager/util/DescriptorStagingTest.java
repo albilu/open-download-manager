@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -118,6 +119,23 @@ class DescriptorStagingTest {
                 DescriptorStaging.collisionSafeTarget(tempDir, "archive", 1));
         assertNotEquals(DescriptorStaging.collisionSafeTarget(tempDir, "movie.torrent", 0),
                 DescriptorStaging.collisionSafeTarget(tempDir, "movie.torrent", 3));
+    }
+
+    @Test
+    @DisplayName("A failed staging copy leaves no partial staged file behind")
+    void failedStagingCopyLeavesNoPartialFileBehind() throws IOException {
+        Path root = newStagingRoot();
+        // A directory as the copy source: the staged output file is created
+        // but reading the source fails, so the copy fails mid-staging
+        Path directorySource = tempDir.resolve("directory-source.torrent");
+        Files.createDirectories(directorySource);
+
+        assertThrows(IOException.class, () -> DescriptorStaging.stageFile(directorySource, root),
+                "staging a directory must fail");
+        try (var entries = Files.list(root)) {
+            assertEquals(0, entries.count(),
+                    "no partial staged file may remain after a failed copy");
+        }
     }
 
     private static byte[] read(Path file) {
