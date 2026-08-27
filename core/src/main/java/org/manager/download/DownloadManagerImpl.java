@@ -1793,8 +1793,7 @@ public class DownloadManagerImpl implements DownloadManager {
      * Configures aria2 to use session and input files for better persistence.
      * This method should be called during aria2 handler initialization.
      */
-    @Override
-    public void configureAria2Session() {
+    private void configureAria2Session() {
         try {
             // Create aria2 configuration with session support
             Map<String, String> aria2Config = new HashMap<>();
@@ -1817,8 +1816,7 @@ public class DownloadManagerImpl implements DownloadManager {
      *
      * @return Path to the aria2 session file
      */
-    @Override
-    public Path getAria2SessionFilePath() {
+    private Path getAria2SessionFilePath() {
         return aria2SessionFilePath;
     }
 
@@ -1827,8 +1825,7 @@ public class DownloadManagerImpl implements DownloadManager {
      *
      * @return Path to the aria2 input file
      */
-    @Override
-    public Path getAria2InputFilePath() {
+    private Path getAria2InputFilePath() {
         return aria2InputFilePath;
     }
 
@@ -1848,6 +1845,7 @@ public class DownloadManagerImpl implements DownloadManager {
      *
      * @param clipboardSettings The new clipboard settings
      */
+    @Override
     public void updateClipboardSettings(ClipboardSettings clipboardSettings) {
         if (clipboardSettings != null) {
             getGlobalSettings().setClipboardSettings(clipboardSettings);
@@ -1881,6 +1879,7 @@ public class DownloadManagerImpl implements DownloadManager {
      *
      * @return true if clipboard monitoring is enabled, false otherwise
      */
+    @Override
     public boolean isClipboardMonitoringEnabled() {
         return clipboardSettingsOrDefault().isMonitoringEnabled()
                 && clipboardService.isServiceEnabled();
@@ -1902,6 +1901,7 @@ public class DownloadManagerImpl implements DownloadManager {
      *
      * @return A future that completes with the list of created downloads
      */
+    @Override
     public CompletableFuture<List<Download>> importFromClipboard() {
         return clipboardService.importFromClipboard();
     }
