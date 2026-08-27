@@ -1,17 +1,7 @@
 package org.odm.gtk4;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 import org.gnome.gtk.Application;
 import org.gnome.gtk.ApplicationWindow;
@@ -46,32 +36,6 @@ import org.gnome.gtk.TreeView;
 public class MainWindow {
 
     private static final Logger LOGGER = Logger.getLogger(MainWindow.class.getName());
-    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-            .withZone(ZoneId.systemDefault());
-
-    // download_store columns (0-11 gchararray, 12 gint — matches the original glade)
-    private static final int COL_NUMBER = 0;
-    private static final int COL_NAME = 1;
-    private static final int COL_COMPLETE = 2;
-    private static final int COL_SIZE = 3;
-    private static final int COL_ELAPSED = 4;
-    private static final int COL_LEFT = 5;
-    private static final int COL_SPEED = 6;
-    private static final int COL_UP_SPEED = 7;
-    private static final int COL_RETRY = 8;
-    private static final int COL_START = 9;
-    private static final int COL_END = 10;
-    private static final int COL_TOR_ICON = 11;
-    private static final int COL_PROGRESS = 12; // gint
-
-    // status_store / category_store columns
-    private static final int SC_ICON = 0;
-    private static final int SC_COUNT = 1;
-    private static final int SC_LABEL = 2;
-
-    private static final String[] STATUS_FILTERS = {"All Status", "Active", "Queuing", "Finished", "Deleted"};
-    private static final String[] CATEGORIES = {"All", "Videos", "Audios", "Photos", "Programs", "Others"};
-
     private final ApplicationWindow window;
     private final ListStore statusStore;
     private final ListStore categoryStore;
@@ -100,11 +64,8 @@ public class MainWindow {
     private final org.gnome.gtk.Widget infoPanelWidget;
     private final DownloadManager downloadManager;
 
-    private List<Download> rowSnapshot = new ArrayList<>();
-    /** Last filter-store counts; filter stores rebuild only when these change. */
-    private int[] lastStatusCounts = new int[0];
-    private int[] lastCategoryCounts = new int[0];
-    private int lastTotalCount = -1;
+    private final DownloadListPresenter listPresenter;
+    private final DetailTabsPresenter detailTabsPresenter;
 
     // Listeners registered with core services; kept as fields so the window
     // can detach them on final close instead of leaking refresh work forever
@@ -114,14 +75,6 @@ public class MainWindow {
     /** Optional app-provided exit sequence (graceful shutdown UI). */
     private Runnable finalCloseDelegate;
     private Download selectedDownload;
-    private String statusFilter = "All Status";
-    private String searchText = "";
-    /** Re-entrancy guard for programmatic status-row re-selection. */
-    private boolean suppressStatusSelection;
-    /** Re-entrancy guard for programmatic category-row re-selection. */
-    private boolean suppressCategorySelection;
-    /** Selected category filter (extension-based), null = All. */
-    private String categoryFilter = "All";
     /** Guard so menu actions register on the window only once. */
     private boolean menuActionsRegistered;
     private final ListStore trackersStore;
@@ -168,6 +121,12 @@ public class MainWindow {
         this.downloadedValue = Widgets.require(builder, "downloaded_value", Label.class);
         this.connectionsValue = Widgets.require(builder, "connections_value", Label.class);
         this.seedsPeersValue = Widgets.require(builder, "seeds_peers_value", Label.class);
+
+        this.listPresenter = new DownloadListPresenter(statusStore, categoryStore,
+                downloadsStore, globalProgressStore, statusTreeview, categoryTreeview,
+                this::refresh);
+        this.detailTabsPresenter = new DetailTabsPresenter(downloadManager, trackersStore,
+                peersStore, filesStore, () -> selectedDownload);
         if (app != null) {
             window.setApplication(app);
         }
@@ -230,20 +189,20 @@ public class MainWindow {
         menuButton.setMenuModel(buildMainMenu());
 
         windowDownloadListener = new DownloadListener() {
-            @Override public void onDownloadStart(Download d) { scheduleRefresh(); }
+            @Override public void onDownloadStart(Download d) { listPresenter.scheduleRefresh(); }
             @Override public void onDownloadProgress(Download d, float p, long db, long tb, float s) {
-                scheduleRefresh();
+                listPresenter.scheduleRefresh();
             }
-            @Override public void onDownloadPause(Download d) { scheduleRefresh(); }
-            @Override public void onDownloadResume(Download d) { scheduleRefresh(); }
+            @Override public void onDownloadPause(Download d) { listPresenter.scheduleRefresh(); }
+            @Override public void onDownloadResume(Download d) { listPresenter.scheduleRefresh(); }
             @Override public void onDownloadComplete(Download d) {
                 executeCompletionAction(d);
-                scheduleRefresh();
+                listPresenter.scheduleRefresh();
             }
             @Override public void onDownloadError(Download d, String errorMessage) {
-                scheduleRefresh();
+                listPresenter.scheduleRefresh();
             }
-            @Override public void onDownloadCanceled(Download d) { scheduleRefresh(); }
+            @Override public void onDownloadCanceled(Download d) { listPresenter.scheduleRefresh(); }
         };
         downloadManager.addDownloadListener(windowDownloadListener);
 
@@ -402,7 +361,7 @@ public class MainWindow {
     }
 
     private void onSearchChanged() {
-        searchText = searchEntry.getText().strip().toLowerCase();
+        listPresenter.setSearchText(searchEntry.getText().strip().toLowerCase());
         refresh();
     }
 
@@ -746,32 +705,12 @@ public class MainWindow {
     private void onCompletionActionChosen(String choice, boolean interactive) {
         downloadManager.getGlobalSettings().setProperty("ui.completionAction", choice);
         downloadManager.getGlobalSettings().save();
-        switch (choice) {
-            case "notify" -> setCompletionAction(new org.manager.download.action.PlayNotificationAction(
-                    org.manager.download.action.PlayNotificationAction.NotificationSound.SUCCESS));
-            case "antivirus" -> setCompletionAction(buildAntivirusAction());
-            case "suspend" -> setCompletionAction(new SuspendAction());
-            case "shutdown" -> setCompletionAction(
-                    new org.manager.download.action.ShutdownComputerAction(30));
-            case "custom" -> {
-                if (interactive) {
-                    promptForCustomCommand();
-                } else {
-                    rebuildCustomCommandAction();
-                }
-            }
-            default -> setCompletionAction(null);
+        if ("custom".equals(choice) && interactive) {
+            promptForCustomCommand();
+            return;
         }
-    }
-
-    /**
-     * Installs the custom completion action from the persisted
-     * {@code ui.completionCommand}, or nothing when no command is stored.
-     */
-    private void rebuildCustomCommandAction() {
-        String saved = downloadManager.getGlobalSettings().getProperty("ui.completionCommand", "");
-        setCompletionAction(saved.isBlank() ? null
-                : new org.manager.download.action.ExecuteCommandAction(saved));
+        setCompletionAction(
+                CompletionActionPolicy.forChoice(choice, downloadManager.getGlobalSettings()));
     }
 
     /**
@@ -836,72 +775,6 @@ public class MainWindow {
         }
     }
 
-    /**
-     * Builds the antivirus completion action from persisted settings:
-     * {@code antivirus.scanner} (clamav|chkrootkit|rkhunter|custom, default
-     * clamav), {@code antivirus.command} for the custom scanner, and
-     * {@code antivirus.timeout} seconds (default 600, 0 = no timeout).
-     */
-    private org.manager.download.action.AntivirusCheckAction buildAntivirusAction() {
-        var s = downloadManager.getGlobalSettings();
-        String scanner = s.getProperty("antivirus.scanner", "clamav");
-        int timeout = s.getIntProperty("antivirus.timeout", 600);
-        var type = switch (scanner.toLowerCase()) {
-            case "chkrootkit" ->
-                org.manager.download.action.AntivirusCheckAction.AntivirusType.CHKROOTKIT;
-            case "rkhunter" ->
-                org.manager.download.action.AntivirusCheckAction.AntivirusType.RKHUNTER;
-            case "custom" ->
-                org.manager.download.action.AntivirusCheckAction.AntivirusType.CUSTOM;
-            default -> org.manager.download.action.AntivirusCheckAction.AntivirusType.CLAMAV;
-        };
-        if (type == org.manager.download.action.AntivirusCheckAction.AntivirusType.CUSTOM) {
-            return new org.manager.download.action.AntivirusCheckAction(
-                    s.getProperty("antivirus.command", "clamscan --no-summary {file}"), timeout);
-        }
-        return new org.manager.download.action.AntivirusCheckAction(type, timeout);
-    }
-
-    /** Suspends the machine on download completion (systemctl suspend). */
-    private static final class SuspendAction implements org.manager.download.action.AfterCompletionAction {
-        private volatile boolean canceled;
-
-        @Override
-        public boolean execute(Download download) {
-            if (canceled) {
-                return false;
-            }
-            try {
-                new ProcessBuilder("systemctl", "suspend").inheritIO().start();
-                return true;
-            } catch (Exception e) {
-                LOGGER.warning("Failed to suspend: " + e.getMessage());
-                return false;
-            }
-        }
-
-        @Override
-        public org.manager.download.action.AfterCompletionAction.ActionType getType() {
-            return org.manager.download.action.AfterCompletionAction.ActionType.SLEEP_COMPUTER;
-        }
-
-        @Override
-        public String getDescription() {
-            return "Suspend the computer when the download completes";
-        }
-
-        @Override
-        public org.manager.download.action.AfterCompletionAction.Severity getSeverity() {
-            return org.manager.download.action.AfterCompletionAction.Severity.HIGH;
-        }
-
-        @Override
-        public boolean cancel() {
-            canceled = true;
-            return true;
-        }
-    }
-
     /** Opens the selected download's file or its folder with xdg-open. */
     private void openSelected(String what) {
         onDownloadSelectionChanged();
@@ -931,39 +804,9 @@ public class MainWindow {
                 java.nio.file.Path path = java.nio.file.Path.of(file.getPath().toString());
                 // File I/O and regex over arbitrarily large documents run OFF
                 // the GTK main loop; only the result goes back to the UI
-                CompletableFuture.supplyAsync(() -> {
-                    try {
-                        String html = java.nio.file.Files.readString(path);
-                        java.util.List<java.net.URI> urls = new java.util.ArrayList<>();
-                        java.util.regex.Matcher m = java.util.regex.Pattern
-                                .compile("href\\s*=\\s*[\"']([^\"']+)[\"']",
-                                        java.util.regex.Pattern.CASE_INSENSITIVE)
-                                .matcher(html);
-                        while (m.find()) {
-                            try {
-                                java.net.URI uri = new java.net.URI(m.group(1));
-                                if (uri.getScheme() != null && (uri.getScheme().startsWith("http"))) {
-                                    urls.add(uri);
-                                }
-                            } catch (Exception ignored) {
-                                // non-absolute/invalid href: skip
-                            }
-                        }
-                        int queued = 0;
-                        for (java.net.URI uri : urls) {
-                            try {
-                                downloadManager.queueDownload(downloadManager.createDownload(uri, null));
-                                queued++;
-                            } catch (Exception ignored) {
-                                // skip
-                            }
-                        }
-                        return queued;
-                    } catch (Exception e) {
-                        LOGGER.log(java.util.logging.Level.FINE, "HTML import failed", e);
-                        return -1;
-                    }
-                }, DETAIL_EXECUTOR).thenAccept(count -> {
+                CompletableFuture.supplyAsync(
+                        () -> HtmlImportExport.importHtmlFile(path, downloadManager),
+                        DetailTabsPresenter.FETCH_EXECUTOR).thenAccept(count -> {
                     if (count == null || count < 0) {
                         return;
                     }
@@ -992,21 +835,15 @@ public class MainWindow {
                 java.nio.file.Path path = java.nio.file.Path.of(file.getPath().toString());
                 // Snapshot the URL list on the GTK thread (model access),
                 // write the file off it
-                StringBuilder sb = new StringBuilder();
-                for (Download d : downloadManager.getAllDownloads()) {
-                    if (d.getUri() != null) {
-                        sb.append(d.getUri()).append('\n');
-                    }
-                }
-                String contents = sb.toString();
+                String contents = HtmlImportExport.exportText(downloadManager.getAllDownloads());
                 CompletableFuture.runAsync(() -> {
                     try {
-                        java.nio.file.Files.writeString(path, contents);
+                        HtmlImportExport.writeText(path, contents);
                         UiThread.marshal(() -> infoLabel.setLabel("Exported download list"));
                     } catch (Exception e) {
                         LOGGER.log(java.util.logging.Level.FINE, "Export failed", e);
                     }
-                }, DETAIL_EXECUTOR);
+                }, DetailTabsPresenter.FETCH_EXECUTOR);
             } catch (Exception e) {
                 LOGGER.log(java.util.logging.Level.FINE, "Export cancelled or failed", e);
             }
@@ -1015,32 +852,15 @@ public class MainWindow {
 
     /** Shows a small statistics dialog (counts by status, total sizes). */
     private void showStatistics() {
-        List<Download> all = downloadManager.getAllDownloads();
-        long totalSize = 0;
-        long doneSize = 0;
-        int active = 0;
-        int queued = 0;
-        int finished = 0;
-        int errors = 0;
-        for (Download d : all) {
-            totalSize += d.getSize();
-            doneSize += d.getDownloaded();
-            switch (d.getStatus()) {
-                case DOWNLOADING, CONNECTING -> active++;
-                case QUEUED, PAUSED -> queued++;
-                case COMPLETED -> finished++;
-                case ERROR, CANCELED -> errors++;
-                default -> { }
-            }
-        }
+        StatisticsPresenter.Stats st = StatisticsPresenter.aggregate(downloadManager.getAllDownloads());
         org.gnome.gtk.MessageDialog stats = new org.gnome.gtk.MessageDialog();
         stats.setTransientFor(window);
         stats.setModal(true);
         stats.setMarkup("<b>Download Statistics</b>");
-        stats.formatSecondaryText("Total: " + all.size() + "\nActive: " + active
-                + "\nQueued/paused: " + queued + "\nFinished: " + finished
-                + "\nErrors: " + errors + "\n\nDownloaded: " + formatSize(doneSize)
-                + " / " + formatSize(totalSize));
+        stats.formatSecondaryText("Total: " + st.total() + "\nActive: " + st.active()
+                + "\nQueued/paused: " + st.queued() + "\nFinished: " + st.finished()
+                + "\nErrors: " + st.errors() + "\n\nDownloaded: " + DownloadFormats.size(st.doneSize())
+                + " / " + DownloadFormats.size(st.totalSize()));
         stats.present();
     }
 
@@ -1281,24 +1101,22 @@ public class MainWindow {
         // Re-entrant guard: rebuildFilterStore re-selects the filter row,
         // which fires "changed" again — without the guard this recurses
         // infinitely (store clear + re-select + refresh loop).
-        if (suppressStatusSelection) {
+        if (listPresenter.isRestoringSelection()) {
             return;
         }
         selectRow(statusTreeview.getSelection(), (path, index) -> {
-            if (index < STATUS_FILTERS.length) {
-                statusFilter = STATUS_FILTERS[index];
+            if (listPresenter.selectStatusFilterAt(index)) {
                 refresh();
             }
         });
     }
 
     private void onCategorySelectionChanged() {
-        if (suppressCategorySelection) {
+        if (listPresenter.isRestoringSelection()) {
             return;
         }
         selectRow(categoryTreeview.getSelection(), (path, index) -> {
-            if (index < CATEGORIES.length) {
-                categoryFilter = CATEGORIES[index];
+            if (listPresenter.selectCategoryAt(index)) {
                 refresh();
             }
         });
@@ -1306,7 +1124,7 @@ public class MainWindow {
 
     private void onDownloadSelectionChanged() {
         selectRow(downloadsTreeview.getSelection(), (path, index) -> {
-            selectedDownload = index < rowSnapshot.size() ? rowSnapshot.get(index) : null;
+            selectedDownload = listPresenter.rowAt(index);
             updateInfoPanel();
         });
     }
@@ -1327,365 +1145,21 @@ public class MainWindow {
         void accept(TreePath path, int index);
     }
 
-    private boolean activeMatches(Download download) {
-        if (!searchText.isEmpty() && (download.getName() == null
-                || !download.getName().toLowerCase().contains(searchText))) {
-            return false;
-        }
-        // Category filter (extension-based, mirrors the approved old UI)
-        if (categoryFilter != null && !"All".equals(categoryFilter)
-                && !categoryFilter.equals(downloadCategory(download))) {
-            return false;
-        }
-        return switch (statusFilter) {
-            case "All Status" -> true;
-            case "Active" -> download.getStatus() == Download.Status.DOWNLOADING;
-            case "Queuing" -> download.getStatus() == Download.Status.QUEUED
-                    || download.getStatus() == Download.Status.CONNECTING
-                    || download.getStatus() == Download.Status.PAUSED;
-            case "Finished" -> download.getStatus() == Download.Status.COMPLETED;
-            case "Deleted" -> download.getStatus() == Download.Status.ERROR
-                    || download.getStatus() == Download.Status.CANCELED;
-            default -> true;
-        };
-    }
-
     /**
-     * Refreshes the download view. Progress ticks (the dominant event rate)
-     * update existing rows in place, preserving the tree selection; only
-     * structural changes (add/remove/reorder/filter switch) rebuild the
-     * store. Filter stores are rebuilt only when their counts actually
-     * changed. GTK thread only.
+     * Refreshes the download view and side-band labels from the current
+     * repository state. GTK thread only.
      */
     private void refresh() {
-        // One repository pass feeds rows, filter counts and global progress
-        List<Download> downloads = downloadManager.getAllDownloads();
-
-        // Global progress totals over ALL downloads (not just filtered rows)
-        long totalBytes = 0;
-        long doneBytes = 0;
-        int[] counts = null;
-        int[] categoryCounts = null;
-
-        List<Download> display = new ArrayList<>(downloads.size());
-        double totalDownSpeed = 0;
-        double totalUpSpeed = 0;
-        int totalSeeders = 0;
-        boolean anyActive = false;
-        for (Download download : downloads) {
-            totalBytes += download.getSize();
-            doneBytes += download.getDownloaded();
-            if (activeMatches(download)) {
-                display.add(download);
-            }
-            if (download.getStatus() == Download.Status.DOWNLOADING) {
-                totalDownSpeed += download.getSpeed();
-                totalUpSpeed += download.getUploadSpeed();
-                totalSeeders += download.getSeeders();
-                anyActive = true;
-            }
-        }
-
-        if (!java.util.Arrays.equals(counts = computeCounts(downloads), lastStatusCounts)
-                || downloads.size() != lastTotalCount) {
-            lastStatusCounts = counts;
-            lastTotalCount = downloads.size();
-            rebuildFilterStore(statusStore, STATUS_FILTERS, counts, downloads.size(), statusFilter);
-            categoryCounts = computeCategoryCounts(downloads);
-            lastCategoryCounts = categoryCounts;
-            rebuildFilterStore(categoryStore, CATEGORIES, categoryCounts, downloads.size(), categoryFilter);
-        }
-
-        // In-place row updates when the visible id sequence is unchanged;
-        // full rebuild only when the structure changed
-        if (rowStructureMatches(display)) {
-            TreeIter iter = new TreeIter();
-            if (downloadsStore.getIterFirst(iter)) {
-                int row = 0;
-                do {
-                    if (row < display.size()) {
-                        updateRowCells(downloadsStore, iter, row, display.get(row));
-                    }
-                    row++;
-                } while (downloadsStore.iterNext(iter));
-            }
-        } else {
-            downloadsStore.clear();
-            rowSnapshot = new ArrayList<>(display.size());
-            TreeIter iter = new TreeIter();
-            for (int row = 0; row < display.size(); row++) {
-                Download download = display.get(row);
-                downloadsStore.append(iter);
-                rowSnapshot.add(download);
-                updateRowCells(downloadsStore, iter, row, download);
-            }
-        }
-
-        infoLabel.setLabel(downloads.size() + " download(s)");
-        downSpeedLabel.setLabel(formatSize((long) totalDownSpeed) + "/s");
-        upSpeedLabel.setLabel(totalUpSpeed > 0 ? formatSize((long) totalUpSpeed) + "/s" : "—");
-        dhtStatusLabel.setLabel(totalSeeders > 0 ? "DHT: " + totalSeeders + " seed(s)" : "DHT: —");
-        activitySpinner.setSpinning(anyActive);
-
-        globalProgressStore.clear();
-        TreeIter progressIter = new TreeIter();
-        globalProgressStore.append(progressIter);
-        setInt(globalProgressStore, progressIter, 0,
-                totalBytes > 0 ? (int) (doneBytes * 100 / totalBytes) : 0);
+        DownloadListPresenter.RefreshSummary summary =
+                listPresenter.refresh(downloadManager.getAllDownloads());
+        infoLabel.setLabel(summary.totalCount() + " download(s)");
+        downSpeedLabel.setLabel(DownloadFormats.size(summary.downBytesPerSec()) + "/s");
+        upSpeedLabel.setLabel(summary.upBytesPerSec() > 0
+                ? DownloadFormats.size(summary.upBytesPerSec()) + "/s" : "—");
+        dhtStatusLabel.setLabel(summary.totalSeeders() > 0
+                ? "DHT: " + summary.totalSeeders() + " seed(s)" : "DHT: —");
+        activitySpinner.setSpinning(summary.anyActive());
         updateInfoPanel();
-    }
-
-    /** Whether the store's current row sequence matches the new display list. */
-    private boolean rowStructureMatches(List<Download> display) {
-        if (rowSnapshot == null || rowSnapshot.size() != display.size()) {
-            return false;
-        }
-        for (int i = 0; i < display.size(); i++) {
-            String a = rowSnapshot.get(i) == null ? null : rowSnapshot.get(i).getId();
-            String b = display.get(i) == null ? null : display.get(i).getId();
-            if (!java.util.Objects.equals(a, b)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /** Writes all cells of one download row (shared by update and rebuild paths). */
-    private void updateRowCells(ListStore store, TreeIter iter, int row, Download download) {
-        setStr(store, iter, COL_NUMBER, String.valueOf(row + 1));
-        setStr(store, iter, COL_NAME, download.getName());
-        setStr(store, iter, COL_COMPLETE, formatSize(download.getDownloaded()));
-        setStr(store, iter, COL_SIZE, formatSize(download.getSize()));
-        setInt(store, iter, COL_PROGRESS, (int) download.getProgress());
-        setStr(store, iter, COL_ELAPSED, formatElapsed(download));
-        setStr(store, iter, COL_LEFT,
-                formatSize(Math.max(0, download.getSize() - download.getDownloaded())));
-        setStr(store, iter, COL_SPEED, formatSize((long) download.getSpeed()) + "/s");
-        setStr(store, iter, COL_UP_SPEED, "—");
-        setStr(store, iter, COL_RETRY, "—");
-        setStr(store, iter, COL_START,
-                download.getCreatedAt() != null ? DATE_FORMAT.format(download.getCreatedAt()) : "—");
-        setStr(store, iter, COL_END,
-                download.getCompletedAt() != null ? DATE_FORMAT.format(download.getCompletedAt()) : "—");
-        setStr(store, iter, COL_TOR_ICON, engineIconName(download));
-    }
-
-    private int[] computeCounts(List<Download> downloads) {
-        int active = 0, queuing = 0, finished = 0, deleted = 0;
-        for (Download d : downloads) {
-            switch (d.getStatus()) {
-                case DOWNLOADING -> active++;
-                case QUEUED, CONNECTING, PAUSED -> queuing++;
-                case COMPLETED -> finished++;
-                case ERROR, CANCELED -> deleted++;
-            }
-        }
-        return new int[]{active, queuing, finished, deleted};
-    }
-
-    /** Counts per category (extension-based), index-aligned with CATEGORIES. */
-    private int[] computeCategoryCounts(List<Download> downloads) {
-        int[] result = new int[CATEGORIES.length];
-        for (Download download : downloads) {
-            String category = downloadCategory(download);
-            for (int i = 1; i < CATEGORIES.length; i++) {
-                if (CATEGORIES[i].equals(category)) {
-                    result[i]++;
-                    break;
-                }
-            }
-            result[0]++; // "All"
-        }
-        return result;
-    }
-
-    /**
-     * Extension-based category of a download — mirrors the approved old UI's
-     * mapping exactly (Videos/Audios/Photos/Programs/Others).
-     */
-    private static String downloadCategory(Download download) {
-        String name = download.getName();
-        if (name == null) {
-            return "Others";
-        }
-        int lastDot = name.lastIndexOf('.');
-        String extension = lastDot > 0 ? name.substring(lastDot + 1).toLowerCase() : "";
-        return switch (extension) {
-            case "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma" -> "Audios";
-            case "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "3gp" -> "Videos";
-            case "jpg", "jpeg", "png", "gif", "bmp", "tiff", "svg", "ico" -> "Photos";
-            case "exe", "msi", "deb", "rpm", "dmg", "appimage", "flatpak", "snap" -> "Programs";
-            default -> "Others";
-        };
-    }
-
-    private void rebuildFilterStore(ListStore store, String[] labels, int[] counts, int total, String selected) {
-        store.clear();
-        for (int i = 0; i < labels.length; i++) {
-            int count = i < counts.length ? counts[i] : (i == 0 ? total : 0);
-            TreeIter iter = new TreeIter();
-            store.append(iter);
-            setStr(store, iter, SC_ICON, iconForFilterRow(labels[i]));
-            setInt(store, iter, SC_COUNT, count);
-            setStr(store, iter, SC_LABEL, labels[i]);
-            if (labels[i].equals(selected)) {
-                if (store == statusStore) {
-                    suppressStatusSelection = true;
-                    try {
-                        statusTreeview.getSelection().selectIter(iter);
-                    } finally {
-                        suppressStatusSelection = false;
-                    }
-                } else {
-                    suppressCategorySelection = true;
-                    try {
-                        categoryTreeview.getSelection().selectIter(iter);
-                    } finally {
-                        suppressCategorySelection = false;
-                    }
-                }
-            }
-        }
-    }
-
-    private static String iconForFilterRow(String label) {
-        return switch (label) {
-            case "All Status" -> "view-list-symbolic";
-            case "Active" -> "media-playback-start-symbolic";
-            case "Queuing" -> "view-grid-symbolic";
-            case "Finished" -> "emblem-ok-symbolic";
-            case "Deleted" -> "edit-delete-symbolic";
-            case "All" -> "view-list-symbolic";
-            case "Videos" -> "video-x-generic-symbolic";
-            case "Audios" -> "audio-x-generic-symbolic";
-            case "Photos" -> "image-x-generic-symbolic";
-            case "Programs" -> "application-x-executable-symbolic";
-            case "Others" -> "text-x-generic-symbolic";
-            default -> "text-x-generic-symbolic";
-        };
-    }
-
-    /** Executor for detail-tab RPC fetches; keeps aria2 round trips off the GTK main loop. */
-    private static final ExecutorService DETAIL_EXECUTOR = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "odm-detail-fetch");
-        t.setDaemon(true);
-        return t;
-    });
-
-    /**
-     * Coalesces refresh scheduling: core progress events arrive at up to 1 Hz
-     * per active download, and a full refresh per event floods the GLib idle
-     * queue. While a refresh is already pending, further events are absorbed
-     * into it.
-     */
-    private final AtomicBoolean refreshPending = new AtomicBoolean(false);
-
-    /** Schedules one coalesced refresh on the GTK main loop. Any thread. */
-    private void scheduleRefresh() {
-        if (refreshPending.compareAndSet(false, true)) {
-            UiThread.marshal(() -> {
-                // Clear before running so events arriving during the refresh
-                // schedule a follow-up instead of being dropped
-                refreshPending.set(false);
-                refresh();
-            });
-        }
-    }
-
-    /** Coalesces detail fetches: at most one in flight; the next refresh re-arms it. */
-    private final AtomicBoolean detailFetchPending = new AtomicBoolean(false);
-
-    /** Immutable snapshot fetched off-thread for the trackers/peers/files tabs. */
-    private record DetailTabData(List<List<String>> trackers, List<Map<String, Object>> peers,
-            List<Map<String, Object>> files) {
-    }
-
-    /**
-     * Refreshes the detail tabs. The manager calls underneath perform
-     * synchronous aria2 RPC round trips, so fetching runs off the GTK thread
-     * and only the store population is marshalled back; results are
-     * discarded when the selection changed while the fetch was in flight.
-     */
-    private void loadDetailTabs() {
-        Download target = selectedDownload;
-        if (target == null) {
-            trackersStore.clear();
-            peersStore.clear();
-            filesStore.clear();
-            return;
-        }
-        if (!detailFetchPending.compareAndSet(false, true)) {
-            // A fetch is already in flight; the next refresh re-triggers it,
-            // which keeps the idle-queue bounded under 1 Hz progress events.
-            return;
-        }
-        String targetId = target.getId();
-        CompletableFuture.supplyAsync(() -> new DetailTabData(
-                downloadManager.getDownloadTrackers(target),
-                downloadManager.getDownloadPeers(target),
-                downloadManager.getDownloadFiles(target)), DETAIL_EXECUTOR)
-                .whenComplete((data, error) -> {
-                    detailFetchPending.set(false);
-                    if (error != null) {
-                        LOGGER.log(java.util.logging.Level.WARNING,
-                                "Failed to load detail tabs for " + target.getName(), error);
-                        return;
-                    }
-                    UiThread.marshal(() -> {
-                        if (selectedDownload == null || !targetId.equals(selectedDownload.getId())) {
-                            return; // stale fetch: selection moved on
-                        }
-                        populateDetailStores(data);
-                    });
-                });
-    }
-
-    /** Populates the detail tab stores from a fetched snapshot. GTK thread only. */
-    private void populateDetailStores(DetailTabData data) {
-        // Trackers
-        trackersStore.clear();
-        int tier = 0;
-        for (List<String> urls : data.trackers()) {
-            for (String url : urls) {
-                TreeIter iter = new TreeIter();
-                trackersStore.append(iter);
-                setStr(trackersStore, iter, 0, url);
-                setStr(trackersStore, iter, 1, "tier " + tier);
-                setStr(trackersStore, iter, 2, "—");
-                setStr(trackersStore, iter, 3, "—");
-                setStr(trackersStore, iter, 4, "—");
-                setStr(trackersStore, iter, 5, "—");
-            }
-            tier++;
-        }
-
-        // Peers
-        peersStore.clear();
-        for (Map<String, Object> peer : data.peers()) {
-            TreeIter iter = new TreeIter();
-            peersStore.append(iter);
-            setStr(peersStore, iter, 0, String.valueOf(peer.getOrDefault("peerId", "—")));
-            setStr(peersStore, iter, 1, String.valueOf(peer.getOrDefault("downloadSpeed", "—")));
-            setStr(peersStore, iter, 2, String.valueOf(peer.getOrDefault("ip", "—"))
-                    + ":" + peer.getOrDefault("port", ""));
-            setStr(peersStore, iter, 3, String.valueOf(peer.getOrDefault("peChoking", false)));
-        }
-
-        // Files
-        filesStore.clear();
-        for (Map<String, Object> file : data.files()) {
-            TreeIter iter = new TreeIter();
-            filesStore.append(iter);
-            // Seed the checkbox from aria2's own per-file selected flag
-            boolean selected = !"false".equalsIgnoreCase(
-                    String.valueOf(file.getOrDefault("selected", "true")));
-            setBool(filesStore, iter, 0, selected);
-            setStr(filesStore, iter, 1, String.valueOf(file.getOrDefault("path", "—")));
-            setStr(filesStore, iter, 2, formatSize(parseLong(file.get("length"), 0)));
-            setStr(filesStore, iter, 3, String.valueOf(progressPercent(
-                    parseLong(file.get("completedLength"), 0), parseLong(file.get("length"), 1))));
-            setStr(filesStore, iter, 4, "—");
-        }
     }
 
     /**
@@ -1710,7 +1184,7 @@ public class MainWindow {
         filesStore.getValue(iter, 0, current);
         boolean newValue = !current.getBoolean();
         current.unset();
-        setBool(filesStore, iter, 0, newValue);
+        ListStoreCells.setBoolean(filesStore, iter, 0, newValue);
 
         // Collect all selected indexes (row order == getDownloadFiles order)
         java.util.List<Integer> selectedIndexes = new java.util.ArrayList<>();
@@ -1729,7 +1203,7 @@ public class MainWindow {
         }
         if (selectedIndexes.isEmpty()) {
             LOGGER.warning("Refusing to deselect every file of " + download.getName());
-            setBool(filesStore, iter, 0, true);
+            ListStoreCells.setBoolean(filesStore, iter, 0, true);
             return;
         }
 
@@ -1745,7 +1219,7 @@ public class MainWindow {
             if (wasActive) {
                 downloadManager.pauseDownload(download).join();
             }
-        }, DETAIL_EXECUTOR)
+        }, DetailTabsPresenter.FETCH_EXECUTOR)
                 .thenCompose(v -> downloadManager.changeSettings(download))
                 .handle((v, e) -> {
                     if (e != null) {
@@ -1757,30 +1231,6 @@ public class MainWindow {
                 .thenCompose(v -> wasActive
                         ? downloadManager.resumeDownload(download)
                         : CompletableFuture.completedFuture(null));
-    }
-
-    private static long parseLong(Object value, long fallback) {
-        try {
-            return value != null ? Long.parseLong(value.toString()) : fallback;
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
-    private static double progressPercent(long done, long total) {
-        return total > 0 ? done * 100.0 / total : 0;
-    }
-
-    private static String engineIconName(Download download) {
-        return switch (download.getType()) {
-            case ARIA2 -> "network-server-symbolic";
-            case CURL -> "network-wired-symbolic";
-            case YOUTUBE -> "video-x-generic-symbolic";
-            case WEBSITE_SCRAPING -> "edit-find-symbolic";
-            case PROXYCHAINS -> "network-proxy-symbolic";
-            case TOR -> "network-wireless-symbolic";
-            default -> "text-x-generic-symbolic";
-        };
     }
 
     private void updateInfoPanel() {
@@ -1797,70 +1247,18 @@ public class MainWindow {
         return;
         }
         infoProgressBar.setFraction(selectedDownload.getProgress() / 100.0);
-        totalSizeValue.setLabel(formatSize(selectedDownload.getSize()));
-        addedOnValue.setLabel(selectedDownload.getCreatedAt() != null ? DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
+        totalSizeValue.setLabel(DownloadFormats.size(selectedDownload.getSize()));
+        addedOnValue.setLabel(selectedDownload.getCreatedAt() != null
+                ? DownloadFormats.DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
         infoHashValue.setLabel(selectedDownload.getInfoHash() != null ? selectedDownload.getInfoHash() : "—");
         folderValue.setLabel(selectedDownload.getDestination() != null ? selectedDownload.getDestination().toString() : "—");
-        etaValue.setLabel(formatEta(selectedDownload));
-        downloadedValue.setLabel(formatSize(selectedDownload.getDownloaded()));
+        etaValue.setLabel(DownloadFormats.eta(selectedDownload));
+        downloadedValue.setLabel(DownloadFormats.size(selectedDownload.getDownloaded()));
         connectionsValue.setLabel(String.valueOf(selectedDownload.getConnectionCount()));
         seedsPeersValue.setLabel(selectedDownload.getSeeders() > 0
                 ? selectedDownload.getSeeders() + " seed(s)"
                 : "—");
-        loadDetailTabs();
+        detailTabsPresenter.load();
     }
 
-    private static String formatEta(Download download) {
-        float speed = download.getSpeed();
-        long remaining = download.getSize() - download.getDownloaded();
-        if (speed <= 0 || remaining <= 0 || download.getStatus() != Download.Status.DOWNLOADING) {
-            return "—";
-        }
-        long seconds = (long) (remaining / speed);
-        Duration d = Duration.ofSeconds(seconds);
-        long h = d.toHours();
-        long m = d.toMinutesPart();
-        long s = d.toSecondsPart();
-        return h > 0 ? String.format("%dh %dm", h, m) : m > 0 ? String.format("%dm %ds", m, s)
-                : String.format("%ds", s);
-    }
-
-    private static String formatElapsed(Download download) {
-        if (download.getCreatedAt() == null) return "—";
-        Duration d = Duration.between(download.getCreatedAt(), Instant.now());
-        long h = d.toHours();
-        long m = d.toMinutesPart();
-        long s = d.toSecondsPart();
-        return h > 0 ? String.format("%dh %dm", h, m) : m > 0 ? String.format("%dm %ds", m, s)
-                : String.format("%ds", s);
-    }
-
-    private static void setStr(ListStore store, TreeIter iter, int column, String value) {
-        Value v = new Value().init(Types.STRING);
-        v.setString(value);
-        store.setValue(iter, column, v);
-        v.unset();
-    }
-
-    private static void setInt(ListStore store, TreeIter iter, int column, int value) {
-        // All int-typed store columns (progress, filter counts) are gint
-        Value v = new Value().init(Types.INT);
-        v.setInt(value);
-        store.setValue(iter, column, v);
-        v.unset();
-    }
-
-    private static void setBool(ListStore store, TreeIter iter, int column, boolean value) {
-        Value v = new Value().init(Types.BOOLEAN);
-        v.setBoolean(value);
-        store.setValue(iter, column, v);
-        v.unset();
-    }
-
-    private static String formatSize(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return (bytes / 1024) + " KB";
-        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / 1048576.0);
-        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
-    }
 }
