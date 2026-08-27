@@ -142,8 +142,13 @@ class FolderMonitorE2ETest {
                         assertTrue(tracker.fileAdded.get(), "File should be detected");
                         assertTrue(tracker.torrentProcessed.get(), "Torrent should be processed");
 
-                        // Download manager should be called with correct parameters
-                        verify(mockDownloadManager).createTorrentDownload(eq(torrentFile), eq(downloadsDir));
+                        // Download manager should be called with correct parameters.
+                        // Watched descriptors arrive as staged copies
+                        // (<uuid>-<original name>) beneath the ODM staging
+                        // root, so match on the preserved original name
+                        verify(mockDownloadManager).createTorrentDownload(
+                                argThat(p -> p.getFileName().toString().endsWith("ubuntu-22.04.torrent")),
+                                eq(downloadsDir));
                         verify(mockDownloadManager).queueDownload(mockTorrentDownload);
 
                         // File action should be executed (move to processed folder)
@@ -770,12 +775,14 @@ class FolderMonitorE2ETest {
 
         @Override
         public void onFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
+            // Watched descriptors arrive as staged copies
+            // (<uuid>-<original name>), so match on the suffix
             String fileName = filePath.getFileName().toString();
-            if (fileName.equals("unique.torrent")) {
+            if (fileName.endsWith("unique.torrent")) {
                 uniqueTorrentProcessed.set(true);
-            } else if (fileName.equals("unique.metalink")) {
+            } else if (fileName.endsWith("unique.metalink")) {
                 uniqueMetalinkProcessed.set(true);
-            } else if (fileName.equals("shared.meta4")) {
+            } else if (fileName.endsWith("shared.meta4")) {
                 sharedFormatEncountered.set(true);
             }
         }
@@ -787,10 +794,12 @@ class FolderMonitorE2ETest {
 
         @Override
         public void onFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
+            // Watched descriptors arrive as staged copies
+            // (<uuid>-<original name>), so match on the suffix
             String fileName = filePath.getFileName().toString();
-            if (fileName.equals("downloading.torrent")) {
+            if (fileName.endsWith("downloading.torrent")) {
                 progressiveDownloadHandled.set(true);
-            } else if (fileName.equals("instant.torrent")) {
+            } else if (fileName.endsWith("instant.torrent")) {
                 instantDownloadHandled.set(true);
             }
         }

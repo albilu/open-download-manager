@@ -2,6 +2,7 @@ package org.manager.folder;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -9,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
@@ -33,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.manager.util.DescriptorStaging;
 
 /**
  * Implementation of FolderMonitorService using Java NIO WatchService for
@@ -44,6 +47,8 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     private static final Logger LOGGER = Logger.getLogger(FolderMonitorServiceImpl.class.getName());
 
     private final WatchService watchService;
+    /** Exclusive root watched descriptors are staged into before dispatch. */
+    private final Path descriptorStagingRoot;
     private final Map<Path, WatchKey> watchKeys = new ConcurrentHashMap<>();
     private final Map<Path, Set<WatchKey>> recursiveWatchKeys = new ConcurrentHashMap<>();
     private final Map<Path, FolderMonitorSettings> folderSettings = new ConcurrentHashMap<>();
@@ -68,11 +73,27 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     private Future<?> monitoringTask;
 
     /**
-     * Creates a new FolderMonitorServiceImpl instance.
+     * Creates a new FolderMonitorServiceImpl instance staging watched
+     * descriptors beneath ODM's default staging root.
      *
      * @throws IOException If the WatchService cannot be created
      */
     public FolderMonitorServiceImpl() throws IOException {
+        this(DescriptorStaging.stagingRoot());
+    }
+
+    /**
+     * Creates a new FolderMonitorServiceImpl instance with an explicit
+     * descriptor staging root.
+     *
+     * @param descriptorStagingRoot exclusive directory watched torrent and
+     *            Metalink descriptors are copied into before listeners are
+     *            notified
+     * @throws IOException If the WatchService cannot be created
+     */
+    public FolderMonitorServiceImpl(Path descriptorStagingRoot) throws IOException {
+        this.descriptorStagingRoot = java.util.Objects.requireNonNull(descriptorStagingRoot,
+                "descriptorStagingRoot");
         this.watchService = FileSystems.getDefault().newWatchService();
         this.executorService = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "FolderMonitor-Worker");
@@ -365,14 +386,17 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             // Notify detection for every file found by a scan. announcedFiles
             // dedupes against a later MODIFY re-announcing the same file.
             announcedFiles.add(file);
-            notifyFileEvent(folderPath, file, settings,
-                    listener -> listener.onFileAdded(folderPath, file, settings));
-            try {
-                processFile(folderPath, file, settings);
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error processing file: " + file, e);
-                errorCount.incrementAndGet();
-                notifyListeners(listener -> listener.onFileProcessingError(folderPath, file, e, settings));
+            // A failed announcement (staging or listener dispatch) must not
+            // proceed to the disposition: the original stays in place and
+            // the error was already reported
+            if (announceFileAdded(folderPath, file, settings)) {
+                try {
+                    processFile(folderPath, file, settings);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error processing file: " + file, e);
+                    errorCount.incrementAndGet();
+                    notifyListeners(listener -> listener.onFileProcessingError(folderPath, file, e, settings));
+                }
             }
         }
         updateStatistics();
@@ -544,8 +568,12 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 // the torrent/metalink listener creates the download
                 // synchronously, so it always observes the complete file.
                 if (announcedFiles.add(filePath)) {
-                    notifyFileEvent(folderPath, filePath, currentSettings,
-                            listener -> listener.onFileAdded(folderPath, filePath, currentSettings));
+                    // A failed announcement (staging or listener dispatch)
+                    // must not proceed to the disposition: the original
+                    // stays in place and the error was already reported
+                    if (!announceFileAdded(folderPath, filePath, currentSettings)) {
+                        return;
+                    }
                 }
                 processFile(folderPath, filePath, currentSettings);
             } else {
@@ -658,13 +686,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error processing file: " + filePath, e);
-            errorCount.incrementAndGet();
-            updateStatistics();
-            // Exactly-once per round: notifyFileEvent may already have
-            // reported a listener failure for this file
-            if (fileErrorReported.add(filePath)) {
-                notifyListeners(listener -> listener.onFileProcessingError(folderPath, filePath, e, settings));
-            }
+            reportFileError(folderPath, filePath, e, settings);
         }
     }
 
@@ -703,8 +725,21 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 Path moveToDir = settings.getMoveToDirectory();
                 if (moveToDir != null) {
                     Files.createDirectories(moveToDir);
+                    // Reserve a collision-safe destination name: never
+                    // REPLACE_EXISTING — a previously processed file with
+                    // the same name must not be silently clobbered
                     Path targetPath = moveToDir.resolve(filePath.getFileName());
-                    Files.move(filePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                    int attempt = 0;
+                    while (true) {
+                        try {
+                            Files.move(filePath, targetPath);
+                            break;
+                        } catch (FileAlreadyExistsException collision) {
+                            attempt++;
+                            targetPath = DescriptorStaging.collisionSafeTarget(
+                                    moveToDir, filePath.getFileName().toString(), attempt);
+                        }
+                    }
                     LOGGER.info("Moved file to: " + targetPath);
                 } else {
                     LOGGER.warning("Move to directory specified but no target directory set for file: " + filePath);
@@ -759,44 +794,45 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         }
 
         String fileName = filePath.getFileName().toString();
-        Path trashPath = trashDir.resolve(fileName);
 
-        // Handle duplicate names in trash
-        int counter = 1;
-        while (Files.exists(trashPath)) {
-            String baseName = fileName;
-            String extension = "";
-            int dotIndex = fileName.lastIndexOf('.');
-            if (dotIndex > 0) {
-                baseName = fileName.substring(0, dotIndex);
-                extension = fileName.substring(dotIndex);
-            }
-            trashPath = trashDir.resolve(baseName + "_" + counter + extension);
-            counter++;
-        }
-
-        // Write the .trashinfo FIRST (freedesktop spec): file managers treat
-        // a trashed file without it as unknown junk and may purge it
-        try {
-            Files.createDirectories(trashInfoDir);
+        // Reserve a collision-safe name via the .trashinfo record: it is
+        // written FIRST (freedesktop spec — file managers treat a trashed
+        // file without it as unknown junk and may purge it) with CREATE_NEW,
+        // so an existing file or .trashinfo record is never replaced
+        Files.createDirectories(trashInfoDir);
+        int attempt = -1;
+        while (true) {
+            attempt++;
+            Path trashPath = DescriptorStaging.collisionSafeTarget(trashDir, fileName, attempt);
+            Path infoPath = trashInfoDir.resolve(trashPath.getFileName() + ".trashinfo");
             String trashInfo = "[Trash Info]\nPath="
                     + filePath.toAbsolutePath().toString().replace("\n", "%0A")
                     + "\nDeletionDate="
                     + java.time.LocalDateTime.now()
                             .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
                     + "\n";
-            Files.writeString(trashInfoDir.resolve(trashPath.getFileName() + ".trashinfo"), trashInfo);
-        } catch (IOException infoError) {
-            LOGGER.log(Level.WARNING, "Failed to write .trashinfo for " + filePath, infoError);
-        }
-
-        // ATOMIC_MOVE with no REPLACE_EXISTING: the existence loop above was
-        // a TOCTOU — a concurrent writer could claim the target between the
-        // check and the move, and REPLACE_EXISTING would silently clobber it
-        try {
-            Files.move(filePath, trashPath, StandardCopyOption.ATOMIC_MOVE);
-        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-            Files.move(filePath, trashPath);
+            try {
+                Files.writeString(infoPath, trashInfo, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            } catch (FileAlreadyExistsException reserved) {
+                continue; // name already taken: try the next candidate
+            }
+            try {
+                // No REPLACE_EXISTING: losing a race for the reserved name
+                // must not silently clobber the winner
+                Files.move(filePath, trashPath, StandardCopyOption.ATOMIC_MOVE);
+                return;
+            } catch (FileAlreadyExistsException raced) {
+                // The reserved name lost the race; drop our info record and
+                // reserve the next candidate
+                Files.deleteIfExists(infoPath);
+            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+                try {
+                    Files.move(filePath, trashPath);
+                    return;
+                } catch (FileAlreadyExistsException racedFallback) {
+                    Files.deleteIfExists(infoPath);
+                }
+            }
         }
     }
 
@@ -811,11 +847,10 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     }
 
     /**
-     * Notifies listeners about a file event (onFileAdded / onFileModified).
+     * Notifies listeners about a file event (onFileModified).
      * A listener that throws must not break the pipeline, but the failure is
      * reported to all listeners through onFileProcessingError so pipeline
-     * errors (for example a download-creation failure in
-     * TorrentFolderMonitor) stay observable.
+     * errors stay observable.
      */
     private void notifyFileEvent(Path folderPath, Path filePath, FolderMonitorSettings settings,
             ListenerAction action) {
@@ -824,14 +859,68 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 action.execute(listener);
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Error notifying listener for file: " + filePath, e);
-                // Exactly-once per processing round: a file that later also
-                // fails format validation must not produce a second
-                // onFileProcessingError
-                if (fileErrorReported.add(filePath)) {
-                    notifyListeners(l -> l.onFileProcessingError(folderPath, filePath, e, settings));
-                }
+                reportFileError(folderPath, filePath, e, settings);
             }
         }
+    }
+
+    /**
+     * Announces onFileAdded for a detected file. Torrent and Metalink
+     * descriptors are first copied into the exclusive staging directory and
+     * the STAGED path is announced, so listeners — and the asynchronous
+     * download queue behind them — always observe durable bytes even after
+     * the source disposition removes the original.
+     *
+     * @return false when the file must NOT proceed to its disposition:
+     *         staging failed or a listener threw. In both cases the original
+     *         stays in place and the error was already reported.
+     */
+    private boolean announceFileAdded(Path folderPath, Path filePath, FolderMonitorSettings settings) {
+        Path announcePath = filePath;
+        if (isDescriptorFile(filePath)) {
+            try {
+                announcePath = DescriptorStaging.stageFile(filePath, descriptorStagingRoot);
+            } catch (Exception stagingFailure) {
+                LOGGER.log(Level.SEVERE,
+                        "Failed to stage descriptor; original kept in place: " + filePath, stagingFailure);
+                reportFileError(folderPath, filePath, stagingFailure, settings);
+                return false;
+            }
+        }
+
+        boolean dispatchedToAll = true;
+        for (FolderMonitorListener listener : listeners) {
+            try {
+                listener.onFileAdded(folderPath, announcePath, settings);
+            } catch (Exception e) {
+                dispatchedToAll = false;
+                LOGGER.log(Level.WARNING, "Error notifying listener for file: " + filePath, e);
+                // The error is identified by the source path; the staged
+                // copy (if any) remains durable for recovery
+                reportFileError(folderPath, filePath, e, settings);
+            }
+        }
+        return dispatchedToAll;
+    }
+
+    /** Reports a file-processing error exactly once per round, keeping the error statistics current. */
+    private void reportFileError(Path folderPath, Path filePath, Throwable error, FolderMonitorSettings settings) {
+        errorCount.incrementAndGet();
+        updateStatistics();
+        // Exactly-once per processing round: a file that later also fails
+        // format validation must not produce a second onFileProcessingError
+        if (fileErrorReported.add(filePath)) {
+            notifyListeners(l -> l.onFileProcessingError(folderPath, filePath, error, settings));
+        }
+    }
+
+    /**
+     * Whether the file is a torrent or Metalink descriptor whose bytes the
+     * download queue reads later: exactly the files that require staging.
+     */
+    private static boolean isDescriptorFile(Path filePath) {
+        String fileName = filePath.getFileName().toString().toLowerCase();
+        return fileName.endsWith(".torrent") || fileName.endsWith(".metalink") || fileName.endsWith(".meta4");
     }
 
     private void updateStatistics() {

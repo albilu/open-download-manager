@@ -338,11 +338,14 @@ class FolderMonitorServiceImplTest {
             folderMonitorService.addFolderMonitorListener(mockListener);
             folderMonitorService.scanFolder(tempDir, settings).get(5, TimeUnit.SECONDS);
 
-            // Only .torrent file should be processed
+            // Only .torrent file should be processed. Watched descriptors are
+            // announced as staged copies (<uuid>-<original name>) beneath the
+            // ODM staging root, so match on the preserved original name
             await().atMost(Duration.ofSeconds(5))
                     .untilAsserted(() -> {
                         verify(mockListener, times(1)).onFileAdded(eq(tempDir), any(Path.class), eq(settings));
-                        verify(mockListener).onFileAdded(eq(tempDir), eq(tempDir.resolve("test.torrent")), eq(settings));
+                        verify(mockListener).onFileAdded(eq(tempDir),
+                                argThat(p -> p.getFileName().toString().endsWith("test.torrent")), eq(settings));
                     });
         }
 
@@ -367,7 +370,8 @@ class FolderMonitorServiceImplTest {
             // Only small file should be processed (size = 5 bytes, within 4-10 range)
             await().atMost(Duration.ofSeconds(5))
                     .untilAsserted(() -> {
-                        verify(mockListener, times(1)).onFileAdded(eq(tempDir), eq(smallFile), eq(settings));
+                        verify(mockListener, times(1)).onFileAdded(eq(tempDir),
+                                argThat(p -> p.getFileName().toString().endsWith("small.torrent")), eq(settings));
                         verify(mockListener, never()).onFileAdded(eq(tempDir), eq(largeFile), eq(settings));
                     });
         }
@@ -391,7 +395,8 @@ class FolderMonitorServiceImplTest {
             await().atMost(Duration.ofSeconds(5))
                     .untilAsserted(() -> {
                         verify(mockListener, times(1)).onFileAdded(eq(tempDir), any(Path.class), eq(settings));
-                        verify(mockListener).onFileAdded(eq(tempDir), eq(tempDir.resolve("test.torrent")), eq(settings));
+                        verify(mockListener).onFileAdded(eq(tempDir),
+                                argThat(p -> p.getFileName().toString().endsWith("test.torrent")), eq(settings));
                     });
         }
 
@@ -461,7 +466,8 @@ class FolderMonitorServiceImplTest {
 
             await().atMost(Duration.ofSeconds(5))
                     .untilAsserted(() -> {
-                        verify(mockListener).onFileAdded(eq(tempDir), eq(subDir.resolve("test.torrent")), eq(settings));
+                        verify(mockListener).onFileAdded(eq(tempDir),
+                                argThat(p -> p.getFileName().toString().endsWith("test.torrent")), eq(settings));
                     });
         }
 
@@ -481,8 +487,9 @@ class FolderMonitorServiceImplTest {
 
             await().atMost(Duration.ofSeconds(5))
                     .untilAsserted(() -> {
-                        verify(mockListener, times(1)).onFileAdded(any(), any(), any());
-                        verify(mockListener).onFileAdded(eq(tempDir), eq(tempDir.resolve("root.torrent")), eq(settings));
+                        verify(mockListener, times(1)).onFileAdded(any(), any(Path.class), any());
+                        verify(mockListener).onFileAdded(eq(tempDir),
+                                argThat(p -> p.getFileName().toString().endsWith("root.torrent")), eq(settings));
                         verify(mockListener, never()).onFileAdded(eq(tempDir), eq(subDir.resolve("test.torrent")), eq(settings));
                     });
         }
@@ -612,7 +619,8 @@ class FolderMonitorServiceImplTest {
                     .untilAsserted(() -> {
                         // Only test.torrent should match (case sensitive)
                         verify(mockListener, times(1)).onFileAdded(eq(tempDir), any(Path.class), eq(settings));
-                        verify(mockListener).onFileAdded(eq(tempDir), eq(tempDir.resolve("test.torrent")), eq(settings));
+                        verify(mockListener).onFileAdded(eq(tempDir),
+                                argThat(p -> p.getFileName().toString().endsWith("test.torrent")), eq(settings));
                     });
         }
     }

@@ -34,6 +34,7 @@ import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.tools.ToolManagerFactory;
+import org.manager.util.DescriptorStaging;
 import org.aria2.Aria2ToolManager;
 
 /**
@@ -957,16 +958,21 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Handle different URI schemes for torrent files
         byte[] torrentData;
         String torrentSource;
+        // Local descriptor whose bytes are consumed by addTorrent; when ODM
+        // staged it (folder monitoring), successful ingestion owns its removal
+        Path localTorrentFile = null;
         if ("file".equals(torrentUri.getScheme())) {
             // Local file path
             Path torrentFile = Paths.get(torrentUri);
             torrentData = readLocalFile(torrentFile, "Torrent");
             torrentSource = torrentFile.toString();
+            localTorrentFile = torrentFile;
         } else if ("torrent".equals(torrentUri.getScheme())) {
             // Custom torrent: scheme - extract file path from URI
             Path torrentFile = Paths.get(torrentUri.getSchemeSpecificPart());
             torrentData = readLocalFile(torrentFile, "Torrent");
             torrentSource = torrentFile.toString();
+            localTorrentFile = torrentFile;
         } else if ("http".equals(torrentUri.getScheme()) || "https".equals(torrentUri.getScheme())) {
             // Remote torrent file: fetch it into memory, then hand the bytes
             // to aria2's addTorrent
@@ -998,6 +1004,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Use the existing addTorrent method from aria2Client
         // Parameters: byte[] torrent, List<String> uris, String dir, Map options
         String gid = aria2Client.addTorrent(torrentData, uris, download.getDestination().toString(), options);
+
+        // Successful ingestion consumes the descriptor: delete it only when
+        // ODM owns it (staged by the folder monitor beneath the staging
+        // root); manually selected files remain user-owned
+        if (localTorrentFile != null) {
+            DescriptorStaging.deleteIfStaged(localTorrentFile);
+        }
 
         LOGGER.info("Started torrent download with GID: " + gid + " for source: " + torrentSource);
         return gid;
@@ -1078,15 +1091,20 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Handle different URI schemes for metalink files
         byte[] metaLinkData;
         String metaLinkSource;
+        // Local descriptor whose bytes are consumed by addMetalink; when ODM
+        // staged it (folder monitoring), successful ingestion owns its removal
+        Path localMetaLinkFile = null;
         if ("file".equals(metaLinkUri.getScheme())) {
             Path metaLinkFile = Paths.get(metaLinkUri);
             metaLinkData = readLocalFile(metaLinkFile, "Metalink");
             metaLinkSource = metaLinkFile.toString();
+            localMetaLinkFile = metaLinkFile;
         } else if ("metalink".equals(metaLinkUri.getScheme())) {
             // Custom metalink: scheme - extract file path from URI
             Path metaLinkFile = Paths.get(metaLinkUri.getSchemeSpecificPart());
             metaLinkData = readLocalFile(metaLinkFile, "Metalink");
             metaLinkSource = metaLinkFile.toString();
+            localMetaLinkFile = metaLinkFile;
         } else if ("http".equals(metaLinkUri.getScheme()) || "https".equals(metaLinkUri.getScheme())) {
             // Remote Metalink file: fetch it into memory and hand the bytes
             // to aria2's addMetalink
@@ -1117,6 +1135,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }
 
         String gid = aria2Client.addMetalink(metaLinkData, options);
+
+        // Successful ingestion consumes the descriptor: delete it only when
+        // ODM owns it (staged by the folder monitor beneath the staging
+        // root); manually selected files remain user-owned
+        if (localMetaLinkFile != null) {
+            DescriptorStaging.deleteIfStaged(localMetaLinkFile);
+        }
+
         LOGGER.info("Started Metalink download with GID: " + gid + " for source: " + metaLinkSource);
         return gid;
     }

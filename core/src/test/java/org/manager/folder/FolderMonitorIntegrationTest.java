@@ -118,7 +118,7 @@ class FolderMonitorIntegrationTest {
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
                         assertTrue(listener.getAddedFiles().stream()
-                                .anyMatch(path -> path.getFileName().toString().equals("test.torrent")));
+                                .anyMatch(path -> path.getFileName().toString().endsWith("test.torrent")));
                     });
         }
 
@@ -147,9 +147,9 @@ class FolderMonitorIntegrationTest {
                     .untilAsserted(() -> {
                         assertEquals(2, listener.getAddedFiles().size());
                         assertTrue(listener.getAddedFiles().stream()
-                                .anyMatch(path -> path.getFileName().toString().equals("existing1.torrent")));
+                                .anyMatch(path -> path.getFileName().toString().endsWith("existing1.torrent")));
                         assertTrue(listener.getAddedFiles().stream()
-                                .anyMatch(path -> path.getFileName().toString().equals("existing2.torrent")));
+                                .anyMatch(path -> path.getFileName().toString().endsWith("existing2.torrent")));
                     });
         }
 
@@ -182,7 +182,7 @@ class FolderMonitorIntegrationTest {
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
                         assertTrue(listener.getAddedFiles().stream()
-                                .anyMatch(path -> path.getFileName().toString().equals("new.torrent")));
+                                .anyMatch(path -> path.getFileName().toString().endsWith("new.torrent")));
                     });
         }
 
@@ -214,12 +214,14 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(15))
                     .untilAsserted(() -> {
                         assertEquals(3, listener.getAddedFiles().size());
+                        // Watched descriptors arrive as staged copies
+                        // (<uuid>-<original name>), so match on the suffix
                         List<String> fileNames = listener.getAddedFiles().stream()
                                 .map(path -> path.getFileName().toString())
                                 .collect(Collectors.toList());
-                        assertTrue(fileNames.contains("root.torrent"));
-                        assertTrue(fileNames.contains("sub1.torrent"));
-                        assertTrue(fileNames.contains("sub2.torrent"));
+                        assertTrue(fileNames.stream().anyMatch(n -> n.endsWith("root.torrent")));
+                        assertTrue(fileNames.stream().anyMatch(n -> n.endsWith("sub1.torrent")));
+                        assertTrue(fileNames.stream().anyMatch(n -> n.endsWith("sub2.torrent")));
                     });
         }
 
@@ -249,7 +251,7 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
-                        assertEquals("root.torrent", listener.getAddedFiles().get(0).getFileName().toString());
+                        assertTrue(listener.getAddedFiles().get(0).getFileName().toString().endsWith("root.torrent"));
                     });
         }
     }
@@ -290,7 +292,7 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
-                        assertEquals("large.torrent", listener.getAddedFiles().get(0).getFileName().toString());
+                        assertTrue(listener.getAddedFiles().get(0).getFileName().toString().endsWith("large.torrent"));
                     });
         }
 
@@ -326,7 +328,7 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
-                        assertEquals("small.torrent", listener.getAddedFiles().get(0).getFileName().toString());
+                        assertTrue(listener.getAddedFiles().get(0).getFileName().toString().endsWith("small.torrent"));
                     });
         }
     }
@@ -361,7 +363,7 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
-                        assertEquals("normal.torrent", listener.getAddedFiles().get(0).getFileName().toString());
+                        assertTrue(listener.getAddedFiles().get(0).getFileName().toString().endsWith("normal.torrent"));
                     });
         }
     }
@@ -487,11 +489,13 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(15))
                     .untilAsserted(() -> {
                         assertEquals(2, listener.getAddedFiles().size());
+                        // Watched descriptors are announced as staged copies
+                        // (<uuid>-<original name>), so match on the suffix
                         List<String> fileNames = listener.getAddedFiles().stream()
                                 .map(path -> path.getFileName().toString())
                                 .collect(Collectors.toList());
-                        assertTrue(fileNames.contains("test1.torrent"));
-                        assertTrue(fileNames.contains("test2.meta4"));
+                        assertTrue(fileNames.stream().anyMatch(n -> n.endsWith("test1.torrent")));
+                        assertTrue(fileNames.stream().anyMatch(n -> n.endsWith("test2.meta4")));
                     });
         }
 
@@ -531,7 +535,9 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
-                        assertEquals("test2.torrent", listener.getAddedFiles().get(0).getFileName().toString());
+                        // Staged copy of the watched file (<uuid>-test2.torrent)
+                        assertTrue(listener.getAddedFiles().get(0).getFileName().toString()
+                                .endsWith("test2.torrent"));
                     });
         }
     }
@@ -593,9 +599,11 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(1, listener.getAddedFiles().size());
-                        assertEquals("test1.torrent", listener.getAddedFiles().get(0).getFileName().toString());
+                        // Staged copy of the watched file (<uuid>-test1.torrent)
+                        assertTrue(listener.getAddedFiles().get(0).getFileName().toString()
+                                .endsWith("test1.torrent"));
                     });
-        }
+    }
     }
 
     @Nested
@@ -640,11 +648,13 @@ class FolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         assertEquals(2, listener.getAddedFiles().size());
+                        // Watched descriptors arrive as staged copies
+                        // (<uuid>-<original name>), so match on the suffix
                         List<String> fileNames = listener.getAddedFiles().stream()
                                 .map(path -> path.getFileName().toString())
                                 .collect(Collectors.toList());
-                        assertTrue(fileNames.contains("test.torrent"));
-                        assertTrue(fileNames.contains("test2.meta4"));
+                        assertTrue(fileNames.stream().anyMatch(n -> n.endsWith("test.torrent")));
+                        assertTrue(fileNames.stream().anyMatch(n -> n.endsWith("test2.meta4")));
                     });
         }
     }
@@ -733,7 +743,7 @@ class FolderMonitorIntegrationTest {
                     .untilAsserted(() -> {
                         assertTrue(listener.getAddedFiles().size() >= 1);
                         assertTrue(listener.getAddedFiles().stream()
-                                .anyMatch(path -> path.getFileName().toString().equals("valid.torrent")));
+                                .anyMatch(path -> path.getFileName().toString().endsWith("valid.torrent")));
                     });
         }
     }

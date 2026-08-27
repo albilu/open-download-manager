@@ -536,7 +536,11 @@ class TorrentFolderMonitorIntegrationTest {
             // Then
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
-                        verify(mockDownloadManager).createTorrentDownload(eq(torrentFile), eq(customDownloadDir));
+                        // Watched descriptors arrive as staged copies
+                        // (<uuid>-<original name>), so match on the suffix
+                        verify(mockDownloadManager).createTorrentDownload(
+                                argThat(p -> p.getFileName().toString().endsWith("test.torrent")),
+                                eq(customDownloadDir));
                     });
         }
 
@@ -560,7 +564,11 @@ class TorrentFolderMonitorIntegrationTest {
             // Then
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
-                        verify(mockDownloadManager).createTorrentDownload(eq(torrentFile), eq(defaultDownloadDirectory));
+                        // Watched descriptors arrive as staged copies
+                        // (<uuid>-<original name>), so match on the suffix
+                        verify(mockDownloadManager).createTorrentDownload(
+                                argThat(p -> p.getFileName().toString().endsWith("test.torrent")),
+                                eq(defaultDownloadDirectory));
                     });
         }
 

@@ -1262,16 +1262,14 @@ public class DownloadManagerImpl implements DownloadManager {
 
     /**
      * Resolves the XDG data directory for ODM state files, honoring
-     * XDG_DATA_HOME and defaulting to ~/.local/share/odm.
+     * XDG_DATA_HOME and defaulting to ~/.local/share/odm. Delegates to the
+     * shared {@link org.manager.util.OdmPaths} so every component (state
+     * store, descriptor staging, aria2 cleanup) agrees on the same root.
      *
      * @return the directory in which to store the state database
      */
     private static Path xdgDataDirectory() {
-        String xdgDataHome = System.getenv("XDG_DATA_HOME");
-        Path base = (xdgDataHome != null && !xdgDataHome.isBlank())
-                ? Paths.get(xdgDataHome)
-                : Paths.get(System.getProperty("user.home"), ".local", "share");
-        return base.resolve("odm");
+        return org.manager.util.OdmPaths.dataDirectory();
     }
 
     /**

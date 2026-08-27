@@ -1,0 +1,130 @@
+package org.manager.util;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Unit tests for the descriptor staging ownership model: durable
+ * collision-resistant copies, containment as the ownership marker, and
+ * deletion restricted to ODM-managed staged files.
+ */
+@DisplayName("Descriptor Staging Tests")
+class DescriptorStagingTest {
+
+    @TempDir
+    Path tempDir;
+
+    private Path newStagingRoot() throws IOException {
+        Path root = tempDir.resolve("descriptor-staging");
+        Files.createDirectories(root);
+        return root;
+    }
+
+    @Test
+    @DisplayName("Staging name collisions cannot replace an existing file")
+    void stagingNameCollisionsCannotReplaceExistingFile() throws IOException {
+        Path root = newStagingRoot();
+        Path sentinel = root.resolve("sentinel.torrent");
+        byte[] sentinelBytes = "sentinel must survive".getBytes(StandardCharsets.UTF_8);
+        Files.write(sentinel, sentinelBytes);
+
+        Path source = tempDir.resolve("movie.torrent");
+        Map<Path, byte[]> stagedCopies = new LinkedHashMap<>();
+        for (int round = 0; round < 3; round++) {
+            byte[] roundBytes = ("descriptor content round " + round).getBytes(StandardCharsets.UTF_8);
+            Files.write(source, roundBytes);
+            Path staged = DescriptorStaging.stageFile(source, root);
+            stagedCopies.put(staged, roundBytes);
+        }
+
+        // Every staging round produced its own distinct durable copy...
+        assertEquals(3, stagedCopies.size(), "each staging round must produce a distinct path");
+        stagedCopies.forEach((staged, expected) -> {
+            assertTrue(Files.isRegularFile(staged), "staged copy must exist: " + staged);
+            assertArrayEquals(expected, read(staged), "staged copy must hold its round's bytes: " + staged);
+        });
+
+        // ...and nothing pre-existing was replaced
+        assertArrayEquals(sentinelBytes, read(sentinel), "an existing staged file must never be replaced");
+        assertTrue(Files.exists(source), "staging must not consume the source");
+    }
+
+    @Test
+    @DisplayName("Containment beneath the staging root is the ownership marker")
+    void containmentIdentifiesOnlyPathsBeneathTheStagingRoot() throws IOException {
+        Path root = newStagingRoot();
+
+        Path source = tempDir.resolve("a.torrent");
+        Files.write(source, "descriptor".getBytes(StandardCharsets.UTF_8));
+        Path staged = DescriptorStaging.stageFile(source, root);
+        assertTrue(DescriptorStaging.isStagedPath(staged, root), "staged copy must be recognized as ODM-managed");
+
+        // Lexically different but resolving into the root still counts
+        Path sneaky = root.getParent().resolve(root.getFileName().toString()).resolve("b.torrent");
+        assertTrue(DescriptorStaging.isStagedPath(sneaky, root), "paths resolving beneath the root count");
+
+        // Siblings, parents, and the root itself are user-owned
+        assertFalse(DescriptorStaging.isStagedPath(root.resolveSibling("descriptor-staging-2").resolve("x.torrent"), root));
+        assertFalse(DescriptorStaging.isStagedPath(tempDir.resolve("manual.torrent"), root));
+        assertFalse(DescriptorStaging.isStagedPath(root, root), "the root itself is not a staged file");
+        assertFalse(DescriptorStaging.isStagedPath(null, root));
+        assertFalse(DescriptorStaging.isStagedPath(staged, null));
+    }
+
+    @Test
+    @DisplayName("Deletion removes only ODM-managed staged files")
+    void deleteIfStagedRemovesOnlyManagedFiles() throws IOException {
+        Path root = newStagingRoot();
+        Path source = tempDir.resolve("movie.torrent");
+        Files.write(source, "descriptor".getBytes(StandardCharsets.UTF_8));
+        Path staged = DescriptorStaging.stageFile(source, root);
+
+        Path manual = tempDir.resolve("manually-selected.torrent");
+        byte[] manualBytes = "user-owned descriptor".getBytes(StandardCharsets.UTF_8);
+        Files.write(manual, manualBytes);
+
+        assertTrue(DescriptorStaging.deleteIfStaged(staged, root), "the staged copy is ODM-managed");
+        assertFalse(Files.exists(staged), "the staged copy must be gone after consumption");
+
+        assertFalse(DescriptorStaging.deleteIfStaged(manual, root),
+                "manually selected files are never auto-deleted");
+        assertArrayEquals(manualBytes, read(manual), "the manual file must be untouched");
+    }
+
+    @Test
+    @DisplayName("Collision-safe targets keep the plain name first and suffix on retry")
+    void collisionSafeTargetProgression() {
+        assertEquals(tempDir.resolve("movie.torrent"),
+                DescriptorStaging.collisionSafeTarget(tempDir, "movie.torrent", 0));
+        assertEquals(tempDir.resolve("movie-1.torrent"),
+                DescriptorStaging.collisionSafeTarget(tempDir, "movie.torrent", 1));
+        assertEquals(tempDir.resolve("movie-2.torrent"),
+                DescriptorStaging.collisionSafeTarget(tempDir, "movie.torrent", 2));
+        assertEquals(tempDir.resolve("archive-1"),
+                DescriptorStaging.collisionSafeTarget(tempDir, "archive", 1));
+        assertNotEquals(DescriptorStaging.collisionSafeTarget(tempDir, "movie.torrent", 0),
+                DescriptorStaging.collisionSafeTarget(tempDir, "movie.torrent", 3));
+    }
+
+    private static byte[] read(Path file) {
+        try {
+            return Files.readAllBytes(file);
+        } catch (IOException e) {
+            throw new AssertionError("failed reading " + file, e);
+        }
+    }
+}
