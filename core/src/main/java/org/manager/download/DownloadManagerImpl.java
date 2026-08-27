@@ -7,8 +7,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,7 +29,6 @@ import org.aria2.Aria2ToolManager;
 import org.manager.ApplicationContext;
 import org.manager.GlobalSettings;
 import org.manager.ShutdownCoordinator;
-import org.manager.clipboard.ClipboardFactory;
 import org.manager.clipboard.ClipboardService;
 import org.manager.clipboard.ClipboardSettings;
 import org.manager.di.DependencyContainer;
@@ -40,10 +37,8 @@ import org.manager.download.action.AfterCompletionActionListener;
 import org.manager.download.action.AfterCompletionActionManager;
 import org.manager.download.handler.DownloadHandler;
 import org.manager.download.handler.DownloadHandlerFactory;
-import org.manager.download.handler.RetryableDownloadHandler;
 import org.manager.exception.ErrorHandler;
 import org.manager.folder.FolderMonitorService;
-import org.manager.folder.FolderMonitorServiceImpl;
 import org.manager.folder.FolderMonitorSettings;
 import org.manager.folder.MetaLinkFolderMonitor;
 import org.manager.folder.TorrentFolderMonitor;
@@ -72,11 +67,6 @@ public class DownloadManagerImpl implements DownloadManager {
     private static final int DEFAULT_MAX_CONCURRENT_DOWNLOADS = 5;
     private static final String STATE_FILE = "odm-state.json";
     private static final String STATE_DB_FILE = "odm-state.db";
-    private static final String ARIA2_SESSION_FILE = "aria2-session.txt";
-    private static final String ARIA2_INPUT_FILE = "aria2-input.txt";
-
-    /** Interval of the periodic state snapshot job (5 minutes). */
-    private static final long STATE_SNAPSHOT_INTERVAL_SECONDS = 300;
 
     private final PaginatedDownloadRepository downloadRepository;
     private final Map<String, String> gidToIdMap; // Handler GID -> download ID
@@ -92,13 +82,11 @@ public class DownloadManagerImpl implements DownloadManager {
     private final SqliteDownloadStateStore stateStore;
     private final DownloadCleanupManager cleanupManager;
     private final ShutdownCoordinator shutdownCoordinator;
-    private final ClipboardService clipboardService;
-    private final FolderMonitorService folderMonitorService;
-    private final TorrentFolderMonitor torrentFolderMonitor;
-    private final MetaLinkFolderMonitor metaLinkFolderMonitor;
-    private final AtomicBoolean torrentFolderMonitoringEnabled;
-    private final AtomicBoolean metaLinkFolderMonitoringEnabled;
-    private final org.manager.proxy.ProxyRotationManager proxyRotationManager;
+    private final ManagerClipboardService clipboard;
+    private final FolderWatchingService folderWatching;
+    private final Aria2SessionManager aria2SessionManager;
+    private final ProxyRotationSupport proxyRotation;
+    private final DownloadServicesScheduler servicesScheduler;
 
     // OPTIMIZATION: Efficient listener management
     private final Map<String, DownloadHandler> activeHandlers; // download ID -> handler
@@ -106,8 +94,6 @@ public class DownloadManagerImpl implements DownloadManager {
 
     // Backward compatibility fields
     private Path defaultDownloadDirectory;
-    private Path aria2SessionFilePath;
-    private Path aria2InputFilePath;
     private final Set<String> activeDownloadsBeforeExit = ConcurrentHashMap.newKeySet();
 
     /**
@@ -155,20 +141,21 @@ public class DownloadManagerImpl implements DownloadManager {
         // into the global ApplicationContext — a domain object mutating the
         // application factory from its constructor, and a cross-generation
         // leak vector; explicit registrants use the factory API directly.
-        this.clipboardService = ClipboardFactory.createClipboardService(this,
-                clipboardSettingsOrDefault());
+        this.clipboard = new ManagerClipboardService(this, this::getGlobalSettings);
 
         // Initialize folder monitoring services
-        try {
-            this.folderMonitorService = new FolderMonitorServiceImpl();
-            this.torrentFolderMonitor = new TorrentFolderMonitor(this, folderMonitorService, defaultDownloadDirectory);
-            this.torrentFolderMonitoringEnabled = new AtomicBoolean(false);
-            this.metaLinkFolderMonitor = new MetaLinkFolderMonitor(this, folderMonitorService, defaultDownloadDirectory);
-            this.metaLinkFolderMonitoringEnabled = new AtomicBoolean(false);
-            this.proxyRotationManager = new org.manager.proxy.ProxyRotationManager();
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to initialize folder monitoring service", e);
-        }
+        this.folderWatching = new FolderWatchingService(this, this::getGlobalSettings,
+                defaultDownloadDirectory);
+        this.proxyRotation = new ProxyRotationSupport(
+                new org.manager.proxy.ProxyRotationManager(),
+                this::getGlobalSettings,
+                executorManager);
+        this.servicesScheduler = new DownloadServicesScheduler(
+                executorManager,
+                this::getGlobalSettings,
+                this::getHandlerFactory,
+                isShuttingDown::get,
+                () -> saveState().join());
 
         // Use the download directory from global settings if empty use default
         if (getGlobalSettings().getDefaultDownloadDirectory() == null
@@ -180,11 +167,27 @@ public class DownloadManagerImpl implements DownloadManager {
         // ODM state lives in the XDG data dir, not inside the user's
         // Downloads folder. aria2's own session/input files stay with the
         // download directory.
-        this.aria2SessionFilePath = defaultDownloadDirectory.resolve(ARIA2_SESSION_FILE);
-        this.aria2InputFilePath = defaultDownloadDirectory.resolve(ARIA2_INPUT_FILE);
+        this.aria2SessionManager = new Aria2SessionManager(defaultDownloadDirectory);
 
         // Register shutdown hooks
-        registerShutdownHooks();
+        new ManagerShutdownHooks(
+                shutdownCoordinator,
+                isShuttingDown,
+                activeDownloadsBeforeExit,
+                () -> downloadRepository.getDownloadsByStatus(
+                        Download.Status.DOWNLOADING, 0, Integer.MAX_VALUE).getDownloads(),
+                this::pauseAllDownloads,
+                this::saveState,
+                servicesScheduler,
+                proxyRotation,
+                cleanupManager,
+                this::getHandlerFactory,
+                this::getActionManager,
+                clipboard,
+                folderWatching,
+                stateStore,
+                container,
+                executorManager).registerAll();
     }
 
     /**
@@ -452,7 +455,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Wrap with proxy rotation when enabled: retries rate-limited /
             // blocked downloads through different proxies from the proxy list
-            handler = maybeWrapWithProxyRotation(handler, download);
+            handler = proxyRotation.maybeWrap(handler, download);
 
             // OPTIMIZATION: Store handler reference for cleanup and use reusable listener
             activeHandlers.put(download.getId(), handler);
@@ -962,8 +965,8 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Re-evaluate the tracker refresh schedule (interval may have
             // changed) and immediately apply a changed tracker list
-            startTrackerRefreshJob();
-            runTrackerRefresh();
+            servicesScheduler.startTrackerRefreshJob();
+            servicesScheduler.runTrackerRefresh();
         }
     }
 
@@ -999,7 +1002,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 stateStore.save(allDownloads, activeDownloads);
 
                 // Save aria2 session if available
-                saveAria2Session();
+                aria2SessionManager.saveSession(getHandlerFactory());
 
                 LOGGER.info("Saved " + allDownloads.size() + " downloads (including "
                         + activeDownloads.size() + " active) to state database");
@@ -1043,7 +1046,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
 
                 // Load aria2 session if available
-                loadAria2Session();
+                aria2SessionManager.loadSession(getHandlerFactory());
 
                 // Auto-resume previously active downloads
                 autoResumeActiveDownloads();
@@ -1259,60 +1262,6 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     /**
-     * Wraps the handler with automatic proxy rotation when enabled in the
-     * global settings. Only HTTP-capable download types (aria2, curl) are
-     * wrapped: proxy rotation exists to bypass server restrictions and rate
-     * limits on plain HTTP downloads. The proxy list is loaded lazily, once,
-     * from the configured proxy list file.
-     *
-     * @param handler the handler selected for the download
-     * @param download the download being started
-     * @return the original handler, or a {@link RetryableDownloadHandler}
-     *         decorating it
-     */
-    private DownloadHandler maybeWrapWithProxyRotation(DownloadHandler handler, Download download) {
-        GlobalSettings settings = getGlobalSettings();
-        if (!settings.isProxyRotationEnabled()) {
-            return handler;
-        }
-        if (download.getType() != Download.Type.ARIA2 && download.getType() != Download.Type.CURL) {
-            return handler;
-        }
-        if (proxyRotationManager.isEmpty()) {
-            loadProxyList(settings);
-            if (proxyRotationManager.isEmpty()) {
-                LOGGER.warning("Proxy rotation is enabled but the proxy list is empty; "
-                        + "starting without rotation");
-                return handler;
-            }
-        }
-        return new RetryableDownloadHandler(handler, proxyRotationManager,
-                org.manager.proxy.ProxyRetrySettings.builder()
-                        .maxRetries(settings.getProxyRotationMaxRetries())
-                        .enableProxyRotation(true)
-                        .build(),
-                executorManager.getScheduledExecutor(), executorManager.getGeneralExecutor());
-    }
-
-    /**
-     * Loads proxies from the configured proxy list file into the rotation
-     * manager. Missing or unreadable files are logged and leave the manager
-     * empty.
-     */
-    private void loadProxyList(GlobalSettings settings) {
-        String path = settings.getProxyListFilePath();
-        if (path == null || path.isBlank()) {
-            return;
-        }
-        try {
-            int loaded = proxyRotationManager.loadProxiesFromFile(Paths.get(path));
-            LOGGER.info("Loaded " + loaded + " proxies for rotation from " + path);
-        } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Could not load proxy list from " + path, e);
-        }
-    }
-
-    /**
      * Gets the handler factory from the dependency container.
      */
     private DownloadHandlerFactory getHandlerFactory() {
@@ -1373,35 +1322,21 @@ public class DownloadManagerImpl implements DownloadManager {
             loadState().join();
 
             // Initialize clipboard service if enabled
-            if (clipboardSettingsOrDefault().isMonitoringEnabled()) {
-                clipboardService.startService().join();
-                LOGGER.info("Clipboard service initialized and started");
-            }
+            clipboard.startIfEnabled();
 
             // Restore folder monitoring from persisted settings
-            if (getGlobalSettings().getBooleanProperty("folder.monitorEnabled", false)) {
-                torrentFolderMonitoringEnabled.set(true);
-                metaLinkFolderMonitoringEnabled.set(true);
-                startConfiguredFolderMonitoring();
-                LOGGER.info("Folder monitoring restored from settings");
-            }
+            folderWatching.restoreFromSettings();
 
             // Start the periodic tracker refresh when configured
-            startTrackerRefreshJob();
+            servicesScheduler.startTrackerRefreshJob();
 
             // Periodic state snapshots: a crash or kill must not lose every
             // download added since launch (shutdown-only persistence did).
-            startStateSnapshotJob();
+            servicesScheduler.startStateSnapshotJob();
 
             // Periodic proxy health check: without it, UNHEALTHY proxies are
             // never reset and BLOCKED never pruned once recorded
-            if (proxyRotationManager.isHealthChecksEnabled()) {
-                long intervalMinutes = Math.max(1, proxyRotationManager.getHealthCheckIntervalMinutes());
-                proxyHealthTask = executorManager.getScheduledExecutor()
-                        .scheduleWithFixedDelay(proxyRotationManager::performHealthCheck,
-                                intervalMinutes, intervalMinutes, TimeUnit.MINUTES);
-                LOGGER.info("Proxy health check scheduled every " + intervalMinutes + " minute(s)");
-            }
+            proxyRotation.startHealthChecks();
 
             // Tool availability is already logged from the async
             // checkAllToolsAsync() in initializeDependencies; the old
@@ -1413,206 +1348,6 @@ public class DownloadManagerImpl implements DownloadManager {
         } catch (Exception e) {
             throw new RuntimeException("Component initialization failed", e);
         }
-    }
-
-    /**
-     * Performs a specific shutdown step with error handling.
-     */
-    private void performShutdownStep(String step) {
-        try {
-            switch (step) {
-                case "save state" ->
-                    saveState().join();
-                case "shutdown handlers" -> {
-                    stopTrackerRefreshJob();
-                    getHandlerFactory().shutdownHandlers();
-                }
-                case "shutdown action manager" ->
-                    getActionManager().shutdown();
-                case "shutdown clipboard service" ->
-                    clipboardService.cleanup();
-                case "shutdown tool manager factory" -> {
-                    ToolManagerFactory toolFactory = container.get(ToolManagerFactory.class);
-                    if (toolFactory != null) {
-                        toolFactory.cleanup();
-                    }
-                }
-                case "shutdown container" ->
-                    container.shutdown();
-                default ->
-                    LOGGER.warning("Unknown shutdown step: " + step);
-            }
-            LOGGER.fine("Completed shutdown step: " + step);
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed shutdown step: " + step, e);
-        }
-    }
-
-    /**
-     * Registers shutdown hooks for proper shutdown coordination.
-     */
-    private void registerShutdownHooks() {
-        // Phase 1: Prepare for shutdown
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.PREPARE,
-                "mark-shutting-down",
-                () -> {
-                    isShuttingDown.set(true);
-                    if (stateSnapshotTask != null) {
-                        stateSnapshotTask.cancel(false);
-                    }
-                    if (proxyHealthTask != null) {
-                        proxyHealthTask.cancel(false);
-                    }
-                });
-
-        // Phase 2: Handle downloads
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.DOWNLOADS,
-                "track-and-pause-active-downloads",
-                () -> {
-                    try {
-                        // Track currently active downloads before pausing them
-                        List<Download> activeDownloads = downloadRepository.getDownloadsByStatus(
-                                Download.Status.DOWNLOADING, 0, Integer.MAX_VALUE).getDownloads();
-
-                        for (Download download : activeDownloads) {
-                            activeDownloadsBeforeExit.add(download.getId());
-                        }
-
-                        LOGGER.info("Tracked " + activeDownloads.size() + " active downloads for auto-resume");
-
-                        // Now pause all downloads
-                        pauseAllDownloads().get(30, TimeUnit.SECONDS);
-                    } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to pause all downloads during shutdown", e);
-                    }
-                });
-
-        // Phase 3: Cleanup manager
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.SERVICES,
-                "cleanup-manager",
-                () -> {
-                    try {
-                        cleanupManager.shutdown().get(30, TimeUnit.SECONDS);
-                    } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to shutdown cleanup manager", e);
-                    }
-                });
-
-        // Phase 4: Save state
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.PERSISTENCE,
-                "save-state",
-                () -> {
-                    try {
-                        saveState().get(30, TimeUnit.SECONDS);
-                    } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to save state during shutdown", e);
-                    }
-                });
-
-        // Phase 5: Shutdown handlers
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.SERVICES,
-                "shutdown-handlers",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown handlers"), "shutdown handlers"));
-
-        // Phase 6: Shutdown action manager
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.SERVICES,
-                "shutdown-action-manager",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown action manager"),
-                        "shutdown action manager"));
-
-        // Phase 3: Shutdown clipboard service
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.SERVICES,
-                "shutdown-clipboard-service",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown clipboard service"),
-                        "shutdown clipboard service"));
-
-        // Phase 3: Shutdown folder monitoring services
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.SERVICES,
-                "shutdown-folder-monitoring",
-                () -> {
-                    try {
-                        LOGGER.info("Shutting down folder monitoring services...");
-
-                        // Shutdown folder monitoring services with proper error handling
-                        CompletableFuture<Void> torrentShutdown = null;
-                        CompletableFuture<Void> folderShutdown = null;
-
-                        try {
-                            if (torrentFolderMonitor != null) {
-                                torrentShutdown = torrentFolderMonitor.shutdown();
-                            }
-                        } catch (Exception e) {
-                            LOGGER.log(Level.WARNING, "Error initiating torrent folder monitor shutdown", e);
-                        }
-
-                        try {
-                            if (folderMonitorService != null) {
-                                folderShutdown = folderMonitorService.shutdown();
-                            }
-                        } catch (Exception e) {
-                            LOGGER.log(Level.WARNING, "Error initiating folder monitor service shutdown", e);
-                        }
-
-                        // Wait for both to complete
-                        if (torrentShutdown != null) {
-                            try {
-                                torrentShutdown.get(8, TimeUnit.SECONDS);
-                            } catch (Exception e) {
-                                LOGGER.log(Level.WARNING, "Torrent folder monitor shutdown timeout or error", e);
-                            }
-                        }
-
-                        if (folderShutdown != null) {
-                            try {
-                                folderShutdown.get(8, TimeUnit.SECONDS);
-                            } catch (Exception e) {
-                                LOGGER.log(Level.WARNING, "Folder monitor service shutdown timeout or error", e);
-                            }
-                        }
-
-                        LOGGER.info("Folder monitoring services shutdown complete");
-                    } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to shutdown folder monitoring services", e);
-                    }
-                });
-
-        // Phase 7: Shutdown dependency manager
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.RESOURCES,
-                "shutdown-dependency-manager",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown dependency manager"),
-                        "shutdown dependency manager"));
-
-        // Phase 8: Shutdown container
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.CLEANUP,
-                "shutdown-container",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown container"),
-                        "shutdown container"));
-
-        // Phase 9: Close the SQLite state database after every save is done
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.CLEANUP,
-                "close-state-store",
-                () -> ErrorHandler.executeSafely(stateStore::close, "close state store"));
-
-        // Phase 10: Tear down the shared thread pools LAST, after every hook
-        // that submits work to them (save-state, pause-all, handler shutdown)
-        // has completed. ExecutorServiceManager deliberately registers no JVM
-        // hook of its own: one would race this coordinator and reject the
-        // persistence phase's saveState() execution.
-        shutdownCoordinator.registerShutdownHook(
-                ShutdownCoordinator.ShutdownPhase.CLEANUP,
-                "shutdown-executors",
-                () -> ErrorHandler.executeSafely(executorManager::shutdown, "shutdown executors"));
     }
 
     /**
@@ -1701,48 +1436,6 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     /**
-     * Saves the aria2 session to file for resume support.
-     */
-    private void saveAria2Session() {
-        try {
-            // Get aria2 handler if available
-            DownloadHandlerFactory factory = getHandlerFactory();
-            if (factory != null) {
-                DownloadHandler aria2Handler = factory.getHandler(Download.Type.ARIA2);
-                // Typed cast, not reflection: a rename must break at compile
-                // time, not silently at shutdown
-                if (aria2Handler instanceof org.manager.download.handler.Aria2DownloadHandler typed) {
-                    typed.saveSession();
-                    LOGGER.info("Saved aria2 session to: " + aria2SessionFilePath);
-                }
-            }
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to save aria2 session", e);
-        }
-    }
-
-    /**
-     * Loads the aria2 session from file for resume support.
-     */
-    private void loadAria2Session() {
-        try {
-            if (Files.exists(aria2SessionFilePath)) {
-                // Get aria2 handler if available
-                DownloadHandlerFactory factory = getHandlerFactory();
-                if (factory != null) {
-                    DownloadHandler aria2Handler = factory.getHandler(Download.Type.ARIA2);
-                    if (aria2Handler instanceof org.manager.download.handler.Aria2DownloadHandler typed) {
-                        typed.loadSession(aria2SessionFilePath);
-                        LOGGER.info("Loaded aria2 session from: " + aria2SessionFilePath);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to load aria2 session", e);
-        }
-    }
-
-    /**
      * Automatically resumes downloads that were active before application exit.
      */
     private void autoResumeActiveDownloads() {
@@ -1790,46 +1483,6 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     /**
-     * Configures aria2 to use session and input files for better persistence.
-     * This method should be called during aria2 handler initialization.
-     */
-    private void configureAria2Session() {
-        try {
-            // Create aria2 configuration with session support
-            Map<String, String> aria2Config = new HashMap<>();
-            aria2Config.put("save-session", aria2SessionFilePath.toString());
-            aria2Config.put("save-session-interval", "60"); // Save every 60 seconds
-
-            if (Files.exists(aria2SessionFilePath)) {
-                aria2Config.put("input-file", aria2SessionFilePath.toString());
-            }
-
-            // This configuration will be used by the aria2 handler during initialization
-            LOGGER.info("Configured aria2 session management with files: " + aria2SessionFilePath);
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to configure aria2 session", e);
-        }
-    }
-
-    /**
-     * Gets the aria2 session file path for use by handlers.
-     *
-     * @return Path to the aria2 session file
-     */
-    private Path getAria2SessionFilePath() {
-        return aria2SessionFilePath;
-    }
-
-    /**
-     * Gets the aria2 input file path for use by handlers.
-     *
-     * @return Path to the aria2 input file
-     */
-    private Path getAria2InputFilePath() {
-        return aria2InputFilePath;
-    }
-
-    /**
      * Gets the clipboard service for URL monitoring and automatic download
      * detection.
      *
@@ -1837,7 +1490,7 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     @Override
     public ClipboardService getClipboardService() {
-        return clipboardService;
+        return clipboard.service();
     }
 
     /**
@@ -1847,11 +1500,7 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     @Override
     public void updateClipboardSettings(ClipboardSettings clipboardSettings) {
-        if (clipboardSettings != null) {
-            getGlobalSettings().setClipboardSettings(clipboardSettings);
-            clipboardService.updateSettings(clipboardSettings);
-            LOGGER.info("Updated clipboard settings");
-        }
+        clipboard.updateSettings(clipboardSettings);
     }
 
     /**
@@ -1861,17 +1510,7 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     @Override
     public void setClipboardMonitoringEnabled(boolean enabled) {
-        ClipboardSettings currentSettings = clipboardSettingsOrDefault();
-        ClipboardSettings updatedSettings = currentSettings.copy().setMonitoringEnabled(enabled);
-        updateClipboardSettings(updatedSettings);
-
-        if (enabled) {
-            clipboardService.startService();
-            LOGGER.info("Clipboard monitoring enabled");
-        } else {
-            clipboardService.stopService();
-            LOGGER.info("Clipboard monitoring disabled");
-        }
+        clipboard.setMonitoringEnabled(enabled);
     }
 
     /**
@@ -1881,19 +1520,7 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     @Override
     public boolean isClipboardMonitoringEnabled() {
-        return clipboardSettingsOrDefault().isMonitoringEnabled()
-                && clipboardService.isServiceEnabled();
-    }
-
-    /**
-     * Returns the configured clipboard settings, falling back to a default
-     * instance when none were explicitly set (GlobalSettings permits null).
-     *
-     * @return the clipboard settings, never null
-     */
-    private ClipboardSettings clipboardSettingsOrDefault() {
-        ClipboardSettings settings = getGlobalSettings().getClipboardSettings();
-        return settings != null ? settings : new ClipboardSettings();
+        return clipboard.isMonitoringEnabled();
     }
 
     /**
@@ -1903,267 +1530,98 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     @Override
     public CompletableFuture<List<Download>> importFromClipboard() {
-        return clipboardService.importFromClipboard();
+        return clipboard.importFromClipboard();
     }
 
     // Folder monitoring methods implementation
     @Override
     public FolderMonitorService getFolderMonitorService() {
-        return folderMonitorService;
+        return folderWatching.folderMonitorService();
     }
 
     @Override
     public TorrentFolderMonitor getTorrentFolderMonitor() {
-        return torrentFolderMonitor;
+        return folderWatching.torrentFolderMonitor();
     }
 
     @Override
     public CompletableFuture<Void> startTorrentFolderMonitoring(Path folderPath) {
-        if (!torrentFolderMonitoringEnabled.get()) {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            future.completeExceptionally(new IllegalStateException("Torrent folder monitoring is disabled"));
-            return future;
-        }
-        return torrentFolderMonitor.startTorrentMonitoring(folderPath);
+        return folderWatching.startTorrentFolderMonitoring(folderPath);
     }
 
     @Override
     public CompletableFuture<Void> startTorrentFolderMonitoring(Path folderPath, FolderMonitorSettings settings) {
-        if (!torrentFolderMonitoringEnabled.get()) {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            future.completeExceptionally(new IllegalStateException("Torrent folder monitoring is disabled"));
-            return future;
-        }
-        return torrentFolderMonitor.startTorrentMonitoring(folderPath, settings);
+        return folderWatching.startTorrentFolderMonitoring(folderPath, settings);
     }
 
     @Override
     public CompletableFuture<Void> stopTorrentFolderMonitoring(Path folderPath) {
-        return torrentFolderMonitor.stopTorrentMonitoring(folderPath);
+        return folderWatching.stopTorrentFolderMonitoring(folderPath);
     }
 
     @Override
     public List<Path> getMonitoredTorrentFolders() {
-        return folderMonitorService.getMonitoredFolders();
+        return folderWatching.getMonitoredTorrentFolders();
     }
 
     @Override
     public boolean isTorrentFolderMonitored(Path folderPath) {
-        return folderMonitorService.isMonitoring(folderPath);
+        return folderWatching.isTorrentFolderMonitored(folderPath);
     }
 
     @Override
     public void setTorrentFolderMonitoringEnabled(boolean enabled) {
-        torrentFolderMonitoringEnabled.set(enabled);
-        if (enabled) {
-            LOGGER.info("Torrent folder monitoring enabled");
-            // Actually start watching the configured folder, if any
-            startConfiguredFolderMonitoring();
-        } else {
-            LOGGER.info("Torrent folder monitoring disabled");
-            // Stop all current monitoring when disabled
-            folderMonitorService.stopAllMonitoring();
-        }
+        folderWatching.setTorrentFolderMonitoringEnabled(enabled);
     }
 
     @Override
     public boolean isTorrentFolderMonitoringEnabled() {
-        return torrentFolderMonitoringEnabled.get();
+        return folderWatching.isTorrentFolderMonitoringEnabled();
     }
 
     @Override
     public CompletableFuture<Void> startDefaultTorrentFolderMonitoring() {
-        return torrentFolderMonitor.startDefaultTorrentMonitoring();
-    }
-
-    /**
-     * Starts torrent and Metalink folder monitoring from the persisted
-     * configuration: the {@code folder.monitorPath} property with the
-     * {@code ui.folderRecursive} and {@code ui.moveToTrash} options. No-op
-     * when no folder is configured, the folder is missing, or it is already
-     * being watched.
-     */
-    private void startConfiguredFolderMonitoring() {
-        String pathText = getGlobalSettings().getProperty("folder.monitorPath", "");
-        if (pathText.isBlank()) {
-            LOGGER.fine("No monitored folder configured; folder monitoring stays idle");
-            return;
-        }
-        Path folder = Paths.get(pathText);
-        if (!Files.isDirectory(folder)) {
-            LOGGER.warning("Configured monitored folder does not exist: " + folder);
-            return;
-        }
-        if (folderMonitorService.isMonitoring(folder)) {
-            LOGGER.fine("Folder already monitored: " + folder);
-            return;
-        }
-
-        boolean recursive = getGlobalSettings().getBooleanProperty("ui.folderRecursive", false);
-        boolean moveToTrash = getGlobalSettings().getBooleanProperty("ui.moveToTrash", false);
-        FolderMonitorSettings.FileAction action = moveToTrash
-                ? FolderMonitorSettings.FileAction.MOVE_TO_TRASH
-                : FolderMonitorSettings.FileAction.KEEP;
-
-        LOGGER.info("Starting folder monitoring on " + folder
-                + " (recursive=" + recursive + ", action=" + action + ")");
-
-        if (torrentFolderMonitoringEnabled.get()) {
-            torrentFolderMonitor.startTorrentMonitoring(folder,
-                            TorrentFolderMonitor.createDefaultTorrentSettings()
-                                    .setRecursive(recursive)
-                                    .setFileAction(action))
-                    .exceptionally(e -> {
-                        LOGGER.log(Level.WARNING, "Failed to start torrent folder monitoring on " + folder, e);
-                        return null;
-                    });
-        }
-        if (metaLinkFolderMonitoringEnabled.get()) {
-            metaLinkFolderMonitor.startMetaLinkMonitoring(folder,
-                            MetaLinkFolderMonitor.createDefaultMetaLinkSettings()
-                                    .setRecursive(recursive)
-                                    .setFileAction(action))
-                    .exceptionally(e -> {
-                        LOGGER.log(Level.WARNING, "Failed to start Metalink folder monitoring on " + folder, e);
-                        return null;
-                    });
-         }
-     }
-
-    /** Handle to the scheduled tracker refresh job, for shutdown cancellation. */
-    private java.util.concurrent.ScheduledFuture<?> trackerRefreshTask;
-    /** Periodic state snapshot so a crash never loses the whole session. */
-    private java.util.concurrent.ScheduledFuture<?> stateSnapshotTask;
-    /** Periodic proxy-pool health check (resets UNHEALTHY, prunes BLOCKED). */
-    private java.util.concurrent.ScheduledFuture<?> proxyHealthTask;
-
-    /**
-     * Starts the periodic tracker refresh when {@code tracker.refreshInterval}
-     * (minutes) and {@code tracker.list} are configured. Each tick re-applies
-     * the tracker list to every active BitTorrent download through
-     * {@code aria2.changeOption}.
-     */
-    private void startTrackerRefreshJob() {
-        stopTrackerRefreshJob();
-        int intervalMinutes = getGlobalSettings().getIntProperty("tracker.refreshInterval", 0);
-        String trackerList = getGlobalSettings().getProperty("tracker.list", "");
-        if (intervalMinutes <= 0 || trackerList.isBlank()) {
-            return;
-        }
-        long periodSeconds = intervalMinutes * 60L;
-        trackerRefreshTask = executorManager.getScheduledExecutor()
-                .scheduleWithFixedDelay(this::runTrackerRefresh,
-                        periodSeconds, periodSeconds, TimeUnit.SECONDS);
-        LOGGER.info("Tracker refresh scheduled every " + intervalMinutes + " minute(s)");
-    }
-
-    /** One tracker refresh tick; failures never kill the schedule. */
-    private void runTrackerRefresh() {
-        try {
-            DownloadHandler handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
-            if (handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler) {
-                aria2Handler.refreshTrackers();
-            }
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Tracker refresh failed", e);
-        }
-    }
-
-    /** Cancels the tracker refresh job, if running. */
-    private void stopTrackerRefreshJob() {
-        if (trackerRefreshTask != null) {
-            trackerRefreshTask.cancel(false);
-            trackerRefreshTask = null;
-        }
-    }
-
-    /**
-     * Starts the periodic state snapshot job. Downloads are otherwise only
-     * persisted at shutdown, so a crash would silently discard the whole
-     * session. Failures never kill the schedule.
-     */
-    private void startStateSnapshotJob() {
-        if (stateSnapshotTask != null) {
-            return;
-        }
-        stateSnapshotTask = executorManager.getScheduledExecutor()
-                .scheduleWithFixedDelay(this::runStateSnapshot,
-                        STATE_SNAPSHOT_INTERVAL_SECONDS, STATE_SNAPSHOT_INTERVAL_SECONDS, TimeUnit.SECONDS);
-        LOGGER.info("State snapshot job scheduled every " + STATE_SNAPSHOT_INTERVAL_SECONDS + " seconds");
-    }
-
-    /** One state snapshot tick; failures never kill the schedule. */
-    private void runStateSnapshot() {
-        if (isShuttingDown.get()) {
-            return;
-        }
-        try {
-            saveState().join();
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Periodic state snapshot failed", e);
-        }
+        return folderWatching.startDefaultTorrentFolderMonitoring();
     }
 
     @Override
     public MetaLinkFolderMonitor getMetaLinkFolderMonitor() {
-        return metaLinkFolderMonitor;
+        return folderWatching.metaLinkFolderMonitor();
     }
 
     @Override
     public CompletableFuture<Void> startMetaLinkFolderMonitoring(Path folderPath) {
-        if (!metaLinkFolderMonitoringEnabled.get()) {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            future.completeExceptionally(new IllegalStateException("Metalink folder monitoring is disabled"));
-            return future;
-        }
-        return metaLinkFolderMonitor.startMetaLinkMonitoring(folderPath);
+        return folderWatching.startMetaLinkFolderMonitoring(folderPath);
     }
 
     @Override
     public CompletableFuture<Void> startMetaLinkFolderMonitoring(Path folderPath, FolderMonitorSettings settings) {
-        if (!metaLinkFolderMonitoringEnabled.get()) {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            future.completeExceptionally(new IllegalStateException("Metalink folder monitoring is disabled"));
-            return future;
-        }
-        return metaLinkFolderMonitor.startMetaLinkMonitoring(folderPath, settings);
+        return folderWatching.startMetaLinkFolderMonitoring(folderPath, settings);
     }
 
     @Override
     public CompletableFuture<Void> stopMetaLinkFolderMonitoring(Path folderPath) {
-        return metaLinkFolderMonitor.stopMetaLinkMonitoring(folderPath);
+        return folderWatching.stopMetaLinkFolderMonitoring(folderPath);
     }
 
     @Override
     public boolean isMetaLinkFolderMonitored(Path folderPath) {
-        return folderMonitorService.isMonitoring(folderPath);
+        return folderWatching.isMetaLinkFolderMonitored(folderPath);
     }
 
     @Override
     public void setMetaLinkFolderMonitoringEnabled(boolean enabled) {
-        metaLinkFolderMonitoringEnabled.set(enabled);
-        if (enabled) {
-            LOGGER.info("Metalink folder monitoring enabled");
-            // Actually start watching the configured folder, if any
-            startConfiguredFolderMonitoring();
-        } else {
-            LOGGER.info("Metalink folder monitoring disabled");
-        }
+        folderWatching.setMetaLinkFolderMonitoringEnabled(enabled);
     }
 
     @Override
     public boolean isMetaLinkFolderMonitoringEnabled() {
-        return metaLinkFolderMonitoringEnabled.get();
+        return folderWatching.isMetaLinkFolderMonitoringEnabled();
     }
 
     @Override
     public CompletableFuture<Void> startDefaultMetaLinkFolderMonitoring() {
-        if (!metaLinkFolderMonitoringEnabled.get()) {
-            CompletableFuture<Void> future = new CompletableFuture<>();
-            future.completeExceptionally(new IllegalStateException("Metalink folder monitoring is disabled"));
-            return future;
-        }
-        return metaLinkFolderMonitor.startDefaultMetaLinkMonitoring();
+        return folderWatching.startDefaultMetaLinkFolderMonitoring();
     }
 
     /**
