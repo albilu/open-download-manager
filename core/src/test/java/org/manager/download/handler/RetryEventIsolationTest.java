@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -313,7 +314,7 @@ class RetryEventIsolationTest {
 
     @Test
     @Timeout(30)
-    @DisplayName("A second download may be started on a terminal wrapper's delegate unaffected")
+    @DisplayName("Cancellation is finalized exactly once")
     void duplicateCancelIsFinalizedOnce() throws Exception {
         ProxyRotationManager proxies = twoProxyManager();
         SharedDelegate delegate = new SharedDelegate();
@@ -375,5 +376,53 @@ class RetryEventIsolationTest {
                 "a replaced wrapper's scheduled retry must never fire");
         assertFalse(future.isCompletedExceptionally(),
                 "retirement must not emit a terminal failure for the superseded operation");
+    }
+
+    @Test
+    @Timeout(30)
+    @DisplayName("A cancel racing the retry start does not orphan the new attempt")
+    void cancelRacingRetryStartDoesNotOrphanTheNewAttempt() throws Exception {
+        // Park the retry task INSIDE beginAttempt, before it selects and
+        // marks the new proxy, so cancelDownload deterministically
+        // finalizes first — the exact cancel-vs-retry-fire interleaving
+        CountDownLatch proxySelectEntered = new CountDownLatch(1);
+        CountDownLatch allowProxySelect = new CountDownLatch(1);
+        ProxyRotationManager proxies = new ProxyRotationManager() {
+            @Override
+            public Proxy getAlternativeProxy(Proxy excludeProxy) {
+                proxySelectEntered.countDown();
+                try {
+                    allowProxySelect.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return super.getAlternativeProxy(excludeProxy);
+            }
+        };
+        proxies.addProxy(new Proxy("proxy1.example.com", 8080, Proxy.Type.HTTP));
+        proxies.addProxy(new Proxy("proxy2.example.com", 8081, Proxy.Type.HTTP));
+
+        SharedDelegate delegate = new SharedDelegate();
+        RetryableDownloadHandler handler = new RetryableDownloadHandler(
+                delegate, proxies, fastSettings(3), scheduler, executor);
+
+        Download download = new Download(new URI("http://example.test/race.bin"));
+        CompletableFuture<String> future = handler.startDownload(download);
+        future.get(5, TimeUnit.SECONDS);
+        assertEquals(RetryDecision.RETRY_SCHEDULED,
+                handler.interceptError(download.getId(), "HTTP 429 Too Many Requests"));
+
+        assertTrue(proxySelectEntered.await(5, TimeUnit.SECONDS),
+                "the retry task must reach the new attempt's proxy selection");
+        handler.cancelDownload(download, false).join();
+        allowProxySelect.countDown();
+
+        Thread.sleep(300);
+        assertEquals(1, delegate.attempts(download),
+                "no delegate start may be issued for an operation canceled mid-retry-start: "
+                        + "an orphan transfer would complete with full terminal handling");
+        assertEquals(0, proxies.getStatistics().get("proxiesInUse"),
+                "the racing attempt's proxy hold must not leak");
+        assertFalse(future.isCompletedExceptionally());
     }
 }

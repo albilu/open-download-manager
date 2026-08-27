@@ -57,6 +57,8 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     private final ProxyRotationManager proxyManager;
     private final ProxyRetrySettings retrySettings;
     private final ScheduledExecutorService scheduler;
+    /** Retained for constructor-signature compatibility only (the wrapper
+     *  itself runs on the delegate's and scheduler's threads). */
     private final ExecutorService executor;
 
     /** The one download this wrapper operates on; captured at startDownload. */
@@ -147,6 +149,18 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
                 }
             }
 
+            // A cancel/pause/finalization may have won between this
+            // attempt's state CAS and the start: release the just-marked
+            // proxy and abandon the attempt. Ordering guarantee: those
+            // paths set their state BEFORE calling the delegate, so if this
+            // check still sees ACTIVE their delegate call is issued after
+            // our start and tears it down; if they won, we never start —
+            // no orphan transfer and no leaked proxy hold either way.
+            if (state.get() != State.ACTIVE) {
+                releaseOwnedProxy(download);
+                return;
+            }
+
             delegate.startDownload(download)
                     .whenComplete((gid, throwable) -> {
                         if (throwable != null) {
@@ -179,8 +193,10 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     private boolean handleFailure(Download download, String errorMessage) {
         // Exactly-once per attempt: duplicate terminal notifications and the
         // start-future whenComplete can both reach here for one failure.
-        // A duplicate of an already-handled failure is absorbed: while the
-        // retry pends, the manager must keep dropping the event.
+        // A duplicate of an already-handled failure is absorbed — including a
+        // NON-retryable duplicate error while a retry pends: the pending
+        // retry still owns the operation, so the manager must keep deferring
+        // terminal handling until the retry settles it.
         if (!failureClaim.compareAndSet(false, true)) {
             return state.get() == State.WAITING_RETRY;
         }
@@ -236,6 +252,9 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
                 }
                 beginAttempt(download, failedProxy);
             }, delay.toMillis(), TimeUnit.MILLISECONDS);
+            // A finalize racing between schedule() and this set() cancels
+            // null; that is still safe — its generation bump (or the task's
+            // own state CAS) aborts the task.
             pendingRetry.set(task);
         } catch (RejectedExecutionException e) {
             failTerminal(download, "Retry scheduler rejected the retry task: " + e.getMessage());
