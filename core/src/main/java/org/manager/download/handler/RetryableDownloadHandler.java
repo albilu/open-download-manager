@@ -4,9 +4,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -21,8 +26,17 @@ import org.manager.proxy.ProxyRotationManager;
  * A decorator that wraps existing DownloadHandler implementations to provide
  * automatic proxy rotation and retry functionality when downloads encounter
  * server restrictions or rate limiting.
+ *
+ * <p>Each wrapper owns exactly ONE download (captured at startDownload) and
+ * one operation generation. Delegates are shared per download type and
+ * broadcast every download's events to every listener, so this wrapper must
+ * NOT register its own delegate listener: mid-transfer failures reach it
+ * through the {@link RetryEventInterceptor} contract, driven by the
+ * manager's single reusable listener. Intermediate retryable failures keep
+ * the manager's running slot assigned to the logical operation; only an
+ * exhausted or non-retryable failure propagates terminally.</p>
  */
-public class RetryableDownloadHandler implements DownloadHandler {
+public class RetryableDownloadHandler implements DownloadHandler, RetryEventInterceptor {
 
     private static final Logger LOGGER = Logger.getLogger(RetryableDownloadHandler.class.getName());
 
@@ -34,11 +48,39 @@ public class RetryableDownloadHandler implements DownloadHandler {
     private static final Pattern HTTP_STATUS_PATTERN =
             Pattern.compile("(?i)(?:http|status|response|server).{0,20}?([1-5]\\d{2})");
 
+    /** Lifecycle of the single logical operation this wrapper owns. */
+    private enum State {
+        ACTIVE, WAITING_RETRY, PAUSED, CANCELLED, TERMINAL
+    }
+
     private final DownloadHandler delegate;
     private final ProxyRotationManager proxyManager;
     private final ProxyRetrySettings retrySettings;
     private final ScheduledExecutorService scheduler;
     private final ExecutorService executor;
+
+    /** The one download this wrapper operates on; captured at startDownload. */
+    private final AtomicReference<Download> owned = new AtomicReference<>();
+    private final AtomicReference<State> state = new AtomicReference<>(State.ACTIVE);
+    /**
+     * Operation generation. Bumped by pause, cancel, terminal finalization
+     * and replacement so a scheduled retry only runs when both the
+     * generation and the state still match.
+     */
+    private final AtomicLong generation = new AtomicLong();
+    /** Index of the last started attempt (-1 before the first start). */
+    private final AtomicInteger attempt = new AtomicInteger(-1);
+    /** Guards exactly-once failure handling for the running attempt. */
+    private final AtomicBoolean failureClaim = new AtomicBoolean();
+    /** The future returned by startDownload; at most one terminal outcome. */
+    private final AtomicReference<CompletableFuture<String>> operation = new AtomicReference<>();
+    private final AtomicReference<ScheduledFuture<?>> pendingRetry = new AtomicReference<>();
+    /** Backoff memory across a pause: what to re-schedule on resume. */
+    private volatile int pendingRetryAttempt = -1;
+    private volatile Proxy pendingRetryProxy;
+    /** True when pause interrupted backoff rather than an active transfer. */
+    private volatile boolean pausedDuringBackoff;
+    private volatile Instant attemptStart = Instant.now();
 
     /**
      * Creates a new RetryableDownloadHandler.
@@ -73,27 +115,324 @@ public class RetryableDownloadHandler implements DownloadHandler {
 
     @Override
     public CompletableFuture<String> startDownload(Download download) {
-        return startDownloadWithRetry(download, 0, null, new AtomicBoolean());
+        CompletableFuture<String> future = new CompletableFuture<>();
+        if (!owned.compareAndSet(null, download)) {
+            future.completeExceptionally(new IllegalStateException(
+                    "Retry wrapper already operates on download " + owned.get().getId()));
+            return future;
+        }
+        operation.set(future);
+        beginAttempt(download, null);
+        return future;
+    }
+
+    /**
+     * Starts one attempt of the owned download. The attempt's failures are
+     * handled internally: a retryable failure schedules the next attempt
+     * without settling the operation future; only an exhausted or
+     * non-retryable failure fails it.
+     */
+    private void beginAttempt(Download download, Proxy previousProxy) {
+        failureClaim.set(false);
+        attemptStart = Instant.now();
+        int attemptNumber = attempt.incrementAndGet();
+        try {
+            if (retrySettings.isEnableProxyRotation() && !proxyManager.isEmpty()) {
+                Proxy proxy = selectProxy(download, previousProxy, attemptNumber);
+                if (proxy != null) {
+                    configureProxyForDownload(download, proxy);
+                    proxyManager.markProxyInUse(proxy, download.getId());
+                    LOGGER.info("Using proxy " + proxy.getAddress() + " for download " + download.getId()
+                            + " (attempt " + (attemptNumber + 1) + ")");
+                }
+            }
+
+            delegate.startDownload(download)
+                    .whenComplete((gid, throwable) -> {
+                        if (throwable != null) {
+                            handleFailure(download, throwable.getMessage());
+                        } else {
+                            Proxy currentProxy = getCurrentProxy(download);
+                            if (currentProxy != null) {
+                                proxyManager.recordSuccess(currentProxy, 0); // no response time here
+                            }
+                            CompletableFuture<String> future = operation.get();
+                            if (future != null && !future.isDone()) {
+                                future.complete(gid);
+                            }
+                        }
+                    });
+
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Failed to start download attempt " + (attemptNumber + 1), e);
+            handleFailure(download, e.getMessage());
+        }
+    }
+
+    /**
+     * Handles a failure of the current attempt from either channel (the
+     * delegate's start future or an intercepted error event).
+     *
+     * @return true when a retry was scheduled (the manager applies no
+     *         terminal handling)
+     */
+    private boolean handleFailure(Download download, String errorMessage) {
+        // Exactly-once per attempt: duplicate terminal notifications and the
+        // start-future whenComplete can both reach here for one failure.
+        // A duplicate of an already-handled failure is absorbed: while the
+        // retry pends, the manager must keep dropping the event.
+        if (!failureClaim.compareAndSet(false, true)) {
+            return state.get() == State.WAITING_RETRY;
+        }
+
+        Proxy currentProxy = getCurrentProxy(download);
+        if (currentProxy != null) {
+            proxyManager.recordFailure(currentProxy, errorMessage);
+            proxyManager.releaseProxy(currentProxy, download.getId());
+        }
+
+        // The retry budget is global and monotonic: never reset the
+        // counter on proxy change, otherwise rotation (which changes the
+        // proxy every attempt) would retry forever.
+        int failedAttempt = attempt.get();
+        if (!shouldRetry(errorMessage, failedAttempt)) {
+            failTerminal(download, errorMessage);
+            return false;
+        }
+
+        int nextAttempt = failedAttempt + 1;
+        LOGGER.info("Retrying download " + download.getId() + " (attempt " + (nextAttempt + 1)
+                + "/" + (retrySettings.getMaxRetries() + 1) + ") due to: " + errorMessage);
+        scheduleRetry(download, nextAttempt, currentProxy);
+        return state.get() == State.WAITING_RETRY;
+    }
+
+    /**
+     * Moves the wrapper to WAITING_RETRY and schedules the next attempt.
+     * The scheduled task runs only when both the captured generation and
+     * the state still match, so cancel, terminal completion and replacement
+     * invalidate it. A no-op when a concurrent cancel/pause/finalization
+     * already won the state race.
+     */
+    private void scheduleRetry(Download download, int nextAttempt, Proxy failedProxy) {
+        while (true) {
+            State prev = state.get();
+            if (prev != State.ACTIVE && prev != State.WAITING_RETRY) {
+                return;
+            }
+            if (state.compareAndSet(prev, State.WAITING_RETRY)) {
+                break;
+            }
+        }
+        pendingRetryAttempt = nextAttempt;
+        pendingRetryProxy = failedProxy;
+        final long scheduledGeneration = generation.get();
+        try {
+            Duration delay = retrySettings.calculateRetryDelay(nextAttempt);
+            ScheduledFuture<?> task = scheduler.schedule(() -> {
+                if (generation.get() != scheduledGeneration
+                        || !state.compareAndSet(State.WAITING_RETRY, State.ACTIVE)) {
+                    return;
+                }
+                beginAttempt(download, failedProxy);
+            }, delay.toMillis(), TimeUnit.MILLISECONDS);
+            pendingRetry.set(task);
+        } catch (RejectedExecutionException e) {
+            failTerminal(download, "Retry scheduler rejected the retry task: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Fails the operation terminally: the wrapper stops retrying and the
+     * manager's normal failure handling runs.
+     */
+    private void failTerminal(Download download, String errorMessage) {
+        if (!tryFinalize(State.TERMINAL)) {
+            return;
+        }
+        String finalError = "Download failed after " + (attempt.get() + 1) + " attempts. Last error: "
+                + errorMessage;
+        LOGGER.warning(finalError);
+        download.setErrorMessage(finalError);
+        CompletableFuture<String> future = operation.get();
+        if (future != null && !future.isDone()) {
+            future.completeExceptionally(new RuntimeException(finalError));
+        }
+    }
+
+    /**
+     * Moves the wrapper to the given final state exactly once. The first
+     * caller wins and invalidates the current schedule; later calls are
+     * no-ops.
+     *
+     * @return true for the first (winning) finalization
+     */
+    private boolean tryFinalize(State finalState) {
+        while (true) {
+            State prev = state.get();
+            if (prev == State.TERMINAL || prev == State.CANCELLED) {
+                return false;
+            }
+            if (state.compareAndSet(prev, finalState)) {
+                generation.incrementAndGet();
+                ScheduledFuture<?> pending = pendingRetry.getAndSet(null);
+                if (pending != null) {
+                    pending.cancel(false);
+                }
+                return true;
+            }
+        }
+    }
+
+    @Override
+    public RetryDecision interceptError(String downloadId, String errorMessage) {
+        Download download = owned.get();
+        if (download == null || !download.getId().equals(downloadId)) {
+            // A shared delegate broadcasts every download's events; this one
+            // is not ours, and the manager applies its normal handling.
+            return RetryDecision.PROPAGATE_TERMINAL;
+        }
+        State current = state.get();
+        if (current == State.TERMINAL || current == State.CANCELLED || current == State.PAUSED) {
+            // Already final, or a real error on a paused download: terminal.
+            return RetryDecision.PROPAGATE_TERMINAL;
+        }
+        return handleFailure(download, errorMessage)
+                ? RetryDecision.RETRY_SCHEDULED
+                : RetryDecision.PROPAGATE_TERMINAL;
+    }
+
+    @Override
+    public void interceptComplete(String downloadId) {
+        Download download = owned.get();
+        if (download == null || !download.getId().equals(downloadId)) {
+            return;
+        }
+        if (!tryFinalize(State.TERMINAL)) {
+            return;
+        }
+        Proxy currentProxy = getCurrentProxy(download);
+        if (currentProxy != null) {
+            long responseTime = Instant.now().toEpochMilli() - attemptStart.toEpochMilli();
+            proxyManager.recordSuccess(currentProxy, responseTime);
+            proxyManager.releaseProxy(currentProxy, download.getId());
+        }
+        CompletableFuture<String> future = operation.get();
+        if (future != null && !future.isDone()) {
+            future.complete(download.getGid());
+        }
+    }
+
+    @Override
+    public void interceptCanceled(String downloadId) {
+        Download download = owned.get();
+        if (download == null || !download.getId().equals(downloadId)) {
+            return;
+        }
+        if (!tryFinalize(State.CANCELLED)) {
+            return;
+        }
+        releaseOwnedProxy(download);
+        CompletableFuture<String> future = operation.get();
+        if (future != null && !future.isDone()) {
+            future.cancel(true);
+        }
+    }
+
+    @Override
+    public void interceptReplaced(String downloadId) {
+        Download download = owned.get();
+        if (download == null || !download.getId().equals(downloadId)) {
+            return;
+        }
+        // A NEW handler operates on this download now: retire silently —
+        // invalidate the schedule and stop retrying, but emit no terminal
+        // outcome (the replacement owns the operation from here on).
+        if (tryFinalize(State.TERMINAL)) {
+            releaseOwnedProxy(download);
+        }
     }
 
     @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
-        return delegate.pauseDownload(download);
+        if (!owns(download)) {
+            return delegate.pauseDownload(download);
+        }
+        while (true) {
+            State prev = state.get();
+            switch (prev) {
+                case ACTIVE -> {
+                    if (state.compareAndSet(prev, State.PAUSED)) {
+                        pausedDuringBackoff = false;
+                        return delegate.pauseDownload(download);
+                    }
+                }
+                case WAITING_RETRY -> {
+                    if (state.compareAndSet(prev, State.PAUSED)) {
+                        invalidatePendingRetry();
+                        pausedDuringBackoff = true;
+                        return CompletableFuture.completedFuture(null);
+                    }
+                }
+                default -> {
+                    return CompletableFuture.completedFuture(null);
+                }
+            }
+        }
     }
 
     @Override
     public CompletableFuture<Void> resumeDownload(Download download) {
-        return delegate.resumeDownload(download);
+        if (!owns(download)) {
+            return delegate.resumeDownload(download);
+        }
+        while (true) {
+            if (state.get() != State.PAUSED) {
+                return CompletableFuture.completedFuture(null);
+            }
+            boolean backoff = pausedDuringBackoff;
+            State target = backoff ? State.WAITING_RETRY : State.ACTIVE;
+            if (state.compareAndSet(State.PAUSED, target)) {
+                if (backoff) {
+                    scheduleRetry(download, pendingRetryAttempt, pendingRetryProxy);
+                    return CompletableFuture.completedFuture(null);
+                }
+                return delegate.resumeDownload(download);
+            }
+        }
     }
 
     @Override
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
-        // Release any proxy associated with this download
+        if (owns(download) && tryFinalize(State.CANCELLED)) {
+            releaseOwnedProxy(download);
+            CompletableFuture<String> future = operation.get();
+            if (future != null && !future.isDone()) {
+                future.cancel(true);
+            }
+        }
+        return delegate.cancelDownload(download, deleteFiles);
+    }
+
+    /** Invalidates the current schedule and cancels the pending retry task. */
+    private void invalidatePendingRetry() {
+        generation.incrementAndGet();
+        ScheduledFuture<?> pending = pendingRetry.getAndSet(null);
+        if (pending != null) {
+            pending.cancel(false);
+        }
+    }
+
+    private void releaseOwnedProxy(Download download) {
         Proxy currentProxy = getCurrentProxy(download);
         if (currentProxy != null) {
             proxyManager.releaseProxy(currentProxy, download.getId());
         }
-        return delegate.cancelDownload(download, deleteFiles);
+    }
+
+    private boolean owns(Download download) {
+        Download owner = owned.get();
+        return owner != null && download != null && owner.getId().equals(download.getId());
     }
 
     @Override
@@ -114,128 +453,6 @@ public class RetryableDownloadHandler implements DownloadHandler {
     @Override
     public CompletableFuture<Void> shutdown() {
         return delegate.shutdown();
-    }
-
-    /**
-     * Starts a download with retry logic and proxy rotation.
-     *
-     * @param download the download to start
-     * @param attemptNumber zero-based attempt index
-     * @param previousProxy the proxy used by the previous attempt, if any
-     * @param failureClaim guards this attempt's failure handling: handlers may
-     *        emit duplicate terminal notifications (and the start future's
-     *        whenComplete can race the listener channel), each of which must
-     *        schedule at most ONE retry
-     */
-    private CompletableFuture<String> startDownloadWithRetry(Download download, int attemptNumber,
-            Proxy previousProxy, AtomicBoolean failureClaim) {
-        CompletableFuture<String> future = new CompletableFuture<>();
-
-        try {
-            // Set up proxy if rotation is enabled
-            if (retrySettings.isEnableProxyRotation() && !proxyManager.isEmpty()) {
-                Proxy proxy = selectProxy(download, previousProxy, attemptNumber);
-                if (proxy != null) {
-                    configureProxyForDownload(download, proxy);
-                    proxyManager.markProxyInUse(proxy, download.getId());
-                    LOGGER.info("Using proxy " + proxy.getAddress() + " for download " + download.getId()
-                            + " (attempt " + (attemptNumber + 1) + ")");
-                }
-            }
-
-            // Create a wrapper listener to intercept errors. It stays
-            // attached after the start future completes: like aria2, the
-            // delegate's future resolves once the transfer is ACCEPTED —
-            // mid-transfer failures (rate limits, 5xx) arrive only through
-            // this listener channel.
-            RetryListener retryListener = new RetryListener(download, attemptNumber, previousProxy,
-                    future, failureClaim);
-            delegate.addDownloadListener(retryListener);
-
-            // Start the actual download
-            delegate.startDownload(download)
-                    .whenComplete((gid, throwable) -> {
-                        if (throwable != null) {
-                            // Handle immediate failures (before download starts)
-                            handleDownloadFailure(download, throwable.getMessage(), attemptNumber,
-                                    previousProxy, future, failureClaim, retryListener);
-                        } else if (!future.isDone()) {
-                            // Download started successfully
-                            Proxy currentProxy = getCurrentProxy(download);
-                            if (currentProxy != null) {
-                                proxyManager.recordSuccess(currentProxy, 0); // We don't have response time here
-                            }
-                            future.complete(gid);
-                            // retryListener stays attached for the transfer
-                        }
-                    });
-
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to start download attempt " + (attemptNumber + 1), e);
-            handleDownloadFailure(download, e.getMessage(), attemptNumber, previousProxy, future,
-                    failureClaim, null);
-        }
-
-        return future;
-    }
-
-    /**
-     * Handles download failures and determines if retry is needed.
-     */
-    private void handleDownloadFailure(Download download, String errorMessage, int attemptNumber,
-            Proxy previousProxy, CompletableFuture<String> future, AtomicBoolean failureClaim,
-            RetryListener listenerToRetire) {
-
-        // Exactly-once per attempt: duplicate terminal notifications and the
-        // start-future whenComplete can both reach here for one failure
-        if (!failureClaim.compareAndSet(false, true)) {
-            return;
-        }
-
-        if (listenerToRetire != null) {
-            delegate.removeDownloadListener(listenerToRetire);
-        }
-
-        Proxy currentProxy = getCurrentProxy(download);
-
-        // Record failure for current proxy
-        if (currentProxy != null) {
-            proxyManager.recordFailure(currentProxy, errorMessage);
-            proxyManager.releaseProxy(currentProxy, download.getId());
-        }
-
-        // Check if we should retry
-        if (shouldRetry(errorMessage, attemptNumber)) {
-            // The retry budget is global and monotonic: never reset the
-            // counter on proxy change, otherwise rotation (which changes the
-            // proxy every attempt) would retry forever.
-            final int nextAttempt = attemptNumber + 1;
-            final AtomicBoolean nextClaim = new AtomicBoolean();
-
-            LOGGER.info("Retrying download " + download.getId() + " (attempt " + (nextAttempt + 1)
-                    + "/" + (retrySettings.getMaxRetries() + 1) + ") due to: " + errorMessage);
-
-            // Calculate delay and schedule retry
-            Duration delay = retrySettings.calculateRetryDelay(nextAttempt);
-            scheduler.schedule(() -> {
-                startDownloadWithRetry(download, nextAttempt, currentProxy, nextClaim)
-                        .whenComplete((gid, throwable) -> {
-                            if (throwable != null) {
-                                future.completeExceptionally(throwable);
-                            } else {
-                                future.complete(gid);
-                            }
-                        });
-            }, delay.toMillis(), TimeUnit.MILLISECONDS);
-
-        } else {
-            // No more retries, complete with failure
-            String finalError = "Download failed after " + (attemptNumber + 1) + " attempts. Last error: "
-                    + errorMessage;
-            LOGGER.warning(finalError);
-            download.setErrorMessage(finalError);
-            future.completeExceptionally(new RuntimeException(finalError));
-        }
     }
 
     /**
@@ -320,91 +537,5 @@ public class RetryableDownloadHandler implements DownloadHandler {
         // state (current proxy) lives in the download's settings options and is
         // re-applied per attempt, so nothing extra is needed here.
         return delegate.changeSettings(download);
-    }
-
-    /**
-     * Listener that intercepts download events to handle retries.
-     */
-    private class RetryListener implements DownloadListener {
-
-        private final Download download;
-        private final int attemptNumber;
-        private final Proxy previousProxy;
-        private final CompletableFuture<String> future;
-        private final AtomicBoolean failureClaim;
-        private final Instant startTime;
-
-        public RetryListener(Download download, int attemptNumber, Proxy previousProxy,
-                CompletableFuture<String> future, AtomicBoolean failureClaim) {
-            this.download = download;
-            this.attemptNumber = attemptNumber;
-            this.previousProxy = previousProxy;
-            this.future = future;
-            this.failureClaim = failureClaim;
-            this.startTime = Instant.now();
-        }
-
-        @Override
-        public void onDownloadStart(Download download) {
-            // Pass through to original listeners - they're already registered
-        }
-
-        @Override
-        public void onDownloadProgress(Download download, float progress, long downloadedBytes,
-                long totalBytes, float speed) {
-            // Pass through to original listeners
-        }
-
-        @Override
-        public void onDownloadPause(Download download) {
-            // Pass through to original listeners
-        }
-
-        @Override
-        public void onDownloadResume(Download download) {
-            // Pass through to original listeners
-        }
-
-        @Override
-        public void onDownloadComplete(Download download) {
-            // This listener's job is done
-            delegate.removeDownloadListener(this);
-
-            // Record success for the proxy
-            Proxy currentProxy = getCurrentProxy(download);
-            if (currentProxy != null) {
-                long responseTime = Instant.now().toEpochMilli() - startTime.toEpochMilli();
-                proxyManager.recordSuccess(currentProxy, responseTime);
-                proxyManager.releaseProxy(currentProxy, download.getId());
-            }
-
-            // Complete the future if not already done
-            if (!future.isDone()) {
-                future.complete(download.getGid());
-            }
-        }
-
-        @Override
-        public void onDownloadError(Download download, String errorMessage) {
-            // Handle the error through retry logic; handleDownloadFailure
-            // removes this listener (and enforces exactly-once claiming)
-            handleDownloadFailure(download, errorMessage, attemptNumber, previousProxy, future,
-                    failureClaim, this);
-        }
-
-        @Override
-        public void onDownloadCanceled(Download download) {
-            delegate.removeDownloadListener(this);
-
-            // Release proxy and cancel future
-            Proxy currentProxy = getCurrentProxy(download);
-            if (currentProxy != null) {
-                proxyManager.releaseProxy(currentProxy, download.getId());
-            }
-
-            if (!future.isDone()) {
-                future.cancel(true);
-            }
-        }
     }
 }

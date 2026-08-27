@@ -37,6 +37,7 @@ import org.manager.download.action.AfterCompletionActionListener;
 import org.manager.download.action.AfterCompletionActionManager;
 import org.manager.download.handler.DownloadHandler;
 import org.manager.download.handler.DownloadHandlerFactory;
+import org.manager.download.handler.RetryEventInterceptor;
 import org.manager.exception.ErrorHandler;
 import org.manager.folder.FolderMonitorService;
 import org.manager.folder.FolderMonitorSettings;
@@ -458,7 +459,13 @@ public class DownloadManagerImpl implements DownloadManager {
             handler = proxyRotation.maybeWrap(handler, download);
 
             // OPTIMIZATION: Store handler reference for cleanup and use reusable listener
-            activeHandlers.put(download.getId(), handler);
+            DownloadHandler previous = activeHandlers.put(download.getId(), handler);
+            if (previous instanceof RetryEventInterceptor interceptor && previous != handler) {
+                // This download was started again while a retry wrapper was
+                // still operating on it: retire the old wrapper so its
+                // scheduled retry never races the new operation
+                interceptor.interceptReplaced(download.getId());
+            }
             // Handlers are shared per download type and the listener set is a
             // CopyOnWriteArraySet, so re-adding the reusable listener is
             // idempotent. It stays attached for the handler's lifetime and is
@@ -576,12 +583,21 @@ public class DownloadManagerImpl implements DownloadManager {
         return true;
     }
 
+    /**
+     * Returns the handler recorded for a running download — which may be a
+     * retry wrapper whose state machine must see pause/resume/cancel —
+     * falling back to the shared factory handler when no start is recorded.
+     */
+    private DownloadHandler handlerFor(Download download) {
+        DownloadHandler active = activeHandlers.get(download.getId());
+        return active != null ? active : getHandlerFactory().getHandler(download);
+    }
+
     @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
             try {
-                // Get the appropriate handler for this download
-                DownloadHandler handler = getHandlerFactory().getHandler(download);
+                DownloadHandler handler = handlerFor(download);
 
                 if (handler != null) {
                     handler.pauseDownload(download).join();
@@ -598,8 +614,7 @@ public class DownloadManagerImpl implements DownloadManager {
     public CompletableFuture<Void> resumeDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
             try {
-                // Get the appropriate handler for this download
-                DownloadHandler handler = getHandlerFactory().getHandler(download);
+                DownloadHandler handler = handlerFor(download);
 
                 if (handler != null) {
                     handler.resumeDownload(download).join();
@@ -616,8 +631,7 @@ public class DownloadManagerImpl implements DownloadManager {
     public CompletableFuture<Void> changeSettings(Download download) {
         return CompletableFuture.runAsync(() -> {
             try {
-                // Get the appropriate handler (which may be proxy-rotation-wrapped)
-                DownloadHandler handler = getHandlerFactory().getHandler(download);
+                DownloadHandler handler = handlerFor(download);
 
                 if (handler != null) {
                     handler.changeSettings(download).join();
@@ -634,8 +648,7 @@ public class DownloadManagerImpl implements DownloadManager {
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
         return CompletableFuture.runAsync(() -> {
             try {
-                // Get the appropriate handler for this download
-                DownloadHandler handler = getHandlerFactory().getHandler(download);
+                DownloadHandler handler = handlerFor(download);
 
                 if (handler != null) {
                     handler.cancelDownload(download, deleteFiles).join();
@@ -1659,6 +1672,13 @@ public class DownloadManagerImpl implements DownloadManager {
         public void onDownloadComplete(Download d) {
             LOGGER.info("Download completed: " + d.getName());
 
+            // Let a retry wrapper finalize (release proxy, cancel any
+            // scheduled retry, settle its future) before terminal handling
+            DownloadHandler handler = activeHandlers.get(d.getId());
+            if (handler instanceof RetryEventInterceptor interceptor) {
+                interceptor.interceptComplete(d.getId());
+            }
+
             // CRITICAL: Update repository status indices to prevent inconsistency
             downloadRepository.updateDownloadStatus(d, Download.Status.COMPLETED);
 
@@ -1679,6 +1699,18 @@ public class DownloadManagerImpl implements DownloadManager {
         public void onDownloadError(Download d, String errorMessage) {
             LOGGER.info("Download error: " + d.getName() + " - " + errorMessage);
 
+            // A retry wrapper owns intermediate retryable failures: it
+            // schedules the retry and the manager defers ALL terminal
+            // handling (no ERROR reindex, no slot release, no next-queued
+            // start) so the running slot stays with the logical operation.
+            DownloadHandler handler = activeHandlers.get(d.getId());
+            if (handler instanceof RetryEventInterceptor interceptor
+                    && interceptor.interceptError(d.getId(), errorMessage)
+                            == RetryEventInterceptor.RetryDecision.RETRY_SCHEDULED) {
+                LOGGER.fine("Retry scheduled for download " + d.getName() + "; terminal handling deferred");
+                return;
+            }
+
             // CRITICAL: Update repository status indices to prevent inconsistency
             downloadRepository.updateDownloadStatus(d, Download.Status.ERROR);
 
@@ -1695,6 +1727,12 @@ public class DownloadManagerImpl implements DownloadManager {
         @Override
         public void onDownloadCanceled(Download d) {
             LOGGER.info("Download canceled: " + d.getName());
+
+            // Let a retry wrapper finalize before terminal handling
+            DownloadHandler handler = activeHandlers.get(d.getId());
+            if (handler instanceof RetryEventInterceptor interceptor) {
+                interceptor.interceptCanceled(d.getId());
+            }
 
             // CRITICAL: Update repository status indices to prevent inconsistency
             downloadRepository.updateDownloadStatus(d, Download.Status.CANCELED);
