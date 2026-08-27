@@ -39,6 +39,9 @@ public final class OdmApplication {
         final StatusNotifierTray[] trayHolder = new StatusNotifierTray[1];
         // Holder so the window publisher can reach the gate it is defined in
         final StartupGate[] startupHolder = new StartupGate[1];
+        // Quit timer scheduled by the failure notice; a successful retry
+        // cancels it so a healthy app is not killed 3s after its last failure
+        final int[] quitTimer = {0};
 
         final StartupGate startup = new StartupGate(
                 () -> new StartShutdownDialog(app),
@@ -58,14 +61,33 @@ public final class OdmApplication {
                     mainWindow.present();
                     progress.close();
                     LOGGER.info("onActivate: window presented");
+                    int pendingQuit = quitTimer[0];
+                    if (pendingQuit != 0) {
+                        // this publish is a retry that beat the failure's
+                        // quit timer — cancel it instead of quitting a
+                        // healthy app
+                        try {
+                            org.gnome.glib.Source.remove(pendingQuit);
+                        } catch (Throwable t) {
+                            LOGGER.warning("Failed to cancel the pending quit timer: " + t.getMessage());
+                        }
+                        quitTimer[0] = 0;
+                    }
                     return mainWindow;
                 },
                 OdmApplication::cleanupFailedStartup,
                 (progress, error) -> {
-                    progress.setMessage("Startup failed: " + error.getMessage());
+                    // progress is null when the progress dialog itself
+                    // failed; the exit strategy below still applies so the
+                    // app cannot hang silently
+                    if (progress != null) {
+                        progress.setMessage("Startup failed: " + error.getMessage());
+                    }
                     // Give the user a moment to read the message, then exit;
-                    // until then a later activation may retry (see StartupGate)
-                    org.gnome.glib.GLib.timeoutAddSecondsOnce(3, () ->
+                    // until then a later activation may retry (see
+                    // StartupGate), and a retry that succeeds cancels this
+                    // timer (see the window publisher above)
+                    quitTimer[0] = org.gnome.glib.GLib.timeoutAddSecondsOnce(3, () ->
                             UiThread.marshal(app::quit));
                 });
         startupHolder[0] = startup;

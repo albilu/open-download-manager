@@ -37,12 +37,6 @@ import org.tor.TorService;
  * {@link #activate()} must be called on it (GtkApplication delivers
  * "activate" there), and completion handlers marshal through
  * {@link UiThread}.</p>
- *
- * @param dialogFactory supplies the startup progress dialog (GTK thread)
- * @param pipeline starts the asynchronous core initialization (worker thread)
- * @param publisher constructs and presents the main window (GTK thread)
- * @param cleanup releases partially created core services after a failure (worker thread)
- * @param notice surfaces a startup failure to the user (GTK thread)
  */
 final class StartupGate {
 
@@ -73,7 +67,9 @@ final class StartupGate {
         void cleanup(CoreRefs partialRefs, Throwable error);
     }
 
-    /** User-visible failure handling: message and exit strategy (GTK thread). */
+    /** User-visible failure handling: message and exit strategy (GTK thread).
+     * The progress dialog is null when the dialog itself failed; the exit
+     * strategy must still be applied in that case. */
     @FunctionalInterface
     interface FailureNotice {
         void notifyUser(StartShutdownDialog progress, Throwable error);
@@ -95,6 +91,20 @@ final class StartupGate {
     /** Set once shutdown begins; no window may be published afterwards. */
     private final AtomicBoolean shutdownRequested = new AtomicBoolean();
 
+    /**
+     * The most recent failure cleanup, always completed when idle. The next
+     * pipeline start chains on it so a retry cannot re-initialize the core
+     * while the previous attempt's cleanup is still draining.
+     */
+    private volatile CompletableFuture<Void> pendingCleanup = CompletableFuture.completedFuture(null);
+
+    /**
+     * @param dialogFactory supplies the startup progress dialog (GTK thread)
+     * @param pipeline starts the asynchronous core initialization (worker thread)
+     * @param publisher constructs and presents the main window (GTK thread)
+     * @param cleanup releases partially created core services after a failure (worker thread)
+     * @param notice surfaces a startup failure to the user (GTK thread)
+     */
     StartupGate(Supplier<StartShutdownDialog> dialogFactory,
             CorePipeline pipeline,
             WindowPublisher publisher,
@@ -148,17 +158,23 @@ final class StartupGate {
     private void startPipeline(CompletableFuture<MainWindow> result) {
         // Startup progress dialog: the GTK main loop is already running, so
         // the activity bar animates while the core initializes on a worker
-        // thread below
-        StartShutdownDialog progress = dialogFactory.get();
-        progress.show("Starting Open Download Manager…");
-
-        CompletableFuture<CoreRefs> core;
+        // thread below. A dialog failure (e.g. a .ui regression tripping
+        // the fail-fast widget lookup) must settle the startup future —
+        // an unsettled slot would ignore every later activation.
+        StartShutdownDialog progress;
         try {
-            core = pipeline.start(progress);
+            progress = dialogFactory.get();
+            progress.show("Starting Open Download Manager…");
         } catch (Throwable t) {
-            failStartup(result, progress, null, t);
+            failStartup(result, null, null, t);
             return;
         }
+
+        // Serialize behind a still-running failure cleanup from a previous
+        // attempt; thenCompose also captures a synchronous pipeline.start
+        // throw as a failed future
+        CompletableFuture<CoreRefs> core = pendingCleanup
+                .thenCompose(v -> pipeline.start(progress));
         core.whenComplete((refs, error) -> {
             if (error != null) {
                 failStartup(result, progress, null, error);
@@ -187,7 +203,7 @@ final class StartupGate {
      */
     private void failStartup(CompletableFuture<MainWindow> result, StartShutdownDialog progress,
             CoreRefs refs, Throwable error) {
-        LOGGER.log(Level.SEVERE, "Core initialization failed", error);
+        LOGGER.log(Level.SEVERE, "Startup failed", error);
         runCleanup(refs, error);
         UiThread.marshal(() -> {
             try {
@@ -200,9 +216,10 @@ final class StartupGate {
         result.completeExceptionally(error); // waiting observers stand down
     }
 
-    /** Runs the failure cleanup off the GTK thread, best effort. */
+    /** Runs the failure cleanup off the GTK thread, best effort and bounded
+     * by the cleanup implementation itself. */
     private void runCleanup(CoreRefs refs, Throwable error) {
-        CompletableFuture.runAsync(() -> {
+        pendingCleanup = CompletableFuture.runAsync(() -> {
             try {
                 cleanup.cleanup(refs, error);
             } catch (Throwable t) {

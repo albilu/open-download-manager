@@ -65,11 +65,17 @@ class StartupGateTest {
         loopThread.shutdownNow();
     }
 
-    @BeforeEach
-    void setUpGate() {
-        gate = new StartupGate(
+    /** Dialog factory used unless a test overrides it before rebuilding the gate. */
+    private volatile java.util.function.Supplier<StartShutdownDialog> dialogFactory =
+            () -> null; // replaced in setUpGate
+    /** Failure cleanup used unless a test overrides it before rebuilding the gate. */
+    private volatile StartupGate.FailureCleanup cleanup = (refs, error) -> cleanupCalls.incrementAndGet();
+
+    /** Builds a gate from the current fixture state; tests may override first. */
+    private StartupGate buildGate() {
+        return new StartupGate(
                 () -> {
-                    StartShutdownDialog dialog = new StartShutdownDialog((org.gnome.gtk.Window) null);
+                    StartShutdownDialog dialog = dialogFactory.get();
                     openDialogs.add(dialog);
                     return dialog;
                 },
@@ -88,8 +94,17 @@ class StartupGateTest {
                     openDialogs.remove(progress);
                     return window;
                 },
-                (refs, error) -> cleanupCalls.incrementAndGet(),
+                cleanup,
                 (progress, error) -> failureNotices.incrementAndGet());
+    }
+
+    @BeforeEach
+    void setUpGate() {
+        dialogFactory = () -> {
+            StartShutdownDialog dialog = new StartShutdownDialog((org.gnome.gtk.Window) null);
+            return dialog;
+        };
+        gate = buildGate();
     }
 
     @AfterEach
@@ -265,5 +280,95 @@ class StartupGateTest {
         awaitTrue(() -> cleanupCalls.get() == 1,
                 "the started core must be cleaned up instead of published");
         assertEquals(0, windows.size(), "no window may be published after shutdown begins");
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("dialog construction failure settles the slot instead of zombie-ing it")
+    void dialogFailureSettlesSlotAndPermitsRetry() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger factoryCalls = new AtomicInteger();
+        dialogFactory = () -> {
+            if (factoryCalls.incrementAndGet() == 1) {
+                throw new IllegalStateException("start-shutdown.ui regression");
+            }
+            return new StartShutdownDialog((org.gnome.gtk.Window) null);
+        };
+        gate = buildGate();
+
+        onLoop(() -> {
+            try {
+                gate.activate(); // today's bug: escapes and leaves an unsettled future
+            } catch (Throwable toleratedForRed) {
+                // the gate must settle, not throw past activate()
+            }
+        });
+
+        awaitTrue(() -> cleanupCalls.get() == 1,
+                "dialog failure must still run the failure cleanup");
+        awaitTrue(() -> failureNotices.get() == 1,
+                "dialog failure must still schedule the exit strategy (null progress)");
+        assertEquals(0, windows.size());
+
+        onLoop(gate::activate); // retry with a working dialog
+        awaitTrue(() -> pipelineCalls.get() == 1,
+                "the slot must be cleared so a later activation is not stuck on a dead future");
+        pipelines.get(0).complete(newRefs());
+        awaitTrue(() -> windows.size() == 1, "the retry must publish one window");
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("a retry pipeline waits for the still-running failure cleanup")
+    void retryWaitsForPendingCleanup() throws Exception {
+        java.util.concurrent.CountDownLatch releaseCleanup = new java.util.concurrent.CountDownLatch(1);
+        cleanup = (refs, error) -> {
+            cleanupCalls.incrementAndGet();
+            try {
+                releaseCleanup.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        };
+        gate = buildGate();
+
+        onLoop(gate::activate);
+        pipelines.get(0).completeExceptionally(new RuntimeException("boom"));
+        awaitTrue(() -> cleanupCalls.get() == 1, "failure cleanup must be running (blocked)");
+
+        onLoop(gate::activate); // retry: pipeline must not race the cleanup
+        Thread.sleep(400); // settle; without serialization the count jumps immediately
+        assertEquals(1, pipelineCalls.get(),
+                "the retry core pipeline must wait for the pending failure cleanup");
+
+        releaseCleanup.countDown();
+        awaitTrue(() -> pipelineCalls.get() == 2,
+                "the retry core pipeline must start once the cleanup completes");
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("activation after shutdown is refused while no window exists")
+    void activateAfterShutdownIsRefused() throws Exception {
+        onLoop(gate::beginShutdown);
+        onLoop(gate::activate);
+        assertEquals(0, pipelineCalls.get(), "no pipeline may start after shutdown began");
+        assertEquals(0, windows.size());
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("a waiting activation stands down when the startup fails")
+    void waitingActivationStandsDownOnFailure() throws Exception {
+        onLoop(() -> {
+            gate.activate(); // owner
+            gate.activate(); // waiter: must observe the failure and do nothing
+        });
+        pipelines.get(0).completeExceptionally(new RuntimeException("boom"));
+
+        awaitTrue(() -> cleanupCalls.get() == 1, "the owner must run the failure cleanup");
+        awaitTrue(() -> failureNotices.get() == 1,
+                "exactly one failure notice: waiting activations stand down silently");
+        assertEquals(0, windows.size(), "a failed startup must publish nothing");
+        assertEquals(1, pipelineCalls.get());
     }
 }
