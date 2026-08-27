@@ -16,7 +16,7 @@ log() {
 
 # Ensure the shared Maven cache directory is writable by the container's
 # developer user (uid 1000). Docker resolves bind-mount sources on the host,
-# so on fresh CI runners (and under nested Docker/act) the source is
+# so on fresh CI runners (and under nested Docker/CI) the source is
 # auto-created root-owned, making Maven fail with "Could not create local
 # repository at /home/developer/.m2/repository". Normalize permissions through
 # Docker itself so the path the daemon actually mounts is writable.
@@ -26,15 +26,33 @@ prepare_m2() {
     chmod 0777 "$HOME/.m2" 2>/dev/null || true
 }
 
+# X11 authentication forwarder. Wayland/Xwayland sessions gate the display
+# behind an Xauthority token (e.g. /run/user/*/.mutter-Xwaylandauth.*). Docker
+# containers must receive that token or the X server rejects the connection
+# with "Authorization required, but no authorization protocol specified".
+# The token is copied to a stable host path before each container launch.
+xauth_args() {
+    if [ -z "$DISPLAY" ] || [ -z "$XAUTHORITY" ] || [ ! -f "$XAUTHORITY" ]; then
+        return
+    fi
+    local host_auth="$HOME/.odm-xauthority"
+    if ! cp "$XAUTHORITY" "$host_auth" 2>/dev/null; then
+        return
+    fi
+    echo " -e XAUTHORITY=/tmp/odm-xauthority -v $host_auth:/tmp/odm-xauthority:rw"
+}
+
 # Run application
 run() {
     prepare_m2
+    local xa="$(xauth_args)"
     log "Running application with GUI..."
     docker run --rm \
         -v "$(pwd):/app" \
         -v "$(pwd)/docker-data:/app/data" \
         -v "$HOME/.m2:/home/developer/.m2" \
         -e DISPLAY=$DISPLAY \
+        $xa \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         --ipc=host \
         $IMAGE_NAME \
@@ -44,11 +62,13 @@ run() {
 # Run application in debug mode
 debug() {
     prepare_m2
+    local xa="$(xauth_args)"
     log "Running application in debug mode (port 5005) with GUI..."
     docker run --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         -e DISPLAY=$DISPLAY \
+        $xa \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         -p 5005:5005 \
         --ipc=host \
@@ -65,11 +85,13 @@ build() {
 # Start development container
 dev() {
     prepare_m2
+    local xa="$(xauth_args)"
     log "Starting development container..."
     docker run -it --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         -e DISPLAY=$DISPLAY \
+        $xa \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         --name odm-dev \
         $IMAGE_NAME

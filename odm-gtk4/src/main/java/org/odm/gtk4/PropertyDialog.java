@@ -23,7 +23,6 @@ import org.manager.download.DownloadManager;
 public class PropertyDialog {
 
     private static final Logger LOGGER = Logger.getLogger(PropertyDialog.class.getName());
-    private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -69,7 +68,7 @@ public class PropertyDialog {
         dialog.setTitle("Properties — " + download.getName());
 
         StringList proxyTypes = new StringList(new String[0]);
-        for (String type : PROXY_TYPES) {
+        for (String type : DialogOptions.PROXY_TYPES) {
             proxyTypes.append(type);
         }
         proxyTypeCombo.setModel(proxyTypes);

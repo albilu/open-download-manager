@@ -32,7 +32,6 @@ import org.manager.download.DownloadManager;
 public class SettingsDialog {
 
     private static final Logger LOGGER = Logger.getLogger(SettingsDialog.class.getName());
-    private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
 
     private static final String[] DAY_LABELS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
@@ -56,7 +55,7 @@ public class SettingsDialog {
 
         dialog.setTransientFor(parent);
 
-        initDropdown("proxy_type_combo", PROXY_TYPES);
+        initDropdown("proxy_type_combo", DialogOptions.PROXY_TYPES);
         initDropdown("file_allocation_combo", FILE_ALLOCATIONS);
 
         buildSchedulerGrid();

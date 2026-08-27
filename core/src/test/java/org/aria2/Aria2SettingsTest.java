@@ -191,23 +191,15 @@ class Aria2SettingsTest {
     }
 
     @Test
-    @DisplayName("Should convert to map with RPC settings when enabled")
-    void shouldConvertToMapWithRpcSettings() {
+    @DisplayName("toMap never emits daemon-lifecycle options for a running download")
+    void toMapNeverEmitsRpcOptions() {
         settings.setEnableRpc(true).setRpcPort(7800);
 
         Map<String, String> map = settings.toMap();
 
-        assertEquals("true", map.get("enable-rpc"));
-        assertEquals("7800", map.get("rpc-listen-port"));
-    }
-
-    @Test
-    @DisplayName("Should not include RPC settings when disabled")
-    void shouldNotIncludeRpcSettingsWhenDisabled() {
-        settings.setEnableRpc(false);
-
-        Map<String, String> map = settings.toMap();
-
+        // toMap feeds per-download changeOption calls on a RUNNING daemon:
+        // listener-lifecycle options must never appear there, regardless of
+        // the daemon configuration fields
         assertFalse(map.containsKey("enable-rpc"));
         assertFalse(map.containsKey("rpc-listen-port"));
     }

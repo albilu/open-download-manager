@@ -560,10 +560,11 @@ public class Aria2Settings extends DownloadSettings {
         map.put("min-split-size", minSplitSize + "M");
         map.put("file-allocation", fileAllocation);
 
-        if (enableRpc) {
-            map.put("enable-rpc", "true");
-            map.put("rpc-listen-port", String.valueOf(rpcPort));
-        }
+        // enable-rpc / rpc-listen-port deliberately NOT emitted: daemon
+        // launch is handler-owned (startAria2cWithRpc), and toMap() keys feed
+        // per-download changeOption calls on a RUNNING daemon — changing its
+        // listener mid-transfer is never valid. The enableRpc/rpcPort fields
+        // remain for daemon configuration elsewhere.
 
         if (checkIntegrity) {
             map.put("check-integrity", "true");

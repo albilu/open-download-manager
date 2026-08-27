@@ -39,7 +39,6 @@ import org.manager.download.DownloadManager;
 public class ImportListDialog {
 
     private static final Logger LOGGER = Logger.getLogger(ImportListDialog.class.getName());
-    private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -67,7 +66,7 @@ public class ImportListDialog {
         dialog.setTransientFor(parent);
 
         StringList proxyTypes = new StringList(new String[0]);
-        for (String type : PROXY_TYPES) {
+        for (String type : DialogOptions.PROXY_TYPES) {
             proxyTypes.append(type);
         }
         Widgets.require(builder, "proxy_type_combo", DropDown.class).setModel(proxyTypes);
@@ -234,38 +233,19 @@ public class ImportListDialog {
     }
 
     private void applyOptions(Download download) {
-        if (Widgets.require(builder, "tor_switch", Switch.class).getActive()) {
-            download.setUseProxy(true);
-            download.setProxyAddress("socks5://127.0.0.1:9050");
-        } else if (Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected() > 0
-                && !Widgets.require(builder, "proxy_host_entry", Entry.class).getText().isBlank()) {
-            String type = PROXY_TYPES[(int) Widgets.require(builder, "proxy_type_combo", DropDown.class)
-                    .getSelected()].toLowerCase();
-            String host = Widgets.require(builder, "proxy_host_entry", Entry.class).getText().trim();
-            int port = (int) Widgets.require(builder, "proxy_port_spin", SpinButton.class).getValue();
-            String user = Widgets.require(builder, "proxy_username_entry", Entry.class).getText().trim();
-            String pass = Widgets.require(builder, "proxy_password_entry", Entry.class).getText();
-            StringBuilder proxy = new StringBuilder(type).append("://");
-            if (!user.isEmpty()) {
-                proxy.append(user);
-                if (!pass.isEmpty()) {
-                    proxy.append(':').append(pass);
-                }
-                proxy.append('@');
-            }
-            proxy.append(host).append(':').append(port);
-            download.setUseProxy(true);
-            download.setProxyAddress(proxy.toString());
-        }
+        DialogOptions.applyProxy(download,
+                Widgets.require(builder, "tor_switch", Switch.class).getActive(),
+                (int) Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected(),
+                Widgets.require(builder, "proxy_host_entry", Entry.class).getText(),
+                (int) Widgets.require(builder, "proxy_port_spin", SpinButton.class).getValue(),
+                Widgets.require(builder, "proxy_username_entry", Entry.class).getText(),
+                Widgets.require(builder, "proxy_password_entry", Entry.class).getText());
 
-        if (download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
-            aria2Settings.setMaxConnectionPerServer(
-                    (int) Widgets.require(builder, "max_connections_spin", SpinButton.class).getValue());
-            int downKb = (int) Widgets.require(builder, "max_download_speed_spin", SpinButton.class).getValue();
-            if (downKb > 0) {
-                aria2Settings.setOption("max-download-limit", String.valueOf(downKb * 1024L));
-            }
-        }
+        // Engine-neutral seam: works for every engine, not just aria2
+        DialogOptions.applyCommon(download.getSettings(),
+                (int) Widgets.require(builder, "max_connections_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "max_download_speed_spin", SpinButton.class).getValue(),
+                0, 0, 0, null, null, null);
     }
 
     private void updateDiskSpace(String dir) {

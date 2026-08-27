@@ -33,7 +33,6 @@ import org.manager.download.DownloadManager;
 public class NewDownloadDialog {
 
     private static final Logger LOGGER = Logger.getLogger(NewDownloadDialog.class.getName());
-    private static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -106,7 +105,7 @@ public class NewDownloadDialog {
         dialog.setTransientFor(parent);
 
         StringList proxyTypes = new StringList(new String[0]);
-        for (String type : PROXY_TYPES) {
+        for (String type : DialogOptions.PROXY_TYPES) {
             proxyTypes.append(type);
         }
         proxyTypeCombo.setModel(proxyTypes);
@@ -422,65 +421,24 @@ public class NewDownloadDialog {
     }
 
     private void applyOptions(Download download) {
-        // Proxy: explicit proxy fields, or Tor SOCKS
-        if (torSwitch.getActive()) {
-            download.setUseProxy(true);
-            download.setProxyAddress("socks5://127.0.0.1:9050");
-        } else if (proxyTypeCombo.getSelected() > 0 && !proxyHostEntry.getText().isBlank()) {
-            StringBuilder proxy = new StringBuilder();
-            String type = PROXY_TYPES[(int) proxyTypeCombo.getSelected()].toLowerCase();
-            proxy.append(type).append("://");
-            if (!proxyUsernameEntry.getText().isBlank()) {
-                proxy.append(proxyUsernameEntry.getText().trim());
-                if (!proxyPasswordEntry.getText().isEmpty()) {
-                    proxy.append(':').append(proxyPasswordEntry.getText());
-                }
-                proxy.append('@');
-            }
-            proxy.append(proxyHostEntry.getText().trim());
-            proxy.append(':').append((int) proxyPortSpin.getValue());
-            download.setUseProxy(true);
-            download.setProxyAddress(proxy.toString());
-        }
+        // Proxy: explicit proxy fields, or Tor SOCKS (shared assembly)
+        DialogOptions.applyProxy(download, torSwitch.getActive(),
+                (int) proxyTypeCombo.getSelected(),
+                proxyHostEntry.getText(), (int) proxyPortSpin.getValue(),
+                proxyUsernameEntry.getText(), proxyPasswordEntry.getText());
 
-        // Uniform connection handling: the shared "max connections" field
-        // drives segmentation for every engine — aria2 per-server
-        // connections, yt-dlp concurrent fragments, HTTrack sockets (-c).
-        // curl intentionally stays single-connection: it is the plain
-        // fallback engine.
-        int connections = (int) maxConnectionsSpin.getValue();
-        if (download.getSettings() != null) {
-            download.getSettings().setConnections(connections);
-        }
-
-        if (download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
-            aria2Settings.setMaxConnectionPerServer(connections);
-            int downKb = (int) maxDownloadSpeedSpin.getValue();
-            if (downKb > 0) {
-                aria2Settings.setOption("max-download-limit", String.valueOf(downKb * 1024L));
-            }
-            int upKb = (int) maxUploadSpeedSpin.getValue();
-            if (upKb > 0) {
-                aria2Settings.setOption("max-upload-limit", String.valueOf(upKb * 1024L));
-            }
-            int retryLimit = (int) retryLimitSpin.getValue();
-            if (retryLimit > 0) {
-                aria2Settings.setOption("max-tries", String.valueOf(retryLimit));
-            }
-            int retryAfter = (int) retryAfterSpin.getValue();
-            if (retryAfter > 0) {
-                aria2Settings.setOption("retry-wait", String.valueOf(retryAfter));
-            }
-            if (!referrerEntry.getText().isBlank()) {
-                aria2Settings.setOption("referer", referrerEntry.getText().trim());
-            }
-            if (!cookieEntry.getText().isBlank()) {
-                aria2Settings.setOption("header", "Cookie: " + cookieEntry.getText().trim());
-            }
-            if (!userAgentEntry.getText().isBlank()) {
-                aria2Settings.setOption("user-agent", userAgentEntry.getText().trim());
-            }
-        }
+        // Uniform option handling via the engine-neutral seam: the shared
+        // "max connections" field drives segmentation for every engine —
+        // aria2 per-server connections, yt-dlp concurrent fragments, HTTrack
+        // sockets (-c); curl intentionally stays single-connection as the
+        // plain fallback engine.
+        DialogOptions.applyCommon(download.getSettings(),
+                (int) maxConnectionsSpin.getValue(),
+                (int) maxDownloadSpeedSpin.getValue(),
+                (int) maxUploadSpeedSpin.getValue(),
+                (int) retryLimitSpin.getValue(),
+                (int) retryAfterSpin.getValue(),
+                referrerEntry.getText(), userAgentEntry.getText(), cookieEntry.getText());
     }
 
     private String currentDefaultDirectory() {

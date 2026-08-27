@@ -164,48 +164,54 @@ public class ApplicationFactory {
         }
 
         for (int attempt = 0; attempt < 2; attempt++) {
-            boolean began = false;
-            coreLock.writeLock().lock();
-            try {
-                if (downloadManager != null) {
-                    return downloadManager;
-                }
-
+            // Coordinator gating first, WITHOUT the core lock: construction
+            // takes hundreds of milliseconds (executors, SQLite open,
+            // shutdown hooks) and used to hold coreLock.writeLock() the
+            // whole time — blocking every concurrent getToolManagerFactory()
+            // / settings caller. DownloadManagerFactory.getInstance() is
+            // itself thread-safe; the write lock now only guards the
+            // field publish.
+            boolean began = startupCoordinator.beginComponentInitialization(
+                    StartupCoordinator.DOWNLOAD_MANAGER);
+            if (!began && !startupCoordinator.isComponentInitializing(
+                    StartupCoordinator.DOWNLOAD_MANAGER)) {
+                // Stale state: marked initialized (an earlier factory
+                // generation) but no instance exists here. Self-heal by
+                // forcing re-initialization.
+                startupCoordinator.resetComponent(StartupCoordinator.DOWNLOAD_MANAGER);
                 began = startupCoordinator.beginComponentInitialization(
                         StartupCoordinator.DOWNLOAD_MANAGER);
-                if (!began && !startupCoordinator.isComponentInitializing(
-                        StartupCoordinator.DOWNLOAD_MANAGER)) {
-                    // Stale state: marked initialized (an earlier factory
-                    // generation) but no instance exists here. Self-heal by
-                    // forcing re-initialization.
-                    startupCoordinator.resetComponent(StartupCoordinator.DOWNLOAD_MANAGER);
-                    began = startupCoordinator.beginComponentInitialization(
-                            StartupCoordinator.DOWNLOAD_MANAGER);
-                }
+            }
 
-                if (began) {
+            if (began) {
+                try {
+                    LOGGER.info("Creating DownloadManager with coordinated initialization...");
+                    long startTime = System.currentTimeMillis();
+
+                    // Thread-safe construction; the write lock only
+                    // publishes the reference for the fast path above
+                    DownloadManager manager = DownloadManagerFactory.getInstance();
+                    coreLock.writeLock().lock();
                     try {
-                        LOGGER.info("Creating DownloadManager with coordinated initialization...");
-                        long startTime = System.currentTimeMillis();
-
-                        // Use existing factory but ensure singleton behavior
-                        downloadManager = DownloadManagerFactory.getInstance();
-
-                        startupCoordinator.completeComponentInitialization(
-                                StartupCoordinator.DOWNLOAD_MANAGER);
-                        long duration = System.currentTimeMillis() - startTime;
-                        LOGGER.info("DownloadManager created successfully in " + duration + "ms");
-                        return downloadManager;
-                    } catch (Throwable e) {
-                        // Throwable, not Exception: an Error must also clear
-                        // the initializing flag or waiters spin forever
-                        startupCoordinator.failComponentInitialization(
-                                StartupCoordinator.DOWNLOAD_MANAGER, e);
-                        throw e;
+                        downloadManager = manager;
+                    } finally {
+                        coreLock.writeLock().unlock();
                     }
+
+                    startupCoordinator.completeComponentInitialization(
+                            StartupCoordinator.DOWNLOAD_MANAGER);
+                    long duration = System.currentTimeMillis() - startTime;
+                    LOGGER.info("DownloadManager created successfully in " + duration + "ms");
+                    // Return the local reference: a concurrent shutdown may
+                    // already have nulled the field after our publish
+                    return manager;
+                } catch (Throwable e) {
+                    // Throwable, not Exception: an Error must also clear
+                    // the initializing flag or waiters spin forever
+                    startupCoordinator.failComponentInitialization(
+                            StartupCoordinator.DOWNLOAD_MANAGER, e);
+                    throw e;
                 }
-            } finally {
-                coreLock.writeLock().unlock();
             }
 
             // Another thread is initializing: wait WITHOUT holding the core
