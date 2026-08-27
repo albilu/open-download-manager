@@ -57,6 +57,16 @@ public class Aria2Client {
     /** Whether RPC payloads carry {@link #rpcSecret} as the aria2 token. */
     private volatile boolean sendToken;
     private Process aria2Process;
+    /**
+     * Ownership state of the daemon this client talks to: not started by us,
+     * started and authenticated by us, or an external daemon adopted after
+     * an authenticated probe with the user-configured secret.
+     */
+    public enum DaemonOwnership {
+        STOPPED, ODM_STARTED, EXTERNAL_AUTHENTICATED
+    }
+
+    private volatile DaemonOwnership daemonOwnership = DaemonOwnership.STOPPED;
     private String httpProxy;
     private String configFile;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -256,8 +266,23 @@ public class Aria2Client {
     /**
      * Start aria2c with --enable-rpc if not already running.
      *
-     * @param extraArgs Additional arguments for aria2c (can be null)
-     * @throws IOException if aria2c fails to start
+     * <p>Ownership rules: an endpoint already occupied by a daemon is
+     * adopted only when the user explicitly configured an RPC secret
+     * before this call and an authenticated probe with that secret
+     * succeeds — the client then records
+     * {@link DaemonOwnership#EXTERNAL_AUTHENTICATED} and never shuts that
+     * daemon down. Any other occupied endpoint (no configured secret, or
+     * credentials the daemon rejects) fails startup with an actionable
+     * exception: no download data is ever sent to a daemon ODM cannot
+     * authenticate. A free endpoint is self-launched; ownership becomes
+     * {@link DaemonOwnership#ODM_STARTED} only after an authenticated RPC
+     * probe against the child succeeds.
+     *
+     * @param extraArgs Additional arguments for aria2c (can be null);
+     *                  RPC-control arguments are filtered out
+     * @return true when a daemon is usable (adopted or self-launched)
+     * @throws IOException if the endpoint is occupied without valid
+     *                     configured credentials, or aria2c fails to start
      */
     public boolean startAria2cWithRpc(List<String> extraArgs) throws IOException {
         if (isShuttingDown) {
@@ -272,16 +297,42 @@ public class Aria2Client {
             } catch (Exception e) {
                 // Process exists but not responsive, clean it up
                 aria2Process = null;
+                daemonOwnership = DaemonOwnership.STOPPED;
                 return false;
             }
         }
 
         // An external daemon may already own the RPC port (e.g. the user
-        // runs their own aria2). Probe it first: if it answers, talk to it
-        // as configured instead of spawning a second, doomed daemon.
-        if (isExternalDaemonRunning()) {
-            LOGGER.info("Using an already-running external aria2 RPC daemon at " + rpcUrl);
-            return true;
+        // runs their own aria2). This probe happens BEFORE any child secret
+        // is generated. Adoption requires an explicitly configured secret
+        // AND a successful authenticated probe; anything else occupying the
+        // endpoint is a hard failure — ODM must not send download data to
+        // an unauthenticated or foreign daemon, nor shut it down later.
+        boolean occupied = false;
+        boolean authenticated = false;
+        try {
+            getVersion();
+            occupied = true;
+            authenticated = true;
+        } catch (Aria2RpcException e) {
+            // The endpoint answered with an RPC-level rejection (e.g.
+            // Unauthorized): something owns it
+            occupied = true;
+        } catch (IOException e) {
+            // Connection refused / nothing listening: the endpoint is free
+        }
+
+        if (occupied) {
+            if (rpcToken != null && authenticated) {
+                daemonOwnership = DaemonOwnership.EXTERNAL_AUTHENTICATED;
+                LOGGER.info("Adopting authenticated external aria2 RPC daemon at " + rpcUrl);
+                return true;
+            }
+            throw new IOException(
+                    "The aria2 RPC endpoint " + rpcUrl + " is already occupied by a daemon "
+                            + "ODM cannot authenticate. Configure a matching RPC secret "
+                            + "(aria2.rpcSecret) to adopt it, or free the port so ODM can "
+                            + "start its own daemon. No download data has been sent to it.");
         }
 
         try {
@@ -289,8 +340,11 @@ public class Aria2Client {
             pb.redirectErrorStream(true);
             aria2Process = pb.start();
 
-            // Wait for aria2c to become responsive (max 10 seconds)
+            // Wait for aria2c to become responsive (max 10 seconds). The
+            // readiness probe is an authenticated getVersion: ODM_STARTED
+            // is only recorded once the child accepts our credentials.
             if (waitForAria2State(true, 10000, 200)) {
+                daemonOwnership = DaemonOwnership.ODM_STARTED;
                 return true; // Success
             }
 
@@ -311,29 +365,26 @@ public class Aria2Client {
     }
 
     /**
-     * Probes the configured RPC endpoint for a daemon this client did not
-     * launch (e.g. a user-managed aria2). Only considers it external when
-     * this client never generated a secret for its own daemon.
+     * RPC controls owned by ODM. Generic extra arguments are filtered
+     * against these so nothing can override the daemon's RPC binding,
+     * port, secret, or enable-RPC state.
      */
-    private boolean isExternalDaemonRunning() {
-        if (sendToken && rpcToken == null) {
-            // We already manage a self-launched daemon with a generated
-            // secret; the probe below would send the wrong credentials.
-            return false;
-        }
-        try {
-            getVersion();
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
+    private static final List<String> RESERVED_RPC_FLAGS = List.of(
+            "--rpc-secret",
+            "--rpc-listen-port",
+            "--rpc-listen-all",
+            "--rpc-listen",
+            "--enable-rpc",
+            "--disable-rpc");
 
     /**
      * Builds the command that launches the self-managed aria2 RPC daemon.
      * The daemon binds localhost only and requires an RPC secret: a random
-     * one is generated when the caller did not configure a token. Exposed
-     * package-private for the security contract tests.
+     * one is generated when the caller did not configure a token. The
+     * listen port is derived from this client's own RPC endpoint, and
+     * reserved RPC-control flags are stripped from {@code extraArgs} so
+     * ODM's values stay authoritative. Exposed package-private for the
+     * security contract tests.
      *
      * @param extraArgs additional aria2c arguments (can be null)
      * @return the full aria2c command line
@@ -353,19 +404,58 @@ public class Aria2Client {
         if (sendToken && rpcSecret != null) {
             cmd.add("--rpc-secret=" + rpcSecret);
         }
+        // ODM selects the port: the self-launched daemon must listen where
+        // this client's own RPC endpoint points
+        int listenPort = rpcUrlListenPort();
+        if (listenPort > 0 && listenPort != 6800) {
+            cmd.add("--rpc-listen-port=" + listenPort);
+        }
         if (httpProxy != null && !httpProxy.isEmpty()) {
             cmd.add("--all-proxy=" + httpProxy);
         }
         if (configFile != null && !configFile.isEmpty()) {
             cmd.add("--conf-path=" + configFile);
         }
-        if (extraArgs != null) {
-            cmd.addAll(extraArgs);
-            this.lastExtraArgs = new ArrayList<>(extraArgs); // Store for restart
-        } else {
-            this.lastExtraArgs = new ArrayList<>();
-        }
+        List<String> filteredArgs = filterReservedRpcArgs(extraArgs);
+        cmd.addAll(filteredArgs);
+        this.lastExtraArgs = new ArrayList<>(filteredArgs); // Store for restart
         return cmd;
+    }
+
+    /** The listen port of this client's own RPC endpoint; -1 when unset. */
+    private int rpcUrlListenPort() {
+        try {
+            return URI.create(rpcUrl).getPort();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Drops reserved RPC-control arguments (both {@code --flag=value} and
+     * two-argument {@code --flag value} forms) so generic arguments can
+     * never override the RPC binding, port, secret, or enable-RPC state
+     * ODM owns.
+     */
+    private static List<String> filterReservedRpcArgs(List<String> extraArgs) {
+        if (extraArgs == null || extraArgs.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<String> filtered = new ArrayList<>(extraArgs.size());
+        for (int i = 0; i < extraArgs.size(); i++) {
+            String arg = extraArgs.get(i);
+            String flagName = arg.contains("=") ? arg.substring(0, arg.indexOf('=')) : arg;
+            if (RESERVED_RPC_FLAGS.contains(flagName)) {
+                LOGGER.warning("Filtered reserved aria2 RPC argument \"" + arg
+                        + "\": RPC binding, port, secret, and enable-RPC are ODM-owned");
+                if (!arg.contains("=") && i + 1 < extraArgs.size()) {
+                    i++; // also drop the value of the two-argument form
+                }
+                continue;
+            }
+            filtered.add(arg);
+        }
+        return filtered;
     }
 
     /** Generates a random RPC secret for a self-launched daemon. */
@@ -375,10 +465,33 @@ public class Aria2Client {
     }
 
     /**
-     * Stop aria2c process started by this client.
+     * Stop the aria2c lifecycle attachment according to daemon ownership:
+     *
+     * <ul>
+     * <li>{@link DaemonOwnership#ODM_STARTED}: send the authenticated
+     * shutdown RPC (with a forceShutdown escalation) and reap the child
+     * process.</li>
+     * <li>{@link DaemonOwnership#EXTERNAL_AUTHENTICATED}: close ODM's own
+     * transports only. An aria2.shutdown RPC is never sent to a daemon ODM
+     * did not start.</li>
+     * </ul>
      */
     public boolean stopAria2c() {
+        if (daemonOwnership == DaemonOwnership.EXTERNAL_AUTHENTICATED) {
+            // Not our daemon: close ODM's own transports and detach. The
+            // external daemon keeps running for whoever started it.
+            closeWebSocketSocket("ODM detached from external aria2 daemon");
+            daemonOwnership = DaemonOwnership.STOPPED;
+            return true;
+        }
+
         if (aria2Process != null /* && aria2Process.isAlive() as its starts as dameon, its exit immediately */) {
+            // An open WebSocket auto-reconnects (and restarts the daemon!)
+            // when the daemon closes the connection on shutdown. Disable
+            // the transport and close the socket BEFORE shutting down, or
+            // the reconnect path resurrects the daemon we are stopping.
+            useWebSocket = false;
+            closeWebSocketSocket("stopping ODM-owned daemon");
             try {
                 // Try to shutdown gracefully first
                 shutdown();
@@ -402,6 +515,7 @@ public class Aria2Client {
                 }
             }
             aria2Process = null;
+            daemonOwnership = DaemonOwnership.STOPPED;
         }
 
         // Verify it's actually stopped
@@ -582,7 +696,10 @@ public class Aria2Client {
     }
 
     /**
-     * Shutdown aria2c daemon.
+     * Shutdown aria2c daemon (raw RPC). Callers must only aim this at a
+     * daemon ODM started: for an adopted
+     * {@link DaemonOwnership#EXTERNAL_AUTHENTICATED} daemon, transports are
+     * closed via {@link #stopAria2c()} without ever sending this request.
      */
     public String shutdown() throws IOException, Aria2RpcException {
         return call("aria2.shutdown", String.class);
@@ -952,6 +1069,15 @@ public class Aria2Client {
      */
     public String getRpcSecret() {
         return sendToken ? rpcSecret : null;
+    }
+
+    /**
+     * The ownership state of the daemon this client is attached to.
+     *
+     * @return STOPPED, ODM_STARTED, or EXTERNAL_AUTHENTICATED
+     */
+    public DaemonOwnership getDaemonOwnership() {
+        return daemonOwnership;
     }
 
     /** Whether WebSocket use has been permanently disabled. Test accessor. */

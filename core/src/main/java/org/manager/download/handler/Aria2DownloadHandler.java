@@ -123,7 +123,16 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Use ToolManagerFactory to get aria2 path
         Aria2ToolManager aria2Manager = toolManagerFactory.getAria2Manager();
         String aria2Path = aria2Manager != null ? aria2Manager.getToolPath() : "aria2c";
-        this.aria2Client = new Aria2Client(aria2Path);
+        // A user-configured RPC secret (aria2.rpcSecret) is the ONLY way an
+        // already-running external daemon gets adopted: the client probes
+        // the endpoint with these credentials before starting a child.
+        String configuredRpcSecret = globalSettings.getProperty("aria2.rpcSecret", null);
+        if (configuredRpcSecret != null && configuredRpcSecret.isBlank()) {
+            configuredRpcSecret = null;
+        }
+        this.aria2Client = configuredRpcSecret != null
+                ? new Aria2Client(aria2Path, "http://localhost:6800/jsonrpc", configuredRpcSecret)
+                : new Aria2Client(aria2Path);
         this.aria2Client.setUseWebSocket(true);
         this.gidToIdMap = new ConcurrentHashMap<>();
         this.activeDownloads = new ConcurrentHashMap<>();
@@ -333,11 +342,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         List<String> extraArgs = new ArrayList<>();
         extraArgs.add("--max-concurrent-downloads=" + globalSettings.getMaxConcurrentDownloads());
 
-        // Honor a configured RPC port (default 6800): the daemon must listen
-        // where the client talks to it, or every RPC call misses
+        // Honor a configured RPC port (default 6800): the client's own RPC
+        // endpoint is authoritative — the self-launched daemon derives its
+        // --rpc-listen-port from it, and an external daemon must already
+        // be listening there to be adopted
         int rpcPort = globalSettings.getIntProperty("aria2.rpcPort", 6800);
         if (rpcPort > 0 && rpcPort != 6800) {
-            extraArgs.add("--rpc-listen-port=" + rpcPort);
             aria2Client.setRpcUrl("http://localhost:" + rpcPort + "/jsonrpc");
             LOGGER.info("aria2 RPC port overridden to " + rpcPort);
         }
@@ -391,8 +401,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             LOGGER.log(java.util.logging.Level.WARNING, "Could not configure aria2 session management", e);
         }
 
-        // Start aria2 with RPC enabled
-        aria2Client.startAria2cWithRpc(extraArgs);
+        // Start aria2 with RPC enabled. A false return or an exception
+        // means no usable daemon (e.g. the endpoint is occupied without
+        // valid credentials) — fail initialization visibly instead of
+        // letting later calls silently miss.
+        if (!aria2Client.startAria2cWithRpc(extraArgs)) {
+            throw new IOException("aria2 RPC daemon failed to start "
+                    + "(aria2c did not become responsive within the startup timeout)");
+        }
 
         // Register notification listener
         aria2Client.addNotificationListener(new Aria2NotificationAdapter());
@@ -533,13 +549,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             LOGGER.log(java.util.logging.Level.WARNING, "Failed to save aria2 session during shutdown", e);
         }
 
-        // Gracefully shutdown aria2 RPC server FIRST (this will close connections properly)
-        try {
-            aria2Client.shutdown(); // Graceful RPC shutdown
-            LOGGER.info("Aria2 RPC graceful shutdown completed");
-        } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "Graceful aria2 shutdown failed, forcing disconnect", e);
-        }
+        // Shutdown is ownership-driven (Aria2Client.DaemonOwnership):
+        // - ODM_STARTED: stopAria2c sends the authenticated shutdown RPC
+        //   and reaps the child process.
+        // - EXTERNAL_AUTHENTICATED: stopAria2c only closes ODM's transports.
+        //   An aria2.shutdown RPC is never sent to a daemon ODM did not
+        //   start, so an adopted user daemon survives ODM.
+        // The unconditional daemon shutdown that used to happen here killed
+        // adopted external daemons.
 
         // Then disconnect WebSocket (should not trigger reconnection now)
         try {
@@ -549,8 +566,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             LOGGER.log(java.util.logging.Level.WARNING, "Error disconnecting WebSocket", e);
         }
 
-        // Finally stop the process: polls daemon state with a bounded wait
-        // (no fixed sleeps) and escalates to destroy on timeout
+        // Finally stop the daemon attachment: polls daemon state with a
+        // bounded wait (no fixed sleeps) and escalates to destroy on
+        // timeout for ODM-owned children
         try {
             aria2Client.stopAria2c();
         } catch (Exception e) {
