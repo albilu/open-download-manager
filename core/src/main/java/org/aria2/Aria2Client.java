@@ -75,7 +75,13 @@ public class Aria2Client {
         // Configure ObjectMapper
         OBJECT_MAPPER.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
-    private boolean useWebSocket = false;
+    /**
+     * Whether RPC payloads use the WebSocket transport. Volatile: written
+     * by {@link #stopAria2c()} to guarantee no reconnect-resurrect while a
+     * daemon is being stopped; the restart path lacks the permanent
+     * shutdown latch, so visibility of that write must not be assumed.
+     */
+    private volatile boolean useWebSocket = false;
     private WebSocketClient wsClient;
     private final ConcurrentHashMap<Integer, CompletableFuture<String>> wsResponses = new ConcurrentHashMap<>();
     private final AtomicInteger wsRequestId = new AtomicInteger(1);
@@ -328,6 +334,20 @@ public class Aria2Client {
                 LOGGER.info("Adopting authenticated external aria2 RPC daemon at " + rpcUrl);
                 return true;
             }
+            // Refusing the endpoint: the probe may have opened a WebSocket
+            // (and its health check) to the daemon — close it so nothing
+            // of ours stays attached to a daemon we reject
+            closeWebSocketSocket("refusing aria2 endpoint without valid credentials");
+            if (authenticated) {
+                // rpcToken == null yet our own generated secret was
+                // accepted: this is an ODM child that survived a failed
+                // stop, not a credentials problem
+                throw new IOException(
+                        "The aria2 RPC endpoint " + rpcUrl + " is still held by a daemon "
+                                + "previously started by ODM (it accepted ODM's generated secret). "
+                                + "Stop the stale daemon or free the port before starting again. "
+                                + "No download data has been sent to it.");
+            }
             throw new IOException(
                     "The aria2 RPC endpoint " + rpcUrl + " is already occupied by a daemon "
                             + "ODM cannot authenticate. Configure a matching RPC secret "
@@ -432,6 +452,16 @@ public class Aria2Client {
     }
 
     /**
+     * Reserved flags that consume a separate value token in the
+     * two-argument form. The other reserved flags are boolean-style:
+     * consuming their following token would swallow the NEXT flag and leak
+     * that flag's real value as a stray positional.
+     */
+    private static final List<String> RESERVED_RPC_VALUE_FLAGS = List.of(
+            "--rpc-secret",
+            "--rpc-listen-port");
+
+    /**
      * Drops reserved RPC-control arguments (both {@code --flag=value} and
      * two-argument {@code --flag value} forms) so generic arguments can
      * never override the RPC binding, port, secret, or enable-RPC state
@@ -448,7 +478,14 @@ public class Aria2Client {
             if (RESERVED_RPC_FLAGS.contains(flagName)) {
                 LOGGER.warning("Filtered reserved aria2 RPC argument \"" + arg
                         + "\": RPC binding, port, secret, and enable-RPC are ODM-owned");
-                if (!arg.contains("=") && i + 1 < extraArgs.size()) {
+                // Only value-taking flags consume the next token
+                // unconditionally; a boolean-style reserved flag must never
+                // swallow a following FLAG (that would leak the next
+                // flag's real value as a stray positional), but a plain
+                // value token (e.g. "false") is still consumed with it
+                boolean valueTaking = RESERVED_RPC_VALUE_FLAGS.contains(flagName);
+                if (!arg.contains("=") && i + 1 < extraArgs.size()
+                        && (valueTaking || !extraArgs.get(i + 1).startsWith("--"))) {
                     i++; // also drop the value of the two-argument form
                 }
                 continue;
@@ -518,7 +555,10 @@ public class Aria2Client {
             daemonOwnership = DaemonOwnership.STOPPED;
         }
 
-        // Verify it's actually stopped
+        // Verify it's actually stopped. This probe cannot distinguish a
+        // foreign daemon on the endpoint from our own; no current caller
+        // double-stops an adopted daemon (ownership resets to STOPPED
+        // above), so a false return here means an ODM child survived.
         try {
             getVersion();
             return false; // Still running

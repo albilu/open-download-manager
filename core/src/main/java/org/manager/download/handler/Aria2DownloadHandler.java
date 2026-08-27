@@ -515,10 +515,17 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
-     * Saves the current aria2 session.
+     * Saves the current aria2 session. Ownership-guarded: an adopted
+     * external daemon never receives aria2.saveSession — that would
+     * rewrite the user's own session file at ODM's cadence, and ODM's
+     * recovery state comes from its own state store anyway.
      */
     public void saveSession() throws Exception {
         if (aria2Client != null) {
+            if (aria2Client.getDaemonOwnership() == Aria2Client.DaemonOwnership.EXTERNAL_AUTHENTICATED) {
+                LOGGER.info("Skipping aria2.saveSession: daemon is an adopted external instance");
+                return;
+            }
             aria2Client.saveSession();
             LOGGER.info("Saved aria2 session");
         }

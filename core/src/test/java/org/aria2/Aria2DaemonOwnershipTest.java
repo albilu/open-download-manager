@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,6 +23,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.ApplicationContext;
+import org.manager.GlobalSettings;
+import org.manager.download.DownloadSettingsFactory;
+import org.manager.download.handler.Aria2DownloadHandler;
 
 /**
  * Daemon-ownership contract for {@link Aria2Client}:
@@ -48,6 +53,8 @@ class Aria2DaemonOwnershipTest {
 
     private Path downloadDir;
     private final List<Process> externalDaemons = new ArrayList<>();
+    private final List<Aria2DownloadHandler> handlers = new ArrayList<>();
+    private final List<ExecutorService> executors = new ArrayList<>();
     private Aria2Client odmClient;
 
     @BeforeEach
@@ -59,6 +66,16 @@ class Aria2DaemonOwnershipTest {
 
     @AfterEach
     void tearDown() {
+        for (Aria2DownloadHandler handler : handlers) {
+            try {
+                handler.shutdown().join();
+            } catch (Exception e) {
+                // ignore
+            }
+        }
+        for (ExecutorService executor : executors) {
+            executor.shutdownNow();
+        }
         if (odmClient != null) {
             try {
                 odmClient.disconnectWebSocket();
@@ -88,7 +105,7 @@ class Aria2DaemonOwnershipTest {
      * Launches a foreground (non-daemonized) aria2c RPC process so the
      * returned handle reliably controls its lifetime from the test.
      */
-    private Process startExternalDaemon(int port, String secret) throws Exception {
+    private Process startExternalDaemon(int port, String secret, String... extraFlags) throws Exception {
         String aria2Path = ApplicationContext.getToolPath("aria2");
         List<String> cmd = new ArrayList<>(Arrays.asList(
                 aria2Path,
@@ -99,6 +116,7 @@ class Aria2DaemonOwnershipTest {
         if (secret != null) {
             cmd.add("--rpc-secret=" + secret);
         }
+        cmd.addAll(Arrays.asList(extraFlags));
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(true);
         Process process = pb.start();
@@ -219,6 +237,112 @@ class Aria2DaemonOwnershipTest {
     }
 
     @Test
+    @DisplayName("An occupied endpoint whose daemon rejects the configured secret is rejected")
+    @Timeout(30)
+    void occupiedEndpointWithWrongConfiguredSecretIsRejected() throws Exception {
+        int port = BASE_PORT + 5;
+        startExternalDaemon(port, "the-real-secret");
+
+        odmClient = new Aria2Client(
+                ApplicationContext.getToolPath("aria2"), rpcUrl(port), "a-wrong-secret");
+
+        IOException failure = assertThrows(IOException.class,
+                () -> odmClient.startAria2cWithRpc(List.of("--dir=" + downloadDir)),
+                "a daemon that rejects the configured credentials must not be adopted");
+        assertTrue(failure.getMessage().toLowerCase().contains("secret"),
+                "rejection message must be actionable and mention the secret: " + failure.getMessage());
+        assertEquals(Aria2Client.DaemonOwnership.STOPPED, odmClient.getDaemonOwnership());
+
+        // The external daemon is untouched: still answering with its own secret
+        Aria2Client externalProbe = new Aria2Client(
+                ApplicationContext.getToolPath("aria2"), rpcUrl(port), "the-real-secret");
+        assertDoesNotThrow(externalProbe::getVersion,
+                "rejecting the endpoint must not disturb the foreign daemon");
+    }
+
+    @Test
+    @DisplayName("A daemon accepting ODM's own generated secret (survived child) gets a distinct refusal")
+    @Timeout(30)
+    void survivingOdmChildGetsDistinctRefusalMessage() throws Exception {
+        int port = BASE_PORT + 6;
+        odmClient = new Aria2Client(ApplicationContext.getToolPath("aria2"), rpcUrl(port), null);
+        // Generate ODM's child secret without launching, then occupy the
+        // endpoint with a daemon that accepts it — the zombie-child case
+        odmClient.buildRpcLaunchCommand(null);
+        startExternalDaemon(port, odmClient.getRpcSecret());
+
+        IOException failure = assertThrows(IOException.class,
+                () -> odmClient.startAria2cWithRpc(null),
+                "a tokenless client must still refuse the occupied endpoint");
+        assertTrue(failure.getMessage().toLowerCase().contains("previously"),
+                "a daemon authenticating ODM's own generated secret is a survived ODM child; "
+                        + "the message must say so instead of blaming credentials: " + failure.getMessage());
+        assertEquals(Aria2Client.DaemonOwnership.STOPPED, odmClient.getDaemonOwnership());
+
+        Aria2Client stillAlive = new Aria2Client(
+                ApplicationContext.getToolPath("aria2"), rpcUrl(port), odmClient.getRpcSecret());
+        assertDoesNotThrow(stillAlive::getVersion);
+    }
+
+    @Test
+    @DisplayName("handler.saveSession never writes an adopted external daemon's session; an ODM child's is written")
+    @Timeout(60)
+    void handlerSaveSessionIsOwnershipGuarded() throws Exception {
+        // Adopted case: external daemon with its own --save-session file
+        int adoptedPort = BASE_PORT + 7;
+        Path externalSessionFile = tempDir.resolve("external-session.txt");
+        startExternalDaemon(adoptedPort, EXTERNAL_SECRET, "--save-session=" + externalSessionFile);
+
+        GlobalSettings adoptedSettings = new GlobalSettings();
+        adoptedSettings.setDefaultDownloadDirectory(downloadDir);
+        adoptedSettings.setProperty("aria2.rpcPort", String.valueOf(adoptedPort));
+        adoptedSettings.setProperty("aria2.rpcSecret", EXTERNAL_SECRET);
+        ExecutorService adoptedExecutor = Executors.newCachedThreadPool();
+        executors.add(adoptedExecutor);
+        Aria2DownloadHandler adoptedHandler = new Aria2DownloadHandler(
+                adoptedSettings,
+                new DownloadSettingsFactory(adoptedSettings),
+                adoptedExecutor,
+                ApplicationContext.getToolManagerFactory());
+        handlers.add(adoptedHandler);
+
+        adoptedHandler.initialize().join();
+        assertEquals(Aria2Client.DaemonOwnership.EXTERNAL_AUTHENTICATED,
+                adoptedHandler.getAria2Client().getDaemonOwnership(),
+                "handler must adopt the authenticated external daemon");
+
+        adoptedHandler.saveSession();
+        assertFalse(Files.exists(externalSessionFile),
+                "saveSession must never rewrite the adopted daemon's own session file");
+
+        // Control case: an ODM-started child whose --save-session path is
+        // the handler-configured session file must still be written
+        int ownedPort = BASE_PORT + 8;
+        Path ownedDownloads = tempDir.resolve("owned-downloads");
+        Files.createDirectories(ownedDownloads);
+
+        GlobalSettings ownedSettings = new GlobalSettings();
+        ownedSettings.setDefaultDownloadDirectory(ownedDownloads);
+        ownedSettings.setProperty("aria2.rpcPort", String.valueOf(ownedPort));
+        ExecutorService ownedExecutor = Executors.newCachedThreadPool();
+        executors.add(ownedExecutor);
+        Aria2DownloadHandler ownedHandler = new Aria2DownloadHandler(
+                ownedSettings,
+                new DownloadSettingsFactory(ownedSettings),
+                ownedExecutor,
+                ApplicationContext.getToolManagerFactory());
+        handlers.add(ownedHandler);
+
+        ownedHandler.initialize().join();
+        assertEquals(Aria2Client.DaemonOwnership.ODM_STARTED,
+                ownedHandler.getAria2Client().getDaemonOwnership());
+
+        ownedHandler.saveSession();
+        assertTrue(Files.exists(ownedDownloads.resolve("aria2-session.txt")),
+                "an ODM-owned daemon's session must still be saved");
+    }
+
+    @Test
     @DisplayName("Reserved RPC arguments in extra args are filtered and cannot override ODM controls")
     void reservedRpcArgumentsAreFilteredFromExtraArgs() throws Exception {
         Aria2Client client = new Aria2Client(
@@ -262,5 +386,15 @@ class Aria2DaemonOwnershipTest {
                 "the value of a dropped two-argument enable-rpc must not leak as a stray positional");
         assertTrue(cmd2.contains("--max-connection-per-server"));
         assertTrue(cmd2.contains("4"));
+
+        // Consecutive reserved flags: a boolean-style flag must not swallow
+        // the next reserved flag as its "value" and leak that flag's real
+        // value as a stray positional
+        List<String> cmd3 = client.buildRpcLaunchCommand(Arrays.asList(
+                "--enable-rpc", "--rpc-secret", "leaked-value"));
+        assertFalse(cmd3.stream().anyMatch("--rpc-secret"::equals),
+                "the reserved --rpc-secret flag itself must be dropped");
+        assertFalse(cmd3.stream().anyMatch("leaked-value"::equals),
+                "the secret value must not leak as a stray positional after consecutive reserved flags");
     }
 }
