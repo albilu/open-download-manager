@@ -33,59 +33,46 @@ public final class OdmApplication {
     public static void main(String[] args) {
         Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
         // A second launch of the same app id forwards "activate" to this
-        // primary instance; constructing a new window/tray/listener set on
-        // every activation would stack permanently-leaking duplicates.
-        final MainWindow[] windowHolder = new MainWindow[1];
+        // primary instance; the startup gate single-flights the asynchronous
+        // initialization so repeated activation cannot stack duplicate
+        // core/scheduler/tray/window pipelines.
         final StatusNotifierTray[] trayHolder = new StatusNotifierTray[1];
+        // Holder so the window publisher can reach the gate it is defined in
+        final StartupGate[] startupHolder = new StartupGate[1];
+
+        final StartupGate startup = new StartupGate(
+                () -> new StartShutdownDialog(app),
+                OdmApplication::initializeCoreInBackground,
+                (progress, refs) -> {
+                    LOGGER.info("onActivate: constructing MainWindow");
+                    MainWindow mainWindow = new MainWindow(
+                            app, refs.manager(), refs.torService(), refs.scheduleManager());
+                    installGracefulShutdown(app, startupHolder[0], mainWindow, refs);
+                    LOGGER.info("onActivate: MainWindow constructed");
+
+                    // Tray (best-effort: no-op when the session bus is unavailable)
+                    final MainWindow raised = mainWindow;
+                    trayHolder[0] = new StatusNotifierTray(() -> UiThread.marshal(raised::present));
+                    LOGGER.info("onActivate: tray constructed");
+
+                    mainWindow.present();
+                    progress.close();
+                    LOGGER.info("onActivate: window presented");
+                    return mainWindow;
+                },
+                OdmApplication::cleanupFailedStartup,
+                (progress, error) -> {
+                    progress.setMessage("Startup failed: " + error.getMessage());
+                    // Give the user a moment to read the message, then exit;
+                    // until then a later activation may retry (see StartupGate)
+                    org.gnome.glib.GLib.timeoutAddSecondsOnce(3, () ->
+                            UiThread.marshal(app::quit));
+                });
+        startupHolder[0] = startup;
 
         app.onActivate(() -> {
             try {
-                MainWindow existing = windowHolder[0];
-                if (existing != null) {
-                    existing.present();
-                    return;
-                }
-
-                // Startup progress dialog: the GTK main loop is already
-                // running, so the activity bar animates while the core
-                // initializes on a worker thread below. Registered with the
-                // app so the loop stays alive while it is the only window
-                StartShutdownDialog progress = new StartShutdownDialog(app);
-                progress.show("Starting Open Download Manager…");
-
-                initializeCoreInBackground(progress).whenComplete((refs, error) -> {
-                    if (error != null) {
-                        LOGGER.log(java.util.logging.Level.SEVERE, "Core initialization failed", error);
-                        progress.setMessage("Startup failed: " + error.getMessage());
-                        // Give the user a moment to read the message, then exit
-                        org.gnome.glib.GLib.timeoutAddSecondsOnce(3, () ->
-                                UiThread.marshal(app::quit));
-                        return;
-                    }
-                    UiThread.marshal(() -> {
-                        try {
-                            LOGGER.info("onActivate: constructing MainWindow");
-                            MainWindow mainWindow = new MainWindow(
-                                    app, refs.manager(), refs.torService(), refs.scheduleManager());
-                            windowHolder[0] = mainWindow;
-                            installGracefulShutdown(app, mainWindow, refs);
-                            LOGGER.info("onActivate: MainWindow constructed");
-
-                            // Tray (best-effort: no-op when the session bus is unavailable)
-                            final MainWindow raised = mainWindow;
-                            trayHolder[0] = new StatusNotifierTray(() -> UiThread.marshal(raised::present));
-                            LOGGER.info("onActivate: tray constructed");
-
-                            mainWindow.present();
-                            progress.close();
-                            LOGGER.info("onActivate: window presented");
-                        } catch (Throwable t) {
-                            LOGGER.log(java.util.logging.Level.SEVERE, "onActivate failed", t);
-                            progress.close();
-                            app.quit();
-                        }
-                    });
-                });
+                startup.activate(); // "activate" is delivered on the GTK thread
             } catch (Throwable t) {
                 LOGGER.log(java.util.logging.Level.SEVERE, "onActivate failed", t);
             }
@@ -96,6 +83,7 @@ public final class OdmApplication {
         // loop ends; this hook covers every other path (e.g. the session
         // manager ending the app) and releases the tray's bus registration
         app.onShutdown(() -> {
+            startup.beginShutdown(); // never publish a window once shutdown begins
             StatusNotifierTray tray = trayHolder[0];
             if (tray != null) {
                 tray.unregister();
@@ -107,19 +95,13 @@ public final class OdmApplication {
         System.exit(status);
     }
 
-    /** Core references handed from the init thread to the UI thread. */
-    private record CoreRefs(
-            DownloadManager manager,
-            org.tor.TorService torService,
-            org.manager.schedule.ScheduleManager scheduleManager) {
-    }
-
     /**
      * Runs the whole two-stage core initialization on a worker thread,
      * reporting progress to the startup dialog. Every message update
      * marshals internally, so this thread never touches widgets.
      */
-    private static CompletableFuture<CoreRefs> initializeCoreInBackground(StartShutdownDialog progress) {
+    private static CompletableFuture<StartupGate.CoreRefs> initializeCoreInBackground(
+            StartShutdownDialog progress) {
         return CompletableFuture.supplyAsync(() -> {
             progress.setMessage("Loading settings and discovering tools…");
             // Toolkit-native clipboard BEFORE the manager is built: it
@@ -146,8 +128,35 @@ public final class OdmApplication {
             configureScheduler(manager, scheduleManager);
 
             progress.setMessage("Ready");
-            return new CoreRefs(manager, torService, scheduleManager);
+            return new StartupGate.CoreRefs(manager, torService, scheduleManager);
         });
+    }
+
+    /**
+     * Releases whatever a failed startup attempt created. Partial refs are
+     * torn down when the pipeline succeeded but the window stage failed;
+     * the manager factory is idempotent (no-op when nothing was created),
+     * and the context reset also makes a later activation able to retry
+     * initialization (see {@link StartupGate}).
+     */
+    private static void cleanupFailedStartup(StartupGate.CoreRefs refs, Throwable error) {
+        if (refs != null && refs.scheduleManager() != null) {
+            try {
+                refs.scheduleManager().stop().get(10, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                LOGGER.warning("ScheduleManager stop failed: " + e.getMessage());
+            }
+        }
+        try {
+            DownloadManagerFactory.shutdown();
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.WARNING, "DownloadManager cleanup failed", e);
+        }
+        try {
+            ApplicationContext.reset();
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.WARNING, "ApplicationContext cleanup failed", e);
+        }
     }
 
     /**
@@ -193,8 +202,12 @@ public final class OdmApplication {
      * actually close. Without this the JVM shutdown hook does the same work
      * invisibly, racing System.exit.
      */
-    private static void installGracefulShutdown(Application app, MainWindow mainWindow, CoreRefs refs) {
+    private static void installGracefulShutdown(Application app, StartupGate startup,
+            MainWindow mainWindow, StartupGate.CoreRefs refs) {
         mainWindow.setFinalCloseDelegate(() -> {
+            // No window publication past this point (a stale activation
+            // observer would race the exit sequence otherwise)
+            startup.beginShutdown();
             // Own dialog instance for the shutdown phase (the startup one
             // was destroyed when the main window appeared); registered with
             // the app so the loop stays alive while the main window is hidden
