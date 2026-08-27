@@ -7,6 +7,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
@@ -340,17 +341,21 @@ public class TorLeakChecker {
     private String resolveDnsThroughTor(String domain) {
         Socket socket = null;
         try {
-            // The socket must be created WITH the SOCKS proxy: connecting the
-            // hostname through the proxy makes the proxy (Tor) resolve the
-            // name. A plain socket here would resolve and connect DIRECTLY —
-            // the exact leak this checker exists to detect.
+            // The socket must be created WITH the SOCKS proxy: a plain socket
+            // here would resolve and connect DIRECTLY — the exact leak this
+            // checker exists to detect.
             Proxy proxy = new Proxy(Proxy.Type.SOCKS,
                     new InetSocketAddress(socksProxyHost, socksProxyPort));
             socket = new Socket(proxy);
 
-            // Connect to the domain through Tor. SOCKS5 carries the hostname
-            // to the proxy, so no local DNS resolution happens.
-            socket.connect(new InetSocketAddress(domain, 80), 5000);
+            // The destination must be built UNRESOLVED: only then does Java's
+            // SOCKS implementation carry the hostname inside the SOCKS5
+            // request (ATYP=DOMAIN) so the proxy resolves it remotely. A
+            // resolving InetSocketAddress would query the local resolver
+            // first and hand the proxy an IP — a DNS leak.
+            connectProbe(socket, InetSocketAddress.createUnresolved(domain, 80), 5000);
+            // Java surfaces the proxy-reported bound address (SOCKS5
+            // BND.ADDR) here, never a local resolution of the name.
             String resolvedIp = ((InetSocketAddress) socket.getRemoteSocketAddress())
                     .getAddress().getHostAddress();
             return resolvedIp;
@@ -366,6 +371,15 @@ public class TorLeakChecker {
                 }
             }
         }
+    }
+
+    /**
+     * Connects the SOCKS probe socket to {@code destination}. Package-private
+     * seam: tests override it to inspect the destination handed to
+     * {@link Socket#connect(SocketAddress, int)} without network I/O.
+     */
+    void connectProbe(Socket socket, SocketAddress destination, int timeout) throws IOException {
+        socket.connect(destination, timeout);
     }
 
     /** Test seam for the SOCKS-routing contract. */
