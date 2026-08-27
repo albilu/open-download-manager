@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -83,6 +84,16 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     /** True when pause interrupted backoff rather than an active transfer. */
     private volatile boolean pausedDuringBackoff;
     private volatile Instant attemptStart = Instant.now();
+    /**
+     * Serializes the state re-validation + start SUBMISSION section of
+     * {@link #beginAttempt} against the finalize + delegate-teardown
+     * sections of cancel/pause/replacement, closing the check-then-act
+     * window between reading the state and submitting the start. Either a
+     * start is submitted first and the teardown — issued strictly after —
+     * kills it, or the finalization happened first and no start is
+     * submitted at all.
+     */
+    private final ReentrantLock lifecycleLock = new ReentrantLock();
 
     /**
      * Creates a new RetryableDownloadHandler.
@@ -149,33 +160,49 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
                 }
             }
 
-            // A cancel/pause/finalization may have won between this
-            // attempt's state CAS and the start: release the just-marked
-            // proxy and abandon the attempt. Ordering guarantee: those
-            // paths set their state BEFORE calling the delegate, so if this
-            // check still sees ACTIVE their delegate call is issued after
-            // our start and tears it down; if they won, we never start —
-            // no orphan transfer and no leaked proxy hold either way.
-            if (state.get() != State.ACTIVE) {
-                releaseOwnedProxy(download);
-                return;
-            }
+            // The re-validation and the start submission are atomic against
+            // cancel/pause/finalization (lifecycleLock): a concurrent
+            // finalize+teardown either runs entirely before this section —
+            // then no start is submitted at all — or entirely after it —
+            // then its delegate teardown is issued strictly after the start
+            // and kills it. Residual gap, accepted: the delegate publishes
+            // the new GID only after its async start RPC completes, so a
+            // teardown racing that publication may still target the stale
+            // GID; that window lives in the delegate, not in this wrapper.
+            lifecycleLock.lock();
+            try {
+                State current = state.get();
+                if (current != State.ACTIVE) {
+                    if (current == State.PAUSED) {
+                        // Pause won between this attempt's activation and
+                        // the submission: no transfer was actually paused,
+                        // so resume must re-schedule the pending retry
+                        // instead of delegating to a transfer that never
+                        // started (which would strand the operation).
+                        pausedDuringBackoff = true;
+                    }
+                    releaseOwnedProxy(download);
+                    return;
+                }
 
-            delegate.startDownload(download)
-                    .whenComplete((gid, throwable) -> {
-                        if (throwable != null) {
-                            handleFailure(download, throwable.getMessage());
-                        } else {
-                            Proxy currentProxy = getCurrentProxy(download);
-                            if (currentProxy != null) {
-                                proxyManager.recordSuccess(currentProxy, 0); // no response time here
+                delegate.startDownload(download)
+                        .whenComplete((gid, throwable) -> {
+                            if (throwable != null) {
+                                handleFailure(download, throwable.getMessage());
+                            } else {
+                                Proxy currentProxy = getCurrentProxy(download);
+                                if (currentProxy != null) {
+                                    proxyManager.recordSuccess(currentProxy, 0); // no response time here
+                                }
+                                CompletableFuture<String> future = operation.get();
+                                if (future != null && !future.isDone()) {
+                                    future.complete(gid);
+                                }
                             }
-                            CompletableFuture<String> future = operation.get();
-                            if (future != null && !future.isDone()) {
-                                future.complete(gid);
-                            }
-                        }
-                    });
+                        });
+            } finally {
+                lifecycleLock.unlock();
+            }
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Failed to start download attempt " + (attemptNumber + 1), e);
@@ -266,23 +293,29 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
      * manager's normal failure handling runs.
      */
     private void failTerminal(Download download, String errorMessage) {
-        if (!tryFinalize(State.TERMINAL)) {
-            return;
-        }
-        String finalError = "Download failed after " + (attempt.get() + 1) + " attempts. Last error: "
-                + errorMessage;
-        LOGGER.warning(finalError);
-        download.setErrorMessage(finalError);
-        CompletableFuture<String> future = operation.get();
-        if (future != null && !future.isDone()) {
-            future.completeExceptionally(new RuntimeException(finalError));
+        lifecycleLock.lock();
+        try {
+            if (!tryFinalize(State.TERMINAL)) {
+                return;
+            }
+            String finalError = "Download failed after " + (attempt.get() + 1) + " attempts. Last error: "
+                    + errorMessage;
+            LOGGER.warning(finalError);
+            download.setErrorMessage(finalError);
+            CompletableFuture<String> future = operation.get();
+            if (future != null && !future.isDone()) {
+                future.completeExceptionally(new RuntimeException(finalError));
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
     /**
      * Moves the wrapper to the given final state exactly once. The first
      * caller wins and invalidates the current schedule; later calls are
-     * no-ops.
+     * no-ops. Callers hold {@link #lifecycleLock} (reentrantly when nested)
+     * so finalization stays ordered against start submissions.
      *
      * @return true for the first (winning) finalization
      */
@@ -327,18 +360,23 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
         if (download == null || !download.getId().equals(downloadId)) {
             return;
         }
-        if (!tryFinalize(State.TERMINAL)) {
-            return;
-        }
-        Proxy currentProxy = getCurrentProxy(download);
-        if (currentProxy != null) {
-            long responseTime = Instant.now().toEpochMilli() - attemptStart.toEpochMilli();
-            proxyManager.recordSuccess(currentProxy, responseTime);
-            proxyManager.releaseProxy(currentProxy, download.getId());
-        }
-        CompletableFuture<String> future = operation.get();
-        if (future != null && !future.isDone()) {
-            future.complete(download.getGid());
+        lifecycleLock.lock();
+        try {
+            if (!tryFinalize(State.TERMINAL)) {
+                return;
+            }
+            Proxy currentProxy = getCurrentProxy(download);
+            if (currentProxy != null) {
+                long responseTime = Instant.now().toEpochMilli() - attemptStart.toEpochMilli();
+                proxyManager.recordSuccess(currentProxy, responseTime);
+                proxyManager.releaseProxy(currentProxy, download.getId());
+            }
+            CompletableFuture<String> future = operation.get();
+            if (future != null && !future.isDone()) {
+                future.complete(download.getGid());
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
@@ -348,13 +386,18 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
         if (download == null || !download.getId().equals(downloadId)) {
             return;
         }
-        if (!tryFinalize(State.CANCELLED)) {
-            return;
-        }
-        releaseOwnedProxy(download);
-        CompletableFuture<String> future = operation.get();
-        if (future != null && !future.isDone()) {
-            future.cancel(true);
+        lifecycleLock.lock();
+        try {
+            if (!tryFinalize(State.CANCELLED)) {
+                return;
+            }
+            releaseOwnedProxy(download);
+            CompletableFuture<String> future = operation.get();
+            if (future != null && !future.isDone()) {
+                future.cancel(true);
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
@@ -367,8 +410,13 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
         // A NEW handler operates on this download now: retire silently —
         // invalidate the schedule and stop retrying, but emit no terminal
         // outcome (the replacement owns the operation from here on).
-        if (tryFinalize(State.TERMINAL)) {
-            releaseOwnedProxy(download);
+        lifecycleLock.lock();
+        try {
+            if (tryFinalize(State.TERMINAL)) {
+                releaseOwnedProxy(download);
+            }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 
@@ -381,9 +429,19 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             State prev = state.get();
             switch (prev) {
                 case ACTIVE -> {
-                    if (state.compareAndSet(prev, State.PAUSED)) {
-                        pausedDuringBackoff = false;
-                        return delegate.pauseDownload(download);
+                    // The CAS, the pause-origin flag, and the delegate
+                    // pause are atomic against a start submission: if a
+                    // retry task bails at its locked re-check because of
+                    // this pause, it observes PAUSED and re-marks the
+                    // origin as backoff (no transfer was paused)
+                    lifecycleLock.lock();
+                    try {
+                        if (state.compareAndSet(State.ACTIVE, State.PAUSED)) {
+                            pausedDuringBackoff = false;
+                            return delegate.pauseDownload(download);
+                        }
+                    } finally {
+                        lifecycleLock.unlock();
                     }
                 }
                 case WAITING_RETRY -> {
@@ -423,14 +481,27 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
 
     @Override
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
-        if (owns(download) && tryFinalize(State.CANCELLED)) {
-            releaseOwnedProxy(download);
-            CompletableFuture<String> future = operation.get();
-            if (future != null && !future.isDone()) {
-                future.cancel(true);
-            }
+        if (!owns(download)) {
+            return delegate.cancelDownload(download, deleteFiles);
         }
-        return delegate.cancelDownload(download, deleteFiles);
+        // Finalization, proxy release, future cancel, and the delegate
+        // teardown run as one section ordered against start submissions
+        // (lifecycleLock): a start either was submitted before — then this
+        // teardown, issued strictly after, kills it — or cannot be
+        // submitted at all once the state reads CANCELLED.
+        lifecycleLock.lock();
+        try {
+            if (tryFinalize(State.CANCELLED)) {
+                releaseOwnedProxy(download);
+                CompletableFuture<String> future = operation.get();
+                if (future != null && !future.isDone()) {
+                    future.cancel(true);
+                }
+            }
+            return delegate.cancelDownload(download, deleteFiles);
+        } finally {
+            lifecycleLock.unlock();
+        }
     }
 
     /** Invalidates the current schedule and cancels the pending retry task. */

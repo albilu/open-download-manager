@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,7 +48,7 @@ class RetryEventIsolationTest {
      * accepted; per-download attempt counts; optional scripted immediate
      * failures for exhausting a budget.
      */
-    private static final class SharedDelegate implements DownloadHandler {
+    private static class SharedDelegate implements DownloadHandler {
 
         private final List<DownloadListener> listeners = new CopyOnWriteArrayList<>();
         private final Map<String, AtomicInteger> attemptsById = new ConcurrentHashMap<>();
@@ -424,5 +425,119 @@ class RetryEventIsolationTest {
         assertEquals(0, proxies.getStatistics().get("proxiesInUse"),
                 "the racing attempt's proxy hold must not leak");
         assertFalse(future.isCompletedExceptionally());
+    }
+
+    @Test
+    @Timeout(30)
+    @DisplayName("Cancel waits for an in-flight retry start submission and tears it down after")
+    void cancelWaitsForInFlightStartSubmission() throws Exception {
+        // Park the retry task INSIDE delegate.startDownload: the wrapper is
+        // mid-submission. A concurrent cancel must not complete around the
+        // in-flight submission — its delegate teardown has to run strictly
+        // after the start it must kill, or the new transfer is orphaned.
+        CountDownLatch startEntered = new CountDownLatch(1);
+        CountDownLatch allowStart = new CountDownLatch(1);
+        ProxyRotationManager proxies = twoProxyManager();
+        var delegate = new SharedDelegate() {
+            private final AtomicLong callSeq = new AtomicLong();
+            long retryStartEnteredAt = -1;
+            long cancelEnteredAt = -1;
+
+            @Override
+            public CompletableFuture<String> startDownload(Download download) {
+                if (attempts(download) == 1) { // the retry call (base increments to 2)
+                    retryStartEnteredAt = callSeq.incrementAndGet();
+                    startEntered.countDown();
+                    try {
+                        allowStart.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return super.startDownload(download);
+            }
+
+            @Override
+            public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
+                cancelEnteredAt = callSeq.incrementAndGet();
+                return super.cancelDownload(download, deleteFiles);
+            }
+        };
+        RetryableDownloadHandler handler = new RetryableDownloadHandler(
+                delegate, proxies, fastSettings(3), scheduler, executor);
+
+        Download download = new Download(new URI("http://example.test/submit-race.bin"));
+        CompletableFuture<String> future = handler.startDownload(download);
+        future.get(5, TimeUnit.SECONDS);
+        assertEquals(RetryDecision.RETRY_SCHEDULED,
+                handler.interceptError(download.getId(), "HTTP 429 Too Many Requests"));
+
+        assertTrue(startEntered.await(5, TimeUnit.SECONDS),
+                "the retry task must be inside the start submission");
+        Thread canceller = new Thread(() -> handler.cancelDownload(download, false).join());
+        canceller.start();
+        Thread.sleep(300);
+        boolean cancelFinishedEarly = canceller.getState() == Thread.State.TERMINATED;
+        allowStart.countDown();
+        canceller.join(5000);
+
+        assertFalse(cancelFinishedEarly,
+                "cancel must wait for the in-flight start submission instead of completing around it");
+        assertTrue(delegate.retryStartEnteredAt > 0 && delegate.cancelEnteredAt > delegate.retryStartEnteredAt,
+                "cancel's delegate teardown must run strictly after the start submission");
+        assertEquals(2, delegate.attempts(download),
+                "the start was submitted first and must then be torn down by cancel");
+        assertEquals(0, proxies.getStatistics().get("proxiesInUse"),
+                "no proxy hold may remain after the post-submission teardown");
+    }
+
+    @Test
+    @Timeout(30)
+    @DisplayName("Pausing at the retry start parks the operation in backoff, not on a dead transfer")
+    void pauseAtRetryStartParkResumesIntoBackoff() throws Exception {
+        // Park the retry task before it selects the new proxy, so pause's
+        // ACTIVE branch wins and the attempt bails: no transfer ever starts,
+        // so resume must re-schedule the pending retry
+        CountDownLatch proxySelectEntered = new CountDownLatch(1);
+        CountDownLatch allowProxySelect = new CountDownLatch(1);
+        ProxyRotationManager proxies = new ProxyRotationManager() {
+            @Override
+            public Proxy getAlternativeProxy(Proxy excludeProxy) {
+                proxySelectEntered.countDown();
+                try {
+                    allowProxySelect.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return super.getAlternativeProxy(excludeProxy);
+            }
+        };
+        proxies.addProxy(new Proxy("proxy1.example.com", 8080, Proxy.Type.HTTP));
+        proxies.addProxy(new Proxy("proxy2.example.com", 8081, Proxy.Type.HTTP));
+
+        SharedDelegate delegate = new SharedDelegate();
+        RetryableDownloadHandler handler = new RetryableDownloadHandler(
+                delegate, proxies, fastSettings(3), scheduler, executor);
+
+        Download download = new Download(new URI("http://example.test/pause-race.bin"));
+        CompletableFuture<String> future = handler.startDownload(download);
+        future.get(5, TimeUnit.SECONDS);
+        assertEquals(RetryDecision.RETRY_SCHEDULED,
+                handler.interceptError(download.getId(), "HTTP 429 Too Many Requests"));
+
+        assertTrue(proxySelectEntered.await(5, TimeUnit.SECONDS),
+                "the retry task must reach the new attempt's proxy selection");
+        handler.pauseDownload(download).join();
+        allowProxySelect.countDown();
+
+        Thread.sleep(300);
+        assertEquals(1, delegate.attempts(download),
+                "a paused operation must not issue the start");
+
+        handler.resumeDownload(download).join();
+        assertTrue(awaitTrue(() -> delegate.attempts(download) == 2),
+                "resume must re-schedule the interrupted retry instead of delegating "
+                        + "to a transfer that never started (which would strand the operation)");
+        handler.interceptComplete(download.getId());
     }
 }
