@@ -46,6 +46,17 @@ public class YtDlpDownloadTask {
     private final AtomicReference<Float> progress = new AtomicReference<>(0.0f);
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
+    /**
+     * Output paths produced by THIS task's own execution (the destinations
+     * yt-dlp reported for the current run). These — and only these — are
+     * deletion authority when a canceled download removes its files: a
+     * display-name guess must never delete anything. Cleared when the task
+     * restarts (resume), because a restarted run is a new generation whose
+     * recorded paths must not survive.
+     */
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> recordedOutputPaths =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+
     // Timing
     private final Instant createdAt;
     private volatile Instant startedAt;
@@ -53,6 +64,7 @@ public class YtDlpDownloadTask {
 
     // Futures for async operations
     private volatile CompletableFuture<String> downloadFuture;
+    private volatile CompletableFuture<String> runFuture;
     private volatile CompletableFuture<YtDlpClient.VideoInfo> infoFuture;
 
     // Process ID for cancellation
@@ -133,12 +145,22 @@ public class YtDlpDownloadTask {
             ProgressCallback callback = new ProgressCallback() {
                 @Override
                 public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
+                    if (cancelled.get()) {
+                        return; // progress events are invalidated by cancellation
+                    }
                     updateProgress(percentage, downloadedBytes, totalBytes, speed);
                     forwardToListener(l -> l.onProgress(percentage, downloadedBytes, totalBytes, speed));
                 }
 
                 @Override
                 public void onStart(String filename) {
+                    // Record before anything else: even a late destination
+                    // line is a fact about this run, and file cleanup after
+                    // cancellation needs it
+                    recordOutputPath(filename);
+                    if (cancelled.get()) {
+                        return; // invalidated by cancellation
+                    }
                     YtDlpDownloadTask.this.filename.set(filename);
                     status.set(Status.DOWNLOADING);
                     LOGGER.info("Download started for task " + taskId + ": " + filename);
@@ -147,6 +169,10 @@ public class YtDlpDownloadTask {
 
                 @Override
                 public void onComplete(String filename) {
+                    recordOutputPath(filename);
+                    if (cancelled.get()) {
+                        return; // a late completion must not replace CANCELED
+                    }
                     YtDlpDownloadTask.this.filename.set(filename);
                     status.set(Status.COMPLETED);
                     completedAt = Instant.now();
@@ -157,6 +183,9 @@ public class YtDlpDownloadTask {
 
                 @Override
                 public void onError(String error) {
+                    if (cancelled.get()) {
+                        return; // the killed process's last words must not replace CANCELED
+                    }
                     errorMessage.set(error);
                     status.set(Status.ERROR);
                     LOGGER.log(Level.SEVERE, "Download error for task " + taskId + ": " + error);
@@ -166,15 +195,21 @@ public class YtDlpDownloadTask {
 
             // Register the download under the task's own process key so the
             // cancel path and the client's process registry can never diverge.
-            downloadFuture = client.download(url, settings, outputPath, callback, processId)
-                    .whenComplete((result, throwable) -> {
-                        if (throwable != null) {
-                            if (!cancelled.get()) {
-                                errorMessage.set(throwable.getMessage());
-                                status.set(Status.ERROR);
-                            }
-                        }
-                    });
+            // The client's own future completes only when its worker thread
+            // is finished with the process (output drained, exit code
+            // collected); the derived downloadFuture below is completed
+            // eagerly by cancel(), so awaiting the run future is the only
+            // confirmed-completion signal.
+            CompletableFuture<String> run = client.download(url, settings, outputPath, callback, processId);
+            runFuture = run;
+            downloadFuture = run.whenComplete((result, throwable) -> {
+                if (throwable != null) {
+                    if (!cancelled.get()) {
+                        errorMessage.set(throwable.getMessage());
+                        status.set(Status.ERROR);
+                    }
+                }
+            });
 
             return downloadFuture;
         }
@@ -271,11 +306,13 @@ public class YtDlpDownloadTask {
             return future;
         }
 
-        // Reset state and restart
+        // Reset state and restart. The recorded output paths belong to the
+        // paused run's generation; the restarted run re-records its own.
         downloadFuture = null;
         processId = null;
         cancelled.set(false);
         status.set(Status.PENDING);
+        recordedOutputPaths.clear();
 
         LOGGER.info("Resuming download task: " + taskId);
         return start();
@@ -312,6 +349,36 @@ public class YtDlpDownloadTask {
         return downloadFuture;
     }
 
+    /**
+     * Waits for the current run's confirmed completion: the client worker
+     * has finished with the process entirely (output drained, exit code
+     * collected, callbacks settled). The derived download future is
+     * completed eagerly by {@link #cancel()}, so this awaits the
+     * underlying run future instead. Callers run on their own thread
+     * (never the client executor), so waiting here cannot self-deadlock.
+     *
+     * @param timeout how long to wait for the confirmation
+     * @return true when completion was confirmed within the timeout
+     */
+    public boolean awaitRunCompletion(java.time.Duration timeout) {
+        CompletableFuture<String> run = runFuture;
+        if (run == null) {
+            return true; // never started: nothing to wait for
+        }
+        try {
+            run.get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            return true;
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.CancellationException e) {
+            return true; // abnormal completion is still confirmed completion
+        } catch (java.util.concurrent.TimeoutException e) {
+            LOGGER.warning("Run of task " + taskId + " not confirmed complete within " + timeout);
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
     public String getUrl() {
         return url;
     }
@@ -330,6 +397,33 @@ public class YtDlpDownloadTask {
 
     public String getFilename() {
         return filename.get();
+    }
+
+    /**
+     * Records an output path reported by yt-dlp for the current run.
+     * Duplicate reports (destination line + completion) collapse to one
+     * entry.
+     */
+    private void recordOutputPath(String path) {
+        if (path == null || path.isBlank()) {
+            return;
+        }
+        String trimmed = path.trim();
+        if (!recordedOutputPaths.contains(trimmed)) {
+            recordedOutputPaths.add(trimmed);
+        }
+    }
+
+    /**
+     * Snapshot of the output paths produced by this task's own execution.
+     * Deletion authority for cancel-with-deleteFiles; never a display name.
+     *
+     * @return the recorded paths, in reporting order
+     */
+    public java.util.List<String> getRecordedOutputPaths() {
+        java.util.List<String> copy = new java.util.ArrayList<>();
+        recordedOutputPaths.forEach(copy::add);
+        return java.util.List.copyOf(copy);
     }
 
     public String getErrorMessage() {

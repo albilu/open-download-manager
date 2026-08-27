@@ -619,6 +619,14 @@ public class YtDlpClient {
                         // Extract filename if not yet known
                         if (filename == null) {
                             filename = extractFilename(line);
+                            // Publish the destination the moment yt-dlp
+                            // reports it: a mid-flight cancel needs the
+                            // output path for cleanup, and the completion
+                            // callback alone would deliver it too late (or
+                            // never, when the process gets killed).
+                            if (filename != null && callback != null) {
+                                callback.onStart(filename);
+                            }
                         }
 
                         // Parse progress

@@ -204,6 +204,11 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
         return CompletableFuture.runAsync(() -> {
             YtDlpDownloadTask task = activeDownloadTasks.remove(download.getId());
             if (task != null) {
+                // Cancellation ordering: the cancelled flag lands first and
+                // invalidates progress/terminal callbacks (a late process
+                // callback cannot replace CANCELED); task.cancel() then
+                // requests process termination (SIGTERM -> bounded SIGKILL,
+                // synchronous in the process registry).
                 task.cancel();
                 LOGGER.info("Cancelled yt-dlp download: " + download.getId());
             }
@@ -211,7 +216,18 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             ytDlpFactory.removeDownloadTask(download.getId());
 
             if (deleteFiles && download.getDestination() != null) {
-                deleteYtDlpOutput(download, task);
+                // Deletion only after confirmed task completion: deleting
+                // while the (dying) process still holds its output races
+                // the process's final writes. This wait runs on the handler
+                // executor, never the client executor, so it cannot
+                // self-deadlock; on timeout deletion is skipped rather than
+                // raced.
+                if (task == null || task.awaitRunCompletion(TASK_COMPLETION_AWAIT_TIMEOUT)) {
+                    deleteYtDlpOutput(download, task);
+                } else {
+                    LOGGER.warning("Task completion for " + download.getId()
+                            + " not confirmed; skipping output deletion");
+                }
             }
 
             download.setStatus(Download.Status.CANCELED);
@@ -219,35 +235,81 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
         }, executor);
     }
 
+    /** Bounded wait for a cancelled task's confirmed completion before deletion. */
+    private static final java.time.Duration TASK_COMPLETION_AWAIT_TIMEOUT =
+            java.time.Duration.ofSeconds(10);
+
     private static final java.util.logging.Logger DELETE_LOGGER =
             java.util.logging.Logger.getLogger(YtDlpDownloadHandler.class.getName());
 
     /**
-     * Best-effort removal of a canceled yt-dlp download's output. The exact
-     * filename is determined by yt-dlp at runtime; the best available
-     * knowledge is the filename parsed from its output (task.getFilename()),
-     * falling back to the download name. The {@code .part} variant covers
-     * transfers canceled mid-flight.
+     * Deletion eligibility for a yt-dlp output path. Only a path produced by
+     * the task's own execution may be deleted, and only when it cannot
+     * escape the destination: relative candidates are resolved against the
+     * normalized absolute destination and normalized again (collapsing
+     * {@code ..} segments before the containment check), while absolute
+     * candidates are accepted only when already proven beneath the
+     * destination (yt-dlp prints absolute destinations depending on
+     * version). {@link Path#startsWith} compares name elements, so a sibling
+     * like {@code /dest-evil} never passes for {@code /dest}.
+     *
+     * @param normalizedDestination the normalized absolute destination dir
+     * @param candidate             the path exactly as yt-dlp reported it
+     * @return the normalized deletable path, or empty when rejected
+     */
+    static java.util.Optional<Path> eligibleOutputPath(Path normalizedDestination, String candidate) {
+        if (candidate == null || candidate.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        Path candidatePath = Path.of(candidate.trim());
+        Path normalized = candidatePath.isAbsolute()
+                ? candidatePath.normalize()
+                : normalizedDestination.resolve(candidatePath).normalize();
+        if (!normalized.startsWith(normalizedDestination)) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(normalized);
+    }
+
+    /**
+     * Best-effort removal of a canceled yt-dlp download's output. Deletion
+     * authority is exclusively the paths the task recorded from yt-dlp's own
+     * output — display names are guesses, and guesses must not delete files.
+     * Every candidate is validated by {@link #eligibleOutputPath}; a missing
+     * or rejected path produces a warning and no deletion. The
+     * {@code .part} variant covers transfers canceled mid-flight.
      *
      * @param download the canceled download
      * @param task the task if it is still known, or null
      */
     static void deleteYtDlpOutput(Download download, YtDlpDownloadTask task) {
-        String filename = task != null ? task.getFilename() : null;
-        if (filename == null || filename.isBlank()) {
-            filename = download.getName();
-        }
-        if (filename == null || filename.isBlank() || download.getDestination() == null) {
+        Path destination = download.getDestination();
+        if (destination == null) {
             DELETE_LOGGER.warning("Cannot delete yt-dlp output for " + download.getId()
-                    + ": filename unknown");
+                    + ": destination unknown");
             return;
         }
-        Path base = download.getDestination().resolve(filename);
-        for (Path candidate : new Path[]{base, Path.of(base + ".part")}) {
-            try {
-                java.nio.file.Files.deleteIfExists(candidate);
-            } catch (Exception e) {
-                DELETE_LOGGER.warning("Could not delete yt-dlp output " + candidate + ": " + e.getMessage());
+        Path normalizedDestination = destination.toAbsolutePath().normalize();
+        java.util.List<String> recorded = task != null ? task.getRecordedOutputPaths() : java.util.List.of();
+        if (recorded.isEmpty()) {
+            DELETE_LOGGER.warning("No yt-dlp output paths recorded for " + download.getId()
+                    + "; refusing deletion (display names are not deletion authority)");
+            return;
+        }
+        for (String candidate : recorded) {
+            java.util.Optional<Path> eligible = eligibleOutputPath(normalizedDestination, candidate);
+            if (eligible.isEmpty()) {
+                DELETE_LOGGER.warning("Refusing to delete yt-dlp output outside the destination for "
+                        + download.getId() + ": " + candidate);
+                continue;
+            }
+            Path base = eligible.get();
+            for (Path target : new Path[]{base, Path.of(base + ".part")}) {
+                try {
+                    Files.deleteIfExists(target);
+                } catch (Exception e) {
+                    DELETE_LOGGER.warning("Could not delete yt-dlp output " + target + ": " + e.getMessage());
+                }
             }
         }
     }
@@ -269,6 +331,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
         task.setProgressListener(new org.ytdlp.YtDlpClient.ProgressCallback() {
             @Override
             public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
+                if (task.isCancelled()) {
+                    return; // invalidated by cancellation
+                }
                 if (totalBytes > 0) {
                     download.setSize(totalBytes);
                 }
@@ -284,6 +349,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
             @Override
             public void onStart(String filename) {
+                if (task.isCancelled()) {
+                    return; // invalidated by cancellation
+                }
                 if (filename != null && !filename.isBlank()
                         && (download.getName() == null || download.getName().isBlank())) {
                     download.setName(filename);
@@ -293,6 +361,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
             @Override
             public void onComplete(String filename) {
+                if (task.isCancelled()) {
+                    return; // a late completion must not replace CANCELED
+                }
                 download.setStatus(Download.Status.COMPLETED);
                 if (download.getSize() > 0) {
                     download.setDownloaded(download.getSize());
@@ -302,6 +373,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
             @Override
             public void onError(String error) {
+                if (task.isCancelled()) {
+                    return; // a late error must not replace CANCELED
+                }
                 download.setStatus(Download.Status.ERROR);
                 if (error != null && !error.isBlank()) {
                     download.setErrorMessage(error);
