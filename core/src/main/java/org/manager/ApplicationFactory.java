@@ -1,5 +1,6 @@
 package org.manager;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -397,9 +398,14 @@ public class ApplicationFactory {
         LOGGER.info("Starting coordinated ApplicationFactory initialization...");
 
         GlobalSettings settings = createDefaultGlobalSettings();
-        settings.setDefaultDownloadDirectory(downloadDir);
-        settings.setMaxConcurrentDownloads(maxConcurrent);
-        settings.setGlobalSpeedLimit(speedLimit);
+        if (!persistedSettingsExist()) {
+            // Fresh installation: no persisted values to honor, so the
+            // caller-supplied profile defines the initial settings. For an
+            // existing installation the persisted values must win.
+            settings.setDefaultDownloadDirectory(downloadDir);
+            settings.setMaxConcurrentDownloads(maxConcurrent);
+            settings.setGlobalSpeedLimit(speedLimit);
+        }
 
         setGlobalSettings(settings);
 
@@ -584,6 +590,7 @@ public class ApplicationFactory {
     public void reset() {
         shutdown();
         shutdownCalled = false;
+        startupCoordinator.reset();
         LOGGER.info("ApplicationFactory reset completed");
     }
 
@@ -629,6 +636,14 @@ public class ApplicationFactory {
         settings.load();
 
         return settings;
+    }
+
+    private static boolean persistedSettingsExist() {
+        try {
+            return Files.exists(GlobalSettings.getConfigFilePath());
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**

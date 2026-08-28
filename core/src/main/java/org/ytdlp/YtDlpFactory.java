@@ -26,6 +26,13 @@ public class YtDlpFactory {
     private final ConcurrentHashMap<String, YtDlpClient> clients;
     private final ConcurrentHashMap<String, YtDlpDownloadTask> activeTasks;
     private final ExecutorService executorService;
+    /**
+     * Independent executor for client reclamation: a run's completion
+     * callback runs on the client's own executor thread and may trigger
+     * task removal, so awaiting that executor's termination inline would
+     * self-deadlock until the shutdown timeout burns out.
+     */
+    private final ExecutorService cleanupExecutor;
     private volatile boolean shutdown = false;
 
     /**
@@ -41,6 +48,11 @@ public class YtDlpFactory {
         this.activeTasks = new ConcurrentHashMap<>();
         this.executorService = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "YtDlpFactory-" + System.currentTimeMillis());
+            t.setDaemon(true);
+            return t;
+        });
+        this.cleanupExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "YtDlpFactory-Cleanup");
             t.setDaemon(true);
             return t;
         });
@@ -338,18 +350,42 @@ public class YtDlpFactory {
      * @return true if the task was found and removed, false otherwise
      */
     public boolean removeDownloadTask(String taskId) {
-        YtDlpDownloadTask task = activeTasks.remove(taskId);
-        if (task != null) {
-            LOGGER.info("Removed YtDlpDownloadTask: " + taskId);
+        YtDlpDownloadTask task = activeTasks.get(taskId);
+        return task != null && removeDownloadTask(taskId, task);
+    }
 
-            // Reclaim the task's dedicated client (and its thread pool)
-            YtDlpClient client = clients.remove("task-" + taskId);
-            if (client != null) {
-                client.shutdown();
-            }
-            return true;
+    /**
+     * Removes a task only while the given instance is still the tracked
+     * one: a completion callback from an older run must never remove (and
+     * shut down the dedicated client of) a replacement started afterwards
+     * under the same id.
+     *
+     * @param taskId The task ID to remove
+     * @param expected The task instance the removal was issued for
+     * @return true if this exact task was found and removed
+     */
+    public boolean removeDownloadTask(String taskId, YtDlpDownloadTask expected) {
+        if (!activeTasks.remove(taskId, expected)) {
+            return false;
         }
-        return false;
+        LOGGER.info("Removed YtDlpDownloadTask: " + taskId);
+
+        // Reclaim the task's dedicated client (and its thread pool) on the
+        // independent cleanup executor: the removal often runs on that
+        // client's own executor thread, whose inline termination cannot be
+        // awaited from itself
+        YtDlpClient client = clients.remove("task-" + taskId);
+        if (client != null) {
+            cleanupExecutor.execute(() -> {
+                try {
+                    client.shutdown();
+                } catch (Exception e) {
+                    LOGGER.warning("Error shutting down YtDlpClient for task " + taskId
+                            + ": " + e.getMessage());
+                }
+            });
+        }
+        return true;
     }
 
     /**
@@ -515,6 +551,16 @@ public class YtDlpFactory {
             }
         } catch (InterruptedException e) {
             executorService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
+        cleanupExecutor.shutdown();
+        try {
+            if (!cleanupExecutor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                cleanupExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            cleanupExecutor.shutdownNow();
             Thread.currentThread().interrupt();
         }
 

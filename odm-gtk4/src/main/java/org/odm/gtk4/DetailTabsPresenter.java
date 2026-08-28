@@ -2,10 +2,11 @@ package org.odm.gtk4;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -18,20 +19,16 @@ import org.manager.download.DownloadManager;
 /**
  * Async trackers/peers/files detail-tab presenter. The manager calls
  * underneath perform synchronous aria2 RPC round trips, so fetching runs
- * off the GTK thread ({@link #FETCH_EXECUTOR}) and only the store
- * population is marshalled back; results are discarded when the selection
- * changed while the fetch was in flight (stale-guard).
+ * off the GTK thread on the instance-owned {@link #fetchExecutor} and only
+ * the store population is marshalled back. Each fired fetch carries an
+ * epoch token: a fetch for a newer selection supersedes the in-flight one
+ * immediately, and a superseded fetch is discarded when it completes.
+ * {@link #shutdown()} releases the executor and belongs on the window's
+ * teardown path.
  */
 final class DetailTabsPresenter {
 
     private static final Logger LOGGER = Logger.getLogger(DetailTabsPresenter.class.getName());
-
-    /** Executor for detail-tab RPC fetches; keeps aria2 round trips off the GTK main loop. */
-    static final ExecutorService FETCH_EXECUTOR = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "odm-detail-fetch");
-        t.setDaemon(true);
-        return t;
-    });
 
     /** Immutable snapshot fetched off-thread for the trackers/peers/files tabs. */
     private record DetailTabData(List<List<String>> trackers, List<Map<String, Object>> peers,
@@ -43,9 +40,13 @@ final class DetailTabsPresenter {
     private final ListStore peersStore;
     private final ListStore filesStore;
     private final Supplier<Download> currentSelection;
+    private final ExecutorService fetchExecutor;
 
-    /** Coalesces detail fetches: at most one in flight; the next refresh re-arms it. */
-    private final AtomicBoolean detailFetchPending = new AtomicBoolean(false);
+    /** Monotonic token; a fetch whose epoch no longer matches is stale. */
+    private final AtomicLong fetchEpoch = new AtomicLong();
+
+    /** Id of the selection whose fetch is in flight; GTK-thread confined. */
+    private String inFlightTargetId;
 
     DetailTabsPresenter(DownloadManager downloadManager, ListStore trackersStore,
             ListStore peersStore, ListStore filesStore, Supplier<Download> currentSelection) {
@@ -54,45 +55,74 @@ final class DetailTabsPresenter {
         this.peersStore = peersStore;
         this.filesStore = filesStore;
         this.currentSelection = currentSelection;
+        this.fetchExecutor = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "odm-detail-fetch");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /**
      * Refreshes the detail tabs for the current selection. GTK thread; the
-     * fetch itself runs on {@link #FETCH_EXECUTOR}.
+     * fetch itself runs on {@link #fetchExecutor}.
      */
     void load() {
         Download target = currentSelection.get();
         if (target == null) {
+            fetchEpoch.incrementAndGet();
+            inFlightTargetId = null;
             trackersStore.clear();
             peersStore.clear();
             filesStore.clear();
             return;
         }
-        if (!detailFetchPending.compareAndSet(false, true)) {
-            // A fetch is already in flight; the next refresh re-triggers it,
-            // which keeps the idle-queue bounded under 1 Hz progress events.
+        if (fetchExecutor.isShutdown()) {
             return;
         }
         String targetId = target.getId();
+        if (Objects.equals(targetId, inFlightTargetId)) {
+            // A fetch is already in flight for this selection; its result
+            // still applies, which keeps the idle-queue bounded under 1 Hz
+            // progress events.
+            return;
+        }
+        inFlightTargetId = targetId;
+        long epoch = fetchEpoch.incrementAndGet();
         CompletableFuture.supplyAsync(() -> new DetailTabData(
                 downloadManager.getDownloadTrackers(target),
                 downloadManager.getDownloadPeers(target),
-                downloadManager.getDownloadFiles(target)), FETCH_EXECUTOR)
+                downloadManager.getDownloadFiles(target)), fetchExecutor)
                 .whenComplete((data, error) -> {
-                    detailFetchPending.set(false);
                     if (error != null) {
                         LOGGER.log(Level.WARNING,
                                 "Failed to load detail tabs for " + target.getName(), error);
-                        return;
                     }
-                    UiThread.marshal(() -> {
-                        Download selected = currentSelection.get();
-                        if (selected == null || !targetId.equals(selected.getId())) {
-                            return; // stale fetch: selection moved on
-                        }
-                        populateDetailStores(data);
-                    });
+                    UiThread.marshal(() -> settle(epoch, targetId, data, error));
                 });
+    }
+
+    /** Applies or discards a completed fetch; GTK thread only. */
+    private void settle(long epoch, String targetId, DetailTabData data, Throwable error) {
+        if (epoch == fetchEpoch.get() && Objects.equals(targetId, inFlightTargetId)) {
+            inFlightTargetId = null;
+        }
+        if (error != null || epoch != fetchEpoch.get()) {
+            return; // stale fetch: a newer selection superseded it
+        }
+        Download selected = currentSelection.get();
+        if (selected == null || !Objects.equals(targetId, selected.getId())) {
+            return; // selection moved on while the fetch was in flight
+        }
+        populateDetailStores(data);
+    }
+
+    /** Releases the fetch executor; part of the window's teardown path. */
+    void shutdown() {
+        fetchExecutor.shutdown();
+    }
+
+    boolean isShutdown() {
+        return fetchExecutor.isShutdown();
     }
 
     /** Populates the detail tab stores from a fetched snapshot. GTK thread only. */

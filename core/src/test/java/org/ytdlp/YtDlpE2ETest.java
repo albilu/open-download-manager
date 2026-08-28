@@ -47,6 +47,7 @@ class YtDlpE2ETest {
     private YtDlpClient client;
     private YtDlpFactory factory;
     private Path downloadDir;
+    private YtDlpLocalMediaServer mediaServer;
 
     @BeforeAll
     static void checkYtDlpAvailability() {
@@ -62,6 +63,10 @@ class YtDlpE2ETest {
         // Create real client (no mocks)
         client = new YtDlpClient();
 
+        // Hermetic media source: local HTTP server exercising the real
+        // yt-dlp generic extractor without platform access
+        mediaServer = YtDlpLocalMediaServer.start();
+
         // Initialize factory with real global settings
         YtDlpFactory.clearInstance();
         GlobalSettings globalSettings = new GlobalSettings();
@@ -70,7 +75,7 @@ class YtDlpE2ETest {
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws IOException {
         if (client != null) {
             client.shutdown();
         }
@@ -78,6 +83,9 @@ class YtDlpE2ETest {
             factory.shutdown();
         }
         YtDlpFactory.clearInstance();
+        if (mediaServer != null) {
+            mediaServer.close();
+        }
     }
 
     @Test
@@ -120,6 +128,9 @@ class YtDlpE2ETest {
     @EnabledIf("isYtDlpAvailable")
     @Timeout(value = TEST_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     void shouldExtractRealVideoInformation() throws Exception {
+        // Requires the real platform; skip only on the external bot block
+        YtDlpBotBlock.assumeNotBotBlocked(TEST_VIDEO_URL);
+
         CompletableFuture<YtDlpClient.VideoInfo> future = client.extractInfo(TEST_VIDEO_URL);
         YtDlpClient.VideoInfo info = future.get();
 
@@ -136,7 +147,8 @@ class YtDlpE2ETest {
     @EnabledIf("isYtDlpAvailable")
     @Timeout(value = TEST_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     void shouldListRealVideoFormats() throws Exception {
-        CompletableFuture<List<YtDlpClient.VideoFormat>> future = client.listFormats(TEST_VIDEO_URL);
+        // Format listing/parsing is platform-independent: served locally
+        CompletableFuture<List<YtDlpClient.VideoFormat>> future = client.listFormats(mediaServer.mediaUrl());
         List<YtDlpClient.VideoFormat> formats = future.get();
 
         assertNotNull(formats);
@@ -159,7 +171,8 @@ class YtDlpE2ETest {
 
         TestProgressCallback callback = new TestProgressCallback();
 
-        CompletableFuture<String> future = client.download(TEST_VIDEO_URL, settings, downloadDir, callback);
+        // Download workflow with progress parsing is platform-independent
+        CompletableFuture<String> future = client.download(mediaServer.mediaUrl(), settings, downloadDir, callback);
         String result = future.get();
 
         assertNotNull(result);
@@ -176,6 +189,9 @@ class YtDlpE2ETest {
     @EnabledIf("isYtDlpAvailable")
     @Timeout(value = TEST_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     void shouldExtractAudioWithRealYtDlp() throws Exception {
+        // Requires a real platform video with an audio stream
+        YtDlpBotBlock.assumeNotBotBlocked(TEST_AUDIO_URL);
+
         YtDlpSettings settings = new YtDlpSettings()
                 .setExtractAudio(true)
                 .setAudioFormat("mp3")
@@ -245,29 +261,34 @@ class YtDlpE2ETest {
     @EnabledIf("isYtDlpAvailable")
     @Timeout(value = TEST_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     void shouldWorkWithDownloadTaskAndRealProcess() throws Exception {
-        YtDlpSettings settings = new YtDlpSettings()
-                .setFormat("worst");
+        // Task lifecycle with a real process is platform-independent; the
+        // throttled local server keeps the download active long enough to
+        // observe the RUNNING state before completion
+        try (YtDlpLocalMediaServer slowServer = YtDlpLocalMediaServer.startThrottled(16 * 1024)) {
+            YtDlpSettings settings = new YtDlpSettings()
+                    .setFormat("worst");
 
-        YtDlpDownloadTask task = factory.createDownloadTask(
-                "test-task-real",
-                TEST_VIDEO_URL,
-                settings,
-                downloadDir);
+            YtDlpDownloadTask task = factory.createDownloadTask(
+                    "test-task-real",
+                    slowServer.mediaUrl(),
+                    settings,
+                    downloadDir);
 
-        assertEquals(YtDlpDownloadTask.Status.PENDING, task.getStatus());
+            assertEquals(YtDlpDownloadTask.Status.PENDING, task.getStatus());
 
-        CompletableFuture<String> future = task.start();
+            CompletableFuture<String> future = task.start();
 
-        // Wait for task to start
-        Thread.sleep(1000);
-        assertTrue(task.isActive());
+            // Wait for task to start
+            Thread.sleep(1000);
+            assertTrue(task.isActive());
 
-        String result = future.get();
-        assertNotNull(result);
-        assertTrue(task.isDone());
-        assertEquals(YtDlpDownloadTask.Status.COMPLETED, task.getStatus());
+            String result = future.get();
+            assertNotNull(result);
+            assertTrue(task.isDone());
+            assertEquals(YtDlpDownloadTask.Status.COMPLETED, task.getStatus());
 
-        factory.removeDownloadTask("test-task-real");
+            factory.removeDownloadTask("test-task-real");
+        }
     }
 
     @Test
@@ -291,8 +312,9 @@ class YtDlpE2ETest {
         TestProgressCallback callback1 = new TestProgressCallback();
         TestProgressCallback callback2 = new TestProgressCallback();
 
-        CompletableFuture<String> future1 = client.download(TEST_VIDEO_URL, settings1, downloadDir1, callback1);
-        CompletableFuture<String> future2 = client.download(TEST_AUDIO_URL, settings2, downloadDir2, callback2);
+        // Concurrent download management is platform-independent
+        CompletableFuture<String> future1 = client.download(mediaServer.mediaUrl(), settings1, downloadDir1, callback1);
+        CompletableFuture<String> future2 = client.download(mediaServer.mediaUrl(), settings2, downloadDir2, callback2);
 
         String result1 = future1.get();
         String result2 = future2.get();
@@ -323,7 +345,9 @@ class YtDlpE2ETest {
 
         TestProgressCallback callback = new TestProgressCallback();
 
-        CompletableFuture<String> future = client.download(TEST_VIDEO_URL, settings, downloadDir, callback);
+        // aria2c engagement is platform-independent; the local server
+        // satisfies the range requests the external downloader issues
+        CompletableFuture<String> future = client.download(mediaServer.mediaUrl(), settings, downloadDir, callback);
         String result = future.get();
 
         assertNotNull(result);

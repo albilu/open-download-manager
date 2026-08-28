@@ -1,9 +1,15 @@
 package org.manager.download.handler;
 
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -378,15 +384,45 @@ public class DownloadHandlerFactory {
     /**
      * Shuts down all handlers. This should be called during the download
      * manager shutdown.
+     *
+     * <p>Handler instances are deduplicated (one instance may be registered
+     * under several download types — aria2 serves both ARIA2 and TOR), every
+     * distinct shutdown future is awaited with a bounded per-handler
+     * timeout, and any failure is rethrown as an aggregate so the essential
+     * shutdown phase can surface it.</p>
      */
     public void shutdownHandlers() {
-        for (DownloadHandler handler : handlers.values()) {
+        Set<DownloadHandler> uniqueHandlers = Collections.newSetFromMap(new IdentityHashMap<>());
+        uniqueHandlers.addAll(handlers.values());
+
+        List<Throwable> failures = new ArrayList<>();
+        for (DownloadHandler handler : uniqueHandlers) {
             try {
-                handler.shutdown();
+                handler.shutdown().get(HANDLER_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                LOGGER.log(Level.SEVERE, "Handler shutdown timed out after "
+                        + HANDLER_SHUTDOWN_TIMEOUT_SECONDS + "s: " + handler.getSupportedType());
+                failures.add(new RuntimeException(
+                        "Handler shutdown timed out: " + handler.getSupportedType(), e));
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error shutting down handler: " + handler.getSupportedType(), e);
+                Throwable cause = (e instanceof java.util.concurrent.ExecutionException && e.getCause() != null)
+                        ? e.getCause() : e;
+                LOGGER.log(Level.SEVERE, "Handler shutdown failed: " + handler.getSupportedType(), cause);
+                failures.add(new RuntimeException(
+                        "Handler shutdown failed: " + handler.getSupportedType(), cause));
             }
         }
         handlers.clear();
+
+        if (!failures.isEmpty()) {
+            RuntimeException aggregate = new RuntimeException(
+                    "Download handler shutdown failed for " + failures.size() + " handler(s)");
+            for (Throwable failure : failures) {
+                aggregate.addSuppressed(failure);
+            }
+            throw aggregate;
+        }
     }
+
+    private static final long HANDLER_SHUTDOWN_TIMEOUT_SECONDS = 30;
 }

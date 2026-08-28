@@ -232,7 +232,12 @@ public class DownloadCleanupManager {
         }
 
         List<Download> completedDownloads = downloadRepository
-                .getDownloadsByStatus(Download.Status.COMPLETED, 0, Integer.MAX_VALUE).getDownloads();
+                .getDownloadsByStatus(Download.Status.COMPLETED, 0, Integer.MAX_VALUE).getDownloads()
+                .stream()
+                .sorted(java.util.Comparator.comparing(
+                        DownloadCleanupManager::historyTimestamp,
+                        java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())))
+                .toList();
 
         if (completedDownloads.size() <= keepCount) {
             return 0;

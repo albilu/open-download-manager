@@ -330,6 +330,19 @@ public class Aria2Client {
 
         if (occupied) {
             if (rpcToken != null && authenticated) {
+                // A tokenless daemon accepts ANY token, so a successful
+                // getVersion with the configured secret proves nothing:
+                // verify the daemon actually REJECTS a deliberately wrong
+                // sentinel secret before classifying it as authenticated.
+                if (daemonAcceptsWrongSecret()) {
+                    closeWebSocketSocket("refusing aria2 endpoint without secret enforcement");
+                    throw new IOException(
+                            "The aria2 RPC endpoint " + rpcUrl + " is occupied by a daemon "
+                                    + "that enforces no RPC secret (it accepted a deliberately wrong "
+                                    + "token). ODM cannot treat it as authenticated. Configure "
+                                    + "--rpc-secret on the daemon (matching aria2.rpcSecret) or free "
+                                    + "the port. No download data has been sent to it.");
+                }
                 daemonOwnership = DaemonOwnership.EXTERNAL_AUTHENTICATED;
                 LOGGER.info("Adopting authenticated external aria2 RPC daemon at " + rpcUrl);
                 return true;
@@ -502,6 +515,32 @@ public class Aria2Client {
     }
 
     /**
+     * Probes the occupied endpoint with a deliberately WRONG sentinel token
+     * over HTTP. A daemon that answers the probe successfully enforces no
+     * RPC secret and accepts any credentials; only a rejection (RPC error)
+     * proves the configured secret is actually being checked.
+     */
+    private boolean daemonAcceptsWrongSecret() {
+        Map<String, Object> probe = new LinkedHashMap<>();
+        probe.put("jsonrpc", "2.0");
+        probe.put("id", 1);
+        probe.put("method", "aria2.getVersion");
+        probe.put("params", new Object[] { "token:" + generateRpcSecret() });
+        try {
+            sendRpcHttp(OBJECT_MAPPER.writeValueAsString(probe),
+                    new TypeReference<Map<String, Object>>() {
+                    });
+            return true;
+        } catch (Aria2RpcException e) {
+            return false;
+        } catch (IOException e) {
+            // Endpoint stopped answering: authentication cannot be verified,
+            // so treat it as enforcing nothing (adoption is refused)
+            return true;
+        }
+    }
+
+    /**
      * Stop the aria2c lifecycle attachment according to daemon ownership:
      *
      * <ul>
@@ -529,28 +568,35 @@ public class Aria2Client {
             // the reconnect path resurrects the daemon we are stopping.
             useWebSocket = false;
             closeWebSocketSocket("stopping ODM-owned daemon");
+
+            // Graceful shutdown first; a failure here is not fatal — the
+            // force escalation below is the retry
             try {
-                // Try to shutdown gracefully first
                 shutdown();
-
-                // Wait for graceful shutdown (max 10 seconds)
-                if (!waitForAria2State(false, 10000, 200)) {
-                    // Still running, try force shutdown
-                    try {
-                        forceShutdown();
-                        // Wait for force shutdown (max 10 seconds)
-                        waitForAria2State(false, 10000, 200);
-                    } catch (Exception e) {
-                        // Ignore force shutdown errors
-                    }
-                }
-
             } catch (Exception e) {
-                // If graceful shutdown fails, force destroy
-                if (aria2Process != null) {
-                    aria2Process.destroy();
+                LOGGER.warning("Graceful aria2 shutdown failed: " + e.getMessage());
+            }
+
+            boolean stopped = waitForAria2State(false, 10000, 200);
+            if (!stopped) {
+                try {
+                    forceShutdown();
+                    stopped = waitForAria2State(false, 10000, 200);
+                } catch (Exception e) {
+                    LOGGER.warning("Force aria2 shutdown failed: " + e.getMessage());
                 }
             }
+
+            if (!stopped && isAria2Running()) {
+                // The daemon survived every shutdown attempt and still
+                // answers RPC. Keep ownership (and the process attachment)
+                // so a later stopAria2c retries the shutdown instead of
+                // leaving a live ODM daemon unmanageable. The retained
+                // Process is only the launcher for a daemonized start, so
+                // destroying it would accomplish nothing anyway.
+                return false;
+            }
+
             aria2Process = null;
             daemonOwnership = DaemonOwnership.STOPPED;
         }
@@ -603,11 +649,17 @@ public class Aria2Client {
             return false;
         }
 
-        // If we were using WebSocket before, reconnect
+        // If we were using WebSocket before, reconnect. This must NOT go
+        // through disconnectWebSocket(): that latches the final shutdown
+        // state and permanently disables the transport even though the
+        // daemon is (again) alive. The stop path already closed the
+        // socket, and stopAria2c clears useWebSocket to prevent
+        // reconnect-resurrection — restore the preference and reconnect
+        // directly.
         if (wasUsingWebSocket) {
+            useWebSocket = true;
             try {
-                disconnectWebSocket();
-                connectWebSocket();
+                connectWebSocketDirect();
             } catch (Exception e) {
                 return false;
             }
@@ -662,11 +714,12 @@ public class Aria2Client {
     }
 
     /**
-     * Add a Metalink file via JSON-RPC. aria2 returns a list of GIDs (one per
-     * file in the metalink); this method returns the first GID, which tracks
-     * the primary download of typical single-file metalinks.
+     * Add a Metalink file via JSON-RPC. aria2 returns one GID per file in
+     * the metalink; every GID is returned so callers can track each file
+     * of a multi-file metalink to completion.
      */
-    public String addMetalink(byte[] metalink, Map<String, Object> options) throws IOException, Aria2RpcException {
+    public List<String> addMetalinkAll(byte[] metalink, Map<String, Object> options)
+            throws IOException, Aria2RpcException {
         String metalinkBase64 = java.util.Base64.getEncoder().encodeToString(metalink);
         List<Object> params = new ArrayList<>();
         params.add(metalinkBase64);
@@ -676,7 +729,21 @@ public class Aria2Client {
         if (gids == null || gids.isEmpty()) {
             throw new IOException("aria2.addMetalink returned no GIDs");
         }
-        return gids.get(0).toString();
+        List<String> result = new ArrayList<>(gids.size());
+        for (Object gid : gids) {
+            result.add(String.valueOf(gid));
+        }
+        return result;
+    }
+
+    /**
+     * Add a Metalink file via JSON-RPC. aria2 returns a list of GIDs (one per
+     * file in the metalink); this method returns the first GID, which tracks
+     * the primary download of typical single-file metalinks. Use
+     * {@link #addMetalinkAll(byte[], Map)} when every file must be tracked.
+     */
+    public String addMetalink(byte[] metalink, Map<String, Object> options) throws IOException, Aria2RpcException {
+        return addMetalinkAll(metalink, options).get(0);
     }
 
     /**
@@ -943,7 +1010,11 @@ public class Aria2Client {
     }
 
     /**
-     * Connect to aria2 WebSocket JSON-RPC server.
+     * Connect to aria2 WebSocket JSON-RPC server. When a reconnection is
+     * already in progress on another thread, callers BLOCK until it
+     * completes (or fails) instead of returning against a dead/null
+     * client: a send issued mid-reconnection must wait for the recovered
+     * transport, then succeed — or fail cleanly.
      */
     public void connectWebSocket() throws Exception {
         if (wsClient != null && wsClient.isOpen()) {
@@ -951,6 +1022,29 @@ public class Aria2Client {
         }
 
         if (isReconnecting) {
+            long deadline = System.currentTimeMillis() + WS_RECONNECT_WAIT_MS;
+            while (isReconnecting && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100);
+            }
+            if (wsClient != null && wsClient.isOpen()) {
+                return;
+            }
+            // Reconnection gave up: fall through and attempt a direct
+            // connect so the caller fails cleanly instead of hanging
+        }
+
+        connectWebSocketDirect();
+    }
+
+    /** Upper bound a send waits for an in-progress reconnection. */
+    private static final long WS_RECONNECT_WAIT_MS = 30000;
+
+    /**
+     * Performs the actual WebSocket connection. Used by the reconnect
+     * worker itself, which must never wait on its own in-progress flag.
+     */
+    void connectWebSocketDirect() throws Exception {
+        if (wsClient != null && wsClient.isOpen()) {
             return;
         }
 
@@ -1011,7 +1105,7 @@ public class Aria2Client {
         }
     }
 
-    private void handleNotification(JsonNode json) {
+    void handleNotification(JsonNode json) {
         String method = json.get("method").asText();
         JsonNode paramsNode = json.get("params");
 
@@ -1019,7 +1113,7 @@ public class Aria2Client {
             return;
         }
 
-        String gid = paramsNode.get(0).asText();
+        String gid = extractNotificationGid(paramsNode.get(0));
 
         switch (method) {
             case "aria2.onDownloadStart" ->
@@ -1031,11 +1125,17 @@ public class Aria2Client {
             case "aria2.onDownloadComplete" ->
                 listeners.forEach(l -> l.onDownloadComplete(gid));
             case "aria2.onDownloadError" -> {
+                Aria2RpcError error = new Aria2RpcError();
                 if (paramsNode.size() >= 2) {
-                    Aria2RpcError error = new Aria2RpcError();
-                    error.code = paramsNode.get(1).asInt();
-                    listeners.forEach(l -> l.onDownloadError(gid, error));
+                    // Real daemons send the second param as an object
+                    // ({"errorCode":"1","errorMessage":"..."}); a plain
+                    // string param is tolerated for forward compatibility
+                    JsonNode errorParam = paramsNode.get(1);
+                    error.message = errorParam.isObject()
+                            ? errorParam.path("errorMessage").asText()
+                            : errorParam.asText();
                 }
+                listeners.forEach(l -> l.onDownloadError(gid, error));
             }
             case "aria2.onBtDownloadComplete" ->
                 listeners.forEach(l -> l.onBtDownloadComplete(gid));
@@ -1050,6 +1150,18 @@ public class Aria2Client {
             // }
             // break;
         }
+    }
+
+    /**
+     * aria2 delivers the gid as a field of the first OBJECT param
+     * ({@code params:[{"gid":"..."}]}); a bare string param is tolerated for
+     * forward compatibility.
+     */
+    private static String extractNotificationGid(JsonNode param) {
+        if (param.isObject()) {
+            return param.path("gid").asText();
+        }
+        return param.asText();
     }
 
     /**
@@ -1098,6 +1210,14 @@ public class Aria2Client {
     /** Whether the permanent shutdown latch is set. Test/inspection accessor. */
     boolean isShutdownLatched() {
         return isShuttingDown;
+    }
+
+    /**
+     * Number of WebSocket response futures currently registered. Test
+     * accessor: a send failure must never leave its future behind.
+     */
+    int pendingWebSocketResponseCount() {
+        return wsResponses.size();
     }
 
     /**
@@ -1180,6 +1300,12 @@ public class Aria2Client {
 
     /**
      * Attempts to reconnect WebSocket with exponential backoff.
+     *
+     * <p>The liveness check and the possible daemon restart run over the
+     * HTTP RPC transport with WebSocket use temporarily disabled: this
+     * thread owns the reconnection, so a WebSocket probe here would wait
+     * on {@code isReconnecting} (or hit the dead client) and misreport a
+     * healthy daemon as gone, restarting or detaching it needlessly.
      */
     private void tryReconnect() {
         if (isReconnecting || !useWebSocket || isShuttingDown) {
@@ -1189,49 +1315,54 @@ public class Aria2Client {
         isReconnecting = true;
         Thread reconnectThread = new Thread(() -> {
             int attempts = 0;
-            while (attempts < WS_RECONNECT_ATTEMPTS && useWebSocket && !isShuttingDown) {
-                try {
-                    attempts++;
-                    long backoffMs = (long) Math.min(1000 * Math.pow(2, attempts), 30000);
-                    LOGGER.info(
-                            "Attempting to reconnect WebSocket in " + backoffMs + "ms (attempt " + attempts + ")");
+            try {
+                while (attempts < WS_RECONNECT_ATTEMPTS && useWebSocket && !isShuttingDown) {
+                    try {
+                        attempts++;
+                        long backoffMs = (long) Math.min(1000 * Math.pow(2, attempts), 30000);
+                        LOGGER.info(
+                                "Attempting to reconnect WebSocket in " + backoffMs + "ms (attempt " + attempts + ")");
 
-                    Thread.sleep(backoffMs);
+                        Thread.sleep(backoffMs);
 
-                    // Check if aria2 is still running, restart if not
-                    if (!isAria2Running()) {
+                        boolean wasUsingWebSocket = useWebSocket;
+                        useWebSocket = false;
                         try {
-                            if (isShuttingDown) {
-                                LOGGER.info("Skipping aria2 restart - application is shutting down");
-                                break;
-                            }
+                            // Health check over HTTP RPC
+                            if (!isAria2Running()) {
+                                if (isShuttingDown) {
+                                    LOGGER.info("Skipping aria2 restart - application is shutting down");
+                                    break;
+                                }
 
-                            boolean restartSuccess = restartAria2c();
-                            if (!restartSuccess) {
-                                LOGGER.severe("Failed to restart aria2 process");
-                                continue;
+                                boolean restartSuccess = restartAria2c();
+                                if (!restartSuccess) {
+                                    LOGGER.severe("Failed to restart aria2 process");
+                                    continue;
+                                }
                             }
-                        } catch (IOException e) {
-                            LOGGER.severe("Failed to restart aria2 process: " + e.getMessage());
-                            continue;
+                        } finally {
+                            if (!isShuttingDown) {
+                                useWebSocket = wasUsingWebSocket;
+                            }
                         }
+
+                        // Try to reconnect
+                        closeWebSocketSocket("reconnect");
+                        connectWebSocketDirect();
+
+                        // If we get here, connection succeeded
+                        LOGGER.info("Successfully reconnected WebSocket");
+                        return;
+                    } catch (Exception e) {
+                        LOGGER.severe("Failed to reconnect WebSocket: " + e.getMessage());
                     }
-
-                    // Try to reconnect
-                    closeWebSocketSocket("reconnect");
-                    connectWebSocket();
-
-                    // If we get here, connection succeeded
-                    LOGGER.info("Successfully reconnected WebSocket");
-                    isReconnecting = false;
-                    return;
-                } catch (Exception e) {
-                    LOGGER.severe("Failed to reconnect WebSocket: " + e.getMessage());
                 }
-            }
 
-            LOGGER.severe("Failed to reconnect WebSocket after " + attempts + " attempts");
-            isReconnecting = false;
+                LOGGER.severe("Failed to reconnect WebSocket after " + attempts + " attempts");
+            } finally {
+                isReconnecting = false;
+            }
         }, "ws-reconnect");
 
         reconnectThread.setDaemon(true);
@@ -1313,10 +1444,14 @@ public class Aria2Client {
         map.put("params", List.of(calls));
         String payload = OBJECT_MAPPER.writeValueAsString(map);
 
+        WebSocketClient socket = wsClient;
+        if (socket == null || !socket.isOpen()) {
+            throw new IOException("WebSocket transport is not connected");
+        }
         CompletableFuture<String> future = new CompletableFuture<>();
         wsResponses.put(id, future);
         try {
-            wsClient.send(payload);
+            socket.send(payload);
             String response = future.get(30, TimeUnit.SECONDS);
             Aria2RpcResponse<T> rpcResponse = parseRpcResponse(response, typeRef);
             if (rpcResponse.error != null) {
@@ -1324,15 +1459,14 @@ public class Aria2Client {
             }
             return rpcResponse;
         } catch (TimeoutException e) {
-            wsResponses.remove(id);
             throw new IOException("RPC request timed out", e);
         } catch (InterruptedException e) {
-            wsResponses.remove(id);
             Thread.currentThread().interrupt();
             throw new IOException("RPC request interrupted", e);
         } catch (ExecutionException e) {
-            wsResponses.remove(id);
             throw new IOException("RPC execution error", e.getCause() != null ? e.getCause() : e);
+        } finally {
+            wsResponses.remove(id);
         }
     }
 
@@ -1384,11 +1518,15 @@ public class Aria2Client {
 
         int id = nextWsRequestId();
         String payload = buildPayloadWithId(method, id, params);
+        WebSocketClient socket = wsClient;
+        if (socket == null || !socket.isOpen()) {
+            throw new IOException("WebSocket transport is not connected");
+        }
         CompletableFuture<String> future = new CompletableFuture<>();
         wsResponses.put(id, future);
 
         try {
-            wsClient.send(payload);
+            socket.send(payload);
             // Wait for response with timeout
             String response = future.get(30, TimeUnit.SECONDS);
             Aria2RpcResponse<T> rpcResponse = parseRpcResponse(response, resultType);
@@ -1397,15 +1535,14 @@ public class Aria2Client {
             }
             return rpcResponse;
         } catch (TimeoutException e) {
-            wsResponses.remove(id);
             throw new IOException("RPC request timed out", e);
         } catch (InterruptedException e) {
-            wsResponses.remove(id);
             Thread.currentThread().interrupt();
             throw new IOException("RPC request interrupted", e);
         } catch (ExecutionException e) {
-            wsResponses.remove(id);
             throw new IOException("RPC execution error", e.getCause() != null ? e.getCause() : e);
+        } finally {
+            wsResponses.remove(id);
         }
     }
 
@@ -1424,11 +1561,15 @@ public class Aria2Client {
 
         int id = nextWsRequestId();
         String payload = buildPayloadWithId(method, id, params);
+        WebSocketClient socket = wsClient;
+        if (socket == null || !socket.isOpen()) {
+            throw new IOException("WebSocket transport is not connected");
+        }
         CompletableFuture<String> future = new CompletableFuture<>();
         wsResponses.put(id, future);
 
         try {
-            wsClient.send(payload);
+            socket.send(payload);
             // Wait for response with timeout
             String response = future.get(30, TimeUnit.SECONDS);
             Aria2RpcResponse<T> rpcResponse = parseRpcResponse(response, typeRef);
@@ -1437,10 +1578,8 @@ public class Aria2Client {
             }
             return rpcResponse;
         } catch (TimeoutException e) {
-            wsResponses.remove(id);
             throw new IOException("RPC request timed out", e);
         } catch (ExecutionException e) {
-            wsResponses.remove(id);
             Throwable cause = e.getCause();
             if (cause instanceof Exception) {
                 throw (Exception) cause;
@@ -1448,9 +1587,10 @@ public class Aria2Client {
                 throw new IOException("WebSocket request failed: " + method, e);
             }
         } catch (InterruptedException e) {
-            wsResponses.remove(id);
             Thread.currentThread().interrupt();
             throw new IOException("WebSocket request interrupted: " + method, e);
+        } finally {
+            wsResponses.remove(id);
         }
     }
 

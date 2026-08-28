@@ -42,15 +42,19 @@ public final class OdmApplication {
         // Quit timer scheduled by the failure notice; a successful retry
         // cancels it so a healthy app is not killed 3s after its last failure
         final int[] quitTimer = {0};
+        // Single-shot release of the scheduler/Tor services OdmApplication
+        // owns; shared by every teardown path
+        final OwnedServicesRelease ownedRelease = new OwnedServicesRelease();
 
         final StartupGate startup = new StartupGate(
                 () -> new StartShutdownDialog(app),
                 OdmApplication::initializeCoreInBackground,
                 (progress, refs) -> {
                     LOGGER.info("onActivate: constructing MainWindow");
+                    ownedRelease.capture(refs);
                     MainWindow mainWindow = new MainWindow(
                             app, refs.manager(), refs.torService(), refs.scheduleManager());
-                    installGracefulShutdown(app, startupHolder[0], mainWindow, refs);
+                    installGracefulShutdown(app, startupHolder[0], mainWindow, refs, ownedRelease);
                     LOGGER.info("onActivate: MainWindow constructed");
 
                     // Tray (best-effort: no-op when the session bus is unavailable)
@@ -104,6 +108,8 @@ public final class OdmApplication {
         // final-close delegate (see installGracefulShutdown) BEFORE the main
         // loop ends; this hook covers every other path (e.g. the session
         // manager ending the app) and releases the tray's bus registration
+        // plus the owned scheduler/Tor services the close path may not have
+        // reached
         app.onShutdown(() -> {
             startup.beginShutdown(); // never publish a window once shutdown begins
             StatusNotifierTray tray = trayHolder[0];
@@ -111,6 +117,7 @@ public final class OdmApplication {
                 tray.unregister();
                 trayHolder[0] = null;
             }
+            ownedRelease.release();
         });
 
         int status = app.run(args);
@@ -161,14 +168,8 @@ public final class OdmApplication {
      * and the context reset also makes a later activation able to retry
      * initialization (see {@link StartupGate}).
      */
-    private static void cleanupFailedStartup(StartupGate.CoreRefs refs, Throwable error) {
-        if (refs != null && refs.scheduleManager() != null) {
-            try {
-                refs.scheduleManager().stop().get(10, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                LOGGER.warning("ScheduleManager stop failed: " + e.getMessage());
-            }
-        }
+    static void cleanupFailedStartup(StartupGate.CoreRefs refs, Throwable error) {
+        releaseOwnedServices(refs);
         try {
             DownloadManagerFactory.shutdown();
         } catch (Exception e) {
@@ -178,6 +179,82 @@ public final class OdmApplication {
             ApplicationContext.reset();
         } catch (Exception e) {
             LOGGER.log(java.util.logging.Level.WARNING, "ApplicationContext cleanup failed", e);
+        }
+    }
+
+    /**
+     * Shuts down every service OdmApplication owns on top of the download
+     * manager: the weekly-schedule {@code DownloadScheduler} (its terminal
+     * executor cleanup) and the {@code TorService} (process, executor, temp
+     * config). Bounded waits; every collaborator is idempotent, so this is
+     * safe to call from every teardown path (normal close, session-manager
+     * fallback, failed startup).
+     */
+    static void releaseOwnedServices(StartupGate.CoreRefs refs) {
+        if (refs == null) {
+            return;
+        }
+        if (refs.scheduleManager() != null) {
+            try {
+                refs.scheduleManager().shutdown().get(10, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                LOGGER.warning("ScheduleManager shutdown failed: " + e.getMessage());
+            }
+        }
+        if (refs.torService() != null) {
+            try {
+                refs.torService().shutdown();
+            } catch (Exception e) {
+                LOGGER.warning("TorService shutdown failed: " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Drains the whole core at exit: owned services first, then the
+     * download manager (which waits for handler teardown and persistence).
+     */
+    private static void drainCoreForExit(StartupGate.CoreRefs refs) {
+        releaseOwnedServices(refs);
+        try {
+            DownloadManagerFactory.shutdown();
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.WARNING, "Graceful core shutdown failed", e);
+        }
+    }
+
+    /**
+     * Single-shot release of the application-owned services (scheduler,
+     * Tor), shared by the graceful close path and the session-manager
+     * fallback so neither leaks them and they are never torn down twice.
+     */
+    static final class OwnedServicesRelease {
+
+        private final java.util.concurrent.atomic.AtomicReference<StartupGate.CoreRefs> refs =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        private final java.util.concurrent.atomic.AtomicBoolean released =
+                new java.util.concurrent.atomic.AtomicBoolean();
+
+        void capture(StartupGate.CoreRefs coreRefs) {
+            refs.set(coreRefs);
+        }
+
+        boolean isReleased() {
+            return released.get();
+        }
+
+        void release() {
+            StartupGate.CoreRefs captured = refs.get();
+            if (captured == null || !released.compareAndSet(false, true)) {
+                return;
+            }
+            releaseOwnedServices(captured);
+        }
+
+        /** Marks the services as released without running the sequence
+         * (the caller drained them through another route). */
+        void markReleased() {
+            released.set(true);
         }
     }
 
@@ -225,7 +302,7 @@ public final class OdmApplication {
      * invisibly, racing System.exit.
      */
     private static void installGracefulShutdown(Application app, StartupGate startup,
-            MainWindow mainWindow, StartupGate.CoreRefs refs) {
+            MainWindow mainWindow, StartupGate.CoreRefs refs, OwnedServicesRelease ownedRelease) {
         mainWindow.setFinalCloseDelegate(() -> {
             // No window publication past this point (a stale activation
             // observer would race the exit sequence otherwise)
@@ -236,22 +313,13 @@ public final class OdmApplication {
             StartShutdownDialog progress = new StartShutdownDialog(app);
             progress.show("Shutting down Open Download Manager…");
 
-            CompletableFuture.runAsync(() -> {
-                try {
-                    refs.scheduleManager().stop();
-                } catch (Exception e) {
-                    LOGGER.warning("ScheduleManager stop failed: " + e.getMessage());
-                }
-                try {
-                    DownloadManagerFactory.shutdown();
-                } catch (Exception e) {
-                    LOGGER.log(java.util.logging.Level.WARNING, "Graceful core shutdown failed", e);
-                }
-            }).whenComplete((v, error) -> UiThread.marshal(() -> {
-                progress.close();
-                mainWindow.dispose(); // last window gone: main loop exits,
-                                      // onShutdown unregisters the tray, run() returns
-            }));
+            CompletableFuture.runAsync(() -> drainCoreForExit(refs))
+                    .whenComplete((v, error) -> UiThread.marshal(() -> {
+                        ownedRelease.markReleased();
+                        progress.close();
+                        mainWindow.dispose(); // last window gone: main loop exits,
+                                              // onShutdown unregisters the tray, run() returns
+                    }));
         });
     }
 

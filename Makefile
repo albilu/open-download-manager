@@ -1,6 +1,6 @@
 # Simple Makefile for Open Download Manager Docker Development
 
-.PHONY: help build dev test compile run debug package clean
+.PHONY: help build dev test test-integration compile run debug package clean
 
 .DEFAULT_GOAL := help
 
@@ -11,6 +11,7 @@ help: ## Show this help message
 	@echo "  build     Build Docker image"
 	@echo "  dev       Start development container"
 	@echo "  test      Run tests"
+	@echo "  test-integration  Run tests including integration/E2E suites"
 	@echo "  compile   Build application"
 	@echo "  run       Run application in Docker with Xvfb"
 	@echo "  debug     Run application in debug mode (port 5005)"
@@ -33,6 +34,9 @@ dev: ## Start development container
 
 test: ## Run tests
 	./docker-build.sh test
+
+test-integration: ## Run tests including integration/E2E suites (-Pintegration)
+	./docker-build.sh test-integration
 
 compile: ## Build application
 	./docker-build.sh compile

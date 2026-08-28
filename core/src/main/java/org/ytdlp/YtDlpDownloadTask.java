@@ -45,6 +45,14 @@ public class YtDlpDownloadTask {
     private final AtomicReference<Float> speed = new AtomicReference<>(0.0f);
     private final AtomicReference<Float> progress = new AtomicReference<>(0.0f);
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    /**
+     * Monotonic run generation. Each started run owns the current value;
+     * pausing, cancelling, or starting another run retires it. Callbacks
+     * and completion actions belonging to a retired generation are inert:
+     * a killed run's late callbacks must neither convert PAUSED into ERROR
+     * nor interfere with a resumed or replacement run.
+     */
+    private final AtomicLong runGeneration = new AtomicLong();
 
     /**
      * Output paths produced by THIS task's own execution (the destinations
@@ -141,12 +149,13 @@ public class YtDlpDownloadTask {
             status.set(Status.STARTING);
             startedAt = Instant.now();
             processId = "ytdlp-" + taskId + "-" + System.currentTimeMillis();
+            final long generation = runGeneration.incrementAndGet();
 
             ProgressCallback callback = new ProgressCallback() {
                 @Override
                 public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
-                    if (cancelled.get()) {
-                        return; // progress events are invalidated by cancellation
+                    if (cancelled.get() || !isCurrentGeneration(generation)) {
+                        return; // progress events are invalidated by cancellation or retirement
                     }
                     updateProgress(percentage, downloadedBytes, totalBytes, speed);
                     forwardToListener(l -> l.onProgress(percentage, downloadedBytes, totalBytes, speed));
@@ -158,8 +167,8 @@ public class YtDlpDownloadTask {
                     // line is a fact about this run, and file cleanup after
                     // cancellation needs it
                     recordOutputPath(filename);
-                    if (cancelled.get()) {
-                        return; // invalidated by cancellation
+                    if (cancelled.get() || !isCurrentGeneration(generation)) {
+                        return; // invalidated by cancellation or retirement
                     }
                     YtDlpDownloadTask.this.filename.set(filename);
                     status.set(Status.DOWNLOADING);
@@ -170,8 +179,8 @@ public class YtDlpDownloadTask {
                 @Override
                 public void onComplete(String filename) {
                     recordOutputPath(filename);
-                    if (cancelled.get()) {
-                        return; // a late completion must not replace CANCELED
+                    if (cancelled.get() || !isCurrentGeneration(generation)) {
+                        return; // a late completion must not replace CANCELED or a newer run
                     }
                     YtDlpDownloadTask.this.filename.set(filename);
                     status.set(Status.COMPLETED);
@@ -183,8 +192,8 @@ public class YtDlpDownloadTask {
 
                 @Override
                 public void onError(String error) {
-                    if (cancelled.get()) {
-                        return; // the killed process's last words must not replace CANCELED
+                    if (cancelled.get() || !isCurrentGeneration(generation)) {
+                        return; // a killed run's last words must not replace CANCELED or PAUSED
                     }
                     errorMessage.set(error);
                     status.set(Status.ERROR);
@@ -203,16 +212,25 @@ public class YtDlpDownloadTask {
             CompletableFuture<String> run = client.download(url, settings, outputPath, callback, processId);
             runFuture = run;
             downloadFuture = run.whenComplete((result, throwable) -> {
-                if (throwable != null) {
-                    if (!cancelled.get()) {
-                        errorMessage.set(throwable.getMessage());
-                        status.set(Status.ERROR);
-                    }
+                if (throwable != null && !cancelled.get() && isCurrentGeneration(generation)
+                        && status.get() != Status.PAUSED) {
+                    errorMessage.set(throwable.getMessage());
+                    status.set(Status.ERROR);
                 }
             });
 
             return downloadFuture;
         }
+    }
+
+    /** The generation of the most recent started or retired run. */
+    public long currentGeneration() {
+        return runGeneration.get();
+    }
+
+    /** Whether {@code generation} is still the current run's generation. */
+    public boolean isCurrentGeneration(long generation) {
+        return runGeneration.get() == generation;
     }
 
     /**
@@ -250,6 +268,10 @@ public class YtDlpDownloadTask {
             return false; // Cannot cancel completed download
         }
 
+        // Retire the current run before signalling its process: callbacks
+        // racing the kill are inert instead of rewriting CANCELED
+        runGeneration.incrementAndGet();
+
         // Cancel the download process
         boolean processCancelled = false;
         if (processId != null) {
@@ -283,7 +305,9 @@ public class YtDlpDownloadTask {
         }
 
         // For yt-dlp, pause is effectively a cancel since it doesn't support true
-        // pause/resume
+        // pause/resume. Retire the run BEFORE killing it so the dying process's
+        // asynchronous callbacks cannot convert PAUSED into ERROR.
+        runGeneration.incrementAndGet();
         if (processId != null) {
             client.cancelDownload(processId);
         }

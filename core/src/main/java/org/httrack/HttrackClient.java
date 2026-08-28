@@ -141,14 +141,15 @@ public class HttrackClient {
                 }
 
                 Process process = processBuilder.start();
-                activeProcesses.register(jobId, process);
+                org.manager.tools.ExternalProcessRegistry.Registration registration =
+                        activeProcesses.register(jobId, process);
 
                 // Update job status
                 job.setStatus(HttrackJob.Status.RUNNING);
                 notifyJobStarted(job);
 
                 // Start monitoring in background
-                Future<?> monitoringFuture = executorService.submit(() -> monitorProcess(process, job));
+                Future<?> monitoringFuture = executorService.submit(() -> monitorProcess(process, job, registration));
                 monitoringFutures.put(jobId, monitoringFuture);
 
                 LOGGER.info("Started httrack job " + jobId + " for URL: " + settings.getUrl());
@@ -221,13 +222,14 @@ public class HttrackClient {
                     }
 
                     Process process = processBuilder.start();
-                    activeProcesses.register(jobId, process);
+                    org.manager.tools.ExternalProcessRegistry.Registration registration =
+                            activeProcesses.register(jobId, process);
 
                     job.setStatus(HttrackJob.Status.RUNNING);
                     notifyJobResumed(job);
 
                     // Start monitoring in background
-                    Future<?> monitoringFuture = executorService.submit(() -> monitorProcess(process, job));
+                    Future<?> monitoringFuture = executorService.submit(() -> monitorProcess(process, job, registration));
                     monitoringFutures.put(jobId, monitoringFuture);
 
                     LOGGER.info("Resumed httrack job: " + jobId);
@@ -251,13 +253,21 @@ public class HttrackClient {
      */
     public CompletableFuture<Void> cancelJob(String jobId, boolean deleteFiles) {
         return CompletableFuture.runAsync(() -> {
-            Process process = activeProcesses.get(jobId);
             HttrackJob job = activeJobs.get(jobId);
 
-            if (process != null) {
-                process.destroyForcibly();
-                activeProcesses.remove(jobId);
+            if (job != null) {
+                // CANCELED lands before termination so the monitoring
+                // thread's completion handler (woken by the dying process)
+                // observes the intentional state instead of converting the
+                // kill exit code into ERROR
+                job.setStatus(HttrackJob.Status.CANCELED);
             }
+
+            // Bounded tree termination (SIGTERM with grace so httrack can
+            // save its index/state files, then SIGKILL): the old bare
+            // destroyForcibly returned before the process (and its spawned
+            // helpers) were actually dead, racing the deletion below
+            activeProcesses.terminate(jobId, 5);
 
             if (job != null) {
                 if (deleteFiles && job.getSettings().getOutputDirectory() != null) {
@@ -268,7 +278,6 @@ public class HttrackClient {
                     }
                 }
 
-                job.setStatus(HttrackJob.Status.CANCELED);
                 notifyJobCanceled(job);
                 activeJobs.remove(jobId);
                 LOGGER.info("Canceled httrack job: " + jobId);
@@ -462,7 +471,8 @@ public class HttrackClient {
         return command;
     }
 
-    private void monitorProcess(Process process, HttrackJob job) {
+    private void monitorProcess(Process process, HttrackJob job,
+            org.manager.tools.ExternalProcessRegistry.Registration registration) {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             long lastUpdateTime = System.currentTimeMillis();
@@ -514,7 +524,11 @@ public class HttrackClient {
             job.setErrorMessage("IO error during monitoring: " + e.getMessage());
             notifyJobError(job, e.getMessage());
         } finally {
-            activeProcesses.remove(job.getJobId());
+            // Generation-safe cleanup: a monitor for a replaced run (resume
+            // raced it) must not unregister the newer process under the key
+            if (registration != null) {
+                registration.unregister();
+            }
         }
     }
 
@@ -587,20 +601,54 @@ public class HttrackClient {
         }
     }
 
+    /**
+     * Recursively deletes the configured output directory. Every entry is
+     * re-validated against the configured (normalized absolute) root with
+     * real-path containment immediately before deletion: a symlinked
+     * component that resolves outside the configured directory can never
+     * redirect the deletion, even when swapped in mid-walk. The root itself
+     * is deleted last and only as itself (a symlink root removes the link,
+     * never its target tree).
+     */
     private void deleteDirectory(Path directory) throws IOException {
         if (!Files.exists(directory)) {
             return;
         }
 
-        Files.walk(directory)
-                .sorted((a, b) -> b.compareTo(a))
-                .forEach(path -> {
-                    try {
-                        Files.delete(path);
-                    } catch (IOException e) {
-                        LOGGER.log(Level.WARNING, "Failed to delete: " + path, e);
-                    }
-                });
+        Path lexicalRoot = directory.toAbsolutePath().normalize();
+        List<Path> paths;
+        try (java.util.stream.Stream<Path> walk = Files.walk(directory)) {
+            paths = walk.sorted((a, b) -> b.compareTo(a)).toList();
+        }
+
+        for (Path path : paths) {
+            try {
+                if (path.equals(directory)) {
+                    Files.deleteIfExists(path);
+                } else if (realPathConfined(path, lexicalRoot)) {
+                    Files.delete(path);
+                } else {
+                    LOGGER.warning("Skipping deletion outside the configured output directory: " + path);
+                }
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Failed to delete: " + path, e);
+            }
+        }
+    }
+
+    private static boolean realPathConfined(Path candidate, Path lexicalRoot) {
+        if (Files.isSymbolicLink(candidate)) {
+            return false;
+        }
+        Path parent = candidate.getParent();
+        if (parent == null) {
+            return false;
+        }
+        try {
+            return parent.toRealPath().startsWith(lexicalRoot);
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     // Notification methods

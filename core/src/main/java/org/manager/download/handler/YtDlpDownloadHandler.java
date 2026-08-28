@@ -134,18 +134,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 // (no dedicated monitor thread per download)
                 installProgressListener(task, download);
 
-                // Start the download
-                task.start().whenComplete((result, throwable) -> {
-                    if (throwable != null && !task.isCancelled()) {
-                        download.setStatus(Download.Status.ERROR);
-                        download.setErrorMessage("Download failed: " + throwable.getMessage());
-                        notifyDownloadError(download, download.getErrorMessage());
-                    }
-                    // Clean up completed task and reclaim its dedicated
-                    // client/thread pool
-                    activeDownloadTasks.remove(download.getId());
-                    ytDlpFactory.removeDownloadTask(download.getId());
-                });
+                // Start the download; the completion watcher is generation
+                // scoped so a retired run's late callback stays inert
+                watchRun(download, task, task.start());
 
                 // Update download status
                 download.setStatus(Download.Status.DOWNLOADING);
@@ -181,14 +172,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
         return CompletableFuture.runAsync(() -> {
             YtDlpDownloadTask task = activeDownloadTasks.get(download.getId());
             if (task != null && download.getStatus() == Download.Status.PAUSED) {
-                // Resume the task
-                task.resume().whenComplete((result, throwable) -> {
-                    if (throwable != null) {
-                        download.setStatus(Download.Status.ERROR);
-                        download.setErrorMessage("Failed to resume: " + throwable.getMessage());
-                        notifyDownloadError(download, download.getErrorMessage());
-                    }
-                });
+                // Resume the task on a new run generation; the retired
+                // run's late callbacks cannot touch it
+                watchRun(download, task, task.resume());
 
                 download.setStatus(Download.Status.DOWNLOADING);
                 notifyDownloadResume(download);
@@ -197,6 +183,41 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 LOGGER.warning("Could not resume yt-dlp download: " + download.getId());
             }
         }, executor);
+    }
+
+    /**
+     * Completion watcher for one started run. Actions apply only while the
+     * observed run is still the task's current generation: a retired run's
+     * late callback (killed by pause, or racing a changeSettings
+     * replacement) must neither notify errors nor remove — and shut down
+     * the dedicated client of — the task that replaced it. A run that ends
+     * in PAUSED keeps its mapping so the subsequent resume finds it.
+     */
+    private void watchRun(Download download, YtDlpDownloadTask task,
+            CompletableFuture<String> started) {
+        final long generation = task.currentGeneration();
+        started.whenComplete((result, throwable) -> {
+            if (!task.isCurrentGeneration(generation)) {
+                LOGGER.info("Retired yt-dlp run of " + download.getId()
+                        + " settled after replacement; ignoring its completion");
+                return;
+            }
+            if (throwable != null && !task.isCancelled()) {
+                download.setStatus(Download.Status.ERROR);
+                download.setErrorMessage("Download failed: " + throwable.getMessage());
+                notifyDownloadError(download, download.getErrorMessage());
+            }
+            if (task.getStatus() == YtDlpDownloadTask.Status.PAUSED) {
+                LOGGER.info("yt-dlp run of " + download.getId()
+                        + " paused; keeping task mapping for resume");
+                return;
+            }
+            // Clean up completed task and reclaim its dedicated
+            // client/thread pool; scoped to this exact task so a
+            // replacement registration is never removed
+            activeDownloadTasks.remove(download.getId(), task);
+            ytDlpFactory.removeDownloadTask(download.getId(), task);
+        });
     }
 
     @Override
@@ -275,9 +296,10 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
      * Best-effort removal of a canceled yt-dlp download's output. Deletion
      * authority is exclusively the paths the task recorded from yt-dlp's own
      * output — display names are guesses, and guesses must not delete files.
-     * Every candidate is validated by {@link #eligibleOutputPath}; a missing
-     * or rejected path produces a warning and no deletion. The
-     * {@code .part} variant covers transfers canceled mid-flight.
+     * Every candidate is validated by {@link #eligibleOutputPath} and then by
+     * real-path containment: a symlinked subdirectory of the destination
+     * resolves outside it and must never redirect deletion. The {@code .part}
+     * variant covers transfers canceled mid-flight.
      *
      * @param download the canceled download
      * @param task the task if it is still known, or null
@@ -305,8 +327,17 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             }
             Path base = eligible.get();
             for (Path target : new Path[]{base, Path.of(base + ".part")}) {
+                if (!org.manager.util.PathSafety.isConfined(target, destination)) {
+                    DELETE_LOGGER.warning("Refusing to delete yt-dlp output whose real path escapes the destination: "
+                            + target);
+                    continue;
+                }
                 try {
-                    Files.deleteIfExists(target);
+                    if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        // NIO delete never follows a final symlink; the
+                        // NOFOLLOW existence check keeps that intent explicit
+                        Files.deleteIfExists(target);
+                    }
                 } catch (Exception e) {
                     DELETE_LOGGER.warning("Could not delete yt-dlp output " + target + ": " + e.getMessage());
                 }
@@ -354,7 +385,13 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 }
                 if (filename != null && !filename.isBlank()
                         && (download.getName() == null || download.getName().isBlank())) {
-                    download.setName(filename);
+                    // yt-dlp reports a destination that may carry path
+                    // segments; the model name is a plain file name only
+                    int slash = Math.max(filename.lastIndexOf('/'), filename.lastIndexOf('\\'));
+                    String displayName = slash >= 0 ? filename.substring(slash + 1) : filename;
+                    if (!displayName.isBlank()) {
+                        download.setName(displayName);
+                    }
                 }
                 download.setStatus(Download.Status.DOWNLOADING);
             }
@@ -401,7 +438,12 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 // task and start a new one with the settings stored on the
                 // Download (same mechanism as pause/resume).
                 if (task.pause()) {
-                    activeDownloadTasks.remove(download.getId());
+                    // Confirm the retired run's completion before
+                    // reclaiming its client so its late callback cannot
+                    // race the replacement about to start
+                    task.awaitRunCompletion(TASK_COMPLETION_AWAIT_TIMEOUT);
+                    activeDownloadTasks.remove(download.getId(), task);
+                    ytDlpFactory.removeDownloadTask(download.getId(), task);
                     startDownload(download).join();
                 } else {
                     LOGGER.warning("Could not pause yt-dlp download for settings change: "

@@ -93,7 +93,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         "uploadSpeed", // Current upload speed in bytes/second (BitTorrent)
         "connections", // Current connection count
         "numSeeders", // Connected seeder count (BitTorrent)
-        "infoHash" // Torrent info hash (present for BitTorrent downloads)
+        "infoHash", // Torrent info hash (present for BitTorrent downloads)
+        "followedBy", // GIDs spawned by this one (BT metadata -> payload)
+        "following", // GID this one was spawned by
+        "belongsTo" // Parent GID (e.g. metadata download of a payload)
     };
 
     private final Aria2Client aria2Client;
@@ -102,6 +105,16 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     /** The single shared batch-poll task covering every GID in pollTasks. */
     private volatile ScheduledFuture<?> batchPollTask;
     private final Map<String, Download> activeDownloads; // download ID -> Download object
+    /**
+     * Every aria2 GID belonging to a download (metalink files, magnet
+     * metadata + followedBy children). A download is only complete when
+     * this set drains.
+     */
+    private final Map<String, java.util.Set<String>> downloadGids;
+    /** Every GID ever tracked for a download (including retired ones). */
+    private final Map<String, java.util.Set<String>> downloadSeenGids;
+    /** Last-known per-GID progress {completed, total}, for aggregation. */
+    private final Map<String, Map<String, long[]>> downloadProgress;
     private final ScheduledExecutorService progressPoller;
     private final AtomicBoolean isShuttingDown;
     private final ObjectMapper objectMapper;
@@ -136,6 +149,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         this.aria2Client.setUseWebSocket(true);
         this.gidToIdMap = new ConcurrentHashMap<>();
         this.activeDownloads = new ConcurrentHashMap<>();
+        this.downloadGids = new ConcurrentHashMap<>();
+        this.downloadSeenGids = new ConcurrentHashMap<>();
+        this.downloadProgress = new ConcurrentHashMap<>();
         this.progressPoller = Executors.newScheduledThreadPool(1);
         this.pollTasks = ConcurrentHashMap.newKeySet();
         this.isShuttingDown = new AtomicBoolean(false);
@@ -187,20 +203,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 // Override output
                 overrideOutputPath(download);
 
-                String gid = null;
-
-                gid = switch (download.getType()) {
-                    // case HTTP:
-                    // case FTP:
-                    // case TOR:
-                    // gid = startHttpDownload(download);
-                    // break;
-                    // case TORRENT:
-                    // gid = startTorrentDownload(download);
-                    // break;
-                    // case MAGNET:
-                    // gid = startMagnetDownload(download);
-                    // break;
+                List<String> gids = switch (download.getType()) {
                     case ARIA2 -> {
                         // For aria2 downloads, we can use the same method for HTTP/FTP
                         yield switch (download.getUri().getScheme()) {
@@ -233,19 +236,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     default -> throw new IllegalArgumentException("Unsupported download type: " + download.getType());
                 };
 
-                if (gid != null) {
-                    // Store the GID -> ID mapping
-                    gidToIdMap.put(gid, download.getId());
+                if (gids != null && !gids.isEmpty()) {
+                    registerTrackedDownload(download, gids);
 
-                    // Store download reference for progress tracking
-                    storeDownloadReference(download);
-
-                    // Update download status and GID
-                    download.setGid(gid);
                     download.setStatus(Download.Status.DOWNLOADING);
 
-                    // Start progress polling
-                    startProgressPolling(gid);
+                    for (String gid : gids) {
+                        startProgressPolling(gid);
+                    }
 
                     // Notify listeners
                     notifyDownloadStart(download);
@@ -255,7 +253,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     notifyDownloadError(download, "Failed to start download with aria2");
                 }
 
-                return gid;
+                return gids != null && !gids.isEmpty() ? gids.get(0) : null;
             } catch (Exception e) {
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage(e.getMessage());
@@ -266,17 +264,38 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }, executor);
     }
 
+    /**
+     * Registers every GID of a download for polling and mapping. The first
+     * GID becomes the download's primary GID.
+     *
+     * @param download the download to track
+     * @param gids every aria2 GID the download consists of
+     */
+    void registerTrackedDownload(Download download, List<String> gids) {
+        java.util.Set<String> tracked = ConcurrentHashMap.newKeySet();
+        tracked.addAll(gids);
+        java.util.Set<String> seen = ConcurrentHashMap.newKeySet();
+        seen.addAll(gids);
+        for (String gid : gids) {
+            gidToIdMap.put(gid, download.getId());
+        }
+        downloadGids.put(download.getId(), tracked);
+        downloadSeenGids.put(download.getId(), seen);
+        downloadProgress.put(download.getId(), new ConcurrentHashMap<>());
+        download.setGid(gids.get(0));
+        storeDownloadReference(download);
+    }
+
     @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
             try {
                 ensureInitialized();
 
-                if (download.getGid() != null) {
-                    aria2Client.pause(download.getGid());
-                    download.setStatus(Download.Status.PAUSED);
-                    notifyDownloadPause(download);
-                }
+                List<String> gids = trackedGidsSnapshot(download);
+                applyToEveryGid(gids, "pause", aria2Client::pause);
+                download.setStatus(Download.Status.PAUSED);
+                notifyDownloadPause(download);
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to pause download: " + download.getName(), e);
                 throw new RuntimeException("Failed to pause download", e);
@@ -290,19 +309,233 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             try {
                 ensureInitialized();
 
-                if (download.getGid() != null) {
-                    aria2Client.unpause(download.getGid());
-                    download.setStatus(Download.Status.DOWNLOADING);
-                    notifyDownloadResume(download);
+                List<String> gids = trackedGidsSnapshot(download);
+                applyToEveryGid(gids, "unpause", aria2Client::unpause);
+                download.setStatus(Download.Status.DOWNLOADING);
+                notifyDownloadResume(download);
 
-                    // Restart progress polling
-                    startProgressPolling(download.getGid());
+                // Restart progress polling for every still-tracked GID
+                for (String gid : gids) {
+                    startProgressPolling(gid);
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to resume download: " + download.getName(), e);
                 throw new RuntimeException("Failed to resume download", e);
             }
         }, executor);
+    }
+
+    private static String unpauseLabel() {
+        return "unpause";
+    }
+
+    /**
+     * A snapshot of every tracked GID of the download, falling back to the
+     * primary GID when tracking was already cleaned up.
+     */
+    private List<String> trackedGidsSnapshot(Download download) {
+        java.util.Set<String> tracked = downloadGids.get(download.getId());
+        if (tracked != null && !tracked.isEmpty()) {
+            return new ArrayList<>(tracked);
+        }
+        return download.getGid() != null ? List.of(download.getGid()) : List.of();
+    }
+
+    /** An aria2 GID-scoped RPC that may fail; used with {@link #applyToEveryGid}. */
+    private interface GidOperation {
+
+        void apply(String gid) throws Exception;
+    }
+
+    /**
+     * Cancels every tracked GID with force-removal (deleteFiles=true path)
+     * and deletes the payload and control files aria2 reported for them.
+     * File paths are collected BEFORE removal (tellStatus files[].path);
+     * deletion happens only after the removal succeeded, and the download
+     * result entries are dropped last.
+     */
+    private void cancelAndDeleteFiles(Download download, List<String> gids) throws Exception {
+        List<String> reportedPaths = new ArrayList<>();
+        Exception firstFailure = null;
+        int failures = 0;
+        for (String gid : gids) {
+            try {
+                reportedPaths.addAll(collectReportedFilePaths(gid));
+                aria2Client.forceRemove(gid);
+            } catch (Aria2RpcException e) {
+                if (e.getMessage() != null && e.getMessage().contains("not found")) {
+                    // Already out of the daemon's queue (completed, errored,
+                    // or removed moments ago): removal is implicitly done
+                    // and the reported files stay deletion-authorized
+                    continue;
+                }
+                failures++;
+                if (firstFailure == null) {
+                    firstFailure = e;
+                }
+                LOGGER.log(Level.WARNING, "Failed to force-remove GID " + gid, e);
+            } catch (Exception e) {
+                failures++;
+                if (firstFailure == null) {
+                    firstFailure = e;
+                }
+                LOGGER.log(Level.WARNING, "Failed to force-remove GID " + gid, e);
+            }
+        }
+        if (!gids.isEmpty() && failures == gids.size()) {
+            throw firstFailure;
+        }
+        deleteAria2Payloads(download, reportedPaths);
+        for (String gid : gids) {
+            try {
+                aria2Client.removeDownloadResult(gid);
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to remove download result for GID " + gid, e);
+            }
+        }
+        // aria2 flushes .aria2 control files asynchronously: a stale write
+        // can land after the first sweep. Sweep again once every aria2
+        // interaction for this download is done.
+        deleteAria2Payloads(download, reportedPaths);
+    }
+
+    /**
+     * The file paths aria2 reported for a download (tellStatus files[].path).
+     * Empty when the status cannot be read.
+     */
+    private List<String> collectReportedFilePaths(String gid) {
+        try {
+            String json = aria2Client.tellStatus(gid, new String[] { "files" });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> status = objectMapper.readValue(json, Map.class);
+            List<String> paths = new ArrayList<>();
+            if (status.get("files") instanceof List<?> files) {
+                for (Object file : files) {
+                    if (file instanceof Map<?, ?> fileMap && fileMap.get("path") instanceof String path) {
+                        paths.add(path);
+                    }
+                }
+            }
+            return paths;
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to collect reported files for GID " + gid, e);
+            return List.of();
+        }
+    }
+
+    /**
+     * Deletion eligibility for an aria2-reported file path. Only a path the
+     * daemon itself reported may be deleted, and only when it cannot escape
+     * the destination: relative candidates are resolved against the
+     * normalized absolute destination and normalized again (collapsing
+     * {@code ..} segments before the containment check), absolute
+     * candidates must already sit beneath the destination.
+     * {@link Path#startsWith} compares name elements, so a sibling like
+     * {@code /dest-evil} never passes for {@code /dest}.
+     *
+     * @param normalizedDestination the normalized absolute destination dir
+     * @param candidate             the path exactly as aria2 reported it
+     * @return the normalized deletable path, or empty when rejected
+     */
+    static java.util.Optional<Path> eligibleAria2Path(Path normalizedDestination, String candidate) {
+        if (candidate == null || candidate.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        Path candidatePath = Path.of(candidate.trim());
+        Path normalized = candidatePath.isAbsolute()
+                ? candidatePath.normalize()
+                : normalizedDestination.resolve(candidatePath).normalize();
+        if (!normalized.startsWith(normalizedDestination)) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(normalized);
+    }
+
+    private static final java.util.logging.Logger DELETE_LOGGER =
+            java.util.logging.Logger.getLogger(Aria2DownloadHandler.class.getName());
+
+    /**
+     * Best-effort removal of a canceled aria2 download's payload and
+     * control files. Deletion authority is exclusively the paths aria2
+     * reported via tellStatus — display names are guesses, and guesses
+     * must not delete files. Every candidate is validated by
+     * {@link #eligibleAria2Path} and, at deletion time, by real-path
+     * containment beneath the destination so a symlinked path whose real
+     * location escapes the destination is refused. Each deletable path's
+     * {@code .aria2} control-file sibling is removed with it. A missing or
+     * rejected path produces a warning and no deletion.
+     *
+     * @param download      the canceled download
+     * @param reportedPaths the file paths aria2 reported for the download
+     */
+    static void deleteAria2Payloads(Download download, List<String> reportedPaths) {
+        Path destination = download.getDestination();
+        if (destination == null) {
+            DELETE_LOGGER.warning("Cannot delete aria2 payload for " + download.getId()
+                    + ": destination unknown");
+            return;
+        }
+        if (reportedPaths == null || reportedPaths.isEmpty()) {
+            DELETE_LOGGER.warning("No aria2 file paths reported for " + download.getId()
+                    + "; refusing deletion (display names are not deletion authority)");
+            return;
+        }
+        Path normalizedDestination = destination.toAbsolutePath().normalize();
+        Path realDestination;
+        try {
+            realDestination = destination.toRealPath();
+        } catch (IOException e) {
+            realDestination = normalizedDestination;
+        }
+        for (String candidate : reportedPaths) {
+            java.util.Optional<Path> eligible = eligibleAria2Path(normalizedDestination, candidate);
+            if (eligible.isEmpty()) {
+                DELETE_LOGGER.warning("Refusing to delete aria2 output outside the destination for "
+                        + download.getId() + ": " + candidate);
+                continue;
+            }
+            Path base = eligible.get();
+            for (Path target : new Path[] { base, Path.of(base + ".aria2") }) {
+                try {
+                    if (!Files.exists(target)) {
+                        continue;
+                    }
+                    Path real = target.toRealPath();
+                    if (!real.startsWith(realDestination)) {
+                        DELETE_LOGGER.warning("Refusing to delete aria2 output whose real path escapes "
+                                + "the destination for " + download.getId() + ": " + target);
+                        continue;
+                    }
+                    Files.deleteIfExists(real);
+                } catch (Exception e) {
+                    DELETE_LOGGER.warning("Could not delete aria2 output " + target + ": " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * Applies an operation to every tracked GID, best-effort per GID (one
+     * finished GID of a multi-GID download must not abort the others). The
+     * operation only fails when EVERY attempt failed.
+     */
+    private void applyToEveryGid(List<String> gids, String operation, GidOperation rpc) throws Exception {
+        Exception firstFailure = null;
+        int failures = 0;
+        for (String gid : gids) {
+            try {
+                rpc.apply(gid);
+            } catch (Exception e) {
+                failures++;
+                if (firstFailure == null) {
+                    firstFailure = e;
+                }
+                LOGGER.log(Level.WARNING, "Failed to " + operation + " GID " + gid, e);
+            }
+        }
+        if (!gids.isEmpty() && failures == gids.size()) {
+            throw firstFailure;
+        }
     }
 
     @Override
@@ -312,19 +545,18 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 ensureInitialized();
 
                 if (download.getGid() != null) {
-                    // Stop progress polling
-                    stopProgressPolling(download.getGid());
-
-                    // Cancel the download
-                    if (deleteFiles) {
-                        aria2Client.forceRemove(download.getGid());
-                    } else {
-                        aria2Client.remove(download.getGid());
+                    List<String> gids = trackedGidsSnapshot(download);
+                    for (String gid : gids) {
+                        stopProgressPolling(gid);
                     }
 
-                    // Clean up mappings
-                    gidToIdMap.remove(download.getGid());
-                    removeDownloadReference(download.getId());
+                    if (deleteFiles) {
+                        cancelAndDeleteFiles(download, gids);
+                    } else {
+                        applyToEveryGid(gids, "remove", aria2Client::remove);
+                    }
+
+                    untrackEntireDownload(download.getId());
 
                     download.setStatus(Download.Status.CANCELED);
                     notifyDownloadCanceled(download);
@@ -758,7 +990,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @param gid The aria2 GID
      * @param status The status information from aria2
      */
-    private void processProgressUpdate(String downloadId, String gid, Map<String, Object> status) {
+    void processProgressUpdate(String downloadId, String gid, Map<String, Object> status) {
         try {
             // Get the download object
             Download download = getDownloadById(downloadId);
@@ -767,6 +999,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 stopProgressPolling(gid);
                 return;
             }
+
+            // Related GIDs (followedBy/following/belongTo) may surface at any
+            // time: a finished magnet metadata download spawns its payload
+            // GID. Track every discovery before evaluating completion.
+            discoverRelatedGids(downloadId, status);
 
             // Extract aria2 status fields
             String downloadStatus = (String) status.get("status");
@@ -785,9 +1022,22 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             String numSeedersStr = (String) status.get("numSeeders");
             String infoHash = (String) status.get("infoHash");
 
+            // Record this GID's progress, then aggregate across every tracked
+            // GID so multi-file downloads report combined numbers
+            Map<String, long[]> perGid = downloadProgress.get(downloadId);
+            if (perGid != null) {
+                perGid.put(gid, new long[] { completedLength, totalLength });
+            }
+            long aggregatedCompleted = 0;
+            long aggregatedTotal = 0;
+            for (long[] progress : perGid != null ? perGid.values() : List.<long[]>of()) {
+                aggregatedCompleted += progress[0];
+                aggregatedTotal += progress[1];
+            }
+
             // Update download object
-            download.setDownloaded(completedLength);
-            download.setSize(totalLength);
+            download.setDownloaded(aggregatedCompleted);
+            download.setSize(aggregatedTotal);
             download.setSpeed(downloadSpeed);
             download.setUploadSpeed(Float.parseFloat(uploadSpeedStr != null ? uploadSpeedStr : "0"));
             download.setConnectionCount(connectionsStr != null ? Integer.parseInt(connectionsStr) : 0);
@@ -798,18 +1048,67 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
             // Calculate progress percentage
             float progress = 0;
-            if (totalLength > 0) {
-                progress = (float) completedLength / totalLength * 100;
+            if (aggregatedTotal > 0) {
+                progress = (float) aggregatedCompleted / aggregatedTotal * 100;
             }
 
             // Update download status based on aria2 status
             updateDownloadStatus(download, downloadStatus, gid);
 
             // Notify listeners about progress
-            notifyDownloadProgress(download, progress, completedLength, totalLength, downloadSpeed);
+            notifyDownloadProgress(download, progress, aggregatedCompleted, aggregatedTotal, downloadSpeed);
 
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error processing progress update for GID " + gid, e);
+        }
+    }
+
+    /**
+     * The tracked GIDs of a download. Test/inspection accessor for
+     * multi-GID ownership.
+     */
+    java.util.Set<String> trackedGidsFor(String downloadId) {
+        java.util.Set<String> tracked = downloadGids.get(downloadId);
+        return tracked != null ? java.util.Set.copyOf(tracked) : java.util.Set.of();
+    }
+
+    /**
+     * Registers GIDs discovered in a tellStatus result (followedBy array,
+     * following/belongTo strings) as part of the given download so they are
+     * polled and completion-gated too.
+     */
+    private void discoverRelatedGids(String downloadId, Map<String, Object> status) {
+        java.util.Set<String> tracked = downloadGids.get(downloadId);
+        java.util.Set<String> seen = downloadSeenGids.get(downloadId);
+        if (tracked == null || seen == null) {
+            return;
+        }
+        List<String> related = new ArrayList<>();
+        if (status.get("followedBy") instanceof List<?> followed) {
+            for (Object gid : followed) {
+                related.add(String.valueOf(gid));
+            }
+        }
+        for (String key : List.of("following", "belongsTo")) {
+            Object value = status.get(key);
+            if (value != null) {
+                related.add(String.valueOf(value));
+            }
+        }
+        for (String gid : related) {
+            if (gid == null || gid.isBlank() || gid.equals("null")) {
+                continue;
+            }
+            // First time EVER seen: track and poll it. GIDs already seen
+            // (still tracked, or retired after completing) must not be
+            // re-registered — a retired parent re-listed by its child's
+            // following/belongsTo reference would never drain the set.
+            if (seen.add(gid)) {
+                tracked.add(gid);
+                gidToIdMap.put(gid, downloadId);
+                LOGGER.info("Tracking related aria2 GID " + gid + " for download " + downloadId);
+                startProgressPolling(gid);
+            }
         }
     }
 
@@ -862,37 +1161,69 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 String errorMessage = "Aria2 download error for GID: " + gid;
                 download.setErrorMessage(errorMessage);
                 notifyDownloadError(download, errorMessage);
-                stopProgressPolling(gid);
-                // Clean up mappings
-                String downloadId = gidToIdMap.remove(gid);
-                if (downloadId != null) {
-                    removeDownloadReference(downloadId);
-                }
+                untrackEntireDownload(download.getId());
                 break;
             case "complete":
-                download.setStatus(Download.Status.COMPLETED);
-                notifyDownloadComplete(download);
-                stopProgressPolling(gid);
-                // Clean up mappings
-                String completedDownloadId = gidToIdMap.remove(gid);
-                if (completedDownloadId != null) {
-                    removeDownloadReference(completedDownloadId);
+                // The download completes only when EVERY tracked GID is
+                // complete: a finished magnet metadata GID (followedBy) or a
+                // finished metalink file must not complete the whole download
+                if (retireTrackedGid(download.getId(), gid)) {
+                    download.setStatus(Download.Status.COMPLETED);
+                    notifyDownloadComplete(download);
+                    removeDownloadReference(download.getId());
                 }
                 break;
             case "removed":
                 download.setStatus(Download.Status.CANCELED);
                 notifyDownloadCanceled(download);
-                stopProgressPolling(gid);
-                // Clean up mappings
-                String canceledDownloadId = gidToIdMap.remove(gid);
-                if (canceledDownloadId != null) {
-                    removeDownloadReference(canceledDownloadId);
-                }
+                untrackEntireDownload(download.getId());
                 break;
             default:
                 LOGGER.warning("Unknown aria2 status: " + aria2Status + " for GID: " + gid);
                 break;
         }
+    }
+
+    /**
+     * Retires one completed GID of a download. Returns true when the last
+     * tracked GID retired (the whole download is complete); sibling GIDs
+     * that are still running keep the download in progress.
+     */
+    private boolean retireTrackedGid(String downloadId, String gid) {
+        java.util.Set<String> tracked = downloadGids.get(downloadId);
+        if (tracked == null) {
+            return true;
+        }
+        tracked.remove(gid);
+        stopProgressPolling(gid);
+        gidToIdMap.remove(gid);
+        if (tracked.isEmpty()) {
+            downloadGids.remove(downloadId);
+            downloadSeenGids.remove(downloadId);
+            downloadProgress.remove(downloadId);
+            return true;
+        }
+        LOGGER.info("GID " + gid + " complete; " + tracked.size() + " tracked GID(s) remain for download "
+                + downloadId);
+        return false;
+    }
+
+    /**
+     * Drops every tracked GID of a download from polling and mapping, and
+     * releases the download reference. Used for terminal states that end
+     * the whole download (error, removed, cancel).
+     */
+    private void untrackEntireDownload(String downloadId) {
+        java.util.Set<String> tracked = downloadGids.remove(downloadId);
+        if (tracked != null) {
+            for (String gid : tracked) {
+                stopProgressPolling(gid);
+                gidToIdMap.remove(gid);
+            }
+        }
+        downloadSeenGids.remove(downloadId);
+        downloadProgress.remove(downloadId);
+        removeDownloadReference(downloadId);
     }
 
     /**
@@ -927,11 +1258,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * Starts an HTTP or FTP download using aria2.
      *
      * @param download The download to start
-     * @return The aria2 GID of the download
+     * @return the aria2 GIDs of the download (single element)
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
-    private String startHttpDownload(Download download) throws IOException, Aria2RpcException {
+    private List<String> startHttpDownload(Download download) throws IOException, Aria2RpcException {
         LOGGER.info("Starting HTTP download for: " + download.getUri());
         Map<String, Object> options = new HashMap<>();
         options.put("dir", download.getDestination().toString());
@@ -966,18 +1297,18 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         String gid = aria2Client.addUriRpc(uriArray, options);
         LOGGER.info("aria2.addUri returned GID: " + gid);
 
-        return gid;
+        return List.of(gid);
     }
 
     /**
      * Starts a torrent download using aria2.
      *
      * @param download The download to start
-     * @return The aria2 GID of the download
+     * @return the aria2 GIDs of the download (single element)
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
-    private String startTorrentDownload(Download download) throws IOException, Aria2RpcException {
+    private List<String> startTorrentDownload(Download download) throws IOException, Aria2RpcException {
         URI torrentUri = download.getUri();
 
         // Handle different URI schemes for torrent files
@@ -1038,18 +1369,19 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }
 
         LOGGER.info("Started torrent download with GID: " + gid + " for source: " + torrentSource);
-        return gid;
+        return List.of(gid);
     }
 
     /**
      * Starts a magnet link download using aria2.
      *
      * @param download The download to start
-     * @return The aria2 GID of the download
+     * @return the aria2 GIDs of the download (the metadata GID; the payload
+     *         GID is discovered later via tellStatus followedBy)
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
-    private String startMagnetDownload(Download download) throws IOException, Aria2RpcException {
+    private List<String> startMagnetDownload(Download download) throws IOException, Aria2RpcException {
         Map<String, Object> options = new HashMap<>();
         options.put("dir", download.getDestination().toString());
 
@@ -1070,7 +1402,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         // Start download with aria2
         String gid = aria2Client.addUriRpc(download.getUri().toString(), options);
-        return gid;
+        return List.of(gid);
     }
 
     /**
@@ -1079,11 +1411,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * else is not a downloadable local file and yields no GID.
      *
      * @param download The download to start
-     * @return The aria2 GID, or null if the file type is unsupported
+     * @return the aria2 GIDs, or null if the file type is unsupported
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
-    private String startLocalFileDownload(Download download) throws IOException, Aria2RpcException {
+    private List<String> startLocalFileDownload(Download download) throws IOException, Aria2RpcException {
         String path = download.getUri().getPath();
         if (path == null) {
             return null;
@@ -1106,11 +1438,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      *
      * @param download The download to start (uri points to a local or remote
      *            .metalink/.meta4 file)
-     * @return The aria2 GID of the download
+     * @return the aria2 GIDs, one per file in the metalink
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
-    private String startMetaLinkDownload(Download download) throws IOException, Aria2RpcException {
+    private List<String> startMetaLinkDownload(Download download) throws IOException, Aria2RpcException {
         URI metaLinkUri = download.getUri();
 
         // Handle different URI schemes for metalink files
@@ -1159,7 +1491,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
         }
 
-        String gid = aria2Client.addMetalink(metaLinkData, options);
+        List<String> gids = aria2Client.addMetalinkAll(metaLinkData, options);
 
         // Successful ingestion consumes the descriptor: delete it only when
         // ODM owns it (staged by the folder monitor beneath the staging
@@ -1168,8 +1500,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             DescriptorStaging.deleteIfStaged(localMetaLinkFile);
         }
 
-        LOGGER.info("Started Metalink download with GID: " + gid + " for source: " + metaLinkSource);
-        return gid;
+        LOGGER.info("Started Metalink download with " + gids.size() + " GID(s) for source: " + metaLinkSource);
+        return gids;
     }
 
     /**

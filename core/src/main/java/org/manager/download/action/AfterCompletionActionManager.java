@@ -9,6 +9,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.manager.download.Download;
@@ -19,20 +20,38 @@ import org.manager.download.Download;
 public class AfterCompletionActionManager {
 
     private static final Logger LOGGER = Logger.getLogger(AfterCompletionActionManager.class.getName());
+    private static final int DEFAULT_POOL_SIZE =
+            Math.max(8, Math.min(32, Runtime.getRuntime().availableProcessors() * 2));
+    private static final long TERMINATION_AWAIT_SECONDS = 10;
 
     private final Map<String, List<AfterCompletionAction>> downloadActions;
     private final List<AfterCompletionActionListener> listeners;
     private final ExecutorService executorService;
+    private final java.util.concurrent.atomic.AtomicBoolean shutdown =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /**
-     * Creates a new AfterCompletionActionManager.
+     * Creates a new AfterCompletionActionManager with a bounded daemon pool.
      */
     public AfterCompletionActionManager() {
+        this(DEFAULT_POOL_SIZE, defaultThreadFactory());
+    }
+
+    AfterCompletionActionManager(int poolSize, java.util.concurrent.ThreadFactory threadFactory) {
         // Written from UI threads while completions execute from worker
         // threads; a plain HashMap loses entries or throws CME on resize races.
         this.downloadActions = new java.util.concurrent.ConcurrentHashMap<>();
         this.listeners = new CopyOnWriteArrayList<>();
-        this.executorService = Executors.newCachedThreadPool();
+        this.executorService = Executors.newFixedThreadPool(
+                Math.max(1, poolSize), threadFactory);
+    }
+
+    private static java.util.concurrent.ThreadFactory defaultThreadFactory() {
+        return r -> {
+            Thread t = new Thread(r, "odm-after-completion");
+            t.setDaemon(true);
+            return t;
+        };
     }
 
     /**
@@ -148,15 +167,17 @@ public class AfterCompletionActionManager {
     }
 
     /**
-     * Submits a task to the executor, falling back to the common pool when
-     * the executor has already been shut down.
+     * Submits a task to the bounded pool. After shutdown the submission is
+     * rejected and logged — no silent common-pool fallback.
      */
     private CompletableFuture<Void> submitAsync(Runnable task) {
         try {
             return CompletableFuture.runAsync(task, executorService);
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            LOGGER.warning("Action executor is shut down; falling back to common pool");
-            return CompletableFuture.runAsync(task);
+            LOGGER.warning("Action executor is shut down; rejecting after-completion action submission");
+            CompletableFuture<Void> rejected = new CompletableFuture<>();
+            rejected.completeExceptionally(e);
+            return rejected;
         }
     }
 
@@ -179,10 +200,31 @@ public class AfterCompletionActionManager {
     }
 
     /**
-     * Shutdown the action manager and its executor service.
+     * Shutdown the action manager and its executor service with a bounded
+     * termination wait; submissions afterwards are rejected.
      */
     public void shutdown() {
-        executorService.shutdown();
+        if (shutdown.compareAndSet(false, true)) {
+            executorService.shutdown();
+            try {
+                if (!executorService.awaitTermination(TERMINATION_AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                    LOGGER.warning("Action executor did not terminate within "
+                            + TERMINATION_AWAIT_SECONDS + "s; forcing");
+                    executorService.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executorService.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    boolean isShutdown() {
+        return shutdown.get() || executorService.isShutdown();
+    }
+
+    boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+        return executorService.awaitTermination(timeout, unit);
     }
 
     // Notification methods

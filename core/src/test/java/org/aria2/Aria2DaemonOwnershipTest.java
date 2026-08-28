@@ -343,6 +343,80 @@ class Aria2DaemonOwnershipTest {
     }
 
     @Test
+    @DisplayName("A tokenless external daemon is refused even with a configured secret")
+    @Timeout(30)
+    void tokenlessExternalDaemonIsRefusedDespiteConfiguredSecret() throws Exception {
+        int port = BASE_PORT + 9;
+        // No --rpc-secret: this daemon accepts EVERY token, including wrong ones
+        startExternalDaemon(port, null);
+
+        odmClient = new Aria2Client(
+                ApplicationContext.getToolPath("aria2"), rpcUrl(port), "configured-secret-1");
+
+        IOException failure = assertThrows(IOException.class,
+                () -> odmClient.startAria2cWithRpc(null),
+                "a daemon that accepts a deliberately wrong token enforces no secret; "
+                        + "adoption would be an authentication bypass");
+        assertTrue(failure.getMessage().toLowerCase().contains("secret"),
+                "rejection message must be actionable and mention the secret: " + failure.getMessage());
+        assertEquals(Aria2Client.DaemonOwnership.STOPPED, odmClient.getDaemonOwnership(),
+                "an unauthenticated daemon must never be recorded as adopted");
+
+        // The external daemon is untouched: still answering tokenless RPC
+        Aria2Client externalProbe = new Aria2Client(
+                ApplicationContext.getToolPath("aria2"), rpcUrl(port), null);
+        assertDoesNotThrow(externalProbe::getVersion,
+                "refusing the endpoint must not disturb the foreign daemon");
+    }
+
+    @Test
+    @DisplayName("A failed owned-daemon shutdown keeps ownership while the daemon still answers RPC")
+    @Timeout(90)
+    void failedOwnedShutdownRetainsOwnershipUntilDaemonConfirmedDead() throws Exception {
+        int port = BASE_PORT + 10;
+        String secret = "owned-shutdown-secret";
+        java.util.concurrent.atomic.AtomicInteger forceAttempts = new java.util.concurrent.atomic.AtomicInteger();
+        odmClient = new Aria2Client(ApplicationContext.getToolPath("aria2"), rpcUrl(port), secret) {
+            @Override
+            public String shutdown() throws IOException, Aria2RpcException {
+                throw new IOException("simulated graceful shutdown failure");
+            }
+
+            @Override
+            public String forceShutdown() throws IOException, Aria2RpcException {
+                if (forceAttempts.incrementAndGet() == 1) {
+                    throw new IOException("simulated force shutdown failure");
+                }
+                return super.forceShutdown();
+            }
+        };
+
+        assertTrue(odmClient.startAria2cWithRpc(List.of("--dir=" + downloadDir)),
+                "self-launch must succeed");
+        assertEquals(Aria2Client.DaemonOwnership.ODM_STARTED, odmClient.getDaemonOwnership());
+
+        // First stop attempt: every shutdown RPC fails, the daemon survives
+        assertFalse(odmClient.stopAria2c(),
+                "a surviving daemon must be reported as not stopped");
+        assertEquals(Aria2Client.DaemonOwnership.ODM_STARTED, odmClient.getDaemonOwnership(),
+                "ownership must be retained while the daemon still answers RPC — "
+                        + "resetting it makes the surviving daemon unmanageable");
+
+        Aria2Client survivorProbe = new Aria2Client(
+                ApplicationContext.getToolPath("aria2"), rpcUrl(port), secret);
+        assertDoesNotThrow(survivorProbe::getVersion,
+                "the daemon survived the failed shutdown and must still answer RPC");
+
+        // A later stop must be able to retry the shutdown instead of
+        // treating the daemon as foreign or already gone
+        assertTrue(odmClient.stopAria2c(),
+                "a retry with a working escalation path must reap the daemon");
+        assertEquals(Aria2Client.DaemonOwnership.STOPPED, odmClient.getDaemonOwnership());
+        assertThrows(Exception.class, survivorProbe::getVersion,
+                "nothing may answer on the endpoint after the successful retry");
+    }
+
+    @Test
     @DisplayName("Reserved RPC arguments in extra args are filtered and cannot override ODM controls")
     void reservedRpcArgumentsAreFilteredFromExtraArgs() throws Exception {
         Aria2Client client = new Aria2Client(

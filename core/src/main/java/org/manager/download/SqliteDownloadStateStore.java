@@ -141,6 +141,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             }
         } catch (SQLException e) {
             LOGGER.log(Level.SEVERE, "Failed to load download state from " + databasePath, e);
+            throw new IllegalStateException("Failed to load download state from " + databasePath, e);
         }
         return new StateSnapshot(downloads, activeIds);
     }
@@ -178,6 +179,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         } catch (Exception e) {
             rollbackQuietly();
             LOGGER.log(Level.SEVERE, "Failed to save download state to " + databasePath, e);
+            throw new IllegalStateException("Failed to save download state to " + databasePath, e);
         } finally {
             restoreAutoCommitQuietly();
         }
@@ -298,7 +300,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         Download download = new Download(rs.getString("id"), readInstant(rs, "created_at"));
         download.setUri(URI.create(rs.getString("uri")));
         download.setGid(rs.getString("gid"));
-        download.setName(rs.getString("name"));
+        download.setName(sanitizePersistedName(rs.getString("name")));
         download.seOverrideOutputPath(rs.getInt("override_output_path") != 0);
         String mirrorsJson = rs.getString("mirrors");
         if (mirrorsJson != null && !mirrorsJson.isBlank()) {
@@ -341,6 +343,33 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             LOGGER.log(Level.WARNING, "Dropping unreadable settings for download " + download.getId(), e);
         }
         return download;
+    }
+
+    /**
+     * Restores a persisted name without failing startup on legacy rows:
+     * old builds stored raw yt-dlp destination strings (for example
+     * {@code channel/video.mkv}) that the strict {@link Download#setName}
+     * validation rejects. Such names are stripped to their plain file
+     * name; names that cannot be made safe ({@code .}, {@code ..}, blank)
+     * load as unset. New names keep the strict validation through the
+     * public API.
+     *
+     * @param persisted the raw {@code name} column value
+     * @return a name safe for {@link Download#setName}, or null
+     */
+    private static String sanitizePersistedName(String persisted) {
+        if (persisted == null) {
+            return null;
+        }
+        String name = persisted;
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        if (name.isBlank() || name.equals(".") || name.equals("..")) {
+            return null;
+        }
+        return name;
     }
 
     private void bindDownload(PreparedStatement insert, Download download, boolean activeBeforeExit)

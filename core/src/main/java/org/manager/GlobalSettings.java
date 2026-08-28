@@ -859,9 +859,11 @@ public class GlobalSettings {
     /**
      * Saves the settings to ${XDG_CONFIG_HOME:~/.config}/odm/settings.json so
      * they persist across restarts.
+     *
+     * @return true when the file was written, false when the write failed
      */
-    public void save() {
-        save(getConfigFilePath());
+    public boolean save() {
+        return save(getConfigFilePath());
     }
 
     /**
@@ -870,8 +872,9 @@ public class GlobalSettings {
      * mid-write can never truncate the live settings file.
      *
      * @param file the target settings file
+     * @return true when the file was written, false when the write failed
      */
-    void save(Path file) {
+    boolean save(Path file) {
         // Sync current values to properties
         syncToProperties();
 
@@ -893,6 +896,7 @@ public class GlobalSettings {
             }
             temp = null;
             LOGGER.fine("Settings saved to " + file);
+            return true;
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to save settings to " + file, e);
             if (temp != null) {
@@ -902,6 +906,7 @@ public class GlobalSettings {
                     LOGGER.log(Level.WARNING, "Failed to delete temporary settings file " + temp, cleanupError);
                 }
             }
+            return false;
         }
     }
 
@@ -968,8 +973,7 @@ public class GlobalSettings {
         concurrency.syncTo(custom);
         proxy.syncTo(custom);
         cleanup.syncTo(custom);
-        // toolPaths are runtime-only today (no persisted keys) — deliberately
-        // not synced; changing that is a format change requiring a fixture bump
+        toolPaths.syncTo(custom);
 
         custom.set("saveDownloadHistory", String.valueOf(saveDownloadHistory));
         if (defaultDownloadDirectory != null) {
@@ -989,6 +993,7 @@ public class GlobalSettings {
         concurrency.applyLoaded(custom);
         proxy.applyLoaded(custom);
         cleanup.applyLoaded(custom);
+        toolPaths.applyLoaded(custom);
 
         if (custom.containsKey("defaultDownloadDirectory")) {
             defaultDownloadDirectory = Paths.get(custom.get("defaultDownloadDirectory", null));
@@ -1233,17 +1238,24 @@ public class GlobalSettings {
     }
 
     /**
-     * External tool executable paths. Runtime-only today: the paths are not
-     * persisted to settings.json (see {@link #syncToProperties}); they are
-     * resolved through the ToolPaths seam and may be overridden per session.
+     * External tool executable paths. Custom (non-default) paths persist to
+     * settings.json; default paths are not written so legacy files and
+     * default installs see no config churn.
      */
     static final class ToolPathSettings {
-        private volatile String aria2Path = "aria2c";
-        private volatile String ytDlpPath = "yt-dlp";
-        private volatile String httrackPath = "httrack";
-        private volatile String curlPath = "curl";
-        private volatile String proxychainsPath = "proxychains";
-        private volatile String torPath = "tor";
+        private static final String DEFAULT_ARIA2 = "aria2c";
+        private static final String DEFAULT_YTDLP = "yt-dlp";
+        private static final String DEFAULT_HTTRACK = "httrack";
+        private static final String DEFAULT_CURL = "curl";
+        private static final String DEFAULT_PROXYCHAINS = "proxychains";
+        private static final String DEFAULT_TOR = "tor";
+
+        private volatile String aria2Path = DEFAULT_ARIA2;
+        private volatile String ytDlpPath = DEFAULT_YTDLP;
+        private volatile String httrackPath = DEFAULT_HTTRACK;
+        private volatile String curlPath = DEFAULT_CURL;
+        private volatile String proxychainsPath = DEFAULT_PROXYCHAINS;
+        private volatile String torPath = DEFAULT_TOR;
 
         void setAria2Path(String value) {
             this.aria2Path = value;
@@ -1278,6 +1290,44 @@ public class GlobalSettings {
             paths.put("proxychains", proxychainsPath);
             paths.put("tor", torPath);
             return paths;
+        }
+
+        void syncTo(CustomProperties bag) {
+            syncPath(bag, "aria2Path", aria2Path, DEFAULT_ARIA2);
+            syncPath(bag, "ytDlpPath", ytDlpPath, DEFAULT_YTDLP);
+            syncPath(bag, "httrackPath", httrackPath, DEFAULT_HTTRACK);
+            syncPath(bag, "curlPath", curlPath, DEFAULT_CURL);
+            syncPath(bag, "proxychainsPath", proxychainsPath, DEFAULT_PROXYCHAINS);
+            syncPath(bag, "torPath", torPath, DEFAULT_TOR);
+        }
+
+        private static void syncPath(CustomProperties bag, String key, String value, String fallback) {
+            if (value != null && !value.isBlank() && !value.equals(fallback)) {
+                bag.set(key, value);
+            } else {
+                bag.remove(key);
+            }
+        }
+
+        void applyLoaded(CustomProperties bag) {
+            if (bag.containsKey("aria2Path")) {
+                aria2Path = bag.get("aria2Path", null);
+            }
+            if (bag.containsKey("ytDlpPath")) {
+                ytDlpPath = bag.get("ytDlpPath", null);
+            }
+            if (bag.containsKey("httrackPath")) {
+                httrackPath = bag.get("httrackPath", null);
+            }
+            if (bag.containsKey("curlPath")) {
+                curlPath = bag.get("curlPath", null);
+            }
+            if (bag.containsKey("proxychainsPath")) {
+                proxychainsPath = bag.get("proxychainsPath", null);
+            }
+            if (bag.containsKey("torPath")) {
+                torPath = bag.get("torPath", null);
+            }
         }
 
         void copyFrom(ToolPathSettings other) {

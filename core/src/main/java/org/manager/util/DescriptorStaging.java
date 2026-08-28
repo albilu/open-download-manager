@@ -2,11 +2,15 @@ package org.manager.util;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.UUID;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -23,6 +27,13 @@ import java.util.logging.Logger;
  * successful ingestion), so no download-model or persistence-schema field
  * is required. Manually selected torrent or Metalink files remain
  * user-owned and are never auto-deleted.
+ *
+ * <p>
+ * The staged name is deterministic per source file ({@code <16-hex source
+ * key>-<original name>}), so one staged entry exists per source: repeated
+ * rounds after a failed announcement replace the retained entry instead of
+ * accumulating copies. Startup reconciliation derives the original name
+ * back from the key prefix.
  */
 public final class DescriptorStaging {
 
@@ -44,11 +55,13 @@ public final class DescriptorStaging {
     }
 
     /**
-     * Copies a descriptor into the staging root under a collision-resistant
-     * name ({@code <uuid>-<original name>}) created with {@code CREATE_NEW},
-     * so an existing staged file can never be replaced. The copy is finished
-     * (stream closed) before this method returns, making the staged bytes
-     * durable for later asynchronous consumers.
+     * Copies a descriptor into the staging root under a name deterministic
+     * for the source ({@code <source key>-<original name>}). One staged
+     * entry exists per source: when a previous failed round already left an
+     * entry, its bytes are replaced (atomically when possible) so repeated
+     * failures cannot accumulate copies. The copy is finished (stream
+     * closed) before this method returns, making the staged bytes durable
+     * for later asynchronous consumers.
      *
      * @param source the detected descriptor file to stage
      * @param stagingRoot the exclusive staging directory
@@ -58,22 +71,141 @@ public final class DescriptorStaging {
      */
     public static Path stageFile(Path source, Path stagingRoot) throws IOException {
         Files.createDirectories(stagingRoot);
-        String stagedName = UUID.randomUUID() + "-" + source.getFileName();
+        String stagedName = sourceKey(source) + "-" + source.getFileName();
         Path staged = stagingRoot.resolve(stagedName);
+        if (Files.exists(staged)) {
+            Path temp = stagingRoot.resolve(stagedName + ".replacing-" + java.util.UUID.randomUUID());
+            try (OutputStream out = Files.newOutputStream(temp,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                Files.copy(source, out);
+            } catch (IOException copyFailure) {
+                deleteQuietly(temp);
+                throw copyFailure;
+            }
+            try {
+                Files.move(temp, staged, StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException fallback) {
+                Files.move(temp, staged, StandardCopyOption.REPLACE_EXISTING);
+            }
+            return staged;
+        }
         try (OutputStream out = Files.newOutputStream(staged,
                 StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
             Files.copy(source, out);
         } catch (IOException copyFailure) {
             // A partial staged file is not a durable descriptor; remove it
             // best-effort so consumers never see truncated input
-            try {
-                Files.deleteIfExists(staged);
-            } catch (IOException cleanupFailure) {
-                copyFailure.addSuppressed(cleanupFailure);
+            deleteQuietly(staged);
+            FileAlreadyExistsException raced
+                    = copyFailure instanceof FileAlreadyExistsException already ? already : null;
+            if (raced != null) {
+                // A concurrent round won the CREATE_NEW race for the same
+                // deterministic name: its entry is the durable copy
+                LOGGER.fine("Concurrent staging round already produced " + staged);
+                return staged;
             }
             throw copyFailure;
         }
         return staged;
+    }
+
+    /**
+     * Derives the watched source file name from a staged entry's name, or
+     * null when the entry is not a reconciliation candidate (foreign name,
+     * transient replacement file, or non-descriptor).
+     *
+     * @param stagedFile the staged entry
+     * @return the original file name, or null
+     */
+    public static String originalNameOf(Path stagedFile) {
+        if (stagedFile == null) {
+            return null;
+        }
+        String name = stagedFile.getFileName().toString();
+        if (name.length() < 18 || name.charAt(16) != '-') {
+            return null;
+        }
+        String key = name.substring(0, 16);
+        for (int i = 0; i < key.length(); i++) {
+            char c = key.charAt(i);
+            boolean hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+            if (!hex) {
+                return null;
+            }
+        }
+        String original = name.substring(17);
+        String lower = original.toLowerCase();
+        if (lower.endsWith(".torrent") || lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
+            return original;
+        }
+        return null;
+    }
+
+    /**
+     * The 16-hex staging key prefix a source file maps to. Reconciliation
+     * uses it to scope shared staging entries back to the watched folder
+     * that staged them: an entry whose key does not match any source of
+     * the reconciled folder belongs to another folder and must not be
+     * re-announced or deleted on its behalf.
+     *
+     * @param source the watched source file
+     * @return the key prefix of {@link #stageFile}'s staged name
+     */
+    public static String sourceKeyPrefix(Path source) {
+        return sourceKey(source);
+    }
+
+    private static String sourceKey(Path source) {
+        String absolute = source.toAbsolutePath().normalize().toString();
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(absolute.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest).substring(0, 16);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 is mandated for the JVM; unreachable
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    private static void deleteQuietly(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException cleanupFailure) {
+            LOGGER.log(Level.FINE, "Failed to remove partial staged file " + file, cleanupFailure);
+        }
+    }
+
+    /**
+     * Marks a staged descriptor as successfully dispatched to the listeners:
+     * the asynchronous download queue now owns the staged bytes. Startup
+     * reconciliation must not re-announce dispatched entries (that would
+     * create duplicate downloads); an entry without the marker is an orphan
+     * of a crashed round.
+     *
+     * @param staged the staged copy whose dispatch succeeded
+     */
+    public static void markDispatched(Path staged) {
+        try {
+            Files.writeString(dispatchMarker(staged), "dispatched");
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to mark staged descriptor as dispatched: "
+                    + staged + " (startup reconciliation may re-announce it)", e);
+        }
+    }
+
+    /**
+     * Whether the staged descriptor was already dispatched to the listeners.
+     *
+     * @param staged the staged copy
+     * @return true when a dispatch marker exists
+     */
+    public static boolean isDispatched(Path staged) {
+        return staged != null && Files.exists(dispatchMarker(staged));
+    }
+
+    private static Path dispatchMarker(Path staged) {
+        return staged.resolveSibling(staged.getFileName() + ".dispatched");
     }
 
     /**
@@ -121,6 +253,7 @@ public final class DescriptorStaging {
         }
         try {
             Files.deleteIfExists(file);
+            Files.deleteIfExists(dispatchMarker(file));
             return true;
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to delete staged descriptor: " + file, e);

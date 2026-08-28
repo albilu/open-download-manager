@@ -646,6 +646,51 @@ class DownloadTest {
     }
 
     @Nested
+    @DisplayName("Name Safety Tests")
+    class NameSafetyTests {
+
+        @ParameterizedTest
+        @ValueSource(strings = {
+            "a/b",
+            "../victim",
+            "..",
+            ".",
+            "/etc/passwd",
+            "sub\\dir",
+            "a\\..\\b"
+        })
+        @DisplayName("Names with separators or directory references are rejected")
+        void unsafeNamesAreRejected(String name) {
+            assertThrows(IllegalArgumentException.class, () -> download.setName(name),
+                    "name must be rejected: " + name);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {
+            "file.iso",
+            "my video [1080p].mkv",
+            "file..mp4",
+            "..hidden",
+            "a...b",
+            "trailing."
+        })
+        @DisplayName("Legitimate file names keep working")
+        void legitimateNamesAreAccepted(String name) {
+            assertDoesNotThrow(() -> download.setName(name));
+            assertEquals(name, download.getName());
+        }
+
+        @Test
+        @DisplayName("Null and empty names remain permitted")
+        void nullAndEmptyRemainPermitted() {
+            assertDoesNotThrow(() -> download.setName(null));
+            assertNull(download.getName());
+            assertDoesNotThrow(() -> download.setName(""));
+            assertEquals("", download.getName());
+        }
+    }
+
+    @Nested
     @DisplayName("ToString and Object Methods Tests")
     class ObjectMethodsTests {
 

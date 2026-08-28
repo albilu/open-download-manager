@@ -184,7 +184,10 @@ class AfterCompletionActionManagerTest {
     @Test
     @DisplayName("Should handle concurrent action execution")
     void shouldHandleConcurrentActionExecution() throws Exception {
-        int actionCount = 10;
+        // Six rendezvous actions must run simultaneously on the bounded
+        // pool (bounded to at least 8 workers); the old count of 10 assumed
+        // an unbounded cached pool
+        int actionCount = 6;
         CountDownLatch startLatch = new CountDownLatch(actionCount);
         CountDownLatch finishLatch = new CountDownLatch(actionCount);
 

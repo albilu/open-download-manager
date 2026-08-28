@@ -104,11 +104,12 @@ class ManagerShutdownHooks {
                     isShuttingDown.set(true);
                     servicesScheduler.stopStateSnapshotJob();
                     proxyRotation.cancelHealthChecks();
-                });
+                }, 30, true);
     }
 
     private void registerDownloadHooks() {
-        // Phase 2: Handle downloads
+        // Phase 2: Handle downloads (pause failures are logged and stay
+        // non-fatal: state persistence below still records them)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.DOWNLOADS,
                 "track-and-pause-active-downloads",
@@ -127,11 +128,11 @@ class ManagerShutdownHooks {
                     } catch (Exception e) {
                         LOGGER.log(Level.WARNING, "Failed to pause all downloads during shutdown", e);
                     }
-                });
+                }, 35, true);
     }
 
     private void registerServiceHooks() {
-        // Phase 3: Cleanup manager
+        // Phase 3: Cleanup manager (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.SERVICES,
                 "cleanup-manager",
@@ -141,37 +142,45 @@ class ManagerShutdownHooks {
                     } catch (Exception e) {
                         LOGGER.log(Level.WARNING, "Failed to shutdown cleanup manager", e);
                     }
-                });
+                }, 35, false);
 
-        // Phase 5: Shutdown handlers
+        // Phase 5: Shutdown handlers — essential: engine teardown failures
+        // must surface through the manager's shutdown future
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.SERVICES,
                 "shutdown-handlers",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown handlers"), "shutdown handlers"));
+                () -> {
+                    servicesScheduler.stopTrackerRefreshJob();
+                    handlerFactory.get().shutdownHandlers();
+                }, 35, true);
 
-        // Phase 6: Shutdown action manager
+        // Phase 6: Shutdown action manager (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.SERVICES,
                 "shutdown-action-manager",
                 () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown action manager"),
-                        "shutdown action manager"));
+                        "shutdown action manager"),
+                30, false);
 
-        // Phase 3: Shutdown clipboard service
+        // Phase 3: Shutdown clipboard service (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.SERVICES,
                 "shutdown-clipboard-service",
                 () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown clipboard service"),
-                        "shutdown clipboard service"));
+                        "shutdown clipboard service"),
+                30, false);
 
-        // Phase 3: Shutdown folder monitoring services
+        // Phase 3: Shutdown folder monitoring services (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.SERVICES,
                 "shutdown-folder-monitoring",
-                folderWatching::shutdown);
+                folderWatching::shutdown,
+                30, false);
     }
 
     private void registerPersistenceHooks() {
-        // Phase 4: Save state
+        // Phase 4: Save state — essential: losing persisted state is the
+        // failure graceful shutdown exists to prevent
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.PERSISTENCE,
                 "save-state",
@@ -179,41 +188,44 @@ class ManagerShutdownHooks {
                     try {
                         saveState.get().get(30, TimeUnit.SECONDS);
                     } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to save state during shutdown", e);
+                        throw new RuntimeException("State save failed during shutdown", e);
                     }
-                });
+                }, 35, true);
     }
 
     private void registerCleanupHooks() {
-        // Phase 7: Shutdown dependency manager
+        // Phase 7: Shutdown dependency manager (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.RESOURCES,
                 "shutdown-dependency-manager",
                 () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown dependency manager"),
-                        "shutdown dependency manager"));
+                        "shutdown dependency manager"),
+                30, false);
 
-        // Phase 8: Shutdown container
+        // Phase 8: Shutdown container (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.CLEANUP,
                 "shutdown-container",
                 () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown container"),
-                        "shutdown container"));
+                        "shutdown container"),
+                30, false);
 
         // Phase 9: Close the SQLite state database after every save is done
+        // (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.CLEANUP,
                 "close-state-store",
-                () -> ErrorHandler.executeSafely(stateStore::close, "close state store"));
+                () -> ErrorHandler.executeSafely(stateStore::close, "close state store"),
+                30, false);
 
-        // Phase 10: Tear down the shared thread pools LAST, after every hook
-        // that submits work to them (save-state, pause-all, handler shutdown)
-        // has completed. ExecutorServiceManager deliberately registers no JVM
-        // hook of its own: one would race this coordinator and reject the
-        // persistence phase's saveState() execution.
+        // Phase 10: Tear down the manager's thread pools LAST, after every
+        // hook that submits work to them (save-state, pause-all, handler
+        // shutdown) has completed.
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.CLEANUP,
                 "shutdown-executors",
-                () -> ErrorHandler.executeSafely(executorManager::shutdown, "shutdown executors"));
+                () -> ErrorHandler.executeSafely(executorManager::shutdown, "shutdown executors"),
+                30, false);
     }
 
     /**

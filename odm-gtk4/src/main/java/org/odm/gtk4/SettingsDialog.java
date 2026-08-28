@@ -116,6 +116,11 @@ public class SettingsDialog {
         dialog.present();
     }
 
+    /** Current status label text (test seam for save-outcome reporting). */
+    String statusText() {
+        return statusLabel.getLabel();
+    }
+
     // ---- widget helpers ----
 
     /** Fills the scheduler grid toggles from a persisted hex grid. */
@@ -301,6 +306,12 @@ public class SettingsDialog {
     }
 
     private void onApply() {
+        applySettings();
+    }
+
+    /** Applies every setting and persists them, updating the status label
+     * with the actual save outcome. Package-private for presenter tests. */
+    void applySettings() {
         GlobalSettings s = downloadManager.getGlobalSettings();
         // tor proxy default
         s.setProperty("tor.enabled", String.valueOf(torSwitchGet()));
@@ -400,9 +411,15 @@ public class SettingsDialog {
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());
 
-        s.save();
+        boolean saved = s.save();
         downloadManager.setGlobalSettings(s);
-        statusLabel.setLabel("Settings saved.");
-        LOGGER.info("Settings saved to " + GlobalSettings.getConfigFilePath());
+        if (saved) {
+            statusLabel.setLabel("Settings saved.");
+            LOGGER.info("Settings saved to " + GlobalSettings.getConfigFilePath());
+        } else {
+            statusLabel.setLabel("Failed to save settings — check permissions for "
+                    + GlobalSettings.getConfigFilePath());
+            LOGGER.severe("Failed to save settings to " + GlobalSettings.getConfigFilePath());
+        }
     }
 }

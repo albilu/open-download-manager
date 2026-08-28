@@ -28,6 +28,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
     // Written on executor threads by initialize()/shutdown(), read by
     // ensureInitialized() from arbitrary caller threads
     protected volatile boolean initialized = false;
+    private volatile boolean shutdownEntered = false;
 
     /**
      * Creates a new AbstractDownloadHandler.
@@ -66,7 +67,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
 
     @Override
     public CompletableFuture<Void> initialize() {
-        return CompletableFuture.runAsync(() -> {
+        return runOnExecutor(() -> {
             try {
                 doInitialize();
                 initialized = true;
@@ -75,12 +76,18 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
                 LOGGER.log(Level.SEVERE, "Failed to initialize " + getSupportedType() + " download handler", e);
                 throw new RuntimeException("Failed to initialize download handler", e);
             }
-        }, executor);
+        });
     }
 
     @Override
     public CompletableFuture<Void> shutdown() {
-        return CompletableFuture.runAsync(() -> {
+        if (shutdownEntered) {
+            // Idempotent teardown: a handler registered under several
+            // download types must tolerate repeated shutdown calls
+            return CompletableFuture.completedFuture(null);
+        }
+        shutdownEntered = true;
+        return runOnExecutor(() -> {
             try {
                 doShutdown();
                 initialized = false;
@@ -89,7 +96,26 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
                 LOGGER.log(Level.SEVERE, "Failed to shut down " + getSupportedType() + " download handler", e);
                 throw new RuntimeException("Failed to shut down download handler", e);
             }
-        }, executor);
+        });
+    }
+
+    /**
+     * Runs the task on the handler's executor, or synchronously when no
+     * executor was provided (the constructor tolerates null): an unguarded
+     * runAsync would fail asynchronously and the failure got discarded.
+     */
+    private CompletableFuture<Void> runOnExecutor(Runnable task) {
+        if (executor != null) {
+            return CompletableFuture.runAsync(task, executor);
+        }
+        try {
+            task.run();
+            return CompletableFuture.completedFuture(null);
+        } catch (RuntimeException e) {
+            CompletableFuture<Void> failed = new CompletableFuture<>();
+            failed.completeExceptionally(e);
+            return failed;
+        }
     }
 
     /**

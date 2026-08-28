@@ -589,6 +589,7 @@ public class YtDlpClient {
     public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
             ProgressCallback callback, String processId) {
         return CompletableFuture.supplyAsync(() -> {
+            org.manager.tools.ExternalProcessRegistry.Registration registration = null;
             try {
                 // Build command
                 List<String> command = buildDownloadCommand(url, settings, outputPath);
@@ -606,7 +607,7 @@ public class YtDlpClient {
 
                 LOGGER.info("Starting yt-dlp download: " + String.join(" ", command));
                 Process process = pb.start();
-                activeProcesses.register(processId, process);
+                registration = activeProcesses.register(processId, process);
 
                 // Monitor progress
                 String filename = null;
@@ -663,7 +664,9 @@ public class YtDlpClient {
                 }
                 throw new RuntimeException("Download failed: " + e.getMessage(), e);
             } finally {
-                activeProcesses.remove(processId);
+                if (registration != null) {
+                    registration.unregister();
+                }
             }
         }, executor);
     }

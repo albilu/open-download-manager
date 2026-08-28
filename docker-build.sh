@@ -110,6 +110,20 @@ test() {
         bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 & sleep 2 && mvn test"
 }
 
+# Run the full suite including integration/E2E (-Pintegration clears the
+# hermetic surefire excludes)
+test_integration() {
+    prepare_m2
+    log "Running integration tests..."
+    docker run --rm \
+        -v "$(pwd):/app" \
+        -v "$HOME/.m2:/home/developer/.m2" \
+        -e PROXYCHAINS_AVAILABLE=true \
+        -e ENABLE_NETWORK_TESTS=true \
+        $IMAGE_NAME \
+        bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 & sleep 2 && mvn test -Pintegration"
+}
+
 # Build application
 compile() {
     prepare_m2
@@ -150,6 +164,7 @@ help() {
     echo "  build     Build Docker image"
     echo "  dev       Start development container"
     echo "  test      Run tests"
+    echo "  test-integration  Run tests including integration/E2E suites (-Pintegration)"
     echo "  compile   Build application"
     echo "  run       Run application with GUI support"
     echo "  debug     Run application in debug mode (port 5005)"
@@ -163,6 +178,7 @@ case "${1:-help}" in
     build)   build ;;
     dev)     build && dev ;;
     test)    build && test ;;
+    test-integration) build && test_integration ;;
     compile) build && compile ;;
     run)     build && run ;;
     debug)   build && debug ;;

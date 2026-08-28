@@ -159,6 +159,35 @@ class ProxychainsClientTest {
             }
         });
 
+        // Setup speed-format handler: deterministic chunked writes over
+        // ~5s so aria2's 1s summary interval yields several distinct
+        // progress lines with non-zero speeds, without any WAN dependency
+        mockServer.createContext("/speed-test.bin", new HttpHandler() {
+            @Override
+            public void handle(HttpExchange exchange) throws IOException {
+                byte[] chunk = new byte[128 * 1024];
+                java.util.Arrays.fill(chunk, (byte) 'S');
+                int totalChunks = 80; // 10 MiB total
+                long totalBytes = (long) chunk.length * totalChunks;
+
+                exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+                exchange.getResponseHeaders().set("Content-Length", String.valueOf(totalBytes));
+                exchange.sendResponseHeaders(200, totalBytes);
+
+                try (OutputStream os = exchange.getResponseBody()) {
+                    for (int i = 0; i < totalChunks; i++) {
+                        os.write(chunk);
+                        os.flush();
+                        try {
+                            Thread.sleep(60);
+                        } catch (InterruptedException ignored) {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
         // Setup error handler
         mockServer.createContext("/error", new HttpHandler() {
             @Override
@@ -612,28 +641,61 @@ class ProxychainsClientTest {
 
     @Test
     @DisplayName("Should parse different speed formats correctly")
-    @Timeout(30)
+    @Timeout(60)
     void shouldParseDifferentSpeedFormats() throws Exception {
         if (client == null) {
             return; // Skip if proxychains not available
         }
 
-        Download download = createTestDownload("speed-test.bin", "https://ash-speed.hetzner.com/100MB.bin");
+        // Hermetic: deterministic chunked payload from the local mock
+        // server (no WAN dependency, no flaky remote throughput). tor's
+        // exit policy refuses loopback targets, so a dedicated config
+        // exempts 127.0.0.0/8 from the proxy chain — proxychains itself
+        // stays in the execution path, only the localhost hop goes direct.
+        Path localConfig = tempDir.resolve("proxychains-local.conf");
+        Files.writeString(localConfig, """
+                strict_chain
+                localnet 127.0.0.0/255.0.0.0
+                [ProxyList]
+                socks4 127.0.0.1 9050
+                """);
+        ProxychainsClient localClient = new ProxychainsClient(TEST_PROXYCHAINS_PATH, localConfig.toString());
 
-        CountDownLatch progressLatch = new CountDownLatch(3); // Wait for multiple progress updates
+        Download download = createTestDownload("speed-test.bin", mockServerUrl + "/speed-test.bin");
+
+        int requiredProgressSamples = 3;
+        CountDownLatch progressLatch = new CountDownLatch(requiredProgressSamples);
+        CountDownLatch completeLatch = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicLong lastReportedBytes = new java.util.concurrent.atomic.AtomicLong();
 
         doAnswer(invocation -> {
             float speed = invocation.getArgument(4);
-            if (speed > 0) {
+            long downloadedBytes = invocation.getArgument(2);
+            if (speed > 0 && downloadedBytes > lastReportedBytes.getAndSet(downloadedBytes)) {
                 progressLatch.countDown();
             }
             return null;
         }).when(mockListener).onDownloadProgress(any(Download.class), anyFloat(), anyLong(), anyLong(), anyFloat());
 
-        Map<String, String> options = new HashMap<>();
-        client.startDownload(download, mockListener, options);
+        doAnswer(invocation -> {
+            completeLatch.countDown();
+            return null;
+        }).when(mockListener).onDownloadComplete(any(Download.class));
 
-        // Wait for progress updates with speed
-        assertTrue(progressLatch.await(25, TimeUnit.SECONDS), "Should receive progress updates with speed");
+        Map<String, String> options = new HashMap<>();
+        try {
+            localClient.startDownload(download, mockListener, options);
+
+            assertTrue(progressLatch.await(40, TimeUnit.SECONDS),
+                    "Should receive distinct progress updates with positive speed");
+            assertTrue(completeLatch.await(40, TimeUnit.SECONDS), "Download should complete within timeout");
+
+            Path downloadedFile = tempDir.resolve("speed-test.bin");
+            assertTrue(Files.exists(downloadedFile), "Downloaded file should exist");
+            assertEquals(128L * 1024 * 80, Files.size(downloadedFile),
+                    "The full deterministic payload must be downloaded");
+        } finally {
+            localClient.shutdown();
+        }
     }
 }

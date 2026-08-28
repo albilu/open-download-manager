@@ -65,7 +65,8 @@ public class MainWindow {
     private final DownloadManager downloadManager;
 
     private final DownloadListPresenter listPresenter;
-    private final DetailTabsPresenter detailTabsPresenter;
+    final DetailTabsPresenter detailTabsPresenter;
+    private final java.util.concurrent.ExecutorService backgroundExecutor;
 
     // Listeners registered with core services; kept as fields so the window
     // can detach them on final close instead of leaking refresh work forever
@@ -127,6 +128,11 @@ public class MainWindow {
                 this::refresh);
         this.detailTabsPresenter = new DetailTabsPresenter(downloadManager, trackersStore,
                 peersStore, filesStore, () -> selectedDownload);
+        this.backgroundExecutor = java.util.concurrent.Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "odm-window-fetch");
+            t.setDaemon(true);
+            return t;
+        });
         if (app != null) {
             window.setApplication(app);
         }
@@ -305,7 +311,17 @@ public class MainWindow {
 
     /** Really destroys the window (bypasses the close-request handler). */
     public void dispose() {
+        shutdownBackgroundWork();
         window.destroy();
+    }
+
+    /**
+     * Stops the window-owned executors (detail-tab fetches and background
+     * I/O). Idempotent; part of every real teardown path.
+     */
+    private void shutdownBackgroundWork() {
+        detailTabsPresenter.shutdown();
+        backgroundExecutor.shutdown();
     }
 
     /**
@@ -314,6 +330,7 @@ public class MainWindow {
      * dispatching refresh work to a dead window forever.
      */
     private void removeWindowListeners() {
+        shutdownBackgroundWork();
         if (windowDownloadListener != null) {
             downloadManager.removeDownloadListener(windowDownloadListener);
             windowDownloadListener = null;
@@ -806,7 +823,7 @@ public class MainWindow {
                 // the GTK main loop; only the result goes back to the UI
                 CompletableFuture.supplyAsync(
                         () -> HtmlImportExport.importHtmlFile(path, downloadManager),
-                        DetailTabsPresenter.FETCH_EXECUTOR).thenAccept(count -> {
+                        backgroundExecutor).thenAccept(count -> {
                     if (count == null || count < 0) {
                         return;
                     }
@@ -843,7 +860,7 @@ public class MainWindow {
                     } catch (Exception e) {
                         LOGGER.log(java.util.logging.Level.FINE, "Export failed", e);
                     }
-                }, DetailTabsPresenter.FETCH_EXECUTOR);
+                }, backgroundExecutor);
             } catch (Exception e) {
                 LOGGER.log(java.util.logging.Level.FINE, "Export cancelled or failed", e);
             }
@@ -1219,7 +1236,7 @@ public class MainWindow {
             if (wasActive) {
                 downloadManager.pauseDownload(download).join();
             }
-        }, DetailTabsPresenter.FETCH_EXECUTOR)
+        }, backgroundExecutor)
                 .thenCompose(v -> downloadManager.changeSettings(download))
                 .handle((v, e) -> {
                     if (e != null) {

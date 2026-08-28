@@ -327,4 +327,54 @@ class SqliteDownloadStateStoreTest {
             assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());
         }
     }
+
+    @Test
+    void legacyRowWithSeparatorInNameLoadsSanitizedToBasename() throws Exception {
+        // Old builds stored raw yt-dlp destination strings (channel paths)
+        // as the download name; one such row must not brick startup
+        try (var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
+            connection.createStatement().executeUpdate("""
+                    CREATE TABLE downloads (
+                        id TEXT PRIMARY KEY,
+                        gid TEXT,
+                        name TEXT,
+                        override_output_path INTEGER NOT NULL DEFAULT 1,
+                        uri TEXT NOT NULL,
+                        mirrors TEXT,
+                        destination TEXT,
+                        type TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        size INTEGER NOT NULL DEFAULT 0,
+                        downloaded INTEGER NOT NULL DEFAULT 0,
+                        speed REAL NOT NULL DEFAULT 0,
+                        upload_speed REAL NOT NULL DEFAULT 0,
+                        connections INTEGER NOT NULL DEFAULT 0,
+                        seeders INTEGER NOT NULL DEFAULT 0,
+                        info_hash TEXT,
+                        queue_position INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        started_at TEXT,
+                        completed_at TEXT,
+                        error_message TEXT,
+                        settings TEXT NOT NULL,
+                        schedule_settings TEXT,
+                        checksum_algorithm TEXT,
+                        expected_checksum TEXT,
+                        active_before_exit INTEGER NOT NULL DEFAULT 0
+                    )
+                    """);
+            connection.createStatement().executeUpdate(
+                    "INSERT INTO downloads (id, name, uri, type, status, created_at, settings) VALUES ("
+                            + "'legacy-name', 'channel/video.mkv', 'https://example.com/video.mkv', "
+                            + "'ARIA2', 'PAUSED', '2026-08-20T00:00:00Z', '{\"@type\":\"aria2\"}')");
+        }
+
+        try (SqliteDownloadStateStore store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            Download restored = store.load().downloads().get(0);
+            assertEquals("legacy-name", restored.getId(),
+                    "the legacy row must load instead of failing startup");
+            assertEquals("video.mkv", restored.getName(),
+                    "a legacy persisted name with a path separator must load as its plain file name");
+        }
+    }
 }

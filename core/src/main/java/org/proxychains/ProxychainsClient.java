@@ -170,6 +170,7 @@ public class ProxychainsClient {
         // Start download in a separate thread
         executorService.submit(() -> {
             Process process = null;
+            org.manager.tools.ExternalProcessRegistry.Registration registration = null;
             try {
                 // Paused before the process spawned (pause raced the async
                 // start): abort so the paused state sticks
@@ -218,7 +219,7 @@ public class ProxychainsClient {
                 LOGGER.info("Executing command: " + String.join(" ", command));
                 process = processBuilder.start();
                 final Process finalProcess = process; // Make final for lambda usage
-                activeProcesses.register(download.getId(), process);
+                registration = activeProcesses.register(download.getId(), process);
 
                 // Update download status
                 download.setStatus(Download.Status.DOWNLOADING);
@@ -287,8 +288,12 @@ public class ProxychainsClient {
                     listener.onDownloadError(download, download.getErrorMessage());
                 }
             } finally {
-                // Clean up
-                activeProcesses.remove(download.getId());
+                // Generation-safe cleanup: an old worker whose run was
+                // replaced (pause + resume raced it) must not unregister
+                // the newer process under the same key
+                if (registration != null) {
+                    registration.unregister();
+                }
                 gidMap.remove(download.getId());
                 activeDownloads.remove(download.getId());
             }
@@ -493,18 +498,28 @@ public class ProxychainsClient {
         // Remove GID mapping
         gidMap.remove(download.getId());
 
-        // Delete partial file if requested
+        // Delete partial file if requested. The name comes from the
+        // download model and may be stale or corrupted, so both a
+        // plain-file-name check and real-path containment must pass before
+        // anything is deleted.
         if (deleteFile && download.getDestination() != null) {
-            Path outputFile = download.getDestination().resolve(download.getName());
-            try {
-                Files.deleteIfExists(outputFile);
-
-                // Also delete aria2 control file
-                Path controlFile = Paths.get(outputFile.toString() + ".aria2");
-                Files.deleteIfExists(controlFile);
-            } catch (IOException e) {
-                // Log error but continue
-                LOGGER.log(Level.WARNING, "Failed to delete partial file: " + e.getMessage(), e);
+            if (org.manager.util.PathSafety.isSafeFileName(download.getName())) {
+                Path outputFile = download.getDestination().resolve(download.getName());
+                if (org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
+                    org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
+                            download.getDestination());
+                    Path controlFile = Paths.get(outputFile.toString() + ".aria2");
+                    if (org.manager.util.PathSafety.isConfined(controlFile, download.getDestination())) {
+                        org.manager.util.PathSafety.deleteIfExistsConfined(controlFile,
+                                download.getDestination());
+                    }
+                } else {
+                    LOGGER.warning("Refusing unsafe partial-file deletion for " + download.getId()
+                            + ": " + download.getName());
+                }
+            } else {
+                LOGGER.warning("Refusing unsafe partial-file name for " + download.getId()
+                        + ": " + download.getName());
             }
         }
 

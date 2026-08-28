@@ -36,6 +36,7 @@ public class TorController {
     private final int controlPort;
     private final String controlPassword;
     private final int connectionTimeoutMs;
+    private final Path cookieDirectory;
 
     // Connection management
     private final AtomicReference<Socket> controlSocket = new AtomicReference<>();
@@ -58,7 +59,18 @@ public class TorController {
      * @param controlPort The Tor control port
      */
     public TorController(int controlPort) {
-        this("127.0.0.1", controlPort, null, 10000);
+        this("127.0.0.1", controlPort, null, 10000, null);
+    }
+
+    /**
+     * Creates a new TorController that reads the control authentication
+     * cookie from the given tor data directory first.
+     *
+     * @param controlPort The Tor control port
+     * @param dataDirectory the tor DataDirectory the daemon was launched with
+     */
+    public TorController(int controlPort, Path dataDirectory) {
+        this("127.0.0.1", controlPort, null, 10000, dataDirectory);
     }
 
     /**
@@ -70,10 +82,26 @@ public class TorController {
      * @param connectionTimeoutMs Connection timeout in milliseconds
      */
     public TorController(String controlHost, int controlPort, String controlPassword, int connectionTimeoutMs) {
+        this(controlHost, controlPort, controlPassword, connectionTimeoutMs, null);
+    }
+
+    /**
+     * Creates a new TorController with custom settings and an explicit tor
+     * data directory to read the control authentication cookie from.
+     *
+     * @param controlHost         The control interface host
+     * @param controlPort         The control interface port
+     * @param controlPassword     Optional control password (null for cookie auth)
+     * @param connectionTimeoutMs Connection timeout in milliseconds
+     * @param dataDirectory       tor DataDirectory holding control_auth_cookie
+     */
+    public TorController(String controlHost, int controlPort, String controlPassword, int connectionTimeoutMs,
+            Path dataDirectory) {
         this.controlHost = controlHost;
         this.controlPort = controlPort;
         this.controlPassword = controlPassword;
         this.connectionTimeoutMs = connectionTimeoutMs;
+        this.cookieDirectory = dataDirectory;
         this.executorService = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "TorController-Worker");
             t.setDaemon(true);
@@ -462,23 +490,25 @@ public class TorController {
     }
 
     private String tryReadCookieAuth() {
-        // Common cookie file locations
-        String[] cookiePaths = {
-                System.getProperty("user.home") + "/.tor/control_auth_cookie",
-                "/var/lib/tor/control_auth_cookie"
-        };
+        // tor writes <DataDirectory>/control_auth_cookie when
+        // CookieAuthentication is enabled; the controller's own data
+        // directory is authoritative, legacy locations are fallbacks
+        java.util.List<Path> cookiePaths = new ArrayList<>(3);
+        if (cookieDirectory != null) {
+            cookiePaths.add(cookieDirectory.resolve("control_auth_cookie"));
+        }
+        cookiePaths.add(Paths.get(System.getProperty("user.home"), ".tor", "control_auth_cookie"));
+        cookiePaths.add(Paths.get("/var/lib/tor", "control_auth_cookie"));
 
-        // Try direct paths
-        for (String cookiePath : cookiePaths) {
-            Path path = Paths.get(cookiePath);
+        for (Path path : cookiePaths) {
             if (Files.exists(path)) {
                 try {
                     byte[] cookieData = Files.readAllBytes(path);
                     String hexCookie = bytesToHex(cookieData);
-                    LOGGER.info("Using cookie authentication from: " + cookiePath);
+                    LOGGER.info("Using cookie authentication from: " + path);
                     return hexCookie;
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to read cookie file: " + cookiePath, e);
+                    LOGGER.log(Level.WARNING, "Failed to read cookie file: " + path, e);
                 }
             }
         }

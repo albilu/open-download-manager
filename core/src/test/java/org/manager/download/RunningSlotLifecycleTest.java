@@ -258,4 +258,71 @@ class RunningSlotLifecycleTest {
         handler.fireComplete(running);
         assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 0));
     }
+
+    @Test
+    @DisplayName("A start that resolves no handler releases the admission slot and reindexes to ERROR")
+    void noHandlerStartReleasesSlotAndReindexesToError() throws Exception {
+        setUp(4);
+
+        // A download type whose handler refuses the work, with curl unable
+        // to take over (curl only accepts CURL-typed downloads): handler
+        // resolution yields null, as it does for real downloads when the
+        // backing tool is unavailable
+        DownloadHandlerFactory factory = DownloadManagerFactory.getContainer()
+                .getRequired(DownloadHandlerFactory.class);
+        factory.registerHandler(Download.Type.PROXYCHAINS, handler);
+
+        Download download = new Download(new URI("http://example.test/no-handler.bin"));
+        download.setType(Download.Type.PROXYCHAINS);
+        download.setName("no-handler");
+
+        AtomicInteger errorEvents = new AtomicInteger();
+        manager.addDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(Download download) {
+            }
+
+            @Override
+            public void onDownloadProgress(Download download, float progress, long downloadedBytes,
+                    long totalBytes, float speed) {
+            }
+
+            @Override
+            public void onDownloadPause(Download download) {
+            }
+
+            @Override
+            public void onDownloadResume(Download download) {
+            }
+
+            @Override
+            public void onDownloadComplete(Download download) {
+            }
+
+            @Override
+            public void onDownloadError(Download download, String errorMessage) {
+                errorEvents.incrementAndGet();
+            }
+
+            @Override
+            public void onDownloadCanceled(Download download) {
+            }
+        });
+
+        manager.queueDownload(download).join();
+
+        assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 0),
+                "the admission slot claimed before handler resolution must be released "
+                        + "when no handler is found, or the concurrency budget leaks forever");
+        assertTrue(awaitTrue(() -> download.getStatus() == Download.Status.ERROR),
+                "a start without any suitable handler must fail the download");
+        assertTrue(awaitTrue(() -> manager.getDownloadsByStatus(Download.Status.ERROR).stream()
+                .anyMatch(d -> d.getId().equals(download.getId()))),
+                "the repository must reindex the failed start from QUEUED to ERROR");
+        assertTrue(awaitTrue(() -> manager.getDownloadsByStatus(Download.Status.QUEUED).stream()
+                .noneMatch(d -> d.getId().equals(download.getId()))),
+                "no stale QUEUED index entry may survive the failed start");
+        assertTrue(awaitTrue(() -> errorEvents.get() == 1),
+                "the failed start must notify exactly one error event");
+    }
 }

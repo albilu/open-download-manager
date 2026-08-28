@@ -65,6 +65,7 @@ public class Download {
     private volatile DownloadSettings settings; // unified settings object
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
     private volatile String expectedChecksum; // detected expected hash in hex
+    private volatile long attemptGeneration; // per-start operation token, never persisted
 
     /**
      * Creates a new Download instance with a random UUID.
@@ -228,7 +229,20 @@ public class Download {
         return name;
     }
 
+    /**
+     * Sets the download's display/output file name. The name becomes part of
+     * resolved output paths in every engine, so it must be a plain file
+     * name: path separators, {@code .} and {@code ..} would let a crafted
+     * name redirect engine file operations outside the destination.
+     *
+     * @param name the file name, or null/empty for unset
+     * @throws IllegalArgumentException when the name contains path
+     *         separators or directory references
+     */
     public void setName(String name) {
+        if (name != null) {
+            org.manager.util.PathSafety.requireSafeFileName(name);
+        }
         synchronized (lock) {
             this.name = name;
         }
@@ -441,6 +455,26 @@ public class Download {
     public void setQueuePosition(int queuePosition) {
         synchronized (lock) {
             this.queuePosition = queuePosition;
+        }
+    }
+
+    /**
+     * Token of the start operation this download currently belongs to.
+     * The manager stamps a fresh token on every start submission so late
+     * events of a superseded operation can be detected and dropped. Not
+     * part of the persisted state: generations live only within one
+     * manager run.
+     *
+     * @return the current attempt generation (0 when never started)
+     */
+    @JsonIgnore
+    public long getAttemptGeneration() {
+        return attemptGeneration;
+    }
+
+    public void setAttemptGeneration(long attemptGeneration) {
+        synchronized (lock) {
+            this.attemptGeneration = attemptGeneration;
         }
     }
 

@@ -28,10 +28,16 @@ public class ShutdownCoordinator {
     private final AtomicBoolean isShutdownComplete = new AtomicBoolean(false);
     /** Single-flight guard for {@link #performShutdown()}. */
     private final AtomicBoolean shutdownEntered = new AtomicBoolean(false);
+    /** Single-removal guard for the JVM hook. */
+    private final AtomicBoolean jvmHookRemoved = new AtomicBoolean(false);
     private final List<ShutdownHook> shutdownHooks = new ArrayList<>();
     private final Object hooksLock = new Object();
     private final ExecutorService shutdownExecutor;
     private final long shutdownTimeoutSeconds;
+    private final Thread jvmHook;
+
+    /** Live coordinator generations whose JVM hook is still registered. */
+    private static final AtomicInteger LIVE_JVM_HOOKS = new AtomicInteger();
 
     /**
      * Represents a shutdown hook with priority and timeout.
@@ -143,8 +149,32 @@ public class ShutdownCoordinator {
             return t;
         });
 
-        // Register JVM shutdown hook
-        Runtime.getRuntime().addShutdownHook(new Thread(this::performShutdown, "jvm-shutdown-hook"));
+        // Register JVM shutdown hook; performShutdown unregisters it again
+        // so reset/retry generations cannot accumulate hooks until JVM exit
+        this.jvmHook = new Thread(this::performShutdown, "jvm-shutdown-hook");
+        Runtime.getRuntime().addShutdownHook(jvmHook);
+        LIVE_JVM_HOOKS.incrementAndGet();
+    }
+
+    /**
+     * Number of coordinator generations whose JVM shutdown hook is still
+     * registered (test seam for hook-leak detection).
+     */
+    public static int liveJvmHookCount() {
+        return LIVE_JVM_HOOKS.get();
+    }
+
+    private void removeJvmHook() {
+        if (jvmHookRemoved.compareAndSet(false, true)) {
+            try {
+                if (Runtime.getRuntime().removeShutdownHook(jvmHook)) {
+                    LIVE_JVM_HOOKS.decrementAndGet();
+                }
+            } catch (IllegalStateException e) {
+                // JVM shutdown already in progress: the hook is about to run
+                // (or has run) and cannot be unregistered
+            }
+        }
     }
 
     /**
@@ -207,11 +237,16 @@ public class ShutdownCoordinator {
     }
 
     /**
-     * Waits for shutdown to complete.
+     * Waits for shutdown to complete. Runs off the coordinator's own
+     * executor: that pool is terminated by performShutdown itself, so a
+     * late submission there would be rejected.
      *
      * @return A CompletableFuture that completes when shutdown is finished
      */
     public CompletableFuture<Void> waitForShutdownCompletion() {
+        if (isShutdownComplete.get()) {
+            return CompletableFuture.completedFuture(null);
+        }
         return CompletableFuture.runAsync(() -> {
             while (!isShutdownComplete.get()) {
                 try {
@@ -221,7 +256,7 @@ public class ShutdownCoordinator {
                     break;
                 }
             }
-        }, shutdownExecutor);
+        });
     }
 
     /**
@@ -229,6 +264,11 @@ public class ShutdownCoordinator {
      * shutdown hook and tests can enter it; single-flight via CAS so the
      * hook path and {@link #initiateShutdown()} can never execute the hook
      * sequence twice concurrently.
+     *
+     * <p>Essential hook failures are aggregated and rethrown once every
+     * phase has run, so the shutdown future completes exceptionally while
+     * best-effort cleanup still happens. Non-essential hook failures are
+     * logged and tolerated.</p>
      */
     void performShutdown() {
         if (!shutdownEntered.compareAndSet(false, true)) {
@@ -242,6 +282,7 @@ public class ShutdownCoordinator {
 
         long startTime = System.currentTimeMillis();
         LOGGER.info("Starting shutdown process...");
+        List<Throwable> essentialFailures = new ArrayList<>();
 
         try {
             List<ShutdownHook> hooksToExecute;
@@ -274,56 +315,73 @@ public class ShutdownCoordinator {
                 LOGGER.info("Executing shutdown phase: " + phaseName + " (" + phaseHooks.size() + " hooks)");
 
                 // Execute all hooks in this phase concurrently
-                List<CompletableFuture<Void>> phaseResults = new ArrayList<>();
-
+                Map<ShutdownHook, CompletableFuture<Void>> phaseResults = new LinkedHashMap<>();
                 for (ShutdownHook hook : phaseHooks) {
-                    CompletableFuture<Void> hookFuture = executeShutdownHook(hook);
-                    phaseResults.add(hookFuture);
+                    phaseResults.put(hook, executeShutdownHook(hook));
                 }
-
-                // Wait for all hooks in this phase to complete
-                CompletableFuture<Void> phaseCompletion = CompletableFuture.allOf(
-                        phaseResults.toArray(new CompletableFuture[0]));
 
                 try {
-                    phaseCompletion.get(Math.max(1, shutdownTimeoutSeconds), TimeUnit.SECONDS);
-                    totalExecuted.addAndGet(phaseHooks.size());
-                    LOGGER.info("Completed shutdown phase: " + phaseName);
-                } catch (TimeoutException e) {
-                    LOGGER.warning("Shutdown phase " + phaseName + " timed out");
-                    // Count individual hook failures
-                    for (CompletableFuture<Void> future : phaseResults) {
-                        if (future.isDone() && !future.isCompletedExceptionally()) {
-                            totalExecuted.incrementAndGet();
+                    CompletableFuture.allOf(phaseResults.values().toArray(new CompletableFuture[0]))
+                            .get(Math.max(1, shutdownTimeoutSeconds), TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Shutdown phase " + phaseName + " did not complete cleanly", e);
+                }
+
+                phaseResults.forEach((hook, future) -> {
+                    if (future.isDone() && !future.isCompletedExceptionally()) {
+                        totalExecuted.incrementAndGet();
+                    } else {
+                        totalFailed.incrementAndGet();
+                        if (hook.isEssential()) {
+                            Throwable cause;
+                            try {
+                                future.get();
+                                cause = new IllegalStateException(
+                                        "Essential hook '" + hook.getName() + "' never completed");
+                            } catch (Exception e) {
+                                cause = (e instanceof java.util.concurrent.ExecutionException
+                                        && e.getCause() != null) ? e.getCause() : e;
+                            }
+                            LOGGER.log(Level.SEVERE,
+                                    "Essential shutdown hook '" + hook.getName() + "' failed", cause);
+                            essentialFailures.add(cause);
                         } else {
-                            totalFailed.incrementAndGet();
+                            LOGGER.warning("Best-effort (non-essential) shutdown hook '" + hook.getName()
+                                    + "' failed; shutdown continues");
                         }
                     }
-                } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error in shutdown phase " + phaseName, e);
-                    totalFailed.addAndGet(phaseHooks.size());
-                }
+                });
+
+                LOGGER.info("Completed shutdown phase: " + phaseName);
             }
 
             long duration = System.currentTimeMillis() - startTime;
             LOGGER.info(String.format("Shutdown process completed in %dms. Executed: %d, Failed: %d",
                     duration, totalExecuted.get(), totalFailed.get()));
 
+            if (!essentialFailures.isEmpty()) {
+                RuntimeException aggregate = new RuntimeException(
+                        "Shutdown failed: " + essentialFailures.size()
+                                + " essential hook failure(s) (see suppressed)");
+                for (Throwable failure : essentialFailures) {
+                    aggregate.addSuppressed(failure);
+                }
+                throw aggregate;
+            }
+
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Critical error during shutdown process", e);
+            throw e instanceof RuntimeException runtime ? runtime : new RuntimeException(e);
         } finally {
             isShutdownComplete.set(true);
 
-            // Shutdown the shutdown executor last
+            // Unregister the JVM hook: this generation is done
+            removeJvmHook();
+
+            // Terminate the shutdown executor, but never await it from a
+            // task it may be running: the pool cannot terminate until this
+            // method returns, so awaiting here always burned the timeout
             shutdownExecutor.shutdown();
-            try {
-                if (!shutdownExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                    shutdownExecutor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                shutdownExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
         }
     }
 

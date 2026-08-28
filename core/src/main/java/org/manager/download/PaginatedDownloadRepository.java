@@ -225,6 +225,42 @@ public class PaginatedDownloadRepository {
     }
 
     /**
+     * Updates a download's status when the caller knows the TRUE prior
+     * status, captured before any handler-side mutation of
+     * {@code Download.status}. Both the source and the target status cache
+     * buckets are invalidated, so prewarmed queries for the old status
+     * stop returning the download immediately instead of after the cache
+     * TTL.
+     *
+     * @param download    the download to reindex
+     * @param fromStatus  the download's status before the handler mutated it
+     * @param toStatus    the status the download has now
+     */
+    public void transitionDownloadStatus(Download download, Download.Status fromStatus,
+            Download.Status toStatus) {
+        lock.writeLock().lock();
+        try {
+            for (Set<String> statusSet : statusIndex.values()) {
+                statusSet.remove(download.getId());
+            }
+
+            if (download.getStatus() != toStatus) {
+                download.setStatus(toStatus);
+            }
+
+            Set<String> newStatusSet = statusIndex.get(toStatus);
+            if (newStatusSet != null) {
+                newStatusSet.add(download.getId());
+            }
+
+            invalidateCacheForStatusChange(fromStatus, toStatus);
+            LOGGER.fine("Transitioned download status: " + download.getId() + " " + fromStatus + " -> " + toStatus);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /**
      * Gets a download by ID.
      *
      * @param downloadId The download ID

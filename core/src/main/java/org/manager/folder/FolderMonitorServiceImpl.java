@@ -159,6 +159,10 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 // The loop starts with the first monitored folder (lazy)
                 ensureMonitoringLoopStarted();
 
+                // Reconcile staged descriptors left by earlier rounds:
+                // orphans are re-announced, duplicates removed
+                reconcileStagedDescriptors(folderPath, settings);
+
                 // Process existing files if enabled
                 if (settings.isProcessExistingFiles()) {
                     scanFolderInternal(folderPath, settings);
@@ -909,6 +913,12 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 reportFileError(folderPath, filePath, e, settings);
             }
         }
+        if (dispatchedToAll && announcePath != filePath) {
+            // The asynchronous queue owns the staged bytes now; without the
+            // marker, startup reconciliation would mistake this entry for a
+            // crashed round's orphan and re-announce it (duplicate download)
+            DescriptorStaging.markDispatched(announcePath);
+        }
         return dispatchedToAll;
     }
 
@@ -920,6 +930,107 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         // format validation must not produce a second onFileProcessingError
         if (fileErrorReported.add(filePath)) {
             notifyListeners(l -> l.onFileProcessingError(folderPath, filePath, error, settings));
+        }
+    }
+
+    /**
+     * Startup reconciliation of the staging directory for a monitored
+     * folder: a staged descriptor whose original no longer exists is an
+     * orphan from a crashed round (the download was never created) and is
+     * re-announced through the regular listener path; a staged descriptor
+     * whose original still exists is a leftover duplicate from a failed
+     * announcement round and is deleted (the existing-file scan re-announces
+     * the original). Only entries staged from this folder (or its
+     * registered recursive subfolders) are considered: the staging root is
+     * shared, and a foreign entry re-announced here would create a
+     * download attributed to the wrong folder.
+     */
+    private void reconcileStagedDescriptors(Path folderPath, FolderMonitorSettings settings) {
+        if (!Files.isDirectory(descriptorStagingRoot)) {
+            return;
+        }
+        try (DirectoryStream<Path> stagedEntries = Files.newDirectoryStream(descriptorStagingRoot)) {
+            for (Path staged : stagedEntries) {
+                if (!Files.isRegularFile(staged)) {
+                    continue;
+                }
+                String originalName = DescriptorStaging.originalNameOf(staged);
+                if (originalName == null) {
+                    continue;
+                }
+                if (DescriptorStaging.isDispatched(staged)) {
+                    // The download queue already owns these bytes; the
+                    // entry will be deleted after ingestion
+                    continue;
+                }
+                if (!isStagedForFolder(staged, originalName, folderPath)) {
+                    // Keyed to a source of another watched folder: that
+                    // folder's reconciliation owns this entry
+                    continue;
+                }
+                Path original = folderPath.resolve(originalName);
+                if (Files.exists(original)) {
+                    try {
+                        Files.deleteIfExists(staged);
+                        LOGGER.info("Removed staged duplicate; original still present: " + staged);
+                    } catch (IOException e) {
+                        LOGGER.log(Level.WARNING, "Failed to remove staged duplicate: " + staged, e);
+                    }
+                } else {
+                    reAnnounceStagedOrphan(folderPath, staged, settings);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Staged-descriptor reconciliation failed for "
+                    + folderPath, e);
+        }
+    }
+
+    /**
+     * Whether a staged entry's key matches a source of the reconciled
+     * folder: the folder itself, or any currently registered recursive
+     * subfolder (recursive monitoring stages subfolder files keyed to
+     * their own path).
+     */
+    private boolean isStagedForFolder(Path staged, String originalName, Path folderPath) {
+        String stagedKey = staged.getFileName().toString().substring(0, 16);
+        if (stagedKey.equals(DescriptorStaging.sourceKeyPrefix(folderPath.resolve(originalName)))) {
+            return true;
+        }
+        for (Path monitored : folderSettings.keySet()) {
+            if (monitored.equals(folderPath)) {
+                continue;
+            }
+            Path absoluteMonitored = monitored.toAbsolutePath().normalize();
+            if (!absoluteMonitored.startsWith(folderPath.toAbsolutePath().normalize())) {
+                continue;
+            }
+            if (stagedKey.equals(DescriptorStaging.sourceKeyPrefix(monitored.resolve(originalName)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void reAnnounceStagedOrphan(Path folderPath, Path staged, FolderMonitorSettings settings) {
+        boolean dispatchedToAll = true;
+        for (FolderMonitorListener listener : listeners) {
+            try {
+                listener.onFileAdded(folderPath, staged, settings);
+            } catch (Exception e) {
+                dispatchedToAll = false;
+                LOGGER.log(Level.WARNING, "Error re-announcing orphaned staged descriptor: "
+                        + staged, e);
+                reportFileError(folderPath, staged, e, settings);
+            }
+        }
+        if (dispatchedToAll) {
+            // The download queue owns the staged bytes now: without the
+            // marker, the next startMonitoring round (production starts
+            // the torrent AND the metalink monitor on one service) would
+            // re-announce this orphan and create a duplicate download
+            DescriptorStaging.markDispatched(staged);
+            LOGGER.info("Re-announced orphaned staged descriptor: " + staged);
         }
     }
 

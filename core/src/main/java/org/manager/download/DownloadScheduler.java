@@ -155,6 +155,16 @@ public class DownloadScheduler {
     }
 
     /**
+     * Whether the scheduler's executor has been shut down (observability
+     * seam for teardown verification).
+     *
+     * @return true when the underlying executor is shut down
+     */
+    public boolean isShutdown() {
+        return scheduler.isShutdown();
+    }
+
+    /**
      * Sets the schedule for a specific download.
      *
      * @param downloadId The download ID

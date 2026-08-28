@@ -76,6 +76,14 @@ public class DownloadManagerImpl implements DownloadManager {
     private final AtomicInteger runningDownloads;
     /** Download IDs currently holding a concurrency slot; guards exactly-once release. */
     private final Set<String> runningDownloadIds;
+    /** Current start-generation per download id; late events of superseded generations are dropped. */
+    private final ConcurrentHashMap<String, Long> attemptGenerations;
+    /** Generation that already reached a terminal state per download id; first terminal wins. */
+    private final ConcurrentHashMap<String, Long> terminalGenerations;
+    /** Serializes generation bumping against terminal-CAS bookkeeping. */
+    private final Object generationLock = new Object();
+    /** Serializes the check-and-add concurrency-slot claim (the admission decision). */
+    private final Object admissionLock = new Object();
     private final AtomicBoolean isShuttingDown;
     private final DependencyContainer container;
     private final ExecutorServiceManager executorManager;
@@ -115,6 +123,8 @@ public class DownloadManagerImpl implements DownloadManager {
         this.listeners = new CopyOnWriteArraySet<>();
         this.runningDownloads = new AtomicInteger(0);
         this.runningDownloadIds = ConcurrentHashMap.newKeySet();
+        this.attemptGenerations = new ConcurrentHashMap<>();
+        this.terminalGenerations = new ConcurrentHashMap<>();
         this.isShuttingDown = new AtomicBoolean(false);
         this.objectMapper = createStateObjectMapper();
         this.stateStore = new SqliteDownloadStateStore(
@@ -126,8 +136,11 @@ public class DownloadManagerImpl implements DownloadManager {
         this.activeHandlers = new ConcurrentHashMap<>();
         this.reusableListener = new ReusableDownloadListener();
 
-        // Get centralized executor manager
-        this.executorManager = ExecutorServiceManager.getInstance();
+        // Manager-scoped executor lifecycle: this manager's shutdown hook
+        // terminates exactly these pools. The process-wide singleton stays
+        // alive for other managers and factory services; only the
+        // whole-application path (ApplicationFactory.shutdown) may end it.
+        this.executorManager = ExecutorServiceManager.create();
         this.eventExecutor = executorManager.getEventExecutor();
 
         // Initialize dependencies
@@ -178,7 +191,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 () -> downloadRepository.getDownloadsByStatus(
                         Download.Status.DOWNLOADING, 0, Integer.MAX_VALUE).getDownloads(),
                 this::pauseAllDownloads,
-                this::saveState,
+                this::saveStateForShutdown,
                 servicesScheduler,
                 proxyRotation,
                 cleanupManager,
@@ -433,6 +446,7 @@ public class DownloadManagerImpl implements DownloadManager {
      * creating new instances.
      */
     private void startDownloadInternal(Download download) {
+        long generation = 0;
         try {
             // Prevent starting downloads that are already active
             if (download.getStatus() == Download.Status.DOWNLOADING && download.getGid() != null) {
@@ -441,16 +455,33 @@ public class DownloadManagerImpl implements DownloadManager {
                 return;
             }
 
+            // Admission is the atomic slot claim: it happens BEFORE any
+            // start submission, so concurrent starts and direct
+            // startDownload calls can never overshoot the limit
+            if (!claimRunningSlot(download.getId())) {
+                requeueAfterDeniedAdmission(download);
+                return;
+            }
+
             LOGGER.info("Starting download internally: " + download.getName()
                     + " (current status: " + download.getStatus() + ", GID: " + download.getGid() + ")");
+
+            // Every start supersedes the previous operation on this id: a
+            // fresh generation token isolates late results of the old one
+            generation = nextAttemptGeneration(download);
 
             // Get the appropriate handler for this download type
             DownloadHandler handler = getHandlerFactory().getHandler(download);
 
             if (handler == null) {
-                download.setStatus(Download.Status.ERROR);
-                download.setErrorMessage("No suitable handler found for download type: " + download.getType());
-                notifyDownloadError(download, "No suitable handler found for download type: " + download.getType());
+                String noHandlerMessage = "No suitable handler found for download type: " + download.getType();
+                downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
+                download.setErrorMessage(noHandlerMessage);
+                notifyDownloadError(download, noHandlerMessage);
+                // The admission slot was claimed before handler resolution;
+                // release it like every other failed start or the
+                // concurrency budget leaks forever
+                cleanupDownloadResources(download.getId(), generation);
                 return;
             }
 
@@ -473,17 +504,14 @@ public class DownloadManagerImpl implements DownloadManager {
             // the manager from every other running download of the same type.
             handler.addDownloadListener(reusableListener);
 
-            // Claim the concurrency slot before the start attempt so the
-            // release in cleanupDownloadResources is exactly-once even when a
-            // download completes before the returned future resolves, or when
-            // a handler emits duplicate terminal notifications.
-            if (runningDownloadIds.add(download.getId())) {
-                runningDownloads.incrementAndGet();
-            }
-
             // Start the download with the handler
+            final long startGeneration = generation;
             CompletableFuture<String> future = handler.startDownload(download);
             future.thenAccept(gid -> {
+                if (!isCurrentAttempt(download.getId(), startGeneration)) {
+                    LOGGER.warning("Dropping stale generation result for download: " + download.getName());
+                    return;
+                }
                 LOGGER.info("Download handler returned GID: " + gid + " for download: " + download.getName());
                 if (gid != null) {
                     download.setGid(gid);
@@ -497,9 +525,13 @@ public class DownloadManagerImpl implements DownloadManager {
                     downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
                     download.setErrorMessage("Handler returned null GID");
                     // Clean up on failure
-                    cleanupDownloadResources(download.getId());
+                    cleanupDownloadResources(download.getId(), startGeneration);
                 }
             }).exceptionally(e -> {
+                if (!isCurrentAttempt(download.getId(), startGeneration)) {
+                    LOGGER.warning("Dropping stale generation failure for download: " + download.getName());
+                    return null;
+                }
                 // proxychains start failure: one-shot fallback to curl with
                 // the socks proxy for plain http(s)/ftp downloads
                 if (maybeFallbackProxychainsToCurl(download, e)) {
@@ -511,7 +543,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 LOGGER.log(Level.SEVERE, "Failed to start download: " + download.getName(), e);
 
                 // Clean up on failure
-                cleanupDownloadResources(download.getId());
+                cleanupDownloadResources(download.getId(), startGeneration);
                 return null;
             });
 
@@ -525,7 +557,84 @@ public class DownloadManagerImpl implements DownloadManager {
             LOGGER.log(Level.SEVERE, "Failed to start download: " + download.getName(), e);
 
             // Clean up on failure
-            cleanupDownloadResources(download.getId());
+            if (generation == 0 || isCurrentAttempt(download.getId(), generation)) {
+                cleanupDownloadResources(download.getId(), generation);
+            }
+        }
+    }
+
+    /** Stamps a fresh operation generation on the download and records it as current. */
+    private long nextAttemptGeneration(Download download) {
+        synchronized (generationLock) {
+            long generation = attemptGenerations.merge(download.getId(), 1L, Long::sum);
+            download.setAttemptGeneration(generation);
+            // A restarted operation must be able to reach its own terminal
+            // state: the previous generation's terminal marker is obsolete
+            terminalGenerations.remove(download.getId());
+            return generation;
+        }
+    }
+
+    /** True when the given generation is still the download's current operation. */
+    private boolean isCurrentAttempt(String downloadId, long generation) {
+        Long current = attemptGenerations.get(downloadId);
+        return current != null && current.longValue() == generation;
+    }
+
+    /**
+     * Atomically claims a concurrency slot for the download. This single
+     * lock-protected check-and-add IS the admission decision: when it
+     * returns false the caller must not submit any start. Re-claiming by
+     * the current slot holder (a restart of a running download) succeeds
+     * without consuming another slot.
+     */
+    private boolean claimRunningSlot(String downloadId) {
+        synchronized (admissionLock) {
+            if (runningDownloadIds.contains(downloadId)) {
+                return true;
+            }
+            if (runningDownloads.get() >= getGlobalSettings().getMaxConcurrentDownloads()) {
+                return false;
+            }
+            runningDownloadIds.add(downloadId);
+            runningDownloads.incrementAndGet();
+            return true;
+        }
+    }
+
+    /** Leaves a non-admitted download queued, with a position and a queued event when new to the queue. */
+    private void requeueAfterDeniedAdmission(Download download) {
+        boolean alreadyQueued = download.getStatus() == Download.Status.QUEUED;
+        if (!alreadyQueued && download.getQueuePosition() == 0) {
+            download.setQueuePosition(nextQueuePosition());
+        }
+        downloadRepository.updateDownloadStatus(download, Download.Status.QUEUED);
+        if (!alreadyQueued) {
+            notifyDownloadQueued(download);
+        }
+        LOGGER.info("Download " + download.getName()
+                + " queued: concurrent limit of " + getGlobalSettings().getMaxConcurrentDownloads()
+                + " reached or schedule inactive");
+    }
+
+    /**
+     * Compare-and-set on the download's terminal state: the first terminal
+     * event of the current generation wins; later terminal events of the
+     * same generation are logged no-ops (no reindex, no actions, no queue
+     * advance, no status overwrite). A newer generation always wins.
+     *
+     * @return true when the caller is the first terminal handler
+     */
+    private boolean tryBeginTerminal(String downloadId, long generation) {
+        synchronized (generationLock) {
+            Long terminated = terminalGenerations.get(downloadId);
+            if (terminated != null && terminated.longValue() == generation) {
+                LOGGER.warning("Duplicate terminal event for download " + downloadId
+                        + " (generation " + generation + ") ignored");
+                return false;
+            }
+            terminalGenerations.put(downloadId, generation);
+            return true;
         }
     }
 
@@ -596,6 +705,9 @@ public class DownloadManagerImpl implements DownloadManager {
     @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
+            // Handlers mutate Download.status before returning, so the true
+            // prior status must be captured BEFORE delegating
+            Download.Status statusBefore = download.getStatus();
             try {
                 DownloadHandler handler = handlerFor(download);
 
@@ -606,13 +718,16 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to cancel download: " + download.getName(), e);
+                throw new CompletionException("Failed to pause download: " + download.getName(), e);
             }
+            downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.PAUSED);
         }, executorManager.getGeneralExecutor());
     }
 
     @Override
     public CompletableFuture<Void> resumeDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
+            Download.Status statusBefore = download.getStatus();
             try {
                 DownloadHandler handler = handlerFor(download);
 
@@ -623,7 +738,9 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to resume download: " + download.getName(), e);
+                throw new CompletionException("Failed to resume download: " + download.getName(), e);
             }
+            downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.DOWNLOADING);
         }, executorManager.getGeneralExecutor());
     }
 
@@ -640,6 +757,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to change settings for download: " + download.getName(), e);
+                throw new CompletionException("Failed to change settings for download: " + download.getName(), e);
             }
         }, executorManager.getGeneralExecutor());
     }
@@ -661,10 +779,11 @@ public class DownloadManagerImpl implements DownloadManager {
                     // notify on their cancel path. The canceled event itself
                     // is emitted by the handler — notifying here as well
                     // would deliver every cancel twice.
-                    cleanupDownloadResources(download.getId());
+                    cleanupDownloadResources(download.getId(), download.getAttemptGeneration());
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Failed to cancel download: " + download.getName(), e);
+                throw new CompletionException("Failed to cancel download: " + download.getName(), e);
             }
         }, executorManager.getGeneralExecutor());
     }
@@ -783,8 +902,10 @@ public class DownloadManagerImpl implements DownloadManager {
             }
         }
 
-        // If there's a queued download and we're under the concurrent limit, start it
-        if (nextQueued.isPresent() && runningDownloads.get() < getGlobalSettings().getMaxConcurrentDownloads()) {
+        // If there's a queued download, try to start it. Admission is the
+        // atomic slot claim inside startDownloadInternal, so a concurrent
+        // finisher or starter can never overshoot the limit.
+        if (nextQueued.isPresent()) {
             Download download = nextQueued.get();
 
             // CRITICAL FIX: Don't start downloads that are already completed or in error
@@ -823,8 +944,6 @@ public class DownloadManagerImpl implements DownloadManager {
             LOGGER.info("Starting next queued download: " + download.getName()
                     + " (current status: " + download.getStatus() + ", GID: " + download.getGid() + ")");
             startDownloadInternal(download);
-        } else if (nextQueued.isPresent()) {
-            LOGGER.info("Queued download found but concurrent limit reached: " + nextQueued.get().getName());
         } else {
             LOGGER.fine("No queued downloads to start");
         }
@@ -972,6 +1091,13 @@ public class DownloadManagerImpl implements DownloadManager {
             // Update internal state (for backward compatibility)
             defaultDownloadDirectory = currentSettings.getDefaultDownloadDirectory();
 
+            // Tool managers cache path/availability: invalidate them so
+            // changed tool paths apply without a restart
+            ToolManagerFactory toolFactory = container.get(ToolManagerFactory.class);
+            if (toolFactory != null) {
+                toolFactory.invalidateToolCaches();
+            }
+
             // Propagate runtime-relevant changes (proxy, speed limit) to the
             // engines so running downloads pick them up immediately
             applyGlobalSettingsToActiveDownloads();
@@ -1008,17 +1134,7 @@ public class DownloadManagerImpl implements DownloadManager {
                         .map(Download::getId)
                         .collect(Collectors.toSet());
 
-                // Persist the full list (including completed/canceled) to the
-                // SQLite store. Global settings are NOT part of the state:
-                // they persist through GlobalSettings.save()/load() in
-                // settings.json.
-                stateStore.save(allDownloads, activeDownloads);
-
-                // Save aria2 session if available
-                aria2SessionManager.saveSession(getHandlerFactory());
-
-                LOGGER.info("Saved " + allDownloads.size() + " downloads (including "
-                        + activeDownloads.size() + " active) to state database");
+                persistState(allDownloads, activeDownloads);
             } catch (Exception e) {
                 // Complete exceptionally so shutdown hooks and callers can
                 // detect (and log) a failed persistence instead of assuming
@@ -1026,6 +1142,48 @@ public class DownloadManagerImpl implements DownloadManager {
                 throw new RuntimeException("Failed to save download state", e);
             }
         }, executorManager.getGeneralExecutor());
+    }
+
+    /**
+     * Shutdown persistence variant: the coordinated shutdown pauses active
+     * downloads BEFORE the save phase runs, so recomputing "currently
+     * downloading" at save time would persist none. The set captured
+     * before the pause is the authoritative resumable set; live
+     * DOWNLOADING ids are unioned in to cover a tracking failure.
+     *
+     * @param activeBeforeExit ids captured before the shutdown pause
+     * @return a future completing when the state is persisted
+     */
+    CompletableFuture<Void> saveState(Set<String> activeBeforeExit) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                List<Download> allDownloads = downloadRepository.getAllDownloads(0, Integer.MAX_VALUE).getDownloads();
+
+                Set<String> activeDownloads = new java.util.HashSet<>(activeBeforeExit);
+                allDownloads.stream()
+                        .filter(d -> d.getStatus() == Download.Status.DOWNLOADING)
+                        .map(Download::getId)
+                        .forEach(activeDownloads::add);
+
+                persistState(allDownloads, activeDownloads);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to save download state", e);
+            }
+        }, executorManager.getGeneralExecutor());
+    }
+
+    private void persistState(List<Download> allDownloads, Set<String> activeDownloads) {
+        // Persist the full list (including completed/canceled) to the
+        // SQLite store. Global settings are NOT part of the state:
+        // they persist through GlobalSettings.save()/load() in
+        // settings.json.
+        stateStore.save(allDownloads, activeDownloads);
+
+        // Save aria2 session if available
+        aria2SessionManager.saveSession(getHandlerFactory());
+
+        LOGGER.info("Saved " + allDownloads.size() + " downloads (including "
+                + activeDownloads.size() + " active) to state database");
     }
 
     @Override
@@ -1070,6 +1228,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to load download state", e);
+                throw new CompletionException("Failed to load download state", e);
             }
         }, executorManager.getGeneralExecutor());
     }
@@ -1428,13 +1587,14 @@ public class DownloadManagerImpl implements DownloadManager {
             // (limit reached / outside schedule) from an actual start
             notifyDownloadQueued(download);
 
-            // Start the download if we are under the concurrent limit and
-            // the schedule allows downloading right now (uGet-style ranges:
-            // outside the ranges downloads stay QUEUED)
-            if (runningDownloads.get() < getGlobalSettings().getMaxConcurrentDownloads()
-                    && isStartAllowedBySchedule(download)) {
+            // Start the download if the schedule allows downloading right
+            // now (uGet-style ranges: outside the ranges downloads stay
+            // QUEUED). Admission itself is the atomic slot claim inside
+            // startDownloadInternal: a denied claim leaves this download
+            // queued without a duplicate queued event.
+            if (isStartAllowedBySchedule(download)) {
                 startDownloadInternal(download);
-            } else if (!isStartAllowedBySchedule(download)) {
+            } else {
                 LOGGER.info("Download " + download.getName()
                         + " stays queued: outside the active download schedule");
             }
@@ -1444,6 +1604,10 @@ public class DownloadManagerImpl implements DownloadManager {
         } catch (Exception e) {
             throw new RuntimeException("Failed to queue download", e);
         }
+    }
+
+    private CompletableFuture<Void> saveStateForShutdown() {
+        return saveState(Set.copyOf(activeDownloadsBeforeExit));
     }
 
     /**
@@ -1656,19 +1820,25 @@ public class DownloadManagerImpl implements DownloadManager {
 
         @Override
         public void onDownloadPause(Download d) {
-            // Route to appropriate download manager listeners
+            // Handler-first status write: membership reindex (the manager's
+            // pause path performs the exact transition afterwards)
+            downloadRepository.updateDownloadStatus(d, Download.Status.PAUSED);
             notifyDownloadPause(d);
         }
 
         @Override
         public void onDownloadResume(Download d) {
-            // Route to appropriate download manager listeners
+            downloadRepository.updateDownloadStatus(d, Download.Status.DOWNLOADING);
             notifyDownloadResume(d);
         }
 
         @Override
         public void onDownloadComplete(Download d) {
             LOGGER.info("Download completed: " + d.getName());
+
+            if (!tryBeginTerminal(d.getId(), d.getAttemptGeneration())) {
+                return;
+            }
 
             // Let a retry wrapper finalize (release proxy, cancel any
             // scheduled retry, settle its future) before terminal handling
@@ -1682,7 +1852,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Clean up resources for this download (releases the running
             // slot exactly once; duplicate notifications are no-ops)
-            cleanupDownloadResources(d.getId());
+            cleanupDownloadResources(d.getId(), d.getAttemptGeneration());
 
             notifyDownloadComplete(d);
 
@@ -1702,10 +1872,20 @@ public class DownloadManagerImpl implements DownloadManager {
             // handling (no ERROR reindex, no slot release, no next-queued
             // start) so the running slot stays with the logical operation.
             DownloadHandler handler = activeHandlers.get(d.getId());
-            if (handler instanceof RetryEventInterceptor interceptor
-                    && interceptor.interceptError(d.getId(), errorMessage)
-                            == RetryEventInterceptor.RetryDecision.RETRY_SCHEDULED) {
-                LOGGER.fine("Retry scheduled for download " + d.getName() + "; terminal handling deferred");
+            if (handler instanceof RetryEventInterceptor interceptor) {
+                RetryEventInterceptor.RetryDecision decision = interceptor.interceptError(d.getId(), errorMessage);
+                if (decision == RetryEventInterceptor.RetryDecision.RETRY_SCHEDULED) {
+                    LOGGER.fine("Retry scheduled for download " + d.getName() + "; terminal handling deferred");
+                    return;
+                }
+                if (decision == RetryEventInterceptor.RetryDecision.STALE) {
+                    LOGGER.warning("Stale generation error for download " + d.getName()
+                            + " dropped; terminal handling skipped");
+                    return;
+                }
+            }
+
+            if (!tryBeginTerminal(d.getId(), d.getAttemptGeneration())) {
                 return;
             }
 
@@ -1714,7 +1894,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Clean up resources for this download (releases the running
             // slot exactly once; duplicate notifications are no-ops)
-            cleanupDownloadResources(d.getId());
+            cleanupDownloadResources(d.getId(), d.getAttemptGeneration());
 
             notifyDownloadError(d, errorMessage);
 
@@ -1725,6 +1905,10 @@ public class DownloadManagerImpl implements DownloadManager {
         @Override
         public void onDownloadCanceled(Download d) {
             LOGGER.info("Download canceled: " + d.getName());
+
+            if (!tryBeginTerminal(d.getId(), d.getAttemptGeneration())) {
+                return;
+            }
 
             // Let a retry wrapper finalize before terminal handling
             DownloadHandler handler = activeHandlers.get(d.getId());
@@ -1737,7 +1921,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Clean up resources for this download (releases the running
             // slot exactly once; duplicate notifications are no-ops)
-            cleanupDownloadResources(d.getId());
+            cleanupDownloadResources(d.getId(), d.getAttemptGeneration());
 
             notifyDownloadCanceled(d);
 
@@ -1749,12 +1933,21 @@ public class DownloadManagerImpl implements DownloadManager {
     /**
      * OPTIMIZATION: Clean up resources associated with a completed/failed
      * download. This prevents memory leaks by removing entries from tracking
-     * maps.
+     * maps. Cleanup only takes effect for the CURRENT operation generation:
+     * late terminal results of a superseded start are logged and dropped so
+     * they never remove the replacement's handler or release its slot.
      *
      * @param downloadId The ID of the download to clean up
+     * @param generation The operation generation the terminal result belongs to
      */
-    private void cleanupDownloadResources(String downloadId) {
+    private void cleanupDownloadResources(String downloadId, long generation) {
         try {
+            if (!isCurrentAttempt(downloadId, generation)) {
+                LOGGER.warning("Stale generation terminal result for download " + downloadId
+                        + " dropped; current operation left untouched");
+                return;
+            }
+
             // Release the concurrency slot exactly once per start attempt.
             // Terminal events for downloads that never started (e.g. cancel
             // of a QUEUED download) and duplicate terminal notifications are

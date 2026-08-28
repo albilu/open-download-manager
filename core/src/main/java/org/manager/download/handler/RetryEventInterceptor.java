@@ -23,7 +23,12 @@ public interface RetryEventInterceptor {
 
         /** The failure is final (exhausted budget or not retryable): the
          *  manager applies its normal terminal handling. */
-        PROPAGATE_TERMINAL
+        PROPAGATE_TERMINAL,
+
+        /** The event belongs to a superseded operation generation: the
+         *  manager must log and drop it without any terminal handling
+         *  (the replacement operation owns the download now). */
+        STALE
     }
 
     /**

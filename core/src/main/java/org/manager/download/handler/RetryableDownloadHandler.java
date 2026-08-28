@@ -66,6 +66,12 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     private final AtomicReference<Download> owned = new AtomicReference<>();
     private final AtomicReference<State> state = new AtomicReference<>(State.ACTIVE);
     /**
+     * Operation generation stamped by the manager on the download at this
+     * start. A different value on the download means this wrapper's
+     * operation was superseded by a newer start: its events are stale.
+     */
+    private volatile long startGeneration;
+    /**
      * Operation generation. Bumped by pause, cancel, terminal finalization
      * and replacement so a scheduled retry only runs when both the
      * generation and the state still match.
@@ -134,9 +140,15 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
                     "Retry wrapper already operates on download " + owned.get().getId()));
             return future;
         }
+        startGeneration = download.getAttemptGeneration();
         operation.set(future);
         beginAttempt(download, null);
         return future;
+    }
+
+    /** True while this wrapper's start is still the download's current generation. */
+    private boolean ownsCurrentGeneration(Download download) {
+        return startGeneration == download.getAttemptGeneration();
     }
 
     /**
@@ -344,6 +356,13 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             // is not ours, and the manager applies its normal handling.
             return RetryDecision.PROPAGATE_TERMINAL;
         }
+        if (!ownsCurrentGeneration(download)) {
+            // The download was started again through a newer generation:
+            // this event belongs to the superseded operation and must be
+            // dropped, not retried and not propagated terminally.
+            LOGGER.fine("Dropping stale-generation error for download " + downloadId);
+            return RetryDecision.STALE;
+        }
         State current = state.get();
         if (current == State.TERMINAL || current == State.CANCELLED || current == State.PAUSED) {
             // Already final, or a real error on a paused download: terminal.
@@ -358,6 +377,10 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     public void interceptComplete(String downloadId) {
         Download download = owned.get();
         if (download == null || !download.getId().equals(downloadId)) {
+            return;
+        }
+        if (!ownsCurrentGeneration(download)) {
+            LOGGER.fine("Ignoring stale-generation completion for download " + downloadId);
             return;
         }
         lifecycleLock.lock();
@@ -384,6 +407,10 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     public void interceptCanceled(String downloadId) {
         Download download = owned.get();
         if (download == null || !download.getId().equals(downloadId)) {
+            return;
+        }
+        if (!ownsCurrentGeneration(download)) {
+            LOGGER.fine("Ignoring stale-generation cancellation for download " + downloadId);
             return;
         }
         lifecycleLock.lock();

@@ -128,6 +128,7 @@ public class CurlClient {
 
         // Start download in a separate thread
         executorService.submit(() -> {
+            org.manager.tools.ExternalProcessRegistry.Registration registration = null;
             try {
                 // Create destination directory if it doesn't exist
                 Path destinationDir = download.getDestination();
@@ -150,7 +151,7 @@ public class CurlClient {
                 // processBuilder.redirectErrorStream(true);
 
                 Process process = processBuilder.start();
-                activeProcesses.register(download.getId(), process);
+                registration = activeProcesses.register(download.getId(), process);
 
                 // Gobble stdout on a daemon thread: the command normally
                 // writes to -o, but if a flag ever routes the document to
@@ -272,8 +273,12 @@ public class CurlClient {
                     }
                 }
             } finally {
-                // Clean up
-                activeProcesses.remove(download.getId());
+                // Generation-safe cleanup: an old worker whose run was
+                // replaced (pause + resume raced it) must not unregister
+                // the newer process under the same key
+                if (registration != null) {
+                    registration.unregister();
+                }
                 activeDownloads.remove(download.getId());
             }
         });
@@ -448,14 +453,23 @@ public class CurlClient {
     public void cancelDownload(Download download, DownloadListener listener, boolean deleteFile) {
         activeProcesses.terminate(download.getId(), 5);
 
-        // Delete partial file if requested
+        // Delete partial file if requested. The name comes from the
+        // download model and may be stale or corrupted, so both a
+        // plain-file-name check and real-path containment must pass before
+        // anything is deleted.
         if (deleteFile && download.getDestination() != null) {
-            Path outputFile = download.getDestination().resolve(download.getName());
-            try {
-                Files.deleteIfExists(outputFile);
-            } catch (IOException e) {
-                // Log error but continue
-                LOGGER.severe("Failed to delete partial file: " + e.getMessage());
+            if (org.manager.util.PathSafety.isSafeFileName(download.getName())) {
+                Path outputFile = download.getDestination().resolve(download.getName());
+                if (org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
+                    org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
+                            download.getDestination());
+                } else {
+                    LOGGER.warning("Refusing unsafe partial-file deletion for " + download.getId()
+                            + ": " + download.getName());
+                }
+            } else {
+                LOGGER.warning("Refusing unsafe partial-file name for " + download.getId()
+                        + ": " + download.getName());
             }
         }
 

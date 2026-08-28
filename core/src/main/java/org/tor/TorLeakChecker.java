@@ -3,7 +3,6 @@ package org.tor;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.Socket;
@@ -231,46 +230,73 @@ public class TorLeakChecker {
         }
     }
 
-    private DnsLeakResult checkDnsLeak() {
+    DnsLeakResult checkDnsLeak() {
         try {
             LOGGER.fine("Checking DNS leak...");
 
-            List<String> directDnsServers = new ArrayList<>();
-            List<String> torDnsServers = new ArrayList<>();
+            List<String> localNameservers = readResolvConfNameservers();
+            boolean anyResolvedLocally = false;
+            boolean anyRoutedUnresolved = false;
 
-            // Test DNS resolution through different paths
             for (String domain : DNS_TEST_DOMAINS) {
-                try {
-                    // Direct DNS resolution
-                    InetAddress[] directAddresses = InetAddress.getAllByName(domain);
-                    if (directAddresses.length > 0) {
-                        directDnsServers.add(directAddresses[0].getHostAddress());
-                    }
-
-                    // DNS through Tor (this is tricky - we check if we can resolve through proxy)
-                    String torResolvedIp = resolveDnsThroughTor(domain);
-                    if (torResolvedIp != null) {
-                        torDnsServers.add(torResolvedIp);
-                    }
-
-                } catch (Exception e) {
-                    LOGGER.fine("DNS test failed for " + domain + ": " + e.getMessage());
-                }
+                DnsProbeEvidence evidence = probeDnsRouting(domain);
+                anyResolvedLocally |= evidence.resolvedLocally();
+                anyRoutedUnresolved |= evidence.routedUnresolved();
             }
 
-            // Check if DNS servers are different (indicating proper Tor usage)
-            boolean isSecure = !torDnsServers.isEmpty()
-                    && (directDnsServers.isEmpty() || !directDnsServers.equals(torDnsServers));
-
-            String message = isSecure ? "DNS properly routed through Tor" : "Potential DNS leak detected";
-
-            return new DnsLeakResult(isSecure, message, directDnsServers, torDnsServers);
+            return evaluateDnsVerdict(localNameservers, anyResolvedLocally, anyRoutedUnresolved);
 
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "DNS leak check failed", e);
-            return new DnsLeakResult(false, "DNS check failed: " + e.getMessage(),
+            return new DnsLeakResult(DnsVerdict.UNVERIFIED, "DNS check failed: " + e.getMessage(),
                     Collections.emptyList(), Collections.emptyList());
         }
+    }
+
+    /**
+     * Truthful verdict from probe evidence only: a leak requires a readable
+     * local resolver to coincide with a locally resolved probe domain;
+     * routing requires the SOCKS probe to have carried the hostname
+     * unresolved; anything else is unproven and must stay unverified.
+     */
+    static DnsLeakResult evaluateDnsVerdict(List<String> localNameservers,
+            boolean localResolutionObserved, boolean routedThroughSocksUnresolved) {
+        if (localResolutionObserved && !localNameservers.isEmpty()) {
+            return new DnsLeakResult(DnsVerdict.DNS_LEAK,
+                    "DNS leak detected: local resolver " + localNameservers
+                            + " resolved the probe domain outside Tor",
+                    localNameservers, Collections.emptyList());
+        }
+        if (routedThroughSocksUnresolved && !localResolutionObserved) {
+            return new DnsLeakResult(DnsVerdict.ROUTED_THROUGH_TOR,
+                    "DNS routed through Tor: probe carried the hostname unresolved through the SOCKS proxy",
+                    localNameservers, Collections.emptyList());
+        }
+        return new DnsLeakResult(DnsVerdict.UNVERIFIED,
+                "DNS routing unverified: cannot prove Tor-side resolution or a local leak",
+                localNameservers, Collections.emptyList());
+    }
+
+    private record DnsProbeEvidence(boolean resolvedLocally, boolean routedUnresolved) {
+    }
+
+    List<String> readResolvConfNameservers() {
+        try {
+            return java.nio.file.Files.readAllLines(java.nio.file.Path.of("/etc/resolv.conf")).stream()
+                    .map(String::trim)
+                    .filter(line -> line.startsWith("nameserver"))
+                    .map(line -> line.split("\\s+"))
+                    .filter(parts -> parts.length > 1)
+                    .map(parts -> parts[1])
+                    .toList();
+        } catch (Exception e) {
+            LOGGER.fine("Could not read /etc/resolv.conf: " + e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    SocketAddress probeDestination(String domain, int port) {
+        return InetSocketAddress.createUnresolved(domain, port);
     }
 
     private TorNetworkResult checkTorNetwork() {
@@ -338,7 +364,10 @@ public class TorLeakChecker {
         }
     }
 
-    private String resolveDnsThroughTor(String domain) {
+    private DnsProbeEvidence probeDnsRouting(String domain) {
+        SocketAddress destination = probeDestination(domain, 80);
+        boolean resolvedLocally = destination instanceof InetSocketAddress inetDestination
+                && !inetDestination.isUnresolved();
         Socket socket = null;
         try {
             // The socket must be created WITH the SOCKS proxy: a plain socket
@@ -347,21 +376,14 @@ public class TorLeakChecker {
             Proxy proxy = new Proxy(Proxy.Type.SOCKS,
                     new InetSocketAddress(socksProxyHost, socksProxyPort));
             socket = new Socket(proxy);
-
-            // The destination must be built UNRESOLVED: only then does Java's
-            // SOCKS implementation carry the hostname inside the SOCKS5
-            // request (ATYP=DOMAIN) so the proxy resolves it remotely. A
-            // resolving InetSocketAddress would query the local resolver
-            // first and hand the proxy an IP — a DNS leak.
-            connectProbe(socket, InetSocketAddress.createUnresolved(domain, 80), 5000);
-            // Java surfaces the proxy-reported bound address (SOCKS5
-            // BND.ADDR) here, never a local resolution of the name.
-            String resolvedIp = ((InetSocketAddress) socket.getRemoteSocketAddress())
-                    .getAddress().getHostAddress();
-            return resolvedIp;
+            connectProbe(socket, destination, 5000);
+            // The connect completed with the hostname still unresolved, so
+            // the SOCKS5 request carried the name (ATYP=DOMAIN) and the
+            // proxy resolved it remotely.
+            return new DnsProbeEvidence(resolvedLocally, !resolvedLocally);
         } catch (Exception e) {
-            // DNS resolution through Tor failed or not properly configured
-            return null;
+            LOGGER.fine("DNS probe failed for " + domain + ": " + e.getMessage());
+            return new DnsProbeEvidence(resolvedLocally, false);
         } finally {
             if (socket != null) {
                 try {
@@ -384,7 +406,7 @@ public class TorLeakChecker {
 
     /** Test seam for the SOCKS-routing contract. */
     void resolveDnsThroughTorForTest(String domain) {
-        resolveDnsThroughTor(domain);
+        probeDnsRouting(domain);
     }
 
     private String buildResultMessage(IpLeakResult ipResult, DnsLeakResult dnsResult, TorNetworkResult torResult) {
@@ -492,6 +514,15 @@ public class TorLeakChecker {
     }
 
     /**
+     * DNS leak check verdict. ROUTED_THROUGH_TOR is the only secure
+     * outcome; DNS_LEAK is proven resolver leakage; UNVERIFIED means the
+     * evidence proved neither and safety must not be claimed.
+     */
+    public enum DnsVerdict {
+        DNS_LEAK, ROUTED_THROUGH_TOR, UNVERIFIED
+    }
+
+    /**
      * DNS leak check result.
      */
     public static class DnsLeakResult {
@@ -500,10 +531,18 @@ public class TorLeakChecker {
         public final String message;
         public final List<String> directDnsServers;
         public final List<String> torDnsServers;
+        public final DnsVerdict verdict;
 
         public DnsLeakResult(boolean isSecure, String message,
                 List<String> directDnsServers, List<String> torDnsServers) {
-            this.isSecure = isSecure;
+            this(isSecure ? DnsVerdict.ROUTED_THROUGH_TOR : DnsVerdict.DNS_LEAK, message,
+                    directDnsServers, torDnsServers);
+        }
+
+        public DnsLeakResult(DnsVerdict verdict, String message,
+                List<String> directDnsServers, List<String> torDnsServers) {
+            this.verdict = verdict;
+            this.isSecure = verdict == DnsVerdict.ROUTED_THROUGH_TOR;
             this.message = message;
             this.directDnsServers = new ArrayList<>(directDnsServers);
             this.torDnsServers = new ArrayList<>(torDnsServers);
@@ -511,8 +550,8 @@ public class TorLeakChecker {
 
         @Override
         public String toString() {
-            return String.format("DnsLeakResult{secure=%s, directServers=%d, torServers=%d}",
-                    isSecure, directDnsServers.size(), torDnsServers.size());
+            return String.format("DnsLeakResult{verdict=%s, directServers=%d, torServers=%d}",
+                    verdict, directDnsServers.size(), torDnsServers.size());
         }
     }
 

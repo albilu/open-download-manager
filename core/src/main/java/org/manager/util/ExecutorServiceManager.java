@@ -89,6 +89,18 @@ public class ExecutorServiceManager {
     }
 
     /**
+     * Creates a manager-scoped executor lifecycle, independent of the
+     * process-wide singleton. Download managers own their pools through
+     * this: shutting down one manager must never terminate the shared
+     * singleton that other managers and factory services still use.
+     *
+     * @return A new, independent ExecutorServiceManager
+     */
+    public static ExecutorServiceManager create() {
+        return new ExecutorServiceManager();
+    }
+
+    /**
      * Ends this manager's generation: shuts the pools down (if still live)
      * and clears the singleton so the next {@link #getInstance()} creates a
      * fresh manager. Called when a whole application generation ends

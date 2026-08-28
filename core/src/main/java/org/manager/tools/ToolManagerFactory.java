@@ -248,6 +248,23 @@ public class ToolManagerFactory {
     }
 
     /**
+     * Resets every tool manager's cached path/availability/version so the
+     * next query re-resolves from the current settings. Called when global
+     * settings change so new tool paths apply without a restart; unlike
+     * {@link #cleanup()} the managers stay registered.
+     */
+    public void invalidateToolCaches() {
+        for (ToolManager manager : managers.values()) {
+            try {
+                manager.cleanup();
+            } catch (Exception e) {
+                LOGGER.warning("Error invalidating tool manager caches: " + e.getMessage());
+            }
+        }
+        LOGGER.info("Invalidated tool manager caches");
+    }
+
+    /**
      * Cleans up all tool managers and releases resources.
      */
     public void cleanup() {

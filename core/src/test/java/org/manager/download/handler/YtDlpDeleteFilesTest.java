@@ -210,4 +210,68 @@ class YtDlpDeleteFilesTest {
 
         assertTrue(Files.isDirectory(tempDir));
     }
+
+    @Test
+    @DisplayName("A symlinked destination subdirectory cannot redirect deletion outside")
+    void symlinkedSubdirectoryEscapeIsRejected() throws Exception {
+        Path destination = tempDir.resolve("dl");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(destination);
+        Files.createDirectories(outside);
+        Path victim = outside.resolve("victim.mkv");
+        Files.writeString(victim, "precious");
+        Files.createSymbolicLink(destination.resolve("channel"), outside);
+
+        Download download = new Download(new java.net.URI("http://example.test/v"));
+        download.setDestination(destination);
+        StartedTask started = new StartedTask(destination);
+        started.ytDlpReported("channel/victim.mkv");
+
+        YtDlpDownloadHandler.deleteYtDlpOutput(download, started.task);
+
+        assertTrue(Files.exists(victim),
+                "deletion through a symlinked subdirectory must never remove files outside the destination");
+    }
+
+    @Test
+    @DisplayName("A reported path that is itself a symlink escaping the destination is rejected")
+    void symlinkedFileEscapeIsRejected() throws Exception {
+        Path destination = tempDir.resolve("dl");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(destination);
+        Files.createDirectories(outside);
+        Path victim = outside.resolve("victim.mkv");
+        Files.writeString(victim, "precious");
+        Files.createSymbolicLink(destination.resolve("link.mkv"), victim);
+
+        Download download = new Download(new java.net.URI("http://example.test/v"));
+        download.setDestination(destination);
+        StartedTask started = new StartedTask(destination);
+        started.ytDlpReported("link.mkv");
+
+        YtDlpDownloadHandler.deleteYtDlpOutput(download, started.task);
+
+        assertTrue(Files.exists(victim),
+                "a symlink target outside the destination must never be deleted");
+    }
+
+    @Test
+    @DisplayName("Deletion beneath a real subdirectory of the destination still works")
+    void deletionBeneathRealSubdirectoryWorks() throws Exception {
+        Path destination = tempDir.resolve("dl");
+        Path channel = destination.resolve("channel");
+        Files.createDirectories(channel);
+        Path done = channel.resolve("video.mkv");
+        Files.writeString(done, "payload");
+
+        Download download = new Download(new java.net.URI("http://example.test/v"));
+        download.setDestination(destination);
+        StartedTask started = new StartedTask(destination);
+        started.ytDlpReported("channel/video.mkv");
+
+        YtDlpDownloadHandler.deleteYtDlpOutput(download, started.task);
+
+        assertFalse(Files.exists(done),
+                "a real subdirectory of the destination is a legitimate deletion target");
+    }
 }

@@ -48,6 +48,7 @@ class YtDlpIntegrationTest {
     private YtDlpFactory factory;
     private GlobalSettings globalSettings;
     private Path downloadDir;
+    private YtDlpLocalMediaServer mediaServer;
 
     @BeforeAll
     static void checkYtDlpAvailability() {
@@ -64,6 +65,10 @@ class YtDlpIntegrationTest {
         globalSettings.setDefaultDownloadDirectory(downloadDir);
         globalSettings.setYtDlpPath("yt-dlp");
 
+        // Hermetic media source: local HTTP server exercising the real
+        // yt-dlp generic extractor without platform access
+        mediaServer = YtDlpLocalMediaServer.start();
+
         // Initialize components with real dependencies
         YtDlpFactory.clearInstance();
         factory = YtDlpFactory.getInstance(globalSettings);
@@ -71,7 +76,7 @@ class YtDlpIntegrationTest {
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws IOException {
         if (client != null) {
             client.shutdown();
         }
@@ -79,6 +84,9 @@ class YtDlpIntegrationTest {
             factory.shutdown();
         }
         YtDlpFactory.clearInstance();
+        if (mediaServer != null) {
+            mediaServer.close();
+        }
     }
 
     @Test
@@ -106,9 +114,10 @@ class YtDlpIntegrationTest {
                 .setFragmentRetries(3)
                 .setNoPlaylist(true);
 
-        // Test command building by attempting info extraction
+        // Test command building by attempting info extraction. Command
+        // building and JSON parsing are platform-independent: served locally
         CompletableFuture<YtDlpClient.VideoInfo> future = client
-                .extractInfo("https://www.youtube.com/watch?v=nulrKPsBTi4");
+                .extractInfo(mediaServer.mediaUrl());
         YtDlpClient.VideoInfo info = future.get();
 
         assertNotNull(info);
@@ -121,6 +130,10 @@ class YtDlpIntegrationTest {
     @EnabledIf("isYtDlpAvailable")
     @Timeout(value = TEST_TIMEOUT_SECONDS, unit = TimeUnit.SECONDS)
     void shouldIntegrateAudioSettingsWithRealValidation() throws Exception {
+        // Requires the real platform (asserts a real duration); skip only
+        // on the external bot block
+        YtDlpBotBlock.assumeNotBotBlocked(TEST_INFO_URL);
+
         // Create audio settings - test that they can be created
         factory.createAudioSettings()
                 .setAudioFormat("mp3")
@@ -145,8 +158,9 @@ class YtDlpIntegrationTest {
         factory.createHighQualityVideoSettings()
                 .setFormat("best[height<=720]/best");
 
-        // Test settings integration by listing available formats
-        CompletableFuture<List<YtDlpClient.VideoFormat>> future = client.listFormats(TEST_INFO_URL);
+        // Test settings integration by listing available formats. Format
+        // listing is platform-independent: served locally
+        CompletableFuture<List<YtDlpClient.VideoFormat>> future = client.listFormats(mediaServer.mediaUrl());
         List<YtDlpClient.VideoFormat> formats = future.get();
 
         assertNotNull(formats);
@@ -286,8 +300,9 @@ class YtDlpIntegrationTest {
             assertNotNull(proxySettings.getProxyAddress());
         }
 
-        // Info extraction should work (will ignore fake proxy in this context)
-        CompletableFuture<YtDlpClient.VideoInfo> future = client.extractInfo(TEST_INFO_URL);
+        // Info extraction should work against the hermetic media source
+        // (the fake proxy is never applied to the extract-info command)
+        CompletableFuture<YtDlpClient.VideoInfo> future = client.extractInfo(mediaServer.mediaUrl());
         YtDlpClient.VideoInfo info = future.get();
 
         assertNotNull(info);
@@ -298,10 +313,11 @@ class YtDlpIntegrationTest {
     @EnabledIf("isYtDlpAvailable")
     @Timeout(value = TEST_TIMEOUT_SECONDS * 2, unit = TimeUnit.SECONDS)
     void shouldIntegrateConcurrentClientOperations() throws Exception {
-        // Test concurrent info extractions
-        CompletableFuture<YtDlpClient.VideoInfo> future1 = client.extractInfo(TEST_INFO_URL);
-        CompletableFuture<YtDlpClient.VideoInfo> future2 = client.extractInfo(TEST_INFO_URL);
-        CompletableFuture<List<YtDlpClient.VideoFormat>> formatsFuture = client.listFormats(TEST_INFO_URL);
+        // Concurrent operations against the hermetic media source: id/title
+        // consistency and format listing are platform-independent
+        CompletableFuture<YtDlpClient.VideoInfo> future1 = client.extractInfo(mediaServer.mediaUrl());
+        CompletableFuture<YtDlpClient.VideoInfo> future2 = client.extractInfo(mediaServer.mediaUrl());
+        CompletableFuture<List<YtDlpClient.VideoFormat>> formatsFuture = client.listFormats(mediaServer.mediaUrl());
 
         // All should complete successfully
         YtDlpClient.VideoInfo info1 = future1.get();

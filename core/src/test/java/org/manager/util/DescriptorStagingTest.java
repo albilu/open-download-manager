@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,8 +37,8 @@ class DescriptorStagingTest {
     }
 
     @Test
-    @DisplayName("Staging name collisions cannot replace an existing file")
-    void stagingNameCollisionsCannotReplaceExistingFile() throws IOException {
+    @DisplayName("Repeated staging of one source reuses a single entry with the latest bytes")
+    void repeatedStagingOfOneSourceReusesASingleEntry() throws IOException {
         Path root = newStagingRoot();
         Path sentinel = root.resolve("sentinel.torrent");
         byte[] sentinelBytes = "sentinel must survive".getBytes(StandardCharsets.UTF_8);
@@ -52,16 +53,58 @@ class DescriptorStagingTest {
             stagedCopies.put(staged, roundBytes);
         }
 
-        // Every staging round produced its own distinct durable copy...
-        assertEquals(3, stagedCopies.size(), "each staging round must produce a distinct path");
-        stagedCopies.forEach((staged, expected) -> {
-            assertTrue(Files.isRegularFile(staged), "staged copy must exist: " + staged);
-            assertArrayEquals(expected, read(staged), "staged copy must hold its round's bytes: " + staged);
-        });
+        // Updated expectation: the staged name is deterministic per source,
+        // so failed-and-retried rounds reuse (replace) ONE entry instead of
+        // accumulating unbounded copies; the last round's bytes win
+        assertEquals(1, stagedCopies.size(),
+                "repeated staging of the same source must reuse one entry");
+        Path staged = stagedCopies.keySet().iterator().next();
+        assertTrue(Files.isRegularFile(staged), "staged copy must exist: " + staged);
+        assertArrayEquals(read(staged), read(source),
+                "the staged entry must hold the latest round's bytes");
 
         // ...and nothing pre-existing was replaced
         assertArrayEquals(sentinelBytes, read(sentinel), "an existing staged file must never be replaced");
         assertTrue(Files.exists(source), "staging must not consume the source");
+    }
+
+    @Test
+    @DisplayName("Distinct sources stage into distinct entries")
+    void distinctSourcesStageIntoDistinctEntries() throws IOException {
+        Path root = newStagingRoot();
+        Path first = tempDir.resolve("movie.torrent");
+        Files.write(first, "descriptor a".getBytes(StandardCharsets.UTF_8));
+        Path stagedFirst = DescriptorStaging.stageFile(first, root);
+
+        Files.createDirectories(tempDir.resolve("elsewhere"));
+        Path otherSource = tempDir.resolve("elsewhere").resolve("movie.torrent");
+        Files.write(otherSource, "descriptor b".getBytes(StandardCharsets.UTF_8));
+        Path stagedSecond = DescriptorStaging.stageFile(otherSource, root);
+
+        assertNotEquals(stagedFirst, stagedSecond,
+                "different source paths must stage into different entries");
+        assertArrayEquals("descriptor a".getBytes(StandardCharsets.UTF_8), read(stagedFirst));
+        assertArrayEquals("descriptor b".getBytes(StandardCharsets.UTF_8), read(stagedSecond));
+    }
+
+    @Test
+    @DisplayName("originalNameOf derives the watched name and rejects foreign names")
+    void originalNameOfDerivesWatchedName() throws IOException {
+        Path root = newStagingRoot();
+        Path source = tempDir.resolve("movie.torrent");
+        Files.write(source, "descriptor".getBytes(StandardCharsets.UTF_8));
+        Path staged = DescriptorStaging.stageFile(source, root);
+
+        assertEquals("movie.torrent", DescriptorStaging.originalNameOf(staged));
+        assertEquals("orphan.torrent",
+                DescriptorStaging.originalNameOf(root.resolve("0123456789abcdef-orphan.torrent")));
+        assertEquals("meta.mkv.meta4",
+                DescriptorStaging.originalNameOf(root.resolve("0123456789abcdef-meta.mkv.meta4")));
+        assertNull(DescriptorStaging.originalNameOf(root.resolve("readme.txt-not-keyed")));
+        assertNull(DescriptorStaging.originalNameOf(root.resolve("readme.txt")));
+        assertNull(DescriptorStaging.originalNameOf(root.resolve("notakey-movie.torrent")));
+        assertNull(DescriptorStaging.originalNameOf(root.resolve("0123456789abcdef-notes.txt")));
+        assertNull(DescriptorStaging.originalNameOf(null));
     }
 
     @Test
