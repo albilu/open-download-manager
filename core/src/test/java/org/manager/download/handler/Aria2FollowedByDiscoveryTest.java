@@ -57,6 +57,27 @@ class Aria2FollowedByDiscoveryTest {
     }
 
     @Test
+    void tellStatusFilesBecomeAuthoritativeModelArtifactsAndInferTheDisplayName() throws Exception {
+        Aria2DownloadHandler handler = newHandler();
+        try {
+            Download download = new Download(new java.net.URI("https://example.test/download?id=1"));
+            download.setDestination(tempDir);
+            handler.registerTrackedDownload(download, List.of("gid"));
+            Path actual = tempDir.resolve("server-selected-name.iso").toAbsolutePath().normalize();
+            Map<String, Object> active = status("active", 10, 100);
+            active.put("files", List.of(Map.of("path", actual.toString())));
+
+            handler.processProgressUpdate(download.getId(), "gid", active);
+
+            assertEquals(List.of(actual), download.getOutputPaths());
+            assertEquals(actual, download.getPrimaryOutputPath());
+            assertEquals("server-selected-name.iso", download.getName());
+        } finally {
+            handler.shutdown().join();
+        }
+    }
+
+    @Test
     @DisplayName("A completed metadata GID with followedBy children does not complete the download")
     void followedByChildrenAreTrackedAndGateCompletion() throws Exception {
         Aria2DownloadHandler handler = newHandler();

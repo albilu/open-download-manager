@@ -467,7 +467,6 @@ public class SettingsDialog {
         s.setProperty("httrack.includeArchives", String.valueOf(check("include_archives_check").getActive()));
         // Advanced
         boolean schedulingEnabled = check("enable_scheduling_check").getActive();
-        s.setProperty("scheduler.enabled", String.valueOf(schedulingEnabled));
         boolean[][] hourGrid = readSchedulerGrid();
         boolean allInactive = true;
         outer:
@@ -479,11 +478,13 @@ public class SettingsDialog {
                 }
             }
         }
+        boolean effectiveSchedulingEnabled = schedulingEnabled && !allInactive;
+        s.setProperty("scheduler.enabled", String.valueOf(effectiveSchedulingEnabled));
         s.setProperty("scheduler.grid",
-                schedulingEnabled && !allInactive
+                effectiveSchedulingEnabled
                         ? org.manager.schedule.WeeklySchedule.hourGridToString(hourGrid)
                         : "");
-        applySchedulerRuntime(schedulingEnabled && !allInactive, hourGrid);
+        applySchedulerRuntime(effectiveSchedulingEnabled, hourGrid);
         s.setProxychainsPath(entry("proxychains_path_entry").getText().trim());
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());

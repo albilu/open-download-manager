@@ -74,8 +74,11 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             return false;
         }
 
-        // Get the source file path (download destination + filename)
-        Path sourceFile = download.getDestination().resolve(download.getName());
+        Path sourceFile = download.getPrimaryOutputPath();
+        if (sourceFile == null) {
+            LOGGER.warning("Cannot scan file: output path is unknown");
+            return false;
+        }
 
         // Check if source file exists
         if (!Files.exists(sourceFile)) {

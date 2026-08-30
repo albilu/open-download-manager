@@ -24,6 +24,15 @@ class UrlDetectorTest {
     class UrlExtractionTest {
 
         @Test
+        @DisplayName("Equivalent bare and absolute URLs deduplicate after normalization")
+        void deduplicatesAfterNormalization() {
+            List<URI> urls = UrlDetector.extractUrls(
+                    "example.com/file.zip https://example.com/file.zip");
+
+            assertEquals(List.of(URI.create("https://example.com/file.zip")), urls);
+        }
+
+        @Test
         @DisplayName("Should extract simple HTTP URLs")
         void testExtractSimpleHttpUrls() {
             String text = "Check out this link: https://example.com/file.zip";
@@ -121,6 +130,44 @@ class UrlDetectorTest {
         void testExtractUrlsWithInvalidInput(String text) {
             List<URI> urls = UrlDetector.extractUrls(text);
             assertTrue(urls.isEmpty());
+        }
+    }
+
+    @Nested
+    @DisplayName("Central URL Validation")
+    class CentralValidationTest {
+
+        @Test
+        void normalizesBareUrlsAndSchemeCase() {
+            assertEquals(URI.create("https://example.com/file.zip"),
+                    UrlDetector.requireValidDownloadUrl(" example.com/file.zip "));
+            assertEquals(URI.create("https://example.com/file.zip"),
+                    UrlDetector.requireValidDownloadUrl("HTTPS://example.com/file.zip"));
+        }
+
+        @Test
+        void acceptsDescriptorFilesAndOpaqueMagnetUris() {
+            URI magnet = URI.create(
+                    "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=test");
+
+            assertEquals(magnet, UrlDetector.requireValidDownloadUri(magnet));
+            assertTrue(UrlDetector.isValidDownloadUrl(URI.create("file:///tmp/item.torrent")));
+            assertTrue(UrlDetector.isValidDownloadUrl(URI.create("file:///tmp/item.meta4")));
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {
+            "javascript:alert(1)",
+            "mailto:someone@example.com",
+            "https:///missing-host.zip",
+            "file:///tmp/arbitrary.txt",
+            "magnet:?dn=missing-exact-topic",
+            "not a url"
+        })
+        void rejectsUnsupportedOrStructurallyInvalidInputs(String input) {
+            assertTrue(UrlDetector.normalizeAndValidate(input).isEmpty());
+            assertThrows(IllegalArgumentException.class,
+                    () -> UrlDetector.requireValidDownloadUrl(input));
         }
     }
 

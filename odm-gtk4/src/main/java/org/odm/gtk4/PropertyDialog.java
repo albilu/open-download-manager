@@ -95,6 +95,7 @@ public class PropertyDialog {
         moveTorrent.setTooltipText("Descriptor movement only applies while adding a new download");
 
         loadCurrentSettings();
+        applyCapabilities();
 
         Widgets.require(builder, "cancel_button", Button.class).onClicked(dialog::close);
         Widgets.require(builder, "apply_button", Button.class).onClicked(this::onApply);
@@ -117,20 +118,16 @@ public class PropertyDialog {
         maxConnectionsSpin.setValue(settings.getMaxConnections());
         maxDownloadSpeedSpin.setValue(settings.getDownloadLimitKB());
         maxUploadSpeedSpin.setValue(settings.getUploadLimitKB());
-        if (settings.getMaxRetries() > 0) {
-            retryLimitSpin.setValue(settings.getMaxRetries());
-        }
-        if (settings.getRetryDelaySeconds() > 0) {
-            retryAfterSpin.setValue(settings.getRetryDelaySeconds());
-        }
+        retryLimitSpin.setValue(settings.getMaxRetries());
+        retryAfterSpin.setValue(settings.getRetryDelaySeconds());
         if (settings.getReferer() != null) {
             referrerEntry.setText(settings.getReferer());
         }
         if (settings.getUserAgent() != null) {
             userAgentEntry.setText(settings.getUserAgent());
         }
-        if (settings.getCookieHeader() != null && settings.getCookieHeader().startsWith("Cookie: ")) {
-            cookieEntry.setText(settings.getCookieHeader().substring("Cookie: ".length()));
+        if (settings.getCookieHeader() != null) {
+            cookieEntry.setText(settings.getCookieHeader().replaceFirst("(?i)^Cookie:\\s*", ""));
         }
         DialogOptions.ProxyFields proxy = download.isUseProxy()
                 ? DialogOptions.parseProxy(download.getProxyAddress())
@@ -147,15 +144,13 @@ public class PropertyDialog {
 
     private void onApply() {
         org.manager.download.ExternalToolSettings settings = download.getSettings();
-        settings.setMaxConnections((int) maxConnectionsSpin.getValue());
-        settings.setDownloadLimitKB((int) maxDownloadSpeedSpin.getValue());
-        settings.setUploadLimitKB((int) maxUploadSpeedSpin.getValue());
-        settings.setMaxRetries((int) retryLimitSpin.getValue());
-        settings.setRetryDelaySeconds((int) retryAfterSpin.getValue());
-        settings.setReferer(blankToNull(referrerEntry.getText()));
-        settings.setUserAgent(blankToNull(userAgentEntry.getText()));
-        String cookie = cookieEntry.getText().trim();
-        settings.setCookieHeader(cookie.isEmpty() ? null : "Cookie: " + cookie);
+        DialogOptions.applyCommon(settings,
+                (int) maxConnectionsSpin.getValue(),
+                (int) maxDownloadSpeedSpin.getValue(),
+                (int) maxUploadSpeedSpin.getValue(),
+                (int) retryLimitSpin.getValue(),
+                (int) retryAfterSpin.getValue(),
+                referrerEntry.getText(), userAgentEntry.getText(), cookieEntry.getText());
         DialogOptions.applyProxy(download, torSwitch.getActive(),
                 (int) proxyTypeCombo.getSelected(), proxyHostEntry.getText(),
                 (int) proxyPortSpin.getValue(), proxyUsernameEntry.getText(),
@@ -168,8 +163,33 @@ public class PropertyDialog {
                 });
     }
 
-    private static String blankToNull(String value) {
-        String trimmed = value == null ? "" : value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
+    private void applyCapabilities() {
+        org.manager.download.ExternalToolSettings settings = download.getSettings();
+        configureCapability(maxConnectionsSpin, settings,
+                org.manager.download.ExternalToolSettings.Capability.CONNECTIONS, "connections");
+        configureCapability(maxDownloadSpeedSpin, settings,
+                org.manager.download.ExternalToolSettings.Capability.DOWNLOAD_LIMIT, "download limits");
+        configureCapability(maxUploadSpeedSpin, settings,
+                org.manager.download.ExternalToolSettings.Capability.UPLOAD_LIMIT, "upload limits");
+        configureCapability(retryLimitSpin, settings,
+                org.manager.download.ExternalToolSettings.Capability.MAX_RETRIES, "retry limits");
+        configureCapability(retryAfterSpin, settings,
+                org.manager.download.ExternalToolSettings.Capability.RETRY_DELAY, "retry delays");
+        configureCapability(referrerEntry, settings,
+                org.manager.download.ExternalToolSettings.Capability.REFERER, "HTTP referers");
+        configureCapability(userAgentEntry, settings,
+                org.manager.download.ExternalToolSettings.Capability.USER_AGENT, "user agents");
+        configureCapability(cookieEntry, settings,
+                org.manager.download.ExternalToolSettings.Capability.COOKIE, "cookie headers");
+    }
+
+    private static void configureCapability(org.gnome.gtk.Widget widget,
+            org.manager.download.ExternalToolSettings settings,
+            org.manager.download.ExternalToolSettings.Capability capability,
+            String description) {
+        boolean supported = settings.supports(capability);
+        widget.setSensitive(supported);
+        widget.setTooltipText(supported ? null
+                : "This download engine does not support " + description);
     }
 }

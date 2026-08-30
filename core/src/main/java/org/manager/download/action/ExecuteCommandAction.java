@@ -157,8 +157,8 @@ public class ExecuteCommandAction implements AfterCompletionAction {
      * the download name, verified to exist when possible.
      */
     private static Path resolveFilePath(Download download) {
-        if (download.getDestination() != null && download.getName() != null) {
-            Path candidate = download.getDestination().resolve(download.getName());
+        Path candidate = download.getPrimaryOutputPath();
+        if (candidate != null) {
             if (Files.exists(candidate)) {
                 return candidate;
             }

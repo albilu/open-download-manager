@@ -244,6 +244,11 @@ public abstract class DownloadSettings implements ExternalToolSettings {
         return additionalOptions.get(key);
     }
 
+    /** Removes a native/additional option when a dialog restores its default. */
+    protected void clearOption(String key) {
+        additionalOptions.remove(key);
+    }
+
     /**
      * Gets all additional options.
      *

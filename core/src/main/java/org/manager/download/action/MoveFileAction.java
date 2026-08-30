@@ -41,8 +41,11 @@ public class MoveFileAction implements AfterCompletionAction {
             return false;
         }
 
-        // Get the source file path (download destination + filename)
-        sourceFile = download.getDestination().resolve(download.getName());
+        sourceFile = download.getPrimaryOutputPath();
+        if (sourceFile == null) {
+            LOGGER.warning("Cannot move file: output path is unknown");
+            return false;
+        }
 
         // Check if source file exists
         if (!Files.exists(sourceFile)) {
@@ -66,6 +69,7 @@ public class MoveFileAction implements AfterCompletionAction {
                     : new StandardCopyOption[] {};
 
             Files.move(sourceFile, targetPath, options);
+            download.setOutputPaths(java.util.List.of(targetPath));
             LOGGER.info("Moved file from " + sourceFile + " to " + targetPath);
             return true;
         } catch (IOException e) {

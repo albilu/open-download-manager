@@ -241,6 +241,40 @@ class RunningSlotLifecycleTest {
 
         Download running = newDownload("slot-running");
         Download queued = newDownload("slot-queued");
+        AtomicInteger queuedCancelEvents = new AtomicInteger();
+        manager.addDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(Download download) {
+            }
+
+            @Override
+            public void onDownloadProgress(Download download, float progress,
+                    long downloadedBytes, long totalBytes, float speed) {
+            }
+
+            @Override
+            public void onDownloadPause(Download download) {
+            }
+
+            @Override
+            public void onDownloadResume(Download download) {
+            }
+
+            @Override
+            public void onDownloadComplete(Download download) {
+            }
+
+            @Override
+            public void onDownloadError(Download download, String errorMessage) {
+            }
+
+            @Override
+            public void onDownloadCanceled(Download download) {
+                if (download.getId().equals(queued.getId())) {
+                    queuedCancelEvents.incrementAndGet();
+                }
+            }
+        });
         manager.queueDownload(running).join();
         manager.queueDownload(queued).join();
 
@@ -254,6 +288,12 @@ class RunningSlotLifecycleTest {
         assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 1),
                 "canceling a never-started download must not decrement the counter "
                         + "of the still-running download");
+        assertTrue(awaitTrue(() -> queuedCancelEvents.get() == 1),
+                "manager-owned queued cancellation must emit exactly one event");
+        assertEquals(Download.Status.CANCELED, queued.getStatus());
+        assertTrue(manager.getDownload(queued.getId()) == null,
+                "the canceled queued item must be removed from the repository");
+        assertEquals(1, queuedCancelEvents.get());
 
         handler.fireComplete(running);
         assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 0));

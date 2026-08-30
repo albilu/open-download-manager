@@ -12,6 +12,11 @@ import org.proxychains.ProxychainsToolManager;
  */
 public class ProxychainsSettings extends DownloadSettings {
 
+    @Override
+    public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
+        return true;
+    }
+
     private String configFile = null;
     private boolean quiet = false;
     private String program = ApplicationContext.getToolPath("aria2"); // aria2c, curl, or custom
@@ -323,9 +328,7 @@ public class ProxychainsSettings extends DownloadSettings {
         ProxychainsSettings copy = new ProxychainsSettings();
 
         // Copy base settings
-        copy.setConnections(this.getConnections());
-        copy.setUseProxy(this.isUseProxy());
-        copy.setProxyAddress(this.getProxyAddress());
+        copyTo(copy);
 
         // Copy Proxychains-specific settings
         copy.configFile = this.configFile;

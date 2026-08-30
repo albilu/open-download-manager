@@ -13,6 +13,13 @@ import org.manager.download.DownloadSettings;
  */
 public class HttrackSettings extends DownloadSettings {
 
+    @Override
+    public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
+        return capability == org.manager.download.ExternalToolSettings.Capability.CONNECTIONS
+                || capability == org.manager.download.ExternalToolSettings.Capability.DOWNLOAD_LIMIT
+                || capability == org.manager.download.ExternalToolSettings.Capability.USER_AGENT;
+    }
+
     private String url;
     private Path outputDirectory;
     private int depth = 5;//
@@ -708,9 +715,7 @@ public class HttrackSettings extends DownloadSettings {
         HttrackSettings copy = new HttrackSettings();
 
         // Copy base DownloadSettings fields
-        copy.setConnections(this.getConnections());
-        copy.setUseProxy(this.isUseProxy());
-        copy.setProxyAddress(this.getProxyAddress());
+        copyTo(copy);
 
         // Copy HttrackSettings-specific fields
         copy.url = this.url;

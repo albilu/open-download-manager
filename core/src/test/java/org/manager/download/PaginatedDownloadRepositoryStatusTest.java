@@ -75,6 +75,7 @@ class PaginatedDownloadRepositoryStatusTest {
     private Download newDownload() {
         Download download = new Download(URI.create("https://example.com/file-" + System.nanoTime() + ".bin"));
         download.setName("file.bin");
+        download.setStatus(Download.Status.QUEUED);
         return download;
     }
 

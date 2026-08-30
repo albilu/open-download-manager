@@ -265,6 +265,35 @@ class YtDlpClientTest {
         assertFalse(command.contains("--concurrent-fragments"));
     }
 
+    @Test
+    @DisplayName("Shared dialog retry, header and filename settings reach yt-dlp")
+    void testSharedSettingsReachCommand() {
+        YtDlpSettings settings = new YtDlpSettings()
+                .setOutputTemplate("100% complete.mp4")
+                .setDownloadLimitKB(320)
+                .setUserAgent("odm-yt")
+                .setReferer("https://referrer.test/");
+        settings.setCookieHeader("Cookie: session=abc");
+        settings.setMaxRetries(8);
+        settings.setRetryDelaySeconds(4);
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        assertCommandValue(command, "-o", "100%% complete.mp4");
+        assertCommandValue(command, "--limit-rate", "320K");
+        assertCommandValue(command, "--retries", "8");
+        assertCommandValue(command, "--retry-sleep", "4");
+        assertCommandValue(command, "--user-agent", "odm-yt");
+        assertCommandValue(command, "--referer", "https://referrer.test/");
+        assertCommandValue(command, "--add-header", "Cookie: session=abc");
+    }
+
+    private static void assertCommandValue(List<String> command, String flag, String expected) {
+        int index = command.indexOf(flag);
+        assertTrue(index >= 0, "missing flag " + flag + " in " + command);
+        assertEquals(expected, command.get(index + 1));
+    }
+
     @ParameterizedTest
     @DisplayName("Should handle byte conversion calculations")
     @CsvSource({

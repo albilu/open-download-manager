@@ -123,7 +123,8 @@ final class DialogOptions {
 
     /**
      * Passes the shared dialog fields onto the engine-neutral settings seam.
-     * Blank/zero values are skipped so engine defaults survive.
+     * Every supported capability is applied, including blank/zero values
+     * which explicitly restore the engine default.
      */
     static void applyCommon(ExternalToolSettings settings, int connections,
             int downloadLimitKb, int uploadLimitKb, int maxRetries, int retryDelaySeconds,
@@ -131,27 +132,30 @@ final class DialogOptions {
         if (settings == null) {
             return;
         }
-        settings.setMaxConnections(connections);
-        if (downloadLimitKb > 0) {
-            settings.setDownloadLimitKB(downloadLimitKb);
+        if (settings.supports(ExternalToolSettings.Capability.CONNECTIONS)) {
+            settings.setMaxConnections(connections);
         }
-        if (uploadLimitKb > 0) {
+        if (settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
+            settings.setDownloadLimitKB(Math.max(0, downloadLimitKb));
+        }
+        if (settings.supports(ExternalToolSettings.Capability.UPLOAD_LIMIT)) {
             settings.setUploadLimitKB(uploadLimitKb);
         }
-        if (maxRetries > 0) {
+        if (settings.supports(ExternalToolSettings.Capability.MAX_RETRIES)) {
             settings.setMaxRetries(maxRetries);
         }
-        if (retryDelaySeconds > 0) {
+        if (settings.supports(ExternalToolSettings.Capability.RETRY_DELAY)) {
             settings.setRetryDelaySeconds(retryDelaySeconds);
         }
-        if (referer != null && !referer.isBlank()) {
-            settings.setReferer(referer.trim());
+        if (settings.supports(ExternalToolSettings.Capability.REFERER)) {
+            settings.setReferer(referer == null || referer.isBlank() ? null : referer.trim());
         }
-        if (userAgent != null && !userAgent.isBlank()) {
-            settings.setUserAgent(userAgent.trim());
+        if (settings.supports(ExternalToolSettings.Capability.USER_AGENT)) {
+            settings.setUserAgent(userAgent == null || userAgent.isBlank() ? null : userAgent.trim());
         }
-        if (cookie != null && !cookie.isBlank()) {
-            settings.setCookieHeader("Cookie: " + cookie.trim());
+        if (settings.supports(ExternalToolSettings.Capability.COOKIE)) {
+            settings.setCookieHeader(cookie == null || cookie.isBlank()
+                    ? null : "Cookie: " + cookie.trim());
         }
     }
 }

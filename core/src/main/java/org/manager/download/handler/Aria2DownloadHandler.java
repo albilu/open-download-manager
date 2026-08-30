@@ -91,6 +91,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         "connections", // Current connection count
         "numSeeders", // Connected seeder count (BitTorrent)
         "infoHash", // Torrent info hash (present for BitTorrent downloads)
+        "files", // Authoritative output artifact paths
         "followedBy", // GIDs spawned by this one (BT metadata -> payload)
         "following", // GID this one was spawned by
         "belongsTo" // Parent GID (e.g. metadata download of a payload)
@@ -1042,6 +1043,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             if (infoHash != null && !infoHash.isBlank()) {
                 download.setInfoHash(infoHash);
             }
+            recordReportedOutputPaths(download, status);
 
             // Calculate progress percentage
             float progress = 0;
@@ -1057,6 +1059,29 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error processing progress update for GID " + gid, e);
+        }
+    }
+
+    private void recordReportedOutputPaths(Download download, Map<String, Object> status) {
+        if (!(status.get("files") instanceof List<?> files)) {
+            return;
+        }
+        for (Object file : files) {
+            if (!(file instanceof Map<?, ?> fileMap)
+                    || !(fileMap.get("path") instanceof String path)
+                    || path.isBlank()) {
+                continue;
+            }
+            try {
+                Path artifact = Path.of(path);
+                download.recordOutputPath(artifact);
+                if (download.getRequestedFileName() == null && files.size() == 1
+                        && artifact.getFileName() != null) {
+                    download.setName(artifact.getFileName().toString());
+                }
+            } catch (IllegalArgumentException invalidPath) {
+                LOGGER.log(Level.WARNING, "Ignoring invalid aria2 output path", invalidPath);
+            }
         }
     }
 
@@ -1263,6 +1288,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         LOGGER.info("Starting HTTP download " + download.getId());
         Map<String, Object> options = new HashMap<>();
         options.put("dir", download.getDestination().toString());
+        if (download.getRequestedFileName() != null) {
+            options.put("out", download.getRequestedFileName());
+        }
 
         // Get settings from download using pattern matching
         switch (download.getSettings()) {

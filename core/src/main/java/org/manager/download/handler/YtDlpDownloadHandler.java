@@ -113,6 +113,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         yield defaultSettings;
                     }
                 };
+                if (download.getRequestedFileName() != null) {
+                    settings.setOutputTemplate(download.getRequestedFileName());
+                }
 
                 // Create destination directory if it doesn't exist
                 Path destinationDir = download.getDestination();
@@ -383,8 +386,15 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 if (task.isCancelled()) {
                     return; // invalidated by cancellation
                 }
+                if (filename != null && !filename.isBlank()) {
+                    try {
+                        download.recordOutputPath(Path.of(filename));
+                    } catch (IllegalArgumentException invalidPath) {
+                        LOGGER.log(Level.WARNING, "Ignoring invalid yt-dlp output path", invalidPath);
+                    }
+                }
                 if (filename != null && !filename.isBlank()
-                        && (download.getName() == null || download.getName().isBlank())) {
+                        && download.getRequestedFileName() == null) {
                     // yt-dlp reports a destination that may carry path
                     // segments; the model name is a plain file name only
                     int slash = Math.max(filename.lastIndexOf('/'), filename.lastIndexOf('\\'));
@@ -400,6 +410,13 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             public void onComplete(String filename) {
                 if (task.isCancelled()) {
                     return; // a late completion must not replace CANCELED
+                }
+                if (filename != null && !filename.isBlank()) {
+                    try {
+                        download.recordOutputPath(Path.of(filename));
+                    } catch (IllegalArgumentException invalidPath) {
+                        LOGGER.log(Level.WARNING, "Ignoring invalid yt-dlp output path", invalidPath);
+                    }
                 }
                 download.setStatus(Download.Status.COMPLETED);
                 if (download.getSize() > 0) {

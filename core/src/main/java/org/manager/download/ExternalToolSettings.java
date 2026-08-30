@@ -13,6 +13,22 @@ package org.manager.download;
  */
 public interface ExternalToolSettings {
 
+    enum Capability {
+        CONNECTIONS,
+        DOWNLOAD_LIMIT,
+        UPLOAD_LIMIT,
+        MAX_RETRIES,
+        RETRY_DELAY,
+        REFERER,
+        USER_AGENT,
+        COOKIE
+    }
+
+    /** Whether this engine actually maps the setting to its native command. */
+    default boolean supports(Capability capability) {
+        return false;
+    }
+
     /** Maximum simultaneous connections for this download. */
     int getMaxConnections();
 

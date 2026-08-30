@@ -57,10 +57,24 @@ class ChecksumProbeTest {
     void picksMatchingEntryAmongMultiple() {
         String other = "a".repeat(64);
         Optional<String> result = ChecksumProbe.parse(
-                other + "  other-file.zip\n" + SHA256 + "  target.iso\n", "sha256");
-        // First valid entry wins; servers list their files in order
+                other + "  other-file.zip\n" + SHA256 + "  target.iso\n",
+                "sha256", "target.iso");
         assertTrue(result.isPresent());
-        assertEquals(other, result.get());
+        assertEquals(SHA256, result.get());
+    }
+
+    @Test
+    void preservesQueryWhenBuildingSiblingUri() {
+        java.net.URI sibling = ChecksumProbe.siblingUri(
+                java.net.URI.create("https://example.test/files/app.zip?token=abc#section"),
+                ".sha256");
+        assertEquals("https://example.test/files/app.zip.sha256?token=abc", sibling.toString());
+    }
+
+    @Test
+    void doesNotUseAnotherNamedEntryAsFallback() {
+        assertTrue(ChecksumProbe.parse("a".repeat(64) + "  other.zip\n",
+                "sha256", "target.zip").isEmpty());
     }
 
     @Test

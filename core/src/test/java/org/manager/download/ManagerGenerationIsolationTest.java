@@ -8,8 +8,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -19,12 +17,9 @@ import org.manager.download.handler.AbstractDownloadHandler;
 import org.manager.download.handler.DownloadHandlerFactory;
 
 /**
- * Same-ID operation generations must be isolated: starting a download
- * again while a previous start's future is still pending supersedes that
- * operation. Late results of the superseded generation (failure or
- * success on the start future) must be dropped — no status clobber, no
- * error notification, no terminal cleanup of the new operation, no slot
- * release.
+ * A download start is single-flight. Repeated Start actions while the
+ * handler is launching or already running must not create a second native
+ * job or operation generation.
  */
 class ManagerGenerationIsolationTest {
 
@@ -168,8 +163,8 @@ class ManagerGenerationIsolationTest {
     }
 
     @Test
-    @DisplayName("A late failure of the superseded start is dropped and leaves the new operation intact")
-    void staleStartFailureIsDropped() throws Exception {
+    @DisplayName("A duplicate Start while the handler is launching is ignored")
+    void duplicateStartWhileLaunchingIsIgnored() throws Exception {
         setUp();
 
         Download download = newDownload("gen-stale-error");
@@ -178,23 +173,13 @@ class ManagerGenerationIsolationTest {
                 "first generation should start");
 
         manager.startDownload(download).join();
-        assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 2),
-                "second generation should start");
+        assertEquals(1, handler.attempts(download.getId()),
+                "the same logical download must only reach the handler once");
         assertEquals(1, manager.getRunningDownloadCount(),
-                "the restarted download holds exactly one slot");
+                "the launching download holds exactly one slot");
+        assertEquals(Download.Status.STARTING, download.getStatus());
 
-        handler.start(download.getId(), 0).completeExceptionally(
-                new RuntimeException("late failure of the superseded generation"));
-
-        assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 2));
-        assertEquals(0, errorEvents.stream().filter(id -> id.equals(download.getId())).count(),
-                "a stale start failure must not surface as a manager error event");
-        assertNotEquals(Download.Status.ERROR, download.getStatus(),
-                "a stale start failure must not clobber the new generation's status");
-        assertEquals(1, manager.getRunningDownloadCount(),
-                "a stale start failure must not release the new generation's slot");
-
-        handler.start(download.getId(), 1).complete("fresh-gid");
+        handler.start(download.getId(), 0).complete("fresh-gid");
         assertTrue(awaitTrue(() -> "fresh-gid".equals(download.getGid())),
                 "the current generation's success must take effect");
         assertEquals(Download.Status.DOWNLOADING, download.getStatus());
@@ -207,8 +192,8 @@ class ManagerGenerationIsolationTest {
     }
 
     @Test
-    @DisplayName("A late success of the superseded start is dropped: no stale GID or status")
-    void staleStartSuccessIsDropped() throws Exception {
+    @DisplayName("A duplicate Start after launch leaves the original GID intact")
+    void duplicateStartAfterLaunchIsIgnored() throws Exception {
         setUp();
 
         Download download = newDownload("gen-stale-success");
@@ -216,20 +201,12 @@ class ManagerGenerationIsolationTest {
         assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 1),
                 "first generation should start");
 
+        handler.start(download.getId(), 0).complete("original-gid");
+        assertTrue(awaitTrue(() -> "original-gid".equals(download.getGid())));
+
         manager.startDownload(download).join();
-        assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 2),
-                "second generation should start");
-
-        handler.start(download.getId(), 0).complete("stale-gid");
-
-        assertNull(download.getGid(),
-                "a late success of the superseded generation must not install its GID");
-        assertNotEquals(Download.Status.DOWNLOADING, download.getStatus(),
-                "a late success of the superseded generation must not flip the status");
-
-        handler.start(download.getId(), 1).complete("fresh-gid");
-        assertTrue(awaitTrue(() -> "fresh-gid".equals(download.getGid())),
-                "the current generation's success must take effect");
+        assertEquals(1, handler.attempts(download.getId()));
+        assertEquals("original-gid", download.getGid());
         assertEquals(Download.Status.DOWNLOADING, download.getStatus());
     }
 }

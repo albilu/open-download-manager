@@ -35,11 +35,16 @@ public class TorService {
     private static final int DEFAULT_CONTROL_PORT = 9051;
     private static final String DEFAULT_DATA_DIR = System.getProperty("java.io.tmpdir") + "/tor-odm";
     private static final String DEFAULT_LOG_LEVEL = "notice";
+    private static final int DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 45;
 
     // Process management
     private final AtomicReference<Process> torProcess = new AtomicReference<>();
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
+    /** Guards whole-service teardown separately from a reversible process stop. */
+    private final AtomicBoolean shutdownStarted = new AtomicBoolean(false);
+    /** Latest requested state; stop() can invalidate a launch still bootstrapping. */
+    private final AtomicBoolean desiredRunning = new AtomicBoolean(false);
     /** Set only after Tor reports a fully built circuit (100% bootstrap). */
     private final AtomicBoolean bootstrapComplete = new AtomicBoolean(false);
     /** Serializes start(): concurrent callers coalesce onto one process. */
@@ -98,6 +103,7 @@ public class TorService {
      */
     public CompletableFuture<Boolean> start() {
         synchronized (startLock) {
+            desiredRunning.set(true);
             if (isRunning.get()) {
                 LOGGER.info("Tor service is already running");
                 return CompletableFuture.completedFuture(true);
@@ -110,6 +116,9 @@ public class TorService {
                         // coalesce instead of spawning a duplicate process
                         // that dies on the port bind and breaks isHealthy()
                         return true;
+                    }
+                    if (!desiredRunning.get()) {
+                        return false;
                     }
                     // A previous stop() left isShuttingDown latched; a new
                     // lifecycle clears it (the output monitors check it, and
@@ -146,13 +155,18 @@ public class TorService {
                         Process process = processBuilder.start();
                         torProcess.set(process);
 
+                        if (!desiredRunning.get()) {
+                            stopInternal();
+                            return false;
+                        }
+
                         // Monitor process output
                         startOutputMonitoring(process);
 
                         // Wait for Tor to be ready
-                        boolean ready = waitForTorReady(30); // 30 seconds timeout
+                        boolean ready = waitForTorReady(DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS);
 
-                        if (ready) {
+                        if (ready && desiredRunning.get()) {
                             isRunning.set(true);
                             notifyListeners(TorServiceEvent.STARTED);
                             LOGGER.info("Tor service started successfully");
@@ -179,7 +193,8 @@ public class TorService {
      * @return true if stopped successfully, false otherwise
      */
     public boolean stop() {
-        if (!isRunning.get()) {
+        desiredRunning.set(false);
+        if (!isRunning.get() && torProcess.get() == null) {
             LOGGER.info("Tor service is not running");
             return true;
         }
@@ -326,12 +341,13 @@ public class TorService {
      * Shuts down the service and releases resources.
      */
     public void shutdown() {
-        if (isShuttingDown.getAndSet(true)) {
+        if (!shutdownStarted.compareAndSet(false, true)) {
             return;
         }
 
         LOGGER.info("Shutting down Tor service...");
 
+        isShuttingDown.set(true);
         stop();
 
         executorService.shutdown();
@@ -470,6 +486,9 @@ public class TorService {
         long timeoutMs = timeoutSeconds * 1000L;
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
+            if (!desiredRunning.get()) {
+                return false;
+            }
             Process managed = torProcess.get();
             if (managed == null || !managed.isAlive()) {
                 return false;

@@ -5,6 +5,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -23,24 +24,41 @@ final class HtmlImportExport {
     private static final Logger LOGGER = Logger.getLogger(HtmlImportExport.class.getName());
     static final long MAX_HTML_BYTES = 8L * 1024 * 1024;
     static final int MAX_IMPORT_LINKS = 1_000;
+    private static final java.util.regex.Pattern HREF_PATTERN = java.util.regex.Pattern.compile(
+            "<a\\b[^>]*?\\s+href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+    private static final java.util.regex.Pattern BASE_PATTERN = java.util.regex.Pattern.compile(
+            "<base\\b[^>]*?\\s+href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
 
     private HtmlImportExport() {
     }
 
     /**
-     * Extracts absolute http(s) links from an HTML document's href
-     * attributes (single- or double-quoted). Non-absolute and invalid
-     * hrefs are skipped.
+     * Extracts http(s) links from an HTML document's anchor href attributes.
+     * Quoted and unquoted values are supported; relative values are resolved
+     * against a valid http(s) base element. Invalid values are skipped.
      */
     static List<URI> extractHttpLinks(String html) {
-        List<URI> urls = new ArrayList<>();
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("href\\s*=\\s*[\"']([^\"']+)[\"']",
-                        java.util.regex.Pattern.CASE_INSENSITIVE)
-                .matcher(html);
+        LinkedHashSet<URI> urls = new LinkedHashSet<>();
+        URI base = extractBaseUri(html);
+        java.util.regex.Matcher m = HREF_PATTERN.matcher(html);
         while (m.find() && urls.size() < MAX_IMPORT_LINKS) {
             try {
-                URI uri = new URI(m.group(1));
+                String raw = decodeHtmlEntities(firstGroup(m));
+                URI candidate;
+                if (raw.startsWith("//")) {
+                    candidate = base != null ? base.resolve(raw) : URI.create("https:" + raw);
+                } else {
+                    candidate = new URI(raw);
+                    if (!candidate.isAbsolute()) {
+                        if (base == null) {
+                            continue;
+                        }
+                        candidate = base.resolve(candidate);
+                    }
+                }
+                URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(candidate);
                 if ("http".equalsIgnoreCase(uri.getScheme())
                         || "https".equalsIgnoreCase(uri.getScheme())) {
                     urls.add(uri);
@@ -49,7 +67,55 @@ final class HtmlImportExport {
                 // non-absolute/invalid href: skip
             }
         }
-        return urls;
+        return new ArrayList<>(urls);
+    }
+
+    private static URI extractBaseUri(String html) {
+        java.util.regex.Matcher matcher = BASE_PATTERN.matcher(html);
+        if (!matcher.find()) {
+            return null;
+        }
+        try {
+            URI base = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
+                    decodeHtmlEntities(firstGroup(matcher)));
+            return "http".equalsIgnoreCase(base.getScheme())
+                    || "https".equalsIgnoreCase(base.getScheme()) ? base : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String firstGroup(java.util.regex.Matcher matcher) {
+        for (int i = 1; i <= 3; i++) {
+            if (matcher.group(i) != null) {
+                return matcher.group(i);
+            }
+        }
+        return "";
+    }
+
+    private static String decodeHtmlEntities(String value) {
+        String decoded = value.replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&apos;", "'");
+        java.util.regex.Matcher numeric = java.util.regex.Pattern
+                .compile("&#(x[0-9a-fA-F]+|[0-9]+);").matcher(decoded);
+        StringBuffer result = new StringBuffer();
+        while (numeric.find()) {
+            try {
+                String token = numeric.group(1);
+                int codePoint = token.startsWith("x") || token.startsWith("X")
+                        ? Integer.parseInt(token.substring(1), 16)
+                        : Integer.parseInt(token);
+                numeric.appendReplacement(result, java.util.regex.Matcher.quoteReplacement(
+                        Character.toString(codePoint)));
+            } catch (IllegalArgumentException invalidEntity) {
+                numeric.appendReplacement(result, java.util.regex.Matcher.quoteReplacement(numeric.group()));
+            }
+        }
+        numeric.appendTail(result);
+        return result.toString();
     }
 
     /**

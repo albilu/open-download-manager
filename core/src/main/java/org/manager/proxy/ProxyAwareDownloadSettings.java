@@ -10,6 +10,11 @@ import java.util.Map;
  */
 public class ProxyAwareDownloadSettings extends DownloadSettings {
 
+    @Override
+    public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
+        return capability == org.manager.download.ExternalToolSettings.Capability.MAX_RETRIES;
+    }
+
     private ProxyRetrySettings proxyRetrySettings;
     private boolean enableProxyRotationForThisDownload = true;
     private String preferredProxyType = null; // HTTP, HTTPS, SOCKS4, SOCKS5

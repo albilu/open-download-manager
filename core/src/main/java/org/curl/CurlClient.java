@@ -146,7 +146,12 @@ public class CurlClient {
                 }
 
                 // Prepare the output file path
-                Path outputFile = destinationDir.resolve(download.getName());
+                String outputName = download.getRequestedFileName() != null
+                        ? download.getRequestedFileName() : download.getName();
+                org.manager.util.PathSafety.requireSafeFileName(outputName);
+                Path outputFile = destinationDir.resolve(outputName);
+                download.setName(outputName);
+                download.recordOutputPath(outputFile);
 
                 // Build curl command
                 List<String> command = buildCurlCommand(download, outputFile);
@@ -309,7 +314,7 @@ public class CurlClient {
      * @param outputFile The output file path
      * @return List of command arguments
      */
-    private List<String> buildCurlCommand(Download download, Path outputFile) {
+    List<String> buildCurlCommand(Download download, Path outputFile) {
         List<String> command = new ArrayList<>();
 
         // Add curl executable
@@ -359,6 +364,14 @@ public class CurlClient {
         // Add retry options
         command.add("--retry");
         command.add(String.valueOf(settings.getRetryCount()));
+        if (settings.getRetryDelaySeconds() > 0) {
+            command.add("--retry-delay");
+            command.add(String.valueOf(settings.getRetryDelaySeconds()));
+        }
+        if (settings.getDownloadLimitKB() > 0) {
+            command.add("--limit-rate");
+            command.add(settings.getDownloadLimitKB() + "K");
+        }
 
         // Add user agent if specified
         if (settings.getUserAgent() != null) {
@@ -370,6 +383,10 @@ public class CurlClient {
         if (settings.getReferer() != null) {
             command.add("--referer");
             command.add(settings.getReferer());
+        }
+        if (settings.getCookieHeader() != null) {
+            command.add("--cookie");
+            command.add(settings.getCookieHeader().replaceFirst("(?i)^Cookie:\\s*", ""));
         }
 
         // Add low speed limit options
@@ -476,16 +493,17 @@ public class CurlClient {
         // plain-file-name check and real-path containment must pass before
         // anything is deleted.
         if (deleteFile && download.getDestination() != null) {
-            if (org.manager.util.PathSafety.isSafeFileName(download.getName())) {
-                Path outputFile = download.getDestination().resolve(download.getName());
-                if (org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
+            try {
+                Path outputFile = download.getPrimaryOutputPath();
+                if (outputFile != null
+                        && org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
                     org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
                             download.getDestination());
                 } else {
                     LOGGER.warning("Refusing unsafe partial-file deletion for " + download.getId()
                             + ": " + download.getName());
                 }
-            } else {
+            } catch (IllegalArgumentException invalidPath) {
                 LOGGER.warning("Refusing unsafe partial-file name for " + download.getId()
                         + ": " + download.getName());
             }

@@ -49,10 +49,13 @@ public class ImportSequenceDialog {
     private final SpinButton numCountSpin;
     private final Entry charEntry;
     private final Entry charVersEntry;
+    private final DropDown numModeCombo;
+    private final DropDown charModeCombo;
     private final ListStore previewStore;
     private final Label diskSpaceLabel;
 
     private Path destinationFolder;
+    private boolean syncingRangeMode;
 
     public ImportSequenceDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone) {
         this.downloadManager = downloadManager;
@@ -66,6 +69,8 @@ public class ImportSequenceDialog {
         this.numCountSpin = Widgets.require(builder, "num_count_spin", SpinButton.class);
         this.charEntry = Widgets.require(builder, "char_entry", Entry.class);
         this.charVersEntry = Widgets.require(builder, "char_vers_entry", Entry.class);
+        this.numModeCombo = Widgets.require(builder, "num_combo", DropDown.class);
+        this.charModeCombo = Widgets.require(builder, "char_combo", DropDown.class);
         this.previewStore = Widgets.require(builder, "preview_liststore", ListStore.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
 
@@ -82,8 +87,10 @@ public class ImportSequenceDialog {
         for (String mode : RANGE_MODES) {
             modes.append(mode);
         }
-        Widgets.require(builder, "num_combo", DropDown.class).setModel(modes);
-        Widgets.require(builder, "char_combo", DropDown.class).setModel(modes);
+        numModeCombo.setModel(modes);
+        charModeCombo.setModel(modes);
+        numModeCombo.setSelected(0);
+        charModeCombo.setSelected(0);
         StringList proxyTypes = new StringList(new String[0]);
         for (String type : DialogOptions.PROXY_TYPES) {
             proxyTypes.append(type);
@@ -103,11 +110,13 @@ public class ImportSequenceDialog {
         numCountSpin.onValueChanged(() -> regen.run());
         charEntry.onChanged(() -> regen.run());
         charVersEntry.onChanged(() -> regen.run());
+        numModeCombo.onNotify("selected", pspec -> syncRangeMode(numModeCombo, charModeCombo));
+        charModeCombo.onNotify("selected", pspec -> syncRangeMode(charModeCombo, numModeCombo));
 
         Widgets.require(builder, "cancel_button", Button.class).onClicked(dialog::close);
         Widgets.require(builder, "validate_button", Button.class).onClicked(this::onImport);
 
-        regeneratePreview();
+        syncRangeMode(numModeCombo, charModeCombo);
     }
 
     public void present() {
@@ -135,25 +144,52 @@ public class ImportSequenceDialog {
 
     /** Generates the URL list from the pattern + range. */
     private List<String> generateUrls() {
-        String pattern = uriEntry.getText().trim();
+        return generateSequence(uriEntry.getText().trim(), numModeCombo.getSelected() == 1,
+                (int) numStartSpin.getValue(), (int) numVersSpin.getValue(),
+                charEntry.getText().trim(), charVersEntry.getText().trim(),
+                (int) numCountSpin.getValue());
+    }
+
+    private void syncRangeMode(DropDown source, DropDown other) {
+        if (syncingRangeMode) {
+            return;
+        }
+        syncingRangeMode = true;
+        try {
+            other.setSelected(source.getSelected());
+            boolean characterMode = source.getSelected() == 1;
+            numStartSpin.setSensitive(!characterMode);
+            numVersSpin.setSensitive(!characterMode);
+            charEntry.setSensitive(characterMode);
+            charVersEntry.setSensitive(characterMode);
+            regeneratePreview();
+        } finally {
+            syncingRangeMode = false;
+        }
+    }
+
+    static List<String> generateSequence(String pattern, boolean characterMode,
+            int start, int end, String charFrom, String charTo, int requestedCount) {
         List<String> urls = new ArrayList<>();
         if (pattern.isEmpty() || !pattern.contains("{}")) {
             return urls;
         }
-        int start = (int) numStartSpin.getValue();
-        int end = (int) numVersSpin.getValue();
         int count = Math.min(MAX_IMPORT_URLS,
-                Math.max(1, (int) numCountSpin.getValue()));
+                Math.max(1, requestedCount));
 
-        // Character range takes precedence when both char fields are filled
-        String charFrom = charEntry.getText().trim();
-        String charTo = charVersEntry.getText().trim();
-        if (!charFrom.isEmpty() && !charTo.isEmpty()
-                && charFrom.length() == 1 && charTo.length() == 1) {
+        if (characterMode) {
+            if (charFrom == null || charTo == null
+                    || charFrom.length() != 1 || charTo.length() != 1) {
+                return urls;
+            }
             char a = charFrom.charAt(0);
             char b = charTo.charAt(0);
-            for (char c = a; c <= b && urls.size() < count; c++) {
-                urls.add(pattern.replace("{}", String.valueOf(c)));
+            int direction = a <= b ? 1 : -1;
+            for (int c = a; urls.size() < count; c += direction) {
+                urls.add(pattern.replace("{}", String.valueOf((char) c)));
+                if (c == b) {
+                    break;
+                }
             }
             return urls;
         }
@@ -224,7 +260,8 @@ public class ImportSequenceDialog {
         int queued = 0;
         for (String url : urls.stream().limit(MAX_IMPORT_URLS).toList()) {
             try {
-                Download download = downloadManager.createDownload(new URI(url), destination);
+                Download download = downloadManager.createDownload(
+                        org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
                 options.apply(download);
                 if (options.startAutomatically()) {
                     downloadManager.queueDownload(download);

@@ -346,7 +346,9 @@ public class DownloadCleanupManager {
      */
     private boolean isActiveDownload(Download download) {
         Download.Status status = download.getStatus();
-        return status == Download.Status.DOWNLOADING
+        return status == Download.Status.CREATED
+                || status == Download.Status.STARTING
+                || status == Download.Status.DOWNLOADING
                 || status == Download.Status.QUEUED
                 || status == Download.Status.PAUSED
                 || status == Download.Status.CONNECTING;

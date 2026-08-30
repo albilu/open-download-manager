@@ -124,6 +124,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
 
                 Path projectDir = destinationDir.resolve(websiteName);
                 Files.createDirectories(projectDir);
+                download.recordOutputPath(projectDir);
 
                 // Create httrack settings from download settings
                 HttrackSettings httrackSettings = createHttrackSettings(download, projectDir);

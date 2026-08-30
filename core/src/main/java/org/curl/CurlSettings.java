@@ -10,8 +10,19 @@ import org.manager.download.DownloadSettings;
  */
 public class CurlSettings extends DownloadSettings {
 
+    @Override
+    public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
+        return switch (capability) {
+            case DOWNLOAD_LIMIT, MAX_RETRIES, RETRY_DELAY, REFERER, USER_AGENT, COOKIE -> true;
+            case CONNECTIONS, UPLOAD_LIMIT -> false;
+        };
+    }
+
     private int connectTimeout = 30;
     private int retryCount = 3;
+    private int downloadLimitKB;
+    private int retryDelaySeconds;
+    private String cookieHeader;
     private boolean followRedirects = true;
     private boolean createDirs = true;
     private boolean resumeDownloads = true;
@@ -78,9 +89,41 @@ public class CurlSettings extends DownloadSettings {
 
     @Override
     public CurlSettings setMaxRetries(int maxRetries) {
-        if (maxRetries > 0) {
-            setRetryCount(maxRetries);
-        }
+        setRetryCount(Math.max(0, maxRetries));
+        return this;
+    }
+
+    @Override
+    public int getDownloadLimitKB() {
+        return downloadLimitKB;
+    }
+
+    @Override
+    public CurlSettings setDownloadLimitKB(int kibPerSecond) {
+        this.downloadLimitKB = Math.max(0, kibPerSecond);
+        return this;
+    }
+
+    @Override
+    public int getRetryDelaySeconds() {
+        return retryDelaySeconds;
+    }
+
+    @Override
+    public CurlSettings setRetryDelaySeconds(int seconds) {
+        this.retryDelaySeconds = Math.max(0, seconds);
+        return this;
+    }
+
+    @Override
+    public String getCookieHeader() {
+        return cookieHeader;
+    }
+
+    @Override
+    public CurlSettings setCookieHeader(String cookieHeader) {
+        this.cookieHeader = cookieHeader == null || cookieHeader.isBlank()
+                ? null : cookieHeader.trim();
         return this;
     }
 
@@ -327,6 +370,15 @@ public class CurlSettings extends DownloadSettings {
 
         map.put("curl.connect-timeout", String.valueOf(connectTimeout));
         map.put("curl.retry", String.valueOf(retryCount));
+        if (downloadLimitKB > 0) {
+            map.put("curl.limit-rate", downloadLimitKB + "K");
+        }
+        if (retryDelaySeconds > 0) {
+            map.put("curl.retry-delay", String.valueOf(retryDelaySeconds));
+        }
+        if (cookieHeader != null) {
+            map.put("curl.cookie", cookieHeader);
+        }
 
         if (followRedirects) {
             map.put("curl.location", "");
@@ -374,13 +426,14 @@ public class CurlSettings extends DownloadSettings {
         CurlSettings copy = new CurlSettings();
 
         // Copy base settings
-        copy.setConnections(this.getConnections());
-        copy.setUseProxy(this.isUseProxy());
-        copy.setProxyAddress(this.getProxyAddress());
+        copyTo(copy);
 
         // Copy Curl-specific settings
         copy.connectTimeout = this.connectTimeout;
         copy.retryCount = this.retryCount;
+        copy.downloadLimitKB = this.downloadLimitKB;
+        copy.retryDelaySeconds = this.retryDelaySeconds;
+        copy.cookieHeader = this.cookieHeader;
         copy.followRedirects = this.followRedirects;
         copy.createDirs = this.createDirs;
         copy.resumeDownloads = this.resumeDownloads;

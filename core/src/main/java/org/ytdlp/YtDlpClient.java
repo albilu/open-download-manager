@@ -645,7 +645,7 @@ public class YtDlpClient {
     public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
             ProgressCallback callback) {
         return download(url, settings, outputPath, callback,
-                "ytdlp-" + System.currentTimeMillis());
+                "ytdlp-" + java.util.UUID.randomUUID());
     }
 
     /**
@@ -803,7 +803,9 @@ public class YtDlpClient {
         command.add(ytDlpPath);
 
         // Output template
-        String outputTemplate = "%(title)s-%(id)s.%(ext)s";
+        String outputTemplate = settings.getOutputTemplate() != null
+                ? settings.getOutputTemplate().replace("%", "%%")
+                : "%(title)s-%(id)s.%(ext)s";
         command.add("-o");
         command.add(outputTemplate);
 
@@ -865,6 +867,14 @@ public class YtDlpClient {
         // Network settings
         command.add("--fragment-retries");
         command.add(String.valueOf(settings.getFragmentRetries()));
+        if (settings.getMaxRetries() > 0) {
+            command.add("--retries");
+            command.add(String.valueOf(settings.getMaxRetries()));
+        }
+        if (settings.getRetryDelaySeconds() > 0) {
+            command.add("--retry-sleep");
+            command.add(String.valueOf(settings.getRetryDelaySeconds()));
+        }
 
         if (settings.isLimitRate() && settings.getRateLimit() > 0) {
             command.add("--limit-rate");
@@ -881,6 +891,10 @@ public class YtDlpClient {
         if (settings.getCookieFile() != null) {
             command.add("--cookies");
             command.add(settings.getCookieFile());
+        }
+        if (settings.getCookieHeader() != null) {
+            command.add("--add-header");
+            command.add(settings.getCookieHeader());
         }
 
         // Playlist settings
@@ -925,9 +939,11 @@ public class YtDlpClient {
         // Add any additional options; imported settings are untrusted, so
         // only allowlisted keys may become yt-dlp flags (--exec & friends
         // execute commands)
+        Map<String, String> nativeAdditionalOptions = settings.getAdditionalOptions();
+        nativeAdditionalOptions.keySet().removeIf(key -> key.startsWith("odm."));
         for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
                 .filter(org.manager.tools.ToolOptionFilter.Tool.YTDLP,
-                        settings.getAdditionalOptions())
+                        nativeAdditionalOptions)
                 .entrySet()) {
             // Skip aria2c options as they're handled above
             if (!entry.getKey().equals("use-aria2c") && !entry.getKey().equals("aria2c-args")) {

@@ -49,6 +49,25 @@ class HtmlImportExportTest {
     }
 
     @Test
+    void resolvesBaseRelativeProtocolRelativeAndEntityEncodedLinksWithoutImportingBaseTag() {
+        String html = """
+                <base href='https://example.com/releases/'>
+                <a href=app.zip?one=1&amp;two=2>unquoted</a>
+                <a href="../manual.pdf">relative</a>
+                <a href='//cdn.example.com/file.iso'>protocol relative</a>
+                <a href="app.zip?one=1&amp;two=2">duplicate</a>
+                <a data-href="https://example.com/not-the-href">ignored attribute</a>
+                <div href="https://example.com/not-an-anchor">ignored</div>
+                """;
+
+        assertEquals(List.of(
+                URI.create("https://example.com/releases/app.zip?one=1&two=2"),
+                URI.create("https://example.com/manual.pdf"),
+                URI.create("https://cdn.example.com/file.iso")),
+                HtmlImportExport.extractHttpLinks(html));
+    }
+
+    @Test
     void importHtmlFileQueuesEveryExtractedLink() throws Exception {
         Path file = tempDir.resolve("links.html");
         Files.writeString(file, """

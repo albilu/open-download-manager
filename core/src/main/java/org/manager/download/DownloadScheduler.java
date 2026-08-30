@@ -31,6 +31,8 @@ public class DownloadScheduler {
     private final Set<DownloadSchedulerListener> listeners;
     /** Download ids paused by the scheduler; only these are auto-resumed. */
     private final Set<String> pausedBySchedule = ConcurrentHashMap.newKeySet();
+    /** Prevents overlapping pause/resume requests across adjacent ticks. */
+    private final Set<String> scheduleOperationsInFlight = ConcurrentHashMap.newKeySet();
     private final Object lock = new Object();
 
     private ScheduleSettings globalSchedule;
@@ -483,6 +485,7 @@ public class DownloadScheduler {
                 // Download no longer exists, remove its schedule
                 downloadSchedules.remove(downloadId);
                 pausedBySchedule.remove(downloadId);
+                scheduleOperationsInFlight.remove(downloadId);
                 return;
             }
 
@@ -497,31 +500,24 @@ public class DownloadScheduler {
                 // Download should be active. Only resume downloads that this
                 // scheduler paused: user-paused downloads must stay paused.
                 if (currentStatus == Download.Status.PAUSED && effectiveSchedule.isResumeOnScheduleStart()
-                        && pausedBySchedule.remove(downloadId)) {
-                    downloadManager.resumeDownload(download);
-                    LOGGER.info("Resumed download " + downloadId + " due to schedule");
-                    notifyDownloadResumed(downloadId, effectiveSchedule);
+                        && pausedBySchedule.contains(downloadId)) {
+                    resumeAfterSchedule(download, effectiveSchedule);
                 }
             } else {
                 // Download should not be active
                 if (effectiveSchedule.isPauseOnScheduleEnd()) {
                     switch (policy) {
                         case STRICT -> {
-                            if (currentStatus == Download.Status.DOWNLOADING
+                            if (currentStatus == Download.Status.STARTING
+                                    || currentStatus == Download.Status.CONNECTING
+                                    || currentStatus == Download.Status.DOWNLOADING
                                     || currentStatus == Download.Status.QUEUED) {
-                                pausedBySchedule.add(downloadId);
-                                downloadManager.pauseDownload(download);
-                                LOGGER.info("Paused download " + downloadId + " due to schedule (strict policy)");
-                                notifyDownloadPaused(downloadId, effectiveSchedule);
+                                pauseForSchedule(download, effectiveSchedule, "strict policy");
                             }
                         }
                         case GRACEFUL -> {
                             if (currentStatus == Download.Status.QUEUED) {
-                                pausedBySchedule.add(downloadId);
-                                downloadManager.pauseDownload(download);
-                                LOGGER.info(
-                                        "Paused queued download " + downloadId + " due to schedule (graceful policy)");
-                                notifyDownloadPaused(downloadId, effectiveSchedule);
+                                pauseForSchedule(download, effectiveSchedule, "graceful policy");
                             }
                             // Let actively downloading files continue
                         }
@@ -535,6 +531,42 @@ public class DownloadScheduler {
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error checking schedule for download " + downloadId, e);
         }
+    }
+
+    private void pauseForSchedule(Download download, ScheduleSettings schedule, String policy) {
+        String downloadId = download.getId();
+        if (!scheduleOperationsInFlight.add(downloadId)) {
+            return;
+        }
+        downloadManager.pauseDownload(download).whenComplete((ignored, error) -> {
+            scheduleOperationsInFlight.remove(downloadId);
+            if (error != null) {
+                LOGGER.log(Level.WARNING, "Failed to pause download " + downloadId
+                        + " due to schedule", error);
+                return;
+            }
+            pausedBySchedule.add(downloadId);
+            LOGGER.info("Paused download " + downloadId + " due to schedule (" + policy + ")");
+            notifyDownloadPaused(downloadId, schedule);
+        });
+    }
+
+    private void resumeAfterSchedule(Download download, ScheduleSettings schedule) {
+        String downloadId = download.getId();
+        if (!scheduleOperationsInFlight.add(downloadId)) {
+            return;
+        }
+        downloadManager.resumeDownload(download).whenComplete((ignored, error) -> {
+            scheduleOperationsInFlight.remove(downloadId);
+            if (error != null) {
+                LOGGER.log(Level.WARNING, "Failed to resume download " + downloadId
+                        + " due to schedule", error);
+                return;
+            }
+            pausedBySchedule.remove(downloadId);
+            LOGGER.info("Resumed download " + downloadId + " due to schedule");
+            notifyDownloadResumed(downloadId, schedule);
+        });
     }
 
     /**

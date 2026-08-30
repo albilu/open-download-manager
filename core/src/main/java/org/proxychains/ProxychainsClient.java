@@ -193,7 +193,12 @@ public class ProxychainsClient {
                 }
 
                 // Prepare the output file path
-                Path outputFile = destinationDir.resolve(download.getName());
+                String outputName = download.getRequestedFileName() != null
+                        ? download.getRequestedFileName() : download.getName();
+                org.manager.util.PathSafety.requireSafeFileName(outputName);
+                Path outputFile = destinationDir.resolve(outputName);
+                download.setName(outputName);
+                download.recordOutputPath(outputFile);
 
                 // Get or create proxychains config
                 Path configPath = this.configPath != null ? Paths.get(this.configPath) : null;
@@ -425,6 +430,29 @@ public class ProxychainsClient {
         command.add("--human-readable=false"); // Use exact byte values
         command.add("--show-console-readout=true"); // Force console progress display
 
+        org.manager.download.ExternalToolSettings common = download.getSettings();
+        if (common.getDownloadLimitKB() > 0) {
+            command.add("--max-download-limit=" + common.getDownloadLimitKB() + "K");
+        }
+        if (common.getUploadLimitKB() > 0) {
+            command.add("--max-upload-limit=" + common.getUploadLimitKB() + "K");
+        }
+        if (common.getMaxRetries() > 0) {
+            command.add("--max-tries=" + common.getMaxRetries());
+        }
+        if (common.getRetryDelaySeconds() > 0) {
+            command.add("--retry-wait=" + common.getRetryDelaySeconds());
+        }
+        if (common.getReferer() != null) {
+            command.add("--referer=" + common.getReferer());
+        }
+        if (common.getUserAgent() != null) {
+            command.add("--user-agent=" + common.getUserAgent());
+        }
+        if (common.getCookieHeader() != null) {
+            command.add("--header=" + common.getCookieHeader());
+        }
+
         // Set download directory and filename
         command.add("-d");
         command.add(outputFile.getParent().toString());
@@ -521,9 +549,10 @@ public class ProxychainsClient {
         // plain-file-name check and real-path containment must pass before
         // anything is deleted.
         if (deleteFile && download.getDestination() != null) {
-            if (org.manager.util.PathSafety.isSafeFileName(download.getName())) {
-                Path outputFile = download.getDestination().resolve(download.getName());
-                if (org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
+            try {
+                Path outputFile = download.getPrimaryOutputPath();
+                if (outputFile != null
+                        && org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
                     org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
                             download.getDestination());
                     Path controlFile = Paths.get(outputFile.toString() + ".aria2");
@@ -535,7 +564,7 @@ public class ProxychainsClient {
                     LOGGER.warning("Refusing unsafe partial-file deletion for " + download.getId()
                             + ": " + download.getName());
                 }
-            } else {
+            } catch (IllegalArgumentException invalidPath) {
                 LOGGER.warning("Refusing unsafe partial-file name for " + download.getId()
                         + ": " + download.getName());
             }

@@ -18,6 +18,8 @@ import org.manager.schedule.ScheduleSettings;
 public class Download {
 
     public enum Status {
+        CREATED,
+        STARTING,
         DOWNLOADING,
         QUEUED,
         PAUSED,
@@ -44,6 +46,10 @@ public class Download {
     private final Object lock = new Object(); // Synchronization lock
     private volatile String gid; // aria2 GID
     private volatile String name;
+    /** Explicit filename entered by the user; null keeps engine-native naming. */
+    private volatile String requestedFileName;
+    /** Actual output artifacts reported by the selected download engine. */
+    private final List<Path> outputPaths;
     private volatile boolean overrideOutputPath = true;
     private volatile URI uri;
     private volatile List<URI> mirrors;
@@ -87,7 +93,8 @@ public class Download {
     public Download(@JsonProperty("id") String id, @JsonProperty("createdAt") Instant createdAt) {
         this.id = id;
         this.mirrors = new ArrayList<>();
-        this.status = Status.QUEUED;
+        this.outputPaths = new ArrayList<>();
+        this.status = Status.CREATED;
         this.createdAt = createdAt;
 
         // Settings will be initialized based on type when needed
@@ -129,12 +136,23 @@ public class Download {
         if (path != null && !path.isEmpty()) {
             String[] parts = path.split("/");
             if (parts.length > 0) {
-                this.name = parts[parts.length - 1];
+                String candidate = parts[parts.length - 1];
+                try {
+                    candidate = java.net.URLDecoder.decode(candidate.replace("+", "%2B"),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    if (!candidate.isBlank()) {
+                        setName(candidate);
+                    }
+                } catch (IllegalArgumentException invalidName) {
+                    // A hostile/invalid URI segment must never bypass the
+                    // same filename validation used by public setters.
+                    this.name = null;
+                }
             }
         }
 
         if (this.name == null || this.name.isEmpty()) {
-            this.name = "download_" + this.id.substring(0, 8);
+            setName("download_" + this.id.substring(0, 8));
         }
     }
 
@@ -147,7 +165,7 @@ public class Download {
      */
     public static Download fromTorrent(Path torrentPath, Path destination) {
         Download download = new Download();
-        download.name = torrentPath.getFileName().toString();
+        download.setName(torrentPath.getFileName().toString());
         download.uri = torrentPath.toUri();
         // download.type = Type.TORRENT;
         download.type = Type.ARIA2;
@@ -167,7 +185,7 @@ public class Download {
      */
     public static Download fromMetaLink(Path metaLinkPath, Path destination) {
         Download download = new Download();
-        download.name = metaLinkPath.getFileName().toString();
+        download.setName(metaLinkPath.getFileName().toString());
         download.uri = metaLinkPath.toUri();
         download.type = Type.ARIA2;
         download.destination = destination;
@@ -247,6 +265,78 @@ public class Download {
         }
         synchronized (lock) {
             this.name = name;
+        }
+    }
+
+    public String getRequestedFileName() {
+        return requestedFileName;
+    }
+
+    /**
+     * Stores an explicit output filename. Blank values restore the engine's
+     * normal naming template; non-blank values are confined to one plain
+     * filename.
+     */
+    public void setRequestedFileName(String requestedFileName) {
+        String normalized = requestedFileName == null ? null : requestedFileName.strip();
+        if (normalized != null && normalized.isEmpty()) {
+            normalized = null;
+        }
+        if (normalized != null) {
+            org.manager.util.PathSafety.requireSafeFileName(normalized);
+        }
+        synchronized (lock) {
+            this.requestedFileName = normalized;
+        }
+    }
+
+    /** Records a real artifact path reported by a download engine. */
+    public void recordOutputPath(Path outputPath) {
+        if (outputPath == null) {
+            return;
+        }
+        synchronized (lock) {
+            Path normalized = outputPath;
+            if (!normalized.isAbsolute() && destination != null) {
+                normalized = destination.resolve(normalized);
+            }
+            normalized = normalized.toAbsolutePath().normalize();
+            if (!outputPaths.contains(normalized)) {
+                outputPaths.add(normalized);
+            }
+        }
+    }
+
+    public List<Path> getOutputPaths() {
+        synchronized (lock) {
+            return List.copyOf(outputPaths);
+        }
+    }
+
+    public void setOutputPaths(List<Path> paths) {
+        synchronized (lock) {
+            outputPaths.clear();
+        }
+        if (paths != null) {
+            paths.forEach(this::recordOutputPath);
+        }
+    }
+
+    /**
+     * Returns the first engine-reported artifact, falling back to the safe
+     * expected path for legacy/in-progress downloads.
+     */
+    @JsonIgnore
+    public Path getPrimaryOutputPath() {
+        synchronized (lock) {
+            if (!outputPaths.isEmpty()) {
+                return outputPaths.get(0);
+            }
+            if (destination == null || name == null || name.isBlank()) {
+                return null;
+            }
+            org.manager.util.PathSafety.requireSafeFileName(name);
+            return destination.resolve(name).toAbsolutePath().normalize();
         }
     }
 

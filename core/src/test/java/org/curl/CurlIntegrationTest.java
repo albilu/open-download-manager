@@ -579,9 +579,10 @@ class CurlIntegrationTest {
 
         assertDoesNotThrow(() -> handler.changeSettings(download).get(10, TimeUnit.SECONDS));
 
-        // Settings stored on the download; transfer untouched (still queued)
+        // Settings are stored without implicitly admitting or queueing a
+        // download that has not yet been submitted to the manager.
         assertSame(newSettings, download.getSettings());
-        assertEquals(Download.Status.QUEUED, download.getStatus());
+        assertEquals(Download.Status.CREATED, download.getStatus());
     }
 
     // Helper methods

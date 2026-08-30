@@ -32,6 +32,8 @@ class DownloadListPresenterTest {
     @Test
     void countsByStatusFilterClass() {
         List<Download> downloads = List.of(
+                download("new.zip", Download.Status.CREATED),
+                download("starting.zip", Download.Status.STARTING),
                 download("a.zip", Download.Status.DOWNLOADING),
                 download("b.zip", Download.Status.CONNECTING),
                 download("c.zip", Download.Status.QUEUED),
@@ -41,7 +43,7 @@ class DownloadListPresenterTest {
                 download("g.zip", Download.Status.CANCELED));
 
         // index-aligned with STATUS_FILTERS[1..]: active, queuing, finished, deleted
-        assertArrayEquals(new int[]{1, 3, 1, 2},
+        assertArrayEquals(new int[]{3, 3, 1, 2},
                 DownloadListPresenter.computeCounts(downloads));
     }
 
@@ -79,10 +81,12 @@ class DownloadListPresenterTest {
         assertFalse(DownloadListPresenter.matchesFilters(movie, "nomatch", "All", "All Status"));
         // wrong category excludes even when search matches
         assertFalse(DownloadListPresenter.matchesFilters(movie, "", "Audios", "All Status"));
-        // Queuing covers QUEUED/CONNECTING/PAUSED but not DOWNLOADING
+        // Queuing covers CREATED/QUEUED/PAUSED, while CONNECTING is active
         assertFalse(DownloadListPresenter.matchesFilters(movie, "", "All", "Queuing"));
         assertTrue(DownloadListPresenter.matchesFilters(
                 download("x.mp4", Download.Status.PAUSED), "", "All", "Queuing"));
+        assertTrue(DownloadListPresenter.matchesFilters(
+                download("x.mp4", Download.Status.CONNECTING), "", "All", "Active"));
         // Deleted covers ERROR and CANCELED
         assertTrue(DownloadListPresenter.matchesFilters(
                 download("x.mp4", Download.Status.CANCELED), "", "All", "Deleted"));

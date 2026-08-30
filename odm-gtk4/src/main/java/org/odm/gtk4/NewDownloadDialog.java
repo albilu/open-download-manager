@@ -65,6 +65,8 @@ public class NewDownloadDialog {
 
     private Path selectedTorrentFile;
     private Path destinationFolder;
+    private boolean updatingFilenameSuggestion;
+    private boolean filenameEditedByUser;
 
     /** Checksum detected for the current URL (null while unknown/not probed). */
     private volatile org.manager.download.ChecksumProbe.DetectedChecksum detectedChecksum;
@@ -128,6 +130,11 @@ public class NewDownloadDialog {
 
         // Live URL analysis (mirrors the approved old UI): filename auto-fill
         // + magnet metadata + multi-file listing in the Files tab
+        filenameEntry.onChanged(() -> {
+            if (!updatingFilenameSuggestion) {
+                filenameEditedByUser = true;
+            }
+        });
         urlEntry.onChanged(this::analyzeUrl);
 
         torrentFileChooser.onClicked(this::onChooseTorrent);
@@ -192,12 +199,12 @@ public class NewDownloadDialog {
                 analyzeMagnet(url);
                 return;
             }
-            java.net.URI uri = new java.net.URI(url);
+            java.net.URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
             String path = uri.getPath();
             if (path != null && !path.isEmpty()) {
                 String filename = path.substring(path.lastIndexOf('/') + 1);
                 if (!filename.isEmpty() && filenameEntry.getText().isBlank()) {
-                    filenameEntry.setText(java.net.URLDecoder.decode(filename,
+                    setFilenameSuggestion(java.net.URLDecoder.decode(filename,
                             java.nio.charset.StandardCharsets.UTF_8));
                 }
             }
@@ -245,11 +252,8 @@ public class NewDownloadDialog {
     }
 
     private java.net.URI safeCurrentUri() {
-        try {
-            return new java.net.URI(urlEntry.getText().trim());
-        } catch (Exception e) {
-            return null;
-        }
+        return org.manager.clipboard.UrlDetector.normalizeAndValidate(urlEntry.getText())
+                .orElse(null);
     }
 
     /** Clears the checksum widgets for a new URL being typed. */
@@ -286,7 +290,19 @@ public class NewDownloadDialog {
                     50 * 1024L, "Normal");
         }
         if (filenameEntry.getText().isBlank() && displayName != null) {
-            filenameEntry.setText(displayName);
+            setFilenameSuggestion(displayName);
+        }
+    }
+
+    private void setFilenameSuggestion(String suggestion) {
+        if (filenameEditedByUser || suggestion == null || suggestion.isBlank()) {
+            return;
+        }
+        updatingFilenameSuggestion = true;
+        try {
+            filenameEntry.setText(suggestion);
+        } finally {
+            updatingFilenameSuggestion = false;
         }
     }
 
@@ -377,6 +393,7 @@ public class NewDownloadDialog {
     private void onStart() {
         try {
             Download download = createDownload();
+            applyRequestedFilename(download);
             applyOptions(download);
             registerChecksumVerification(download);
             if (startAutomaticallyCheck.getActive()) {
@@ -393,6 +410,17 @@ public class NewDownloadDialog {
         } catch (IllegalArgumentException e) {
             LOGGER.warning("New download rejected: " + e.getMessage());
             urlEntry.getStyleContext().addClass("error");
+        }
+    }
+
+    private void applyRequestedFilename(Download download) {
+        if (!filenameEditedByUser) {
+            return;
+        }
+        String requested = filenameEntry.getText().strip();
+        download.setRequestedFileName(requested);
+        if (!requested.isEmpty()) {
+            download.setName(requested);
         }
     }
 
@@ -436,11 +464,8 @@ public class NewDownloadDialog {
         if (url.isEmpty()) {
             throw new IllegalArgumentException("Enter a URL or choose a torrent/metalink file.");
         }
-        try {
-            return downloadManager.createDownload(new URI(url), destination);
-        } catch (java.net.URISyntaxException e) {
-            throw new IllegalArgumentException("Invalid URL");
-        }
+        return downloadManager.createDownload(
+                org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
     }
 
     private Path moveDescriptorToDrafts(Path source) {

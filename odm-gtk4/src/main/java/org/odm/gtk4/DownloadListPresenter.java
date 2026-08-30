@@ -168,11 +168,15 @@ final class DownloadListPresenter {
             if (matchesFilters(download, searchText, categoryFilter, statusFilter)) {
                 display.add(download);
             }
-            if (download.getStatus() == Download.Status.DOWNLOADING) {
-                totalDownSpeed += download.getSpeed();
-                totalUpSpeed += download.getUploadSpeed();
-                totalSeeders += download.getSeeders();
+            if (download.getStatus() == Download.Status.STARTING
+                    || download.getStatus() == Download.Status.CONNECTING
+                    || download.getStatus() == Download.Status.DOWNLOADING) {
                 anyActive = true;
+                if (download.getStatus() == Download.Status.DOWNLOADING) {
+                    totalDownSpeed += download.getSpeed();
+                    totalUpSpeed += download.getUploadSpeed();
+                    totalSeeders += download.getSeeders();
+                }
             }
         }
 
@@ -258,9 +262,11 @@ final class DownloadListPresenter {
         }
         return switch (statusFilter == null ? "All Status" : statusFilter) {
             case "All Status" -> true;
-            case "Active" -> download.getStatus() == Download.Status.DOWNLOADING;
-            case "Queuing" -> download.getStatus() == Download.Status.QUEUED
+            case "Active" -> download.getStatus() == Download.Status.STARTING
                     || download.getStatus() == Download.Status.CONNECTING
+                    || download.getStatus() == Download.Status.DOWNLOADING;
+            case "Queuing" -> download.getStatus() == Download.Status.CREATED
+                    || download.getStatus() == Download.Status.QUEUED
                     || download.getStatus() == Download.Status.PAUSED;
             case "Finished" -> download.getStatus() == Download.Status.COMPLETED;
             case "Deleted" -> download.getStatus() == Download.Status.ERROR
@@ -274,8 +280,8 @@ final class DownloadListPresenter {
         int active = 0, queuing = 0, finished = 0, deleted = 0;
         for (Download d : downloads) {
             switch (d.getStatus()) {
-                case DOWNLOADING -> active++;
-                case QUEUED, CONNECTING, PAUSED -> queuing++;
+                case STARTING, CONNECTING, DOWNLOADING -> active++;
+                case CREATED, QUEUED, PAUSED -> queuing++;
                 case COMPLETED -> finished++;
                 case ERROR, CANCELED -> deleted++;
                 default -> { }

@@ -29,6 +29,7 @@ class PaginatedDownloadRepositoryTransitionTest {
         download = new Download(new URI("http://example.test/transition.bin"));
         download.setName("transition.bin");
         download.setType(Download.Type.ARIA2);
+        download.setStatus(Download.Status.QUEUED);
         repository.addDownload(download);
     }
 

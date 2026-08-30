@@ -214,7 +214,8 @@ public class NewMediaDialog {
 
     private void onStart() {
         try {
-            URI uri = URI.create(urlEntry.getText().trim());
+            URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
+                    urlEntry.getText());
             Download download = downloadManager.createYoutubeDownload(uri, destinationFolder, null);
             applyMediaOptions(download);
             downloadManager.queueDownload(download);

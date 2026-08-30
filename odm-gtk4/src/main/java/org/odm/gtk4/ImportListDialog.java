@@ -212,13 +212,11 @@ public class ImportListDialog {
     private void applyExtensionFilter() {
         // The treeview shows all rows; the filter only toggles which rows are marked.
         long selected = extensionFilterCombo.getSelected();
-        if (selected == 0) {
-            return; // "(all)": nothing to change
-        }
-        String filterExt = extensionFilterCombo.getSelectedItem() instanceof org.gnome.gtk.StringObject so
+        String filterExt = selected == 0 ? null
+                : extensionFilterCombo.getSelectedItem() instanceof org.gnome.gtk.StringObject so
                 ? so.getString()
                 : null;
-        if (filterExt == null) {
+        if (selected != 0 && filterExt == null) {
             return;
         }
         TreeIter iter = new TreeIter();
@@ -226,7 +224,7 @@ public class ImportListDialog {
             do {
                 String ext = ListStoreCells.getString(urlStore, iter, 2);
                 Value nv = new Value().init(Types.BOOLEAN);
-                nv.setBoolean(filterExt.equals(ext));
+                nv.setBoolean(selected == 0 || filterExt.equals(ext));
                 urlStore.setValue(iter, 0, nv);
                 nv.unset();
             } while (urlStore.iterNext(iter));
@@ -281,7 +279,8 @@ public class ImportListDialog {
         int queued = 0;
         for (String url : urls.stream().limit(MAX_IMPORT_URLS).toList()) {
             try {
-                Download download = downloadManager.createDownload(new URI(url), destination);
+                Download download = downloadManager.createDownload(
+                        org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
                 options.apply(download);
                 if (options.startAutomatically()) {
                     downloadManager.queueDownload(download);

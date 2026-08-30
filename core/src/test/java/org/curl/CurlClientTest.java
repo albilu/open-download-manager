@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -242,6 +243,29 @@ class CurlClientTest {
     }
 
     @Test
+    @DisplayName("Shared dialog settings reach native curl command flags")
+    void sharedSettingsReachCurlCommand() {
+        Download download = createTestDownload(URI.create("https://example.test/file.bin"));
+        CurlSettings settings = new CurlSettings()
+                .setDownloadLimitKB(256)
+                .setRetryDelaySeconds(7)
+                .setCookieHeader("Cookie: session=abc")
+                .setUserAgent("odm-test")
+                .setReferer("https://referrer.test/");
+        settings.setMaxRetries(9);
+        download.setSettings(settings);
+
+        List<String> command = client.buildCurlCommand(download, tempDir.resolve("file.bin"));
+
+        assertFlagValue(command, "--limit-rate", "256K");
+        assertFlagValue(command, "--retry", "9");
+        assertFlagValue(command, "--retry-delay", "7");
+        assertFlagValue(command, "--cookie", "session=abc");
+        assertFlagValue(command, "--user-agent", "odm-test");
+        assertFlagValue(command, "--referer", "https://referrer.test/");
+    }
+
+    @Test
     @DisplayName("Should handle concurrent downloads")
     @Timeout(60)
     void shouldHandleConcurrentDownloads() throws Exception {
@@ -303,6 +327,12 @@ class CurlClientTest {
         String fileName = (lastSlash >= 0) ? path.substring(lastSlash + 1) : path;
 
         return fileName.isEmpty() ? "download" : fileName;
+    }
+
+    private static void assertFlagValue(List<String> command, String flag, String expected) {
+        int index = command.indexOf(flag);
+        assertTrue(index >= 0, "missing flag " + flag + " in " + command);
+        assertEquals(expected, command.get(index + 1));
     }
 
     private static boolean isCurlAvailable() {

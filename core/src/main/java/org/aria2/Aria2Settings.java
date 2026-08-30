@@ -10,6 +10,11 @@ import org.manager.download.DownloadSettings;
  */
 public class Aria2Settings extends DownloadSettings {
 
+    @Override
+    public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
+        return true;
+    }
+
     private int maxConnectionPerServer = 5;
     private boolean continueDownload = true;
     private int minSplitSize = 20; // in MB
@@ -103,6 +108,8 @@ public class Aria2Settings extends DownloadSettings {
     public Aria2Settings setUploadLimitKB(int kibPerSecond) {
         if (kibPerSecond > 0) {
             setOption("max-upload-limit", String.valueOf(kibPerSecond * 1024L));
+        } else {
+            clearOption("max-upload-limit");
         }
         return this;
     }
@@ -124,6 +131,8 @@ public class Aria2Settings extends DownloadSettings {
     public Aria2Settings setMaxRetries(int maxRetries) {
         if (maxRetries > 0) {
             setOption("max-tries", String.valueOf(maxRetries));
+        } else {
+            clearOption("max-tries");
         }
         return this;
     }
@@ -145,6 +154,8 @@ public class Aria2Settings extends DownloadSettings {
     public Aria2Settings setRetryDelaySeconds(int seconds) {
         if (seconds > 0) {
             setOption("retry-wait", String.valueOf(seconds));
+        } else {
+            clearOption("retry-wait");
         }
         return this;
     }
@@ -158,6 +169,8 @@ public class Aria2Settings extends DownloadSettings {
     public Aria2Settings setReferer(String referer) {
         if (referer != null && !referer.isBlank()) {
             setOption("referer", referer.trim());
+        } else {
+            clearOption("referer");
         }
         return this;
     }
@@ -171,6 +184,8 @@ public class Aria2Settings extends DownloadSettings {
     public Aria2Settings setUserAgent(String userAgent) {
         if (userAgent != null && !userAgent.isBlank()) {
             setOption("user-agent", userAgent.trim());
+        } else {
+            clearOption("user-agent");
         }
         return this;
     }
@@ -184,6 +199,8 @@ public class Aria2Settings extends DownloadSettings {
     public Aria2Settings setCookieHeader(String cookieHeader) {
         if (cookieHeader != null && !cookieHeader.isBlank()) {
             setOption("header", cookieHeader.trim());
+        } else {
+            clearOption("header");
         }
         return this;
     }

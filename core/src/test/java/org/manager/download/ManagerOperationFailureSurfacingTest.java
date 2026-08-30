@@ -133,6 +133,13 @@ class ManagerOperationFailureSurfacingTest {
         Download download = newDownload("fail-resume");
         manager.queueDownload(download).join();
 
+        // Resume is only meaningful for a paused download. A duplicate resume
+        // of an already-running download is intentionally idempotent.
+        handler.fail = false;
+        manager.pauseDownload(download).join();
+        assertEquals(Download.Status.PAUSED, download.getStatus());
+        handler.fail = true;
+
         assertFails(manager.resumeDownload(download), "resume");
     }
 

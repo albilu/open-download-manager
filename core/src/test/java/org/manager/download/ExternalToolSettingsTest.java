@@ -111,4 +111,25 @@ class ExternalToolSettingsTest {
         assertTrue(s.getUserAgent() == null || s.getUserAgent().isBlank(),
                 "cleared user agent must be null or blank, never junk");
     }
+
+    @Test
+    @DisplayName("Capabilities describe only settings each native engine consumes")
+    void capabilitiesMatchNativeSupport() {
+        CurlSettings curl = new CurlSettings();
+        assertTrue(curl.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT));
+        assertTrue(curl.supports(ExternalToolSettings.Capability.COOKIE));
+        assertEquals(false, curl.supports(ExternalToolSettings.Capability.CONNECTIONS));
+        assertEquals(false, curl.supports(ExternalToolSettings.Capability.UPLOAD_LIMIT));
+
+        YtDlpSettings yt = new YtDlpSettings();
+        assertTrue(yt.supports(ExternalToolSettings.Capability.CONNECTIONS));
+        assertTrue(yt.supports(ExternalToolSettings.Capability.RETRY_DELAY));
+        assertEquals(false, yt.supports(ExternalToolSettings.Capability.UPLOAD_LIMIT));
+
+        Aria2Settings aria2 = new Aria2Settings();
+        for (ExternalToolSettings.Capability capability
+                : ExternalToolSettings.Capability.values()) {
+            assertTrue(aria2.supports(capability), "aria2 must support " + capability);
+        }
+    }
 }

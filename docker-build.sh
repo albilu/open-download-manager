@@ -56,7 +56,7 @@ run() {
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         --ipc=host \
         $IMAGE_NAME \
-        bash -c 'mvn -q -pl odm-gtk4 -am package -DskipTests=true && mvn -q -pl odm-gtk4 dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt && java -Djava.util.logging.level=FINE -Djava.util.logging.ConsoleHandler.level=FINE -cp "odm-gtk4/target/classes:$(cat /tmp/cp.txt)" org.odm.gtk4.OdmApplication' 
+        bash -c 'mvn -q -pl odm-gtk4 -am package -DskipTests=true && mvn -q -pl odm-gtk4 dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt && java -Djava.util.logging.level=FINE -Djava.util.logging.ConsoleHandler.level=FINE -cp "odm-gtk4/target/classes:core/target/classes:$(cat /tmp/cp.txt)" org.odm.gtk4.OdmApplication'
 }
 
 # Run application in debug mode
@@ -73,7 +73,7 @@ debug() {
         -p 5005:5005 \
         --ipc=host \
         $IMAGE_NAME \
-        bash -c 'mvn -q -pl odm-gtk4 -am package -DskipTests=true && mvn -q -pl odm-gtk4 dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt && java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=0.0.0.0:5005 -Djava.util.logging.level=FINE -Djava.util.logging.ConsoleHandler.level=FINE -cp "odm-gtk4/target/classes:$(cat /tmp/cp.txt)" org.odm.gtk4.OdmApplication' 
+        bash -c 'mvn -q -pl odm-gtk4 -am package -DskipTests=true && mvn -q -pl odm-gtk4 dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt && java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=0.0.0.0:5005 -Djava.util.logging.level=FINE -Djava.util.logging.ConsoleHandler.level=FINE -cp "odm-gtk4/target/classes:core/target/classes:$(cat /tmp/cp.txt)" org.odm.gtk4.OdmApplication'
 }
 
 # Build the Docker image

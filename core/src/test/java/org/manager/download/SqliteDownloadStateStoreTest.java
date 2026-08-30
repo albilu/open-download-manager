@@ -65,6 +65,9 @@ class SqliteDownloadStateStoreTest {
         original.setStartedAt(Instant.parse("2026-08-19T10:15:30Z"));
         original.setCompletedAt(Instant.parse("2026-08-19T11:00:00Z"));
         original.setErrorMessage("boom");
+        original.setRequestedFileName("custom-file.iso");
+        original.recordOutputPath(Path.of("/tmp", "odm-downloads", "actual-file.iso"));
+        original.recordOutputPath(Path.of("/tmp", "odm-downloads", "actual-file.iso.sha256"));
 
         org.aria2.Aria2Settings settings = (org.aria2.Aria2Settings) original.getSettings();
         settings.setOption("header", "Cookie: session=1");
@@ -92,6 +95,9 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getStartedAt(), restored.getStartedAt());
             assertEquals(original.getCompletedAt(), restored.getCompletedAt());
             assertEquals(original.getErrorMessage(), restored.getErrorMessage());
+            assertEquals(original.getRequestedFileName(), restored.getRequestedFileName());
+            assertEquals(original.getOutputPaths(), restored.getOutputPaths());
+            assertEquals(original.getOutputPaths().get(0), restored.getPrimaryOutputPath());
             assertEquals(12, restored.getConnections());
 
             var restoredSettings = assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());
@@ -323,8 +329,23 @@ class SqliteDownloadStateStoreTest {
             assertNull(restored.getGid());
             assertNull(restored.getStartedAt());
             assertNull(restored.getErrorMessage());
+            assertNull(restored.getRequestedFileName());
+            assertTrue(restored.getOutputPaths().isEmpty());
             assertEquals(Download.Status.QUEUED, restored.getStatus());
             assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());
+
+            // Opening the old schema added the new columns in place; writing
+            // and reopening proves the migration is usable, not just readable.
+            restored.setRequestedFileName("migrated.bin");
+            restored.recordOutputPath(tempDir.resolve("actual-migrated.bin"));
+            store.save(List.of(restored), Set.of());
+        }
+
+        try (SqliteDownloadStateStore reopened = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            Download restored = reopened.load().downloads().get(0);
+            assertEquals("migrated.bin", restored.getRequestedFileName());
+            assertEquals(List.of(tempDir.resolve("actual-migrated.bin").toAbsolutePath().normalize()),
+                    restored.getOutputPaths());
         }
     }
 

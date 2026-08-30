@@ -1,6 +1,5 @@
 package org.manager.download.handler;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
@@ -320,14 +319,17 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             return;
         }
 
-        String name = download.getName();
+        String name = download.getRequestedFileName() != null
+                ? download.getRequestedFileName() : download.getName();
+        if (download.getDestination() == null || name == null || name.isBlank()) {
+            return;
+        }
+        org.manager.util.PathSafety.requireSafeFileName(name);
         Path output = download.getDestination().resolve(name);
         if (download.isOverrideOutputPath() && Files.exists(output)) {
-            try {
-                Files.deleteIfExists(output);
-            } catch (IOException e) {
-                // Handle exception
-                LOGGER.info("Fail to delete output file");
+            if (!org.manager.util.PathSafety.deleteIfExistsConfined(output, download.getDestination())) {
+                throw new IllegalStateException(
+                        "Refusing to overwrite output outside destination: " + output);
             }
 
         } else if (Files.exists(output) && !download.isOverrideOutputPath()) {
@@ -336,7 +338,11 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             while (Files.exists(output.resolveSibling(name + "_" + counter))) {
                 counter++;
             }
-            download.setName(name + "_" + counter);
+            String uniqueName = name + "_" + counter;
+            download.setName(uniqueName);
+            if (download.getRequestedFileName() != null) {
+                download.setRequestedFileName(uniqueName);
+            }
         }
     }
 }

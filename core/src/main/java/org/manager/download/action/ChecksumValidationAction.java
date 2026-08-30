@@ -89,8 +89,11 @@ public class ChecksumValidationAction implements AfterCompletionAction {
             return false;
         }
 
-        // Determine file path
-        validatedFile = download.getDestination().resolve(download.getName());
+        validatedFile = download.getPrimaryOutputPath();
+        if (validatedFile == null) {
+            LOGGER.warning("Cannot validate checksum: output path is unknown");
+            return false;
+        }
 
         // Check if file exists
         if (!Files.exists(validatedFile)) {

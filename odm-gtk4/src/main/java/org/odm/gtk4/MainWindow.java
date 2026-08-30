@@ -2,6 +2,7 @@ package org.odm.gtk4;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.gnome.gtk.Application;
 import org.gnome.gtk.ApplicationWindow;
@@ -84,6 +85,12 @@ public class MainWindow {
     private final ListStore globalProgressStore;
     private final org.tor.TorService torService;
     private final org.manager.schedule.ScheduleManager scheduleManager;
+    private final java.util.concurrent.atomic.AtomicLong torToggleEpoch =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicBoolean torDesiredRunning =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicReference<org.tor.TorLeakChecker> torLeakChecker =
+            new java.util.concurrent.atomic.AtomicReference<>();
     /** Builder reference kept for window-state persistence from menu actions. */
     private final GtkBuilder uiBuilder;
 
@@ -345,6 +352,9 @@ public class MainWindow {
      * I/O). Idempotent; part of every real teardown path.
      */
     private void shutdownBackgroundWork() {
+        torDesiredRunning.set(false);
+        torToggleEpoch.incrementAndGet();
+        shutdownTorLeakChecker();
         if (contextMenu != null) {
             contextMenu.dispose();
             contextMenu = null;
@@ -412,6 +422,9 @@ public class MainWindow {
         if (active) {
             onTorToggled(true);
         } else {
+            torDesiredRunning.set(false);
+            torToggleEpoch.incrementAndGet();
+            shutdownTorLeakChecker();
             torService.stop();
             downloadManager.applyGlobalSettingsToActiveDownloads();
             LOGGER.info("Tor stopped; Settings proxy preference retained");
@@ -524,21 +537,35 @@ public class MainWindow {
         if (selectedDownload == null) {
             return;
         }
+        Download targetDownload = selectedDownload;
+        if (!canChangeDestination(targetDownload)) {
+            AccessibilitySupport.status(infoLabel,
+                    "Destination can only be changed before a download starts");
+            return;
+        }
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
         dialog.setTitle("Select new destination");
         dialog.selectFolder(window, null, result -> {
             try {
                 org.gnome.gio.File folder = dialog.selectFolderFinish(result);
-                if (folder != null && folder.getPath() != null && selectedDownload != null) {
-                    selectedDownload.setDestination(
-                            java.nio.file.Path.of(folder.getPath().toString()));
-                    downloadManager.changeSettings(selectedDownload);
+                if (folder != null && folder.getPath() != null
+                        && canChangeDestination(targetDownload)) {
+                    targetDownload.setDestination(java.nio.file.Path.of(folder.getPath().toString()));
                     UiThread.marshal(this::refresh);
                 }
             } catch (Exception e) {
                 LOGGER.log(java.util.logging.Level.FINE, "Destination change cancelled or failed", e);
             }
         });
+    }
+
+    private static boolean canChangeDestination(Download download) {
+        return download != null
+                && (download.getStatus() == Download.Status.CREATED
+                        || download.getStatus() == Download.Status.QUEUED)
+                && download.getGid() == null
+                && download.getAttemptGeneration() == 0
+                && download.getOutputPaths().isEmpty();
     }
 
     /** Requests an integrity re-check of the selected download (aria2). */
@@ -869,7 +896,10 @@ public class MainWindow {
         try {
             java.nio.file.Path target = "folder".equals(what)
                     ? selectedDownload.getDestination()
-                    : selectedDownload.getDestination().resolve(selectedDownload.getName());
+                    : selectedDownload.getPrimaryOutputPath();
+            if (target == null) {
+                return;
+            }
             new ProcessBuilder("xdg-open", target.toString()).inheritIO().start();
         } catch (Exception e) {
             LOGGER.warning("Failed to open " + what + ": " + e.getMessage());
@@ -960,7 +990,15 @@ public class MainWindow {
         downloadManager.getGlobalSettings().setProperty("scheduler.grid", "");
         downloadManager.getGlobalSettings().setProperty("scheduler.enabled", "true");
         downloadManager.getGlobalSettings().save();
-        LOGGER.info("Schedule preset applied: " + preset);
+        scheduleManager.start().whenComplete((ignored, error) -> {
+            if (error != null) {
+                LOGGER.log(Level.WARNING, "Failed to start scheduler for preset " + preset, error);
+                UiThread.marshal(() -> AccessibilitySupport.status(
+                        infoLabel, "Could not start download scheduler"));
+            } else {
+                LOGGER.info("Schedule preset applied: " + preset);
+            }
+        });
     }
 
     private void setCompletionAction(org.manager.download.action.AfterCompletionAction action) {
@@ -970,8 +1008,18 @@ public class MainWindow {
     }
 
     private boolean onTorToggled(boolean active) {
+        long epoch = torToggleEpoch.incrementAndGet();
+        torDesiredRunning.set(active);
         if (active) {
-            torService.start().thenAccept(ok -> {
+            torService.start().whenComplete((ok, error) -> {
+                if (epoch != torToggleEpoch.get() || !torDesiredRunning.get()) {
+                    // The user switched Tor off while startup was pending.
+                    // A late successful start must not resurrect the proxy.
+                    if (Boolean.TRUE.equals(ok)) {
+                        torService.stop();
+                    }
+                    return;
+                }
                 if (Boolean.TRUE.equals(ok)) {
                     LOGGER.info("Tor started; downloads can route via SOCKS5 127.0.0.1:9050");
                     downloadManager.getGlobalSettings().setGlobalProxyEnabled(true);
@@ -981,9 +1029,10 @@ public class MainWindow {
                     downloadManager.getGlobalSettings().save();
                     // Reconfigure running downloads to use the new proxy
                     downloadManager.applyGlobalSettingsToActiveDownloads();
-                    verifyTorCircuit();
+                    verifyTorCircuit(epoch);
                 } else {
-                    LOGGER.warning("Tor failed to start");
+                    LOGGER.warning("Tor failed to start"
+                            + (error != null ? ": " + error.getMessage() : ""));
                     downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
                     // Keep the dead SOCKS endpoint enabled so a failed Tor
                     // launch cannot turn an intended private transfer into a
@@ -997,6 +1046,7 @@ public class MainWindow {
                 }
             });
         } else {
+            shutdownTorLeakChecker();
             downloadManager.getGlobalSettings().setGlobalProxyEnabled(false);
             downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
             downloadManager.getGlobalSettings().save();
@@ -1014,17 +1064,23 @@ public class MainWindow {
      * bar. This is the user-facing wiring of TorLeakChecker: without it the
      * SOCKS port being open says nothing about actual circuit health.
      */
-    private void verifyTorCircuit() {
-        TorLeakHolder.checker = new org.tor.TorLeakChecker(
+    private void verifyTorCircuit(long epoch) {
+        org.tor.TorLeakChecker checker = new org.tor.TorLeakChecker(
                 "127.0.0.1", torService.getSocksPort(), 5000, 5000);
-        TorLeakHolder.checker.performLeakCheck()
+        org.tor.TorLeakChecker previous = torLeakChecker.getAndSet(checker);
+        if (previous != null) {
+            previous.shutdown();
+        }
+        checker.performLeakCheck()
                 .whenComplete((result, error) -> {
                     try {
-                        if (TorLeakHolder.checker != null) {
-                            TorLeakHolder.checker.shutdown();
-                        }
+                        checker.shutdown();
                     } catch (Exception ignore) {
                         // shutdown is best-effort
+                    }
+                    torLeakChecker.compareAndSet(checker, null);
+                    if (epoch != torToggleEpoch.get() || !torDesiredRunning.get()) {
+                        return;
                     }
                     String message;
                     if (error != null) {
@@ -1040,10 +1096,15 @@ public class MainWindow {
                 });
     }
 
-    /** Holder for the transient leak-checker instance. */
-    private static final class TorLeakHolder {
-
-        static volatile org.tor.TorLeakChecker checker;
+    private void shutdownTorLeakChecker() {
+        org.tor.TorLeakChecker checker = torLeakChecker.getAndSet(null);
+        if (checker != null) {
+            try {
+                checker.shutdown();
+            } catch (Exception e) {
+                LOGGER.log(Level.FINE, "Failed to stop Tor leak checker", e);
+            }
+        }
     }
 
     /**

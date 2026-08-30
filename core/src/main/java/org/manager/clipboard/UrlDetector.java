@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -41,6 +43,10 @@ public class UrlDetector {
 
     // Pattern for magnet links
     private static final Pattern MAGNET_PATTERN = Pattern.compile("(?i)^magnet:\\?xt=urn:");
+
+    // RFC 3986 scheme syntax. An explicitly supplied but unsupported scheme
+    // must never be reinterpreted as a protocol-less HTTPS hostname.
+    private static final Pattern EXPLICIT_SCHEME_PATTERN = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:");
 
     // Pattern for YouTube and video URLs
     private static final Pattern VIDEO_URL_PATTERN = Pattern.compile("""
@@ -79,21 +85,12 @@ public class UrlDetector {
         while (matcher.find()) {
             String urlString = matcher.group().trim();
 
-            // Avoid duplicates
-            if (seen.contains(urlString)) {
-                continue;
-            }
-            seen.add(urlString);
-
-            try {
-                URI uri = normalizeUrl(urlString);
-                if (uri != null && isValidDownloadUrl(uri)) {
+            normalizeAndValidate(urlString).ifPresent(uri -> {
+                if (seen.add(uri.toString())) {
                     urls.add(uri);
                     LOGGER.fine("Detected a valid URL");
                 }
-            } catch (Exception e) {
-                LOGGER.fine("Ignored an invalid URL: " + e.getClass().getSimpleName());
-            }
+            });
         }
 
         return urls;
@@ -128,7 +125,8 @@ public class UrlDetector {
             String lowerCaseUrl = urlString.toLowerCase(java.util.Locale.ROOT);
             if (!lowerCaseUrl.startsWith("http://") && !lowerCaseUrl.startsWith("https://")
                     && !lowerCaseUrl.startsWith("ftp://") && !lowerCaseUrl.startsWith("ftps://")
-                    && !lowerCaseUrl.startsWith("sftp://") && !lowerCaseUrl.startsWith("file://")) {
+                    && !lowerCaseUrl.startsWith("sftp://") && !lowerCaseUrl.startsWith("file://")
+                    && !EXPLICIT_SCHEME_PATTERN.matcher(urlString).find()) {
                 // Try adding https:// prefix for URLs that look like web URLs
                 if (urlString.contains(".") && !urlString.contains(" ")) {
                     urlString = "https://" + urlString;
@@ -150,13 +148,39 @@ public class UrlDetector {
         }
     }
 
+    /** Normalizes user input and returns it only when it is a supported URL. */
+    public static Optional<URI> normalizeAndValidate(String input) {
+        if (input == null || input.isBlank()) {
+            return Optional.empty();
+        }
+        URI normalized = normalizeUrl(input.strip());
+        return isValidDownloadUrl(normalized) ? Optional.of(normalized) : Optional.empty();
+    }
+
+    /**
+     * Normalizes and validates URL text, throwing a user-facing argument
+     * error instead of allowing each caller to accept a different scheme.
+     */
+    public static URI requireValidDownloadUrl(String input) {
+        return normalizeAndValidate(input)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid or unsupported download URL"));
+    }
+
+    /** Validates and normalizes an already-parsed URI. */
+    public static URI requireValidDownloadUri(URI uri) {
+        if (uri == null) {
+            throw new IllegalArgumentException("Download URI cannot be null");
+        }
+        return requireValidDownloadUrl(uri.toString());
+    }
+
     /**
      * Checks if a URI represents a valid download URL.
      *
      * @param uri The URI to check
      * @return true if it's a valid download URL, false otherwise
      */
-    private static boolean isValidDownloadUrl(URI uri) {
+    public static boolean isValidDownloadUrl(URI uri) {
         if (uri == null) {
             return false;
         }
@@ -166,7 +190,7 @@ public class UrlDetector {
             return false;
         }
 
-        scheme = scheme.toLowerCase();
+        scheme = scheme.toLowerCase(Locale.ROOT);
 
         // Accept common download protocols
         if (scheme.equals("http") || scheme.equals("https")
@@ -175,19 +199,32 @@ public class UrlDetector {
                 || scheme.equals("magnet")
                 || scheme.equals("file")) {
 
-            // For magnet links, they're always valid for downloads
+            // Magnet links require an exact-topic parameter.
             if (scheme.equals("magnet")) {
-                return true;
+                // Magnet URIs are opaque (magnet:?xt=...), so URI#getRawQuery
+                // is normally null. Inspect the raw scheme-specific part and
+                // treat its leading '?' as the query delimiter.
+                String query = uri.getRawQuery();
+                if (query == null) {
+                    query = uri.getRawSchemeSpecificPart();
+                    if (query != null && query.startsWith("?")) {
+                        query = query.substring(1);
+                    }
+                }
+                return query != null && Pattern.compile("(?i)(?:^|&)xt=urn:[^&]+")
+                        .matcher(query).find();
             }
 
             // For file:// URLs, check if it's a torrent file
             if (scheme.equals("file")) {
-                return TORRENT_PATTERN.matcher(uri.getPath()).matches();
+                String path = uri.getPath();
+                return path != null && (TORRENT_PATTERN.matcher(path).matches()
+                        || path.toLowerCase(Locale.ROOT).endsWith(".meta4")
+                        || path.toLowerCase(Locale.ROOT).endsWith(".metalink"));
             }
 
-            // SFTP references are always treated as downloads
-            if (scheme.equals("sftp")) {
-                return true;
+            if (uri.getHost() == null || uri.getHost().isBlank()) {
+                return false;
             }
 
             // For HTTP/HTTPS/FTP, check various criteria

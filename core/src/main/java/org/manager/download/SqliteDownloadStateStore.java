@@ -48,6 +48,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 id TEXT PRIMARY KEY,
                 gid TEXT,
                 name TEXT,
+                requested_file_name TEXT,
+                output_paths TEXT,
                 override_output_path INTEGER NOT NULL DEFAULT 1,
                 uri TEXT NOT NULL,
                 mirrors TEXT,
@@ -76,12 +78,13 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
 
     private static final String INSERT = """
             INSERT INTO downloads (
-                id, gid, name, override_output_path, uri, mirrors, destination,
+                id, gid, name, requested_file_name, output_paths,
+                override_output_path, uri, mirrors, destination,
                 type, status, size, downloaded, speed, upload_speed, connections,
                 seeders, info_hash, queue_position, created_at, started_at,
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, active_before_exit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -216,11 +219,32 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 statement.execute("PRAGMA synchronous=NORMAL");
                 statement.execute(CREATE_TABLE);
             }
+            ensureColumn("requested_file_name", "TEXT");
+            ensureColumn("output_paths", "TEXT");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
             close();
             throw new IllegalStateException("Failed to open download state database " + databasePath, e);
+        }
+    }
+
+    /** Adds columns introduced after the first SQLite release in place. */
+    private void ensureColumn(String column, String declaration) throws SQLException {
+        boolean present = false;
+        try (Statement statement = connection.createStatement();
+                ResultSet rs = statement.executeQuery("PRAGMA table_info(downloads)")) {
+            while (rs.next()) {
+                if (column.equalsIgnoreCase(rs.getString("name"))) {
+                    present = true;
+                    break;
+                }
+            }
+        }
+        if (!present) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("ALTER TABLE downloads ADD COLUMN " + column + " " + declaration);
+            }
         }
     }
 
@@ -301,6 +325,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         download.setUri(URI.create(rs.getString("uri")));
         download.setGid(rs.getString("gid"));
         download.setName(sanitizePersistedName(rs.getString("name")));
+        download.setRequestedFileName(sanitizePersistedName(rs.getString("requested_file_name")));
         download.seOverrideOutputPath(rs.getInt("override_output_path") != 0);
         String mirrorsJson = rs.getString("mirrors");
         if (mirrorsJson != null && !mirrorsJson.isBlank()) {
@@ -315,6 +340,11 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         String destination = rs.getString("destination");
         if (destination != null && !destination.isBlank()) {
             download.setDestination(Path.of(destination));
+        }
+        List<String> outputPaths = readJson(rs, "output_paths", new TypeReference<List<String>>() {
+        });
+        if (outputPaths != null) {
+            download.setOutputPaths(outputPaths.stream().map(Path::of).toList());
         }
         download.setType(Download.Type.valueOf(rs.getString("type")));
         download.setStatus(Download.Status.valueOf(rs.getString("status")));
@@ -377,31 +407,36 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(1, download.getId());
         insert.setString(2, download.getGid());
         insert.setString(3, download.getName());
-        insert.setInt(4, download.isOverrideOutputPath() ? 1 : 0);
-        insert.setString(5, download.getUri().toString());
-        insert.setString(6, download.getMirrors() == null || download.getMirrors().isEmpty()
+        insert.setString(4, download.getRequestedFileName());
+        insert.setString(5, download.getOutputPaths().isEmpty()
+                ? null
+                : mapper.writeValueAsString(download.getOutputPaths().stream()
+                        .map(Path::toString).toList()));
+        insert.setInt(6, download.isOverrideOutputPath() ? 1 : 0);
+        insert.setString(7, download.getUri().toString());
+        insert.setString(8, download.getMirrors() == null || download.getMirrors().isEmpty()
                 ? null
                 : mapper.writeValueAsString(download.getMirrors()));
-        insert.setString(7, download.getDestination() == null ? null : download.getDestination().toString());
-        insert.setString(8, download.getType().name());
-        insert.setString(9, download.getStatus().name());
-        insert.setLong(10, download.getSize());
-        insert.setLong(11, download.getDownloaded());
-        insert.setFloat(12, download.getSpeed());
-        insert.setFloat(13, download.getUploadSpeed());
-        insert.setInt(14, download.getConnections());
-        insert.setInt(15, download.getSeeders());
-        insert.setString(16, download.getInfoHash());
-        insert.setInt(17, download.getQueuePosition());
-        insert.setString(18, formatInstant(download.getCreatedAt()));
-        insert.setString(19, formatInstant(download.getStartedAt()));
-        insert.setString(20, formatInstant(download.getCompletedAt()));
-        insert.setString(21, download.getErrorMessage());
-        insert.setString(22, mapper.writeValueAsString(download.getSettings()));
-        insert.setString(23, null); // schedule_settings: legacy, no longer populated
-        insert.setString(24, download.getChecksumAlgorithm());
-        insert.setString(25, download.getExpectedChecksum());
-        insert.setInt(26, activeBeforeExit ? 1 : 0);
+        insert.setString(9, download.getDestination() == null ? null : download.getDestination().toString());
+        insert.setString(10, download.getType().name());
+        insert.setString(11, download.getStatus().name());
+        insert.setLong(12, download.getSize());
+        insert.setLong(13, download.getDownloaded());
+        insert.setFloat(14, download.getSpeed());
+        insert.setFloat(15, download.getUploadSpeed());
+        insert.setInt(16, download.getConnections());
+        insert.setInt(17, download.getSeeders());
+        insert.setString(18, download.getInfoHash());
+        insert.setInt(19, download.getQueuePosition());
+        insert.setString(20, formatInstant(download.getCreatedAt()));
+        insert.setString(21, formatInstant(download.getStartedAt()));
+        insert.setString(22, formatInstant(download.getCompletedAt()));
+        insert.setString(23, download.getErrorMessage());
+        insert.setString(24, mapper.writeValueAsString(download.getSettings()));
+        insert.setString(25, null); // schedule_settings: legacy, no longer populated
+        insert.setString(26, download.getChecksumAlgorithm());
+        insert.setString(27, download.getExpectedChecksum());
+        insert.setInt(28, activeBeforeExit ? 1 : 0);
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

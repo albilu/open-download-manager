@@ -15,7 +15,17 @@ import org.ytdlp.YtDlpToolManager;
  */
 public class YtDlpSettings extends DownloadSettings {
 
+    @Override
+    public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
+        return switch (capability) {
+            case CONNECTIONS, DOWNLOAD_LIMIT, MAX_RETRIES, RETRY_DELAY,
+                    REFERER, USER_AGENT, COOKIE -> true;
+            case UPLOAD_LIMIT -> false;
+        };
+    }
+
     private String format = "bestvideo+bestaudio/best";
+    private String outputTemplate;
     private boolean embedThumbnail = false;
     private boolean embedMetadata = true;
     private boolean embedSubs = false;
@@ -46,6 +56,16 @@ public class YtDlpSettings extends DownloadSettings {
     private int aria2cTimeout = 60;
     private int aria2cRetryWait = 10;
     private int aria2cMaxTries = 5;
+
+    public String getOutputTemplate() {
+        return outputTemplate;
+    }
+
+    public YtDlpSettings setOutputTemplate(String outputTemplate) {
+        this.outputTemplate = outputTemplate == null || outputTemplate.isBlank()
+                ? null : outputTemplate;
+        return this;
+    }
 
     /**
      * Gets the video format specification.
@@ -353,6 +373,8 @@ public class YtDlpSettings extends DownloadSettings {
     public YtDlpSettings setUserAgent(String userAgent) {
         if (userAgent != null && !userAgent.isBlank()) {
             setOption("user-agent", userAgent.trim());
+        } else {
+            clearOption("user-agent");
         }
         return this;
     }
@@ -367,6 +389,8 @@ public class YtDlpSettings extends DownloadSettings {
     public YtDlpSettings setReferer(String referer) {
         if (referer != null && !referer.isBlank()) {
             setOption("referer", referer.trim());
+        } else {
+            clearOption("referer");
         }
         return this;
     }
@@ -764,6 +788,9 @@ public class YtDlpSettings extends DownloadSettings {
         Map<String, String> map = super.toMap();
 
         map.put("ytdlp.format", format);
+        if (outputTemplate != null) {
+            map.put("ytdlp.output-template", outputTemplate);
+        }
 
         if (embedThumbnail) {
             map.put("ytdlp.embed-thumbnail", "true");
@@ -842,12 +869,11 @@ public class YtDlpSettings extends DownloadSettings {
         YtDlpSettings copy = new YtDlpSettings();
 
         // Copy base settings
-        copy.setConnections(this.getConnections());
-        copy.setUseProxy(this.isUseProxy());
-        copy.setProxyAddress(this.getProxyAddress());
+        copyTo(copy);
 
         // Copy YtDlp-specific settings
         copy.format = this.format;
+        copy.outputTemplate = this.outputTemplate;
         copy.embedThumbnail = this.embedThumbnail;
         copy.embedMetadata = this.embedMetadata;
         copy.embedSubs = this.embedSubs;

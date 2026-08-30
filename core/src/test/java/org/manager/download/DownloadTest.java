@@ -93,6 +93,23 @@ class DownloadTest {
         }
 
         @Test
+        @DisplayName("Should decode a safe URI filename without treating plus as space")
+        void shouldDecodeSafeFilenameFromUriPath() {
+            Download decoded = new Download(URI.create(
+                    "https://example.com/path/my%20archive%2Bnotes.zip"));
+
+            assertEquals("my archive+notes.zip", decoded.getName());
+        }
+
+        @Test
+        @DisplayName("Unsafe decoded URI filename falls back to a generated name")
+        void unsafeDecodedFilenameFallsBack() {
+            Download decoded = new Download(URI.create("https://example.com/%2E%2E"));
+
+            assertTrue(decoded.getName().startsWith("download_"));
+        }
+
+        @Test
         @DisplayName("Should generate default name when URI has no filename")
         void shouldGenerateDefaultNameWhenUriHasNoFilename() {
             URI uriWithoutFilename = URI.create("https://example.com/");
@@ -122,7 +139,7 @@ class DownloadTest {
             Download newDownload = new Download();
 
             assertNotNull(newDownload.getId());
-            assertEquals(Download.Status.QUEUED, newDownload.getStatus());
+            assertEquals(Download.Status.CREATED, newDownload.getStatus());
             assertNotNull(newDownload.getCreatedAt());
             assertTrue(newDownload.getMirrors().isEmpty());
             assertEquals(0, newDownload.getSize());
@@ -648,6 +665,37 @@ class DownloadTest {
     @Nested
     @DisplayName("Name Safety Tests")
     class NameSafetyTests {
+
+        @Test
+        @DisplayName("Requested filename is distinct from engine-reported output artifacts")
+        void requestedFilenameAndOutputArtifactsStayDistinct() {
+            download.setDestination(testDestination);
+            download.setRequestedFileName("chosen-name.zip");
+            download.recordOutputPath(Path.of("engine-name.zip"));
+            download.recordOutputPath(testDestination.resolve("engine-name.zip"));
+            download.recordOutputPath(testDestination.resolve("engine-name.zip.sha256"));
+
+            assertEquals("chosen-name.zip", download.getRequestedFileName());
+            assertEquals(List.of(
+                    testDestination.resolve("engine-name.zip").toAbsolutePath().normalize(),
+                    testDestination.resolve("engine-name.zip.sha256").toAbsolutePath().normalize()),
+                    download.getOutputPaths());
+            assertEquals(testDestination.resolve("engine-name.zip").toAbsolutePath().normalize(),
+                    download.getPrimaryOutputPath());
+            assertThrows(UnsupportedOperationException.class,
+                    () -> download.getOutputPaths().add(Path.of("unexpected")));
+        }
+
+        @Test
+        @DisplayName("Blank requested filename restores engine-native naming")
+        void blankRequestedFilenameClearsOverride() {
+            download.setRequestedFileName("custom.zip");
+            download.setRequestedFileName("   ");
+
+            assertNull(download.getRequestedFileName());
+            assertThrows(IllegalArgumentException.class,
+                    () -> download.setRequestedFileName("../escape.zip"));
+        }
 
         @ParameterizedTest
         @ValueSource(strings = {

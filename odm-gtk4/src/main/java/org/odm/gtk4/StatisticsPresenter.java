@@ -28,8 +28,8 @@ final class StatisticsPresenter {
             totalSize += d.getSize();
             doneSize += d.getDownloaded();
             switch (d.getStatus()) {
-                case DOWNLOADING, CONNECTING -> active++;
-                case QUEUED, PAUSED -> queued++;
+                case STARTING, DOWNLOADING, CONNECTING -> active++;
+                case CREATED, QUEUED, PAUSED -> queued++;
                 case COMPLETED -> finished++;
                 case ERROR, CANCELED -> errors++;
                 default -> { }
