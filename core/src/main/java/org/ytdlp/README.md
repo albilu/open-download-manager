@@ -10,7 +10,7 @@ This package provides a complete integration with yt-dlp, including:
 -   **YtDlpDownloadTask**: High-level task management for downloads
 -   **YtDlpFactory**: Factory for creating and managing yt-dlp components
 -   **YtDlpSettings**: Comprehensive configuration options
--   **YtDlpUrlUtils**: URL validation and platform detection utilities
+-   **MediaUrlDetector**: Central media-engine routing shared with the download manager
 -   **YtDlpDownloadHandler**: Integration with the download manager framework
 -   **Aria2c Integration**: External downloader support for faster multi-connection downloads
 
@@ -239,21 +239,20 @@ YtDlpSettings aria2cSettings = factory.createAria2cSettings();
 YtDlpSettings customAria2c = factory.createAria2cSettings(32, 16, "512K");
 ```
 
-## URL Validation and Platform Detection
+## URL Validation and Media Routing
 
 ```java
-// Validate URL
-boolean isSupported = YtDlpUrlUtils.isSupported("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+// Normalize and validate user input once.
+URI uri = UrlDetector.requireValidDownloadUrl(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
 
-// Analyze URL
-YtDlpUrlUtils.UrlInfo info = YtDlpUrlUtils.analyzeUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-System.out.println("Platform: " + YtDlpUrlUtils.getPlatformDisplayName(info.getPlatform()));
-System.out.println("Video ID: " + info.getVideoId());
-System.out.println("Is Playlist: " + info.isPlaylist());
-
-// Get suggested format for platform
-String suggestedFormat = YtDlpUrlUtils.getSuggestedFormat(info.getPlatform(), "720p");
+// Use the same routing decision as Download and ClipboardService.
+boolean useYtDlp = MediaUrlDetector.isMediaUrl(uri);
 ```
+
+Automatic routing sends known media-platform pages and HLS/DASH stream URLs
+to yt-dlp. Explicit file URLs, including direct audio and video files, remain
+on the aria2 route.
 
 ## Task Management
 
@@ -337,7 +336,9 @@ The integration supports hundreds of sites through yt-dlp, including:
 -   **Streaming**: Crunchyroll, Funimation
 -   **And many more...**
 
-Use `YtDlpUrlUtils.isSupported(url)` to check if a specific URL is supported.
+Automatic routing recognizes the configured media hosts and stream manifest
+formats. The installed yt-dlp version remains the authority on whether a
+specific extractor is available.
 
 ## Requirements
 
@@ -399,12 +400,12 @@ See `YtDlpExample.java` for comprehensive usage examples including:
 YtDlpFactory (Singleton)
 ├── YtDlpClient (Process management)
 ├── YtDlpDownloadTask (Task lifecycle)
-├── YtDlpSettings (Configuration)
-└── YtDlpUrlUtils (URL validation)
+└── YtDlpSettings (Configuration)
 
 Integration Layer:
 ├── YtDlpDownloadHandler (Download manager integration)
-└── DownloadSettingsFactory (Settings creation)
+├── DownloadSettingsFactory (Settings creation)
+└── MediaUrlDetector (Central media routing)
 ```
 
 ## Thread Safety

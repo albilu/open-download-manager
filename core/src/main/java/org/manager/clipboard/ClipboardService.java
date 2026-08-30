@@ -11,6 +11,7 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
+import org.manager.download.MediaUrlDetector;
 
 /**
  * Service that integrates clipboard monitoring with the download manager. This
@@ -274,19 +275,21 @@ public class ClipboardService implements ClipboardListener {
             return false;
         }
 
-        // Check video URL filter
-        if (UrlDetector.isVideoUrl(url) && !settings.isFilterVideoUrls()) {
+        boolean mediaUrl = MediaUrlDetector.isMediaUrl(url);
+        boolean torrentUrl = UrlDetector.isMagnetLink(url) || UrlDetector.isTorrentFile(url);
+
+        // Check media URL filter
+        if (mediaUrl && !settings.isFilterVideoUrls()) {
             return false;
         }
 
         // Check torrent URL filter
-        if ((UrlDetector.isMagnetLink(url) || UrlDetector.isTorrentFile(url)) && !settings.isFilterTorrentUrls()) {
+        if (torrentUrl && !settings.isFilterTorrentUrls()) {
             return false;
         }
 
         // Check direct download filter
-        if (!UrlDetector.isVideoUrl(url) && !UrlDetector.isMagnetLink(url)
-                && !UrlDetector.isTorrentFile(url) && !settings.isFilterDirectDownloads()) {
+        if (!mediaUrl && !torrentUrl && !settings.isFilterDirectDownloads()) {
             return false;
         }
 
@@ -324,7 +327,7 @@ public class ClipboardService implements ClipboardListener {
             } else if (UrlDetector.isTorrentFile(url)) {
                 // For torrent files, we might need special handling
                 download = downloadManager.createDownload(url, defaultDir);
-            } else if (UrlDetector.isVideoUrl(url)) {
+            } else if (MediaUrlDetector.isMediaUrl(url)) {
                 download = downloadManager.createYoutubeDownload(url, defaultDir, null);
             } else {
                 download = downloadManager.createDownload(url, defaultDir);

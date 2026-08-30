@@ -114,7 +114,7 @@ public class Download {
         // (m3u8/DASH/fragmented MP4) are handled by the yt-dlp engine, while
         // everything else (including direct media file links, which benefit
         // from aria2 multi-connection) goes to aria2.
-        if (MediaUrlDetector.isMediaUrl(uri.toString())) {
+        if (MediaUrlDetector.isMediaUrl(uri)) {
             this.type = Type.YOUTUBE; // Use yt-dlp handler for media URLs
         } else {
             String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";

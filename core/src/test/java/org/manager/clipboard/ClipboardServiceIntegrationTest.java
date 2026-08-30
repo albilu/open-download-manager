@@ -210,15 +210,42 @@ class ClipboardServiceIntegrationTest {
             clipboardService.startService().get(3, TimeUnit.SECONDS);
 
             List<URI> testUrls = Arrays.asList(
-                URI.create("https://youtube.com/watch?v=abc123"),
+                URI.create("https://soundcloud.com/artist/track"),
+                URI.create("https://cdn.example.com/live/playlist.m3u8?token=abc"),
                 URI.create("https://example.com/file.zip")
             );
 
             // When - simulate URL detection
             clipboardService.onUrlsDetected(testUrls, "mixed content");
 
-            // Then - only non-video URL should be processed (since video filtering is disabled)
-            verify(downloadManager, times(1)).createDownload(any(URI.class), any(Path.class));
+            // Then - host and manifest media routes are both filtered out.
+            verify(downloadManager).createDownload(
+                    eq(URI.create("https://example.com/file.zip")), any(Path.class));
+            verify(downloadManager, never()).createYoutubeDownload(
+                    any(URI.class), any(Path.class), any());
+            verify(downloadManager).queueDownload(mockDownload);
+        }
+
+        @Test
+        @DisplayName("Should use the canonical media route for every clipboard URL")
+        @Timeout(value = 5, unit = TimeUnit.SECONDS)
+        void testCanonicalMediaRouting() throws Exception {
+            settings.setMonitoringEnabled(true)
+                   .setAutoDownloadDetectedUrls(true);
+            clipboardService.updateSettings(settings);
+            clipboardService.startService().get(3, TimeUnit.SECONDS);
+
+            URI soundCloud = URI.create("https://soundcloud.com/artist/track");
+            URI manifest = URI.create("https://cdn.example.com/live/playlist.m3u8?token=abc");
+            URI lookalike = URI.create("https://evil-youtube.com/watch?v=abc123");
+
+            clipboardService.onUrlsDetected(
+                    List.of(soundCloud, manifest, lookalike), "mixed media routes");
+
+            verify(downloadManager).createYoutubeDownload(eq(soundCloud), any(Path.class), any());
+            verify(downloadManager).createYoutubeDownload(eq(manifest), any(Path.class), any());
+            verify(downloadManager).createDownload(eq(lookalike), any(Path.class));
+            verify(downloadManager, times(3)).queueDownload(mockDownload);
         }
 
         @Test

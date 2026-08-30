@@ -269,61 +269,6 @@ class UrlDetectorTest {
     }
 
     @Nested
-    @DisplayName("Video URL Detection")
-    class VideoUrlDetectionTest {
-
-        @ParameterizedTest
-        @ValueSource(strings = {
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            "https://youtu.be/dQw4w9WgXcQ",
-            "https://youtube.com/embed/dQw4w9WgXcQ",
-            "https://youtube.com/v/dQw4w9WgXcQ",
-            "https://vimeo.com/123456789",
-            "https://dailymotion.com/video/x123456",
-            "https://twitch.tv/username",
-            "https://facebook.com/username/videos/123456",
-            "https://instagram.com/p/ABC123/",
-            "https://tiktok.com/@user/video/123456",
-            "https://twitter.com/user/status/123456"
-        })
-        @DisplayName("Should identify video URLs")
-        void testIsVideoUrlValid(String url) {
-            URI videoUri = URI.create(url);
-            assertTrue(UrlDetector.isVideoUrl(videoUri), "Should identify as video URL: " + url);
-        }
-
-        @Test
-        @DisplayName("Should handle case insensitive video URLs")
-        void testIsVideoUrlCaseInsensitive() {
-            URI videoUri = URI.create("HTTPS://WWW.YOUTUBE.COM/WATCH?V=dQw4w9WgXcQ");
-            assertTrue(UrlDetector.isVideoUrl(videoUri));
-        }
-
-        @Test
-        @DisplayName("Should handle video URLs without protocol")
-        void testIsVideoUrlWithoutProtocol() {
-            String text = "Watch youtube.com/watch?v=dQw4w9WgXcQ";
-            List<URI> urls = UrlDetector.extractUrls(text);
-
-            assertEquals(1, urls.size());
-            assertTrue(UrlDetector.isVideoUrl(urls.get(0)));
-        }
-
-        @Test
-        @DisplayName("Should reject non-video URLs")
-        void testIsVideoUrlInvalid() {
-            URI nonVideoUri = URI.create("https://example.com/file.zip");
-            assertFalse(UrlDetector.isVideoUrl(nonVideoUri));
-        }
-
-        @Test
-        @DisplayName("Should handle null URI for video check")
-        void testIsVideoUrlNull() {
-            assertFalse(UrlDetector.isVideoUrl(null));
-        }
-    }
-
-    @Nested
     @DisplayName("Complex URL Scenarios")
     class ComplexUrlScenariosTest {
 

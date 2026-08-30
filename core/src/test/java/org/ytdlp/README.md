@@ -6,9 +6,9 @@ This directory contains comprehensive tests for the YtDlp package, following the
 
 The YtDlp test suite is organized into three distinct layers, each serving a specific purpose:
 
-### 1. Unit Tests (`YtDlpSimpleTest`, `YtDlpClientTest`, `YtDlpUrlUtilsTest`)
+### 1. Unit Tests (`YtDlpSimpleTest`, `YtDlpClientTest`)
 - **Purpose**: Test individual class behavior and configuration logic
-- **Scope**: Pure logic, data models, utility functions, settings management
+- **Scope**: Pure logic, data models, and settings management
 - **Dependencies**: No external processes or network calls
 - **Mocking**: Minimal - only for test setup helpers
 
@@ -58,7 +58,6 @@ try (MockedStatic<Runtime> runtimeMock = Mockito.mockStatic(Runtime.class)) {
 **Purpose**: Basic functionality and configuration testing
 - ✅ Settings creation and validation
 - ✅ Method chaining patterns
-- ✅ URL analysis and platform detection
 - ✅ Factory pattern basic functionality
 - ✅ Settings copying and independence
 
@@ -69,13 +68,6 @@ try (MockedStatic<Runtime> runtimeMock = Mockito.mockStatic(Runtime.class)) {
 - ✅ Basic availability checks (without process mocking)
 - ✅ Concurrent request handling logic
 - ✅ Byte conversion calculations
-
-#### `YtDlpUrlUtilsTest.java`
-**Purpose**: URL validation and platform detection utilities
-- ✅ Platform identification (YouTube, Vimeo, etc.)
-- ✅ URL format validation
-- ✅ Playlist detection logic
-- ✅ Format suggestions per platform
 
 ### Integration Tests
 

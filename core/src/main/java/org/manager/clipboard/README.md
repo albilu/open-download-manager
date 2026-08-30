@@ -168,14 +168,15 @@ ClipboardService service = ClipboardFactory.builder()
 
 ### Detection Logic
 
-The `UrlDetector` class uses sophisticated pattern matching to identify valid URLs:
+`UrlDetector` extracts, normalizes, and validates download URLs. Media engine
+routing is classified separately by the core-owned `MediaUrlDetector`:
 
 ```java
 // Extract all URLs from text
 List<URI> urls = UrlDetector.extractUrls(clipboardText);
 
-// Check specific URL types
-boolean isVideo = UrlDetector.isVideoUrl(uri);
+// Check specific URL types and the canonical engine route
+boolean useYtDlp = MediaUrlDetector.isMediaUrl(uri);
 boolean isMagnet = UrlDetector.isMagnetLink(uri);
 boolean isTorrent = UrlDetector.isTorrentFile(uri);
 ```
@@ -186,9 +187,11 @@ URLs are validated based on:
 
 -   Protocol support (http, https, ftp, magnet, file)
 -   File extensions for downloadable content
--   Domain patterns for video sites
 -   Magnet link format validation
 -   General downloadability heuristics
+
+Known media-platform pages and HLS/DASH stream URLs use yt-dlp. Explicit file
+URLs, including direct media files, continue through aria2.
 
 ## Event Handling
 

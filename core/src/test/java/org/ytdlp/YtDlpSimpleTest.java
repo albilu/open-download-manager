@@ -5,9 +5,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.manager.GlobalSettings;
-import org.ytdlp.YtDlpUrlUtils.Platform;
-import org.ytdlp.YtDlpUrlUtils.UrlInfo;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -73,56 +70,6 @@ class YtDlpSimpleTest {
 
         assertEquals(languages, settings.getSubtitleLanguages());
         assertEquals(3, settings.getSubtitleLanguages().size());
-    }
-
-    @Test
-    @DisplayName("Should validate YouTube URLs correctly")
-    void testYouTubeUrlValidation() {
-        assertTrue(YtDlpUrlUtils.isSupported("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
-        assertTrue(YtDlpUrlUtils.isSupported("https://youtu.be/dQw4w9WgXcQ"));
-        assertFalse(YtDlpUrlUtils.isSupported("https://example.com"));
-        assertFalse(YtDlpUrlUtils.isSupported("not-a-url"));
-    }
-
-    @Test
-    @DisplayName("Should analyze URLs correctly")
-    void testUrlAnalysis() {
-        String youtubeUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
-        UrlInfo urlInfo = YtDlpUrlUtils.analyzeUrl(youtubeUrl);
-
-        assertNotNull(urlInfo);
-        assertEquals(Platform.YOUTUBE, urlInfo.getPlatform());
-        assertEquals("dQw4w9WgXcQ", urlInfo.getVideoId());
-        assertFalse(urlInfo.isPlaylist());
-    }
-
-    @Test
-    @DisplayName("Should detect playlists correctly")
-    void testPlaylistDetection() {
-        String playlistUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLtest";
-        UrlInfo urlInfo = YtDlpUrlUtils.analyzeUrl(playlistUrl);
-
-        assertEquals(Platform.YOUTUBE_PLAYLIST, urlInfo.getPlatform());
-        assertTrue(urlInfo.isPlaylist());
-    }
-
-    @Test
-    @DisplayName("Should suggest formats for different platforms")
-    void testFormatSuggestions() {
-        assertEquals("bestvideo+bestaudio/best",
-                    YtDlpUrlUtils.getSuggestedFormat(Platform.YOUTUBE, "best"));
-        assertEquals("bestaudio/best",
-                    YtDlpUrlUtils.getSuggestedFormat(Platform.YOUTUBE, "audio"));
-        assertEquals("best",
-                    YtDlpUrlUtils.getSuggestedFormat(Platform.TWITCH, "best"));
-    }
-
-    @Test
-    @DisplayName("Should identify audio extraction support")
-    void testAudioExtractionSupport() {
-        assertTrue(YtDlpUrlUtils.supportsAudioExtraction(Platform.YOUTUBE));
-        assertTrue(YtDlpUrlUtils.supportsAudioExtraction(Platform.SOUNDCLOUD));
-        assertFalse(YtDlpUrlUtils.supportsAudioExtraction(Platform.TWITCH));
     }
 
     @Test

@@ -1,68 +1,81 @@
 package org.manager.download;
 
 import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /**
  * Core-owned routing classification for media URLs. The download domain
  * model needs to know whether a URI belongs to a media platform / streaming
  * manifest (routed to the yt-dlp engine) — but the model must not depend on
  * the yt-dlp integration package. This detector holds the single source of
- * truth; the yt-dlp layer delegates to it.
+ * truth; input paths delegate their engine-routing decision to it.
  */
 public final class MediaUrlDetector {
 
-    private static final Set<String> SUPPORTED_DOMAINS = new HashSet<>(Arrays.asList(
+    private static final Set<String> MEDIA_DOMAINS = Set.of(
         // YouTube
-        "youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com",
+        "youtube.com", "youtu.be",
 
         // Popular video platforms
-        "vimeo.com", "www.vimeo.com",
-        "dailymotion.com", "www.dailymotion.com",
-        "twitch.tv", "www.twitch.tv", "clips.twitch.tv",
-        "tiktok.com", "www.tiktok.com", "vm.tiktok.com",
-        "instagram.com", "www.instagram.com",
-        "facebook.com", "www.facebook.com", "fb.watch",
-        "twitter.com", "www.twitter.com", "x.com",
-        "reddit.com", "www.reddit.com", "v.redd.it",
+        "vimeo.com",
+        "dailymotion.com",
+        "twitch.tv",
+        "tiktok.com",
+        "instagram.com",
+        "facebook.com", "fb.watch",
+        "twitter.com", "x.com",
+        "reddit.com", "v.redd.it",
 
         // Media platforms
-        "soundcloud.com", "www.soundcloud.com",
+        "soundcloud.com",
         "bandcamp.com",
-        "archive.org", "www.archive.org",
-        "metacafe.com", "www.metacafe.com",
-        "liveleak.com", "www.liveleak.com",
+        "archive.org",
+        "metacafe.com",
+        "liveleak.com",
 
         // News and media
-        "cnn.com", "www.cnn.com",
-        "bbc.co.uk", "www.bbc.co.uk", "bbc.com", "www.bbc.com",
-        "reuters.com", "www.reuters.com",
-        "vice.com", "www.vice.com",
+        "cnn.com",
+        "bbc.co.uk", "bbc.com",
+        "reuters.com",
+        "vice.com",
 
         // Streaming platforms
-        "crunchyroll.com", "www.crunchyroll.com",
-        "funimation.com", "www.funimation.com",
-        "netflix.com", "www.netflix.com",
+        "crunchyroll.com",
+        "funimation.com",
+        "netflix.com",
 
         // Educational
-        "coursera.org", "www.coursera.org",
-        "udemy.com", "www.udemy.com",
-        "khanacademy.org", "www.khanacademy.org",
+        "coursera.org",
+        "udemy.com",
+        "khanacademy.org",
 
         // Adult content (commonly supported)
-        "pornhub.com", "www.pornhub.com",
-        "xvideos.com", "www.xvideos.com",
-        "xhamster.com", "www.xhamster.com"
-    ));
+        "pornhub.com",
+        "xvideos.com",
+        "xhamster.com"
+    );
 
-    // Streaming media manifests and segments (HLS playlists, DASH manifests,
-    // fragmented MP4) that require yt-dlp instead of plain HTTP downloading.
-    private static final Pattern MEDIA_MANIFEST_PATTERN = Pattern.compile(
-        ".*\\.(m3u8|mpd|m4s)([?&#].*)?$"
+    private static final Set<String> MEDIA_STREAM_EXTENSIONS = Set.of(
+            "m3u8", "mpd", "m4s"
+    );
+
+    /**
+     * Explicit files keep the ordinary aria2 route even when hosted by a
+     * media/news domain. This prevents a broad host rule from sending an
+     * Archive.org PDF, a BBC image, or a direct MP4 to yt-dlp. Manifest and
+     * fragmented-stream extensions are checked first and are not listed here.
+     */
+    private static final Set<String> DIRECT_FILE_EXTENSIONS = Set.of(
+            "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
+            "exe", "msi", "dmg", "pkg", "deb", "rpm",
+            "iso", "img", "bin", "apk", "ipa",
+            "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v",
+            "mp3", "flac", "wav", "ogg", "aac", "m4a", "opus",
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "epub",
+            "jpg", "jpeg", "png", "gif", "webp", "svg",
+            "srt", "vtt", "txt", "csv", "json", "xml",
+            "torrent", "metalink", "meta4"
     );
 
     private MediaUrlDetector() {
@@ -75,24 +88,17 @@ public final class MediaUrlDetector {
      * @return true when the host is a known media platform
      */
     public static boolean isKnownMediaHost(String url) {
-        if (url == null || url.trim().isEmpty()) {
+        return isKnownMediaHost(parseWebUri(url));
+    }
+
+    /** URI overload used by the download and clipboard layers. */
+    public static boolean isKnownMediaHost(URI uri) {
+        if (!isWebUri(uri)) {
             return false;
         }
-        try {
-            String host = new URI(url).getHost();
-            if (host == null) {
-                return false;
-            }
-            host = host.toLowerCase();
-            for (String domain : SUPPORTED_DOMAINS) {
-                if (host.equals(domain) || host.endsWith("." + domain)) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (URISyntaxException e) {
-            return false;
-        }
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
+        return MEDIA_DOMAINS.stream()
+                .anyMatch(domain -> host.equals(domain) || host.endsWith("." + domain));
     }
 
     /**
@@ -103,15 +109,12 @@ public final class MediaUrlDetector {
      * @return true when the URL is a media manifest or segment
      */
     public static boolean isMediaManifestUrl(String url) {
-        if (url == null || url.trim().isEmpty()) {
-            return false;
-        }
-        try {
-            String path = new URI(url).getPath();
-            return path != null && MEDIA_MANIFEST_PATTERN.matcher(path.toLowerCase()).matches();
-        } catch (URISyntaxException e) {
-            return false;
-        }
+        return isMediaManifestUrl(parseWebUri(url));
+    }
+
+    /** URI overload used when input has already passed central validation. */
+    public static boolean isMediaManifestUrl(URI uri) {
+        return isWebUri(uri) && MEDIA_STREAM_EXTENSIONS.contains(pathExtension(uri));
     }
 
     /**
@@ -124,6 +127,64 @@ public final class MediaUrlDetector {
      * @return true when the URL should be handled by the media engine
      */
     public static boolean isMediaUrl(String url) {
-        return isKnownMediaHost(url) || isMediaManifestUrl(url);
+        return isMediaUrl(parseWebUri(url));
+    }
+
+    /**
+     * Canonical media-routing decision shared by every input path.
+     * Streaming manifests/segments take the yt-dlp route, direct files take
+     * aria2, and remaining pages on known media hosts take yt-dlp.
+     */
+    public static boolean isMediaUrl(URI uri) {
+        if (!isWebUri(uri)) {
+            return false;
+        }
+        String extension = pathExtension(uri);
+        if (MEDIA_STREAM_EXTENSIONS.contains(extension)) {
+            return true;
+        }
+        if (DIRECT_FILE_EXTENSIONS.contains(extension)) {
+            return false;
+        }
+        return isKnownMediaHost(uri);
+    }
+
+    private static URI parseWebUri(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            URI uri = URI.create(value.strip());
+            return isWebUri(uri) ? uri : null;
+        } catch (IllegalArgumentException invalidUri) {
+            return null;
+        }
+    }
+
+    private static boolean isWebUri(URI uri) {
+        if (uri == null || uri.getScheme() == null || uri.getHost() == null
+                || uri.getHost().isBlank()) {
+            return false;
+        }
+        return "http".equalsIgnoreCase(uri.getScheme())
+                || "https".equalsIgnoreCase(uri.getScheme());
+    }
+
+    private static String pathExtension(URI uri) {
+        String path = uri.getPath();
+        if (path == null || path.isBlank()) {
+            return "";
+        }
+        int slash = path.lastIndexOf('/');
+        String segment = path.substring(slash + 1);
+        int parameters = segment.indexOf(';');
+        if (parameters >= 0) {
+            segment = segment.substring(0, parameters);
+        }
+        int dot = segment.lastIndexOf('.');
+        if (dot < 0 || dot == segment.length() - 1) {
+            return "";
+        }
+        return segment.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 }

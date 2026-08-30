@@ -48,14 +48,6 @@ public class UrlDetector {
     // must never be reinterpreted as a protocol-less HTTPS hostname.
     private static final Pattern EXPLICIT_SCHEME_PATTERN = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:");
 
-    // Pattern for YouTube and video URLs
-    private static final Pattern VIDEO_URL_PATTERN = Pattern.compile("""
-            (?i)(?:https?://)?(?:www\\.)?
-            (?:youtube\\.com/watch\\?v=|youtu\\.be/|youtube\\.com/embed/|youtube\\.com/v/|
-            vimeo\\.com/|dailymotion\\.com/video/|twitch\\.tv/|facebook\\.com/.*videos/|
-            instagram\\.com/p/|tiktok\\.com/@[\\w.\\-]+/video/|twitter\\.com/.*status/)
-            [\\w-]+""".replaceAll("\\s+", ""));
-
     // Common download file extensions
     private static final Set<String> DOWNLOAD_EXTENSIONS = new HashSet<>(Arrays.asList(
             "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
@@ -254,11 +246,6 @@ public class UrlDetector {
             return true;
         }
 
-        // Check for video URLs (YouTube, Vimeo, etc.)
-        if (VIDEO_URL_PATTERN.matcher(fullUrl).find()) {
-            return true;
-        }
-
         // Check for torrent files
         if (TORRENT_PATTERN.matcher(path).matches()) {
             return true;
@@ -376,16 +363,4 @@ public class UrlDetector {
         return path != null && TORRENT_PATTERN.matcher(path).matches();
     }
 
-    /**
-     * Checks if a URI is likely a video URL that can be downloaded with yt-dlp.
-     *
-     * @param uri The URI to check
-     * @return true if it's likely a video URL
-     */
-    public static boolean isVideoUrl(URI uri) {
-        if (uri == null) {
-            return false;
-        }
-        return VIDEO_URL_PATTERN.matcher(uri.toString()).find();
-    }
 }
