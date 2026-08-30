@@ -8,8 +8,10 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NavigableSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -29,6 +31,8 @@ public class PaginatedDownloadRepository {
 
     private final Map<String, Download> downloads;
     private final Map<Download.Status, Set<String>> statusIndex;
+    private final NavigableSet<Download> creationIndex;
+    private final Map<Download.Status, NavigableSet<Download>> statusOrderIndex;
     private final ReadWriteLock lock;
     private final GlobalSettings globalSettings;
 
@@ -44,6 +48,10 @@ public class PaginatedDownloadRepository {
     private final Object cacheLock = new Object();
     private static final int MAX_CACHE_SIZE = 100;
     private static final long CACHE_TTL_MS = 30000; // 30 seconds
+    private static final Comparator<Download> DOWNLOAD_ORDER =
+            Comparator.comparing(Download::getCreatedAt,
+                            Comparator.nullsLast(Comparator.reverseOrder()))
+                    .thenComparing(Download::getId);
 
     // OPTIMIZATION: Cache performance metrics for selective invalidation
     private volatile long cacheHits = 0;
@@ -129,6 +137,8 @@ public class PaginatedDownloadRepository {
     public PaginatedDownloadRepository(GlobalSettings globalSettings) {
         this.downloads = new ConcurrentHashMap<>();
         this.statusIndex = new ConcurrentHashMap<>();
+        this.creationIndex = new TreeSet<>(DOWNLOAD_ORDER);
+        this.statusOrderIndex = new ConcurrentHashMap<>();
         this.lock = new ReentrantReadWriteLock();
         this.globalSettings = globalSettings;
         this.queryCache = new LinkedHashMap<String, CachedQueryResult>(MAX_CACHE_SIZE + 1, 0.75f, true) {
@@ -141,6 +151,7 @@ public class PaginatedDownloadRepository {
         // Initialize status index
         for (Download.Status status : Download.Status.values()) {
             statusIndex.put(status, ConcurrentHashMap.newKeySet());
+            statusOrderIndex.put(status, new TreeSet<>(DOWNLOAD_ORDER));
         }
     }
 
@@ -152,7 +163,10 @@ public class PaginatedDownloadRepository {
     public void addDownload(Download download) {
         lock.writeLock().lock();
         try {
-            downloads.put(download.getId(), download);
+            Download replaced = downloads.put(download.getId(), download);
+            if (replaced != null) {
+                removeFromIndices(replaced);
+            }
             updateIndices(download);
             invalidateCacheForAdd(download);
             LOGGER.fine("Added download: " + download.getId());
@@ -206,6 +220,9 @@ public class PaginatedDownloadRepository {
             for (Set<String> statusSet : statusIndex.values()) {
                 statusSet.remove(download.getId());
             }
+            for (NavigableSet<Download> ordered : statusOrderIndex.values()) {
+                ordered.remove(download);
+            }
 
             if (oldStatus != newStatus) {
                 download.setStatus(newStatus);
@@ -215,6 +232,10 @@ public class PaginatedDownloadRepository {
             Set<String> newStatusSet = statusIndex.get(newStatus);
             if (newStatusSet != null) {
                 newStatusSet.add(download.getId());
+            }
+            NavigableSet<Download> newStatusOrder = statusOrderIndex.get(newStatus);
+            if (newStatusOrder != null) {
+                newStatusOrder.add(download);
             }
 
             invalidateCacheForStatusChange(oldStatus, newStatus);
@@ -243,6 +264,9 @@ public class PaginatedDownloadRepository {
             for (Set<String> statusSet : statusIndex.values()) {
                 statusSet.remove(download.getId());
             }
+            for (NavigableSet<Download> ordered : statusOrderIndex.values()) {
+                ordered.remove(download);
+            }
 
             if (download.getStatus() != toStatus) {
                 download.setStatus(toStatus);
@@ -251,6 +275,10 @@ public class PaginatedDownloadRepository {
             Set<String> newStatusSet = statusIndex.get(toStatus);
             if (newStatusSet != null) {
                 newStatusSet.add(download.getId());
+            }
+            NavigableSet<Download> newStatusOrder = statusOrderIndex.get(toStatus);
+            if (newStatusOrder != null) {
+                newStatusOrder.add(download);
             }
 
             invalidateCacheForStatusChange(fromStatus, toStatus);
@@ -294,9 +322,7 @@ public class PaginatedDownloadRepository {
             }
             cacheMisses++;
 
-            List<Download> allDownloads = downloads.values().stream()
-                    .sorted(Comparator.comparing(Download::getCreatedAt).reversed())
-                    .collect(Collectors.toList());
+            List<Download> allDownloads = new ArrayList<>(creationIndex);
 
             int totalCount = allDownloads.size();
             int fromIndex = pageNumber * pageSize;
@@ -331,17 +357,11 @@ public class PaginatedDownloadRepository {
         }
         lock.readLock().lock();
         try {
-            List<Download> allDownloads = downloads.values().stream()
-                    .sorted(Comparator.comparing(Download::getCreatedAt).reversed())
-                    .collect(Collectors.toList());
-
-            int totalCount = allDownloads.size();
+            int totalCount = creationIndex.size();
             int fromIndex = Math.max(0, offset);
-            int toIndex = Math.min(fromIndex + limit, totalCount);
-
             List<Download> pageDownloads = fromIndex < totalCount
-                    ? new ArrayList<>(allDownloads.subList(fromIndex, toIndex))
-                    : new ArrayList<>();
+                    ? creationIndex.stream().skip(fromIndex).limit(limit).toList()
+                    : List.of();
             return new DownloadPage(pageDownloads, totalCount, 0, totalCount);
         } finally {
             lock.readLock().unlock();
@@ -368,29 +388,44 @@ public class PaginatedDownloadRepository {
             }
             cacheMisses++;
 
-            Set<String> statusDownloadIds = statusIndex.get(status);
-            if (statusDownloadIds == null || statusDownloadIds.isEmpty()) {
+            NavigableSet<Download> statusDownloads = statusOrderIndex.get(status);
+            if (statusDownloads == null || statusDownloads.isEmpty()) {
                 return new DownloadPage(new ArrayList<>(), 0, pageNumber, pageSize);
             }
-
-            List<Download> statusDownloads = statusDownloadIds.stream()
-                    .map(downloads::get)
-                    .filter(Objects::nonNull)
-                    .sorted(Comparator.comparing(Download::getCreatedAt).reversed())
-                    .collect(Collectors.toList());
 
             int totalCount = statusDownloads.size();
             int fromIndex = pageNumber * pageSize;
             int toIndex = Math.min(fromIndex + pageSize, totalCount);
 
             List<Download> pageDownloads = fromIndex < totalCount
-                    ? statusDownloads.subList(fromIndex, toIndex)
-                    : new ArrayList<>();
+                    ? statusDownloads.stream().skip(fromIndex)
+                            .limit(toIndex - fromIndex).toList()
+                    : List.of();
 
             // Cache the result
             cacheStore(cacheKey, new CachedQueryResult(pageDownloads, totalCount));
 
             return new DownloadPage(pageDownloads, totalCount, pageNumber, pageSize);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /** Cursor-style status window used by UI pagination. */
+    public DownloadPage getDownloadsByStatusByOffset(Download.Status status, int offset,
+            int limit) {
+        if (limit <= 0) {
+            return new DownloadPage(List.of(), getCountByStatus(status), 0, 0);
+        }
+        lock.readLock().lock();
+        try {
+            NavigableSet<Download> ordered = statusOrderIndex.get(status);
+            int totalCount = ordered == null ? 0 : ordered.size();
+            int fromIndex = Math.max(0, offset);
+            List<Download> window = ordered != null && fromIndex < totalCount
+                    ? ordered.stream().skip(fromIndex).limit(limit).toList()
+                    : List.of();
+            return new DownloadPage(window, totalCount, 0, totalCount);
         } finally {
             lock.readLock().unlock();
         }
@@ -566,6 +601,11 @@ public class PaginatedDownloadRepository {
         if (statusSet != null) {
             statusSet.add(download.getId());
         }
+        creationIndex.add(download);
+        NavigableSet<Download> statusOrder = statusOrderIndex.get(download.getStatus());
+        if (statusOrder != null) {
+            statusOrder.add(download);
+        }
     }
 
     /**
@@ -577,6 +617,10 @@ public class PaginatedDownloadRepository {
         // Remove from status index
         for (Set<String> statusSet : statusIndex.values()) {
             statusSet.remove(download.getId());
+        }
+        creationIndex.remove(download);
+        for (NavigableSet<Download> statusOrder : statusOrderIndex.values()) {
+            statusOrder.remove(download);
         }
     }
 
@@ -799,6 +843,8 @@ public class PaginatedDownloadRepository {
         try {
             downloads.clear();
             statusIndex.values().forEach(Set::clear);
+            creationIndex.clear();
+            statusOrderIndex.values().forEach(Set::clear);
             invalidateCache(); // Full invalidation is appropriate when clearing all
             LOGGER.info("Cleared all downloads from repository");
         } finally {

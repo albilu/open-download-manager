@@ -156,25 +156,29 @@ public class AfterCompletionActionManager {
 
         for (AfterCompletionAction action : actions) {
             futures.add(submitAsync(() -> {
-                try {
-                    // Notify listeners that action is starting
-                    notifyActionStart(download, action);
+                // Action implementations hold invocation-specific mutable
+                // fields. The same global instance can be selected by many
+                // completions, so serialize only that instance while still
+                // allowing distinct actions to execute concurrently.
+                synchronized (action) {
+                    try {
+                        notifyActionStart(download, action);
+                        boolean success = action.execute(download);
 
-                    // Execute the action
-                    boolean success = action.execute(download);
-
-                    if (success) {
-                        successfulActions.add(action);
-                        notifyActionComplete(download, action);
-                    } else {
+                        if (success) {
+                            successfulActions.add(action);
+                            notifyActionComplete(download, action);
+                        } else {
+                            failedActions.add(action);
+                            notifyActionError(download, action, "Action returned false",
+                                    action.getSeverity());
+                        }
+                    } catch (Exception e) {
                         failedActions.add(action);
-                        notifyActionError(download, action, "Action returned false", action.getSeverity());
+                        LOGGER.log(Level.WARNING, "Error executing after-completion action: "
+                                + action.getDescription(), e);
+                        notifyActionError(download, action, e.getMessage(), action.getSeverity());
                     }
-                } catch (Exception e) {
-                    failedActions.add(action);
-                    LOGGER.log(Level.WARNING, "Error executing after-completion action: "
-                            + action.getDescription(), e);
-                    notifyActionError(download, action, e.getMessage(), action.getSeverity());
                 }
             }));
         }

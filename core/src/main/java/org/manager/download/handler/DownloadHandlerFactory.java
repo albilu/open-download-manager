@@ -247,19 +247,19 @@ public class DownloadHandlerFactory {
             return null;
         }
 
-        // Socks routing: fresh aria2 downloads whose effective proxy is
-        // socks4/socks5 (per-download fields, global proxy setting, or the
-        // Tor toggle) are routed through proxychains when available. Without
-        // proxychains, plain HTTP(S)/FTP downloads fall back to curl (native
-        // -x socks support); torrents/magnets stay on aria2 (native
-        // all-proxy socks). Downloads already typed PROXYCHAINS/CURL keep
-        // their handler so routing stays stable across later lookups.
+        // aria2 does not accept SOCKS4/SOCKS5 in --all-proxy. Every aria2
+        // workload with an effective SOCKS proxy (including torrents,
+        // magnets and Metalinks) therefore tries proxychains first. Plain
+        // URL transfers may use Curl's native SOCKS support as a secondary
+        // route; aria2-only torrent-like work must never reach Curl.
+        // Downloads already typed PROXYCHAINS/CURL keep their handler so
+        // routing remains stable across later lookups.
         String effectiveProxy = effectiveProxyAddress(download);
         boolean socksRoutingRequired = download.getType() == Download.Type.ARIA2
-                && isSocksProxy(effectiveProxy) && !isTorrentLike(download);
+                && isSocksProxyAddress(effectiveProxy);
         if (socksRoutingRequired) {
-            // Fail closed: null means there is no proxy-capable handler. Do
-            // not continue into the ordinary aria2/curl fallback path.
+            // This method owns the complete privacy-preserving fallback
+            // chain. Do not continue into the ordinary direct fallback path.
             return routeSocksDownload(download, effectiveProxy);
         }
 
@@ -284,8 +284,11 @@ public class DownloadHandlerFactory {
     }
 
     /**
-     * Routes fresh ARIA2 downloads with an effective socks proxy to the
-     * proxychains handler, or to curl when proxychains is unavailable.
+     * Routes fresh ARIA2 downloads with an effective SOCKS proxy through
+     * proxychains first. When proxychains is unavailable, a plain URL may
+     * fall back to Curl with the same SOCKS proxy. Torrent, magnet and
+     * Metalink work remains proxychains-only because Curl cannot execute
+     * those aria2 protocols.
      *
      * @return a handler, or null when no socks routing applies
      */
@@ -295,40 +298,65 @@ public class DownloadHandlerFactory {
         settings.setProxyAddress(proxy);
         DownloadHandler proxychains = handlers.get(Download.Type.PROXYCHAINS);
         if (proxychains != null) {
+            Download.Type originalType = download.getType();
             download.setType(Download.Type.PROXYCHAINS);
-            if (proxychains.canHandle(download)) {
-                LOGGER.info("Routing socks download through proxychains: "
-                        + download.getName());
-                return proxychains;
+            try {
+                if (proxychains.canHandle(download)) {
+                    LOGGER.info("Routing SOCKS download through proxychains: "
+                            + download.getName());
+                    return proxychains;
+                }
+            } catch (RuntimeException routingFailure) {
+                LOGGER.log(Level.WARNING, "Proxychains rejected SOCKS download "
+                        + download.getId() + "; considering Curl fallback", routingFailure);
             }
+            download.setType(originalType);
         }
 
         if (prepareCurlProxyFallback(download)) {
             DownloadHandler curl = handlers.get(Download.Type.CURL);
-            if (curl != null && curl.canHandle(download)) {
-                LOGGER.info("proxychains unavailable; falling back to curl with socks proxy: "
-                        + download.getName());
-                return curl;
-            }
+            LOGGER.info("Proxychains unavailable; falling back to Curl with SOCKS proxy: "
+                    + download.getName());
+            return curl;
         }
 
-        LOGGER.severe("Refusing direct fallback for proxied download " + download.getId());
+        LOGGER.severe("Proxychains is unavailable and no valid Curl fallback exists for "
+                + "SOCKS-proxied download " + download.getId());
         return null;
     }
 
     /**
-     * Retypes a plain URL for curl while translating the effective proxy and
-     * engine-neutral settings. Merely changing Download.type is unsafe:
-     * CurlClient intentionally ignores non-CurlSettings proxy fields.
-     *
-     * @return true when a valid proxy and curl handler are available
+     * Returns whether a proxy-preserving Curl fallback can be prepared
+     * without mutating the download. Used by the manager before it claims a
+     * failed proxychains generation for runtime handoff.
      */
-    public boolean prepareCurlProxyFallback(Download download) {
-        String proxy = effectiveProxyAddress(download);
-        if (!isSocksProxy(proxy) || !isValidProxyAddress(proxy)
-                || handlers.get(Download.Type.CURL) == null) {
+    public boolean canPrepareCurlProxyFallback(Download download) {
+        if (download == null) {
             return false;
         }
+        String proxy = effectiveProxyAddress(download);
+        return isCurlTransfer(download)
+                && !isAria2OnlyDownload(download)
+                && isSocksProxyAddress(proxy)
+                && isValidProxyAddress(proxy)
+                && handlers.get(Download.Type.CURL) != null;
+    }
+
+    /**
+     * Retypes a plain URL for Curl while translating the effective SOCKS
+     * proxy and engine-neutral settings. Merely changing {@link Download.Type}
+     * is insufficient because {@code CurlClient} intentionally reads proxy
+     * fields from {@link CurlSettings}.
+     *
+     * @return true when a valid proxy-preserving Curl handler is available
+     */
+    public boolean prepareCurlProxyFallback(Download download) {
+        if (!canPrepareCurlProxyFallback(download)) {
+            return false;
+        }
+
+        String proxy = effectiveProxyAddress(download);
+        Download.Type originalType = download.getType();
         DownloadSettings old = download.getSettings();
         CurlSettings curl = old instanceof CurlSettings existing
                 ? existing : new CurlSettings();
@@ -347,7 +375,20 @@ public class DownloadHandlerFactory {
         curl.setProxyAddress(proxy);
         download.setSettings(curl);
         download.setType(Download.Type.CURL);
-        return true;
+
+        DownloadHandler curlHandler = handlers.get(Download.Type.CURL);
+        try {
+            if (curlHandler != null && curlHandler.canHandle(download)) {
+                return true;
+            }
+        } catch (RuntimeException routingFailure) {
+            LOGGER.log(Level.WARNING, "Curl rejected proxychains fallback for "
+                    + download.getId(), routingFailure);
+        }
+
+        download.setType(originalType);
+        download.setSettings(old);
+        return false;
     }
 
     /**
@@ -367,7 +408,7 @@ public class DownloadHandlerFactory {
         return null;
     }
 
-    private static boolean isSocksProxy(String address) {
+    public static boolean isSocksProxyAddress(String address) {
         if (address == null) {
             return false;
         }
@@ -385,12 +426,20 @@ public class DownloadHandlerFactory {
         }
     }
 
-    /**
-     * Checks whether a download is torrent/magnet/metalink work that only
-     * aria2 can perform.
-     */
-    private static boolean isTorrentLike(Download download) {
-        URI uri = download.getUri();
+    private static boolean isCurlTransfer(Download download) {
+        URI uri = download != null ? download.getUri() : null;
+        if (uri == null || uri.getScheme() == null) {
+            return false;
+        }
+        return switch (uri.getScheme().toLowerCase()) {
+            case "http", "https", "ftp", "ftps" -> true;
+            default -> false;
+        };
+    }
+
+    /** Torrent descriptors, magnets and Metalinks require aria2 semantics. */
+    private static boolean isAria2OnlyDownload(Download download) {
+        URI uri = download != null ? download.getUri() : null;
         if (uri == null || uri.getScheme() == null) {
             return false;
         }

@@ -566,10 +566,9 @@ class TorrentFolderMonitorTest {
             failedFuture.completeExceptionally(new RuntimeException("Queue failed"));
             when(mockDownloadManager.queueDownload(any())).thenReturn(failedFuture);
 
-            // Should not throw exception immediately (async error handling)
-            assertDoesNotThrow(() -> {
-                torrentFolderMonitor.onFileAdded(tempDir, torrentFile, settings);
-            });
+            assertThrows(RuntimeException.class,
+                    () -> torrentFolderMonitor.onFileAdded(tempDir, torrentFile, settings),
+                    "queue rejection must propagate to the folder disposition boundary");
 
             verify(mockDownloadManager).createTorrentDownload(torrentFile, defaultDownloadDirectory);
             verify(mockDownloadManager).queueDownload(mockDownload);

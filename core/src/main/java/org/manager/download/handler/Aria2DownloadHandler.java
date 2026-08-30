@@ -588,8 +588,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             extraArgs.add("--max-overall-download-limit=" + speedLimitBytesPerSec);
         }
 
-        // Apply proxy settings if enabled
-        if (globalSettings.isGlobalProxyEnabled() && globalSettings.getGlobalProxyAddress() != null) {
+        // aria2's --all-proxy accepts HTTP(S), but not SOCKS. SOCKS work is
+        // routed per download through ProxychainsDownloadHandler.
+        if (globalSettings.isGlobalProxyEnabled()
+                && globalSettings.getGlobalProxyAddress() != null
+                && !DownloadHandlerFactory.isSocksProxyAddress(
+                        globalSettings.getGlobalProxyAddress())) {
             extraArgs.add("--all-proxy=" + globalSettings.getGlobalProxyAddress());
         }
 
@@ -609,7 +613,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // Use default session file paths in downloads directory
             java.nio.file.Path downloadsDir = globalSettings.getDefaultDownloadDirectory();
             java.nio.file.Path sessionPath = downloadsDir.resolve("aria2-session.txt");
-            java.nio.file.Path inputPath = downloadsDir.resolve("aria2-input.txt");
 
             // Ensure downloads directory exists
             if (!java.nio.file.Files.exists(downloadsDir)) {
@@ -619,12 +622,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // Configure aria2 with session support
             extraArgs.add("--save-session=" + sessionPath.toString());
             extraArgs.add("--save-session-interval=60");
-
-            // Load existing session if file exists
-            if (java.nio.file.Files.exists(sessionPath)) {
-                extraArgs.add("--input-file=" + sessionPath.toString());
-                LOGGER.info("Loading aria2 session from: " + sessionPath);
-            }
 
             LOGGER.info("Configured aria2 session management with file: " + sessionPath);
         } catch (Exception e) {
@@ -724,6 +721,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // its own proxy configured. An empty value clears a previous proxy.
         String globalProxy = globalSettings.isGlobalProxyEnabled()
                 && globalSettings.getGlobalProxyAddress() != null
+                && !DownloadHandlerFactory.isSocksProxyAddress(
+                        globalSettings.getGlobalProxyAddress())
                         ? globalSettings.getGlobalProxyAddress()
                         : "";
         for (Download download : activeDownloads.values()) {
@@ -765,9 +764,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * Loads aria2 session from the specified file.
      */
     public void loadSession(java.nio.file.Path sessionFile) throws Exception {
-        // Session loading is handled during aria2 startup via --input-file
-        // This method is kept for compatibility
-        LOGGER.info("Session loading is handled during aria2 startup");
+        // ODM's SQLite state is the only replay authority. Retained as a
+        // compatibility no-op for callers compiled against the old API.
+        LOGGER.info("Ignoring aria2 session replay; ODM state owns recovery");
     }
 
     @Override

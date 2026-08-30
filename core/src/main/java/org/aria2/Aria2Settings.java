@@ -666,8 +666,11 @@ public class Aria2Settings extends DownloadSettings {
             options.put("all-proxy", getProxyAddress());
         }
 
-        // Add any additional options
-        for (Map.Entry<String, String> entry : getAdditionalOptions().entrySet()) {
+        // Imported/internal maps are untrusted; only native aria2 options may
+        // cross the RPC boundary.
+        for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
+                .filter(org.manager.tools.ToolOptionFilter.Tool.ARIA2,
+                        getAdditionalOptions()).entrySet()) {
             options.put(entry.getKey(), entry.getValue());
         }
 

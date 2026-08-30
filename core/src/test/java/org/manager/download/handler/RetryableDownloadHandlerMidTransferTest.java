@@ -11,6 +11,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -198,5 +199,27 @@ class RetryableDownloadHandlerMidTransferTest {
         Thread.sleep(500);
         assertEquals(1, delegate.startAttempts.get(),
                 "a timeout duration must not be treated as a retryable HTTP status");
+    }
+
+    @Test
+    @DisplayName("Health accounting uses the credentialed proxy object from the pool")
+    void proxyIdentityAndCredentialsArePreserved() throws Exception {
+        Proxy credentialed = new Proxy("auth.example.test", 8080, Proxy.Type.HTTP,
+                "alice", "secret");
+        ProxyRotationManager manager = new ProxyRotationManager();
+        manager.addProxy(credentialed);
+        RetryableDownloadHandler handler = new RetryableDownloadHandler(
+                new MidTransferDelegate(), manager, fastSettings(0), scheduler, executor);
+        Download download = new Download(new URI("http://example.test/auth.bin"));
+
+        handler.startDownload(download).get(5, TimeUnit.SECONDS);
+        assertEquals(RetryDecision.PROPAGATE_TERMINAL,
+                handler.interceptError(download.getId(), "HTTP 403 Forbidden"));
+
+        assertEquals(1, credentialed.getFailureCount(),
+                "the pool object, not a detached credential-less copy, must record failure");
+        assertTrue(download.getProxyAddress().contains("alice:secret@"));
+        assertFalse(download.getSettings().getAdditionalOptions().keySet().stream()
+                .anyMatch(key -> key.startsWith("_current_proxy_")));
     }
 }

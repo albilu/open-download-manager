@@ -618,12 +618,18 @@ public class HttrackSettings extends DownloadSettings {
 
         // Add exclude patterns
         for (String pattern : excludePatterns) {
-            args.add("-" + pattern);
+            String filter = safeFilterToken('-', pattern);
+            if (filter != null) {
+                args.add(filter);
+            }
         }
 
         // Add include patterns
         for (String pattern : includePatterns) {
-            args.add("+" + pattern);
+            String filter = safeFilterToken('+', pattern);
+            if (filter != null) {
+                args.add(filter);
+            }
         }
 
         // ExternalToolSettings defines KiB/s; httrack -A expects bytes/s.
@@ -656,6 +662,33 @@ public class HttrackSettings extends DownloadSettings {
         }
         return args;
 
+    }
+
+    /**
+     * Encodes user/stored text as an unmistakable HTTrack scan-rule token.
+     * A raw exclusion such as {@code Vcommand} previously became
+     * {@code -Vcommand}, where {@code -V} is HTTrack's external-command
+     * option. Prefixing a wildcard keeps the token in the filter grammar.
+     */
+    private static String safeFilterToken(char sign, String pattern) {
+        if (pattern == null || pattern.isBlank()) {
+            return null;
+        }
+        String normalized = pattern.trim();
+        if (normalized.indexOf('\0') >= 0 || normalized.indexOf('\n') >= 0
+                || normalized.indexOf('\r') >= 0) {
+            throw new IllegalArgumentException("HTTrack filters cannot contain control characters");
+        }
+        while (normalized.startsWith("+") || normalized.startsWith("-")) {
+            normalized = normalized.substring(1);
+        }
+        if (normalized.isBlank()) {
+            return null;
+        }
+        if (!normalized.startsWith("*")) {
+            normalized = "*" + normalized;
+        }
+        return sign + normalized;
     }
 
     private String proxyWithCredentials() {

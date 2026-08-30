@@ -110,4 +110,19 @@ class DownloadListPresenterTest {
         assertFalse(DownloadListPresenter.rowStructureMatches(null, List.of(a)));
         assertTrue(DownloadListPresenter.rowStructureMatches(List.of(), List.of()));
     }
+
+    @Test
+    void queuedRowsFollowQueuePositionWithoutMovingHistoryRows() {
+        Download history = download("finished.zip", Download.Status.COMPLETED);
+        Download later = download("later.zip", Download.Status.QUEUED);
+        later.setQueuePosition(2);
+        Download active = download("active.zip", Download.Status.DOWNLOADING);
+        Download first = download("first.zip", Download.Status.QUEUED);
+        first.setQueuePosition(1);
+
+        List<Download> ordered = DownloadListPresenter.orderQueuedRows(
+                List.of(history, later, active, first));
+
+        assertEquals(List.of(history, first, active, later), ordered);
+    }
 }

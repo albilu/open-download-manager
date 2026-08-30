@@ -21,6 +21,7 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.manager.schedule.ScheduleSettings;
 
 /**
  * Tests for the SQLite-backed download state store that replaces
@@ -142,6 +143,25 @@ class SqliteDownloadStateStoreTest {
 
             assertEquals("sha256", restored.getChecksumAlgorithm());
             assertEquals("deadbeef", restored.getExpectedChecksum());
+        }
+    }
+
+    @Test
+    void perDownloadScheduleRoundTrips() {
+        Download original = new Download(URI.create("https://example.com/nightly.iso"));
+        ScheduleSettings schedule = ScheduleSettings.nightHours()
+                .setRespectGlobalSchedule(false)
+                .setPolicy(ScheduleSettings.SchedulePolicy.STRICT)
+                .setPauseOnScheduleEnd(false)
+                .setResumeOnScheduleStart(true);
+        original.setScheduleSettings(schedule);
+
+        try (SqliteDownloadStateStore store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            store.save(List.of(original), Set.of());
+            ScheduleSettings restored = store.load().downloads().get(0).getScheduleSettings();
+
+            assertNotNull(restored);
+            assertEquals(schedule, restored);
         }
     }
 

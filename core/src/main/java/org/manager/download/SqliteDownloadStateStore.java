@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.manager.schedule.ScheduleSettings;
 
 /**
  * SQLite-backed persistence for the download list, replacing the former
@@ -359,9 +360,15 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         download.setStartedAt(readInstant(rs, "started_at"));
         download.setCompletedAt(readInstant(rs, "completed_at"));
         download.setErrorMessage(rs.getString("error_message"));
-        // schedule_settings column: legacy of the model-side scheduling
-        // removed from Download; schedules live in the scheduler (and are
-        // persisted inside its own settings), so the column is ignored
+        String scheduleJson = rs.getString("schedule_settings");
+        if (scheduleJson != null && !scheduleJson.isBlank()) {
+            try {
+                download.setScheduleSettings(mapper.readValue(scheduleJson, ScheduleSettings.class));
+            } catch (IOException e) {
+                LOGGER.log(Level.WARNING, "Dropping unreadable schedule for download "
+                        + download.getId(), e);
+            }
+        }
         download.setChecksumAlgorithm(rs.getString("checksum_algorithm"));
         download.setExpectedChecksum(rs.getString("expected_checksum"));
         try {
@@ -433,7 +440,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(22, formatInstant(download.getCompletedAt()));
         insert.setString(23, download.getErrorMessage());
         insert.setString(24, mapper.writeValueAsString(download.getSettings()));
-        insert.setString(25, null); // schedule_settings: legacy, no longer populated
+        insert.setString(25, download.getScheduleSettings() == null
+                ? null : mapper.writeValueAsString(download.getScheduleSettings()));
         insert.setString(26, download.getChecksumAlgorithm());
         insert.setString(27, download.getExpectedChecksum());
         insert.setInt(28, activeBeforeExit ? 1 : 0);

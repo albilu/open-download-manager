@@ -345,27 +345,24 @@ class CurlIntegrationTest {
         download.setDestination(tempDir);
         download.setType(Download.Type.CURL);
 
-        CompletableFuture<String> downloadFuture = handler.startDownload(download);
-
         assertNotNull(download);
         assertEquals(testUri, download.getUri());
         assertEquals(tempDir, download.getDestination());
         assertNotNull(download.getName());
 
-        // Ensure download completes
-        assertDoesNotThrow(() -> downloadFuture.get(30, TimeUnit.SECONDS));
-
-        // Verify the created download works with the system
+        // Register completion observation before the one and only start.
+        // The mock server enqueues one response for this URI; starting this
+        // same object twice made the full integration profile time out.
         TestDownloadListener listener = new TestDownloadListener();
         CompletableFuture<Void> downloadComplete = new CompletableFuture<>();
         listener.onCompleteCallback = (d) -> downloadComplete.complete(null);
 
         handler.addDownloadListener(listener);
-        CompletableFuture<String> downloadFuture2 = handler.startDownload(download);
+        CompletableFuture<String> downloadFuture = handler.startDownload(download);
 
         assertDoesNotThrow(() -> {
             downloadComplete.get(25, TimeUnit.SECONDS);
-            downloadFuture2.get(25, TimeUnit.SECONDS);
+            downloadFuture.get(25, TimeUnit.SECONDS);
         });
         assertEquals(Download.Status.COMPLETED, download.getStatus());
     }

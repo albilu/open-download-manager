@@ -687,26 +687,31 @@ public class YtDlpClient {
 
                 // Monitor progress
                 String filename = null;
+                boolean progressReported = false;
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
                     while (!Thread.currentThread().isInterrupted()
                             && (line = reader.readLine()) != null) {
-                        // Extract filename if not yet known
-                        if (filename == null) {
-                            filename = extractFilename(line);
+                        // Track both the early destination and the final
+                        // after-move path (post-processing may change the
+                        // extension). Publishing each distinct path also
+                        // keeps cancellation cleanup authoritative.
+                        String reportedFilename = extractFilename(line);
+                        if (reportedFilename != null && !reportedFilename.equals(filename)) {
+                            filename = reportedFilename;
                             // Publish the destination the moment yt-dlp
                             // reports it: a mid-flight cancel needs the
                             // output path for cleanup, and the completion
                             // callback alone would deliver it too late (or
                             // never, when the process gets killed).
-                            if (filename != null && callback != null) {
+                            if (callback != null) {
                                 callback.onStart(filename);
                             }
                         }
 
                         // Parse progress
                         if (callback != null) {
-                            parseProgress(line, callback);
+                            progressReported |= parseProgress(line, callback);
                         }
 
                         // Check for errors
@@ -720,11 +725,23 @@ public class YtDlpClient {
                 if (launch.isCancelled()) {
                     throw new CancellationException("yt-dlp download was cancelled");
                 } else if (exitCode == 0) {
-                    if (callback != null && filename != null) {
+                    if (filename == null || filename.isBlank()) {
+                        throw new IllegalStateException(
+                                "yt-dlp exited successfully without reporting an output file");
+                    }
+                    if (callback != null) {
+                        // Very small and already-present files can complete
+                        // without yt-dlp emitting an intermediate progress
+                        // line. Preserve the callback contract by publishing
+                        // a terminal snapshot before completion.
+                        if (!progressReported) {
+                            long completedBytes = completedFileSize(filename, outputPath);
+                            callback.onProgress(100.0f, completedBytes, completedBytes, 0.0f);
+                        }
                         callback.onComplete(filename);
                     }
                     LOGGER.info("yt-dlp download completed successfully");
-                    return filename != null ? filename : "download-complete";
+                    return filename;
                 } else {
                     String error = "yt-dlp failed with exit code: " + exitCode;
                     if (callback != null) {
@@ -818,6 +835,10 @@ public class YtDlpClient {
         command.add("download:[download] %(progress._percent_str)s of "
                 + "%(progress._total_bytes_estimate_str)s at %(progress._speed_str)s "
                 + "|odmbytes|%(progress.downloaded_bytes)s|%(progress.total_bytes_estimate)s");
+        // A stable machine marker covers merged/post-processed files and
+        // already-present outputs without depending on localized prose.
+        command.add("--print");
+        command.add("after_move:|odmfile|%(filepath)s");
         if (settings.isVerboseOutput()) {
             command.add("--verbose");
         }
@@ -1047,12 +1068,22 @@ public class YtDlpClient {
     /**
      * Extracts filename from yt-dlp output.
      */
-    private String extractFilename(String line) {
+    String extractFilename(String line) {
+        int marker = line.indexOf("|odmfile|");
+        if (marker >= 0) {
+            String path = line.substring(marker + "|odmfile|".length()).trim();
+            return path.isEmpty() ? null : path;
+        }
         if (line.contains("[download] Destination:")) {
-            String[] parts = line.split("Destination:");
-            if (parts.length > 1) {
-                return parts[1].trim();
-            }
+            String path = line.substring(line.indexOf("Destination:")
+                    + "Destination:".length()).trim();
+            return path.isEmpty() ? null : path;
+        }
+        String alreadyDownloaded = " has already been downloaded";
+        if (line.startsWith("[download] ") && line.endsWith(alreadyDownloaded)) {
+            String path = line.substring("[download] ".length(),
+                    line.length() - alreadyDownloaded.length()).trim();
+            return path.isEmpty() ? null : path;
         }
         return null;
     }
@@ -1063,7 +1094,7 @@ public class YtDlpClient {
      * custom progress template; falls back to the legacy rounded-output
      * regex (older yt-dlp without --progress-template).
      */
-    private void parseProgress(String line, ProgressCallback callback) {
+    private boolean parseProgress(String line, ProgressCallback callback) {
         int exactMarker = line.indexOf("|odmbytes|");
         if (exactMarker >= 0) {
             try {
@@ -1086,7 +1117,7 @@ public class YtDlpClient {
                 }
 
                 callback.onProgress(percentage, downloadedBytes, totalBytes, speedBps);
-                return;
+                return true;
             } catch (NumberFormatException e) {
                 // Fall through to the legacy parser
             }
@@ -1107,15 +1138,30 @@ public class YtDlpClient {
                 float speedBps = convertToBytes(speed, speedUnit);
 
                 callback.onProgress(percentage, downloadedBytes, totalBytes, speedBps);
+                return true;
             } catch (NumberFormatException e) {
                 // Ignore parsing errors
             }
         }
+        return false;
     }
 
     /** Test seam for the progress-line parser. */
     void parseProgressForTest(String line, ProgressCallback callback) {
         parseProgress(line, callback);
+    }
+
+    private long completedFileSize(String filename, Path outputPath) {
+        try {
+            Path completedPath = Path.of(filename);
+            if (!completedPath.isAbsolute() && outputPath != null) {
+                completedPath = outputPath.resolve(completedPath);
+            }
+            return Files.isRegularFile(completedPath) ? Files.size(completedPath) : 0L;
+        } catch (IOException | IllegalArgumentException | SecurityException e) {
+            LOGGER.log(Level.FINE, "Unable to inspect completed yt-dlp output size", e);
+            return 0L;
+        }
     }
 
     /**

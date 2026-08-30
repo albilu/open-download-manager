@@ -3,11 +3,13 @@ package org.manager.download.action;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.DisplayName;
@@ -25,7 +27,7 @@ import org.aria2.Aria2Settings;
 @DisplayName("AfterCompletionActionManager survives concurrent registration")
 class AfterCompletionActionManagerConcurrencyTest {
 
-    private static final class NoOpAction implements AfterCompletionAction {
+    private static class NoOpAction implements AfterCompletionAction {
 
         @Override
         public boolean execute(Download download) {
@@ -135,5 +137,55 @@ class AfterCompletionActionManagerConcurrencyTest {
         // No setOption call may be lost to a concurrent toMap iteration
         assertTrue(settings.getAdditionalOptions().size() >= threads * perThread,
                 "every concurrently set option must be present in the options map");
+    }
+
+    @Test
+    @Timeout(30)
+    @DisplayName("A shared global action instance never executes concurrently")
+    void globalActionInstanceIsSerializedAcrossDownloads() throws Exception {
+        AfterCompletionActionManager manager = new AfterCompletionActionManager();
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        AtomicInteger invocations = new AtomicInteger();
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maxActive = new AtomicInteger();
+        AfterCompletionAction shared = new NoOpAction() {
+            @Override
+            public boolean execute(Download download) {
+                int invocation = invocations.incrementAndGet();
+                int now = active.incrementAndGet();
+                maxActive.accumulateAndGet(now, Math::max);
+                try {
+                    if (invocation == 1) {
+                        firstEntered.countDown();
+                        releaseFirst.await(5, TimeUnit.SECONDS);
+                    }
+                    return true;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                } finally {
+                    active.decrementAndGet();
+                }
+            }
+        };
+        manager.setGlobalAction(shared);
+        try {
+            Download first = new Download(new URI("https://example.test/first"));
+            Download second = new Download(new URI("https://example.test/second"));
+            var firstFuture = manager.executeActions(first);
+            var secondFuture = manager.executeActions(second);
+            assertTrue(firstEntered.await(5, TimeUnit.SECONDS));
+            Thread.sleep(150);
+            releaseFirst.countDown();
+
+            CompletableFuture.allOf(firstFuture, secondFuture).get(10, TimeUnit.SECONDS);
+            assertEquals(2, invocations.get());
+            assertEquals(1, maxActive.get(),
+                    "mutable global action state must be isolated between downloads");
+        } finally {
+            releaseFirst.countDown();
+            manager.shutdown();
+        }
     }
 }

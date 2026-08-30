@@ -57,6 +57,8 @@ public class NewMediaDialog {
     private final List<YtDlpClient.VideoFormat> formats = new ArrayList<>();
     private Path destinationFolder;
     private Path cookieFile;
+    /** Reused after queue rejection so Retry cannot create duplicate rows. */
+    private Download pendingDownload;
 
     public NewMediaDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
         this.downloadManager = downloadManager;
@@ -214,18 +216,41 @@ public class NewMediaDialog {
 
     private void onStart() {
         try {
-            URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
-                    urlEntry.getText());
-            Download download = downloadManager.createYoutubeDownload(uri, destinationFolder, null);
-            applyMediaOptions(download);
-            downloadManager.queueDownload(download);
-            LOGGER.info("Queued media download: " + download.getName());
-            if (onDownloadQueued != null) {
-                onDownloadQueued.run();
+            Download download = pendingDownload;
+            if (download == null) {
+                URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
+                        urlEntry.getText());
+                download = downloadManager.createYoutubeDownload(uri, destinationFolder, null);
+                applyMediaOptions(download);
             }
-            dialog.close();
+            pendingDownload = download;
+            startButton.setSensitive(false);
+            AccessibilitySupport.status(statusLabel, "Adding media download to queue…");
+            Download submitted = download;
+            downloadManager.queueDownload(download).whenComplete((ignored, error) ->
+                    UiThread.marshal(() -> {
+                        if (closed.get()) {
+                            return;
+                        }
+                        if (error == null) {
+                            pendingDownload = null;
+                            LOGGER.info("Queued media download: " + submitted.getName());
+                            if (onDownloadQueued != null) {
+                                onDownloadQueued.run();
+                            }
+                            dialog.close();
+                        } else {
+                            startButton.setSensitive(true);
+                            AccessibilitySupport.status(statusLabel,
+                                    "Could not add to queue: " + rootMessage(error)
+                                            + ". Press Download to retry.",
+                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                            LOGGER.log(Level.WARNING, "Queue rejected media download", error);
+                        }
+                    }));
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Media download rejected: " + e.getMessage(), e);
+            startButton.setSensitive(true);
             AccessibilitySupport.status(statusLabel, "Cannot start: " + e.getMessage(),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }

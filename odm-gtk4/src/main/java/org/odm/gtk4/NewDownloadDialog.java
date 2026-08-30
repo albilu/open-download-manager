@@ -62,6 +62,9 @@ public class NewDownloadDialog {
     private final CheckButton moveTorrentCheck;
     private final Label checksumLabel;
     private final CheckButton verifyChecksumCheck;
+    private final Button startButton;
+    /** Reused after a queue rejection so Retry cannot create duplicate rows. */
+    private Download pendingDownload;
 
     private Path selectedTorrentFile;
     private Path destinationFolder;
@@ -114,6 +117,17 @@ public class NewDownloadDialog {
         AccessibilitySupport.label(proxyUsernameEntry, "Proxy username");
         AccessibilitySupport.label(proxyPasswordEntry, "Proxy password");
         AccessibilitySupport.label(torSwitch, "Route this download through Tor");
+        AccessibilitySupport.label(maxConnectionsSpin, "Maximum connections");
+        AccessibilitySupport.label(retryLimitSpin, "Retry limit");
+        AccessibilitySupport.label(maxDownloadSpeedSpin, "Maximum download speed in KB per second");
+        AccessibilitySupport.label(maxUploadSpeedSpin, "Maximum upload speed in KB per second");
+        AccessibilitySupport.label(retryAfterSpin, "Seconds before retry");
+        AccessibilitySupport.label(referrerEntry, "HTTP referrer");
+        AccessibilitySupport.label(cookieEntry, "HTTP cookie header");
+        AccessibilitySupport.label(userAgentEntry, "HTTP user agent");
+        AccessibilitySupport.label(startAutomaticallyCheck, "Start automatically");
+        AccessibilitySupport.label(moveTorrentCheck, "Move descriptor to drafts");
+        AccessibilitySupport.label(verifyChecksumCheck, "Verify checksum at completion");
 
         dialog.setTransientFor(parent);
 
@@ -140,7 +154,8 @@ public class NewDownloadDialog {
         torrentFileChooser.onClicked(this::onChooseTorrent);
         saveFolderChooser.onClicked(this::onChooseFolder);
         Widgets.require(builder, "new_download_cancel_button", Button.class).onClicked(dialog::close);
-        Widgets.require(builder, "new_download_start_button", Button.class).onClicked(this::onStart);
+        this.startButton = Widgets.require(builder, "new_download_start_button", Button.class);
+        startButton.onClicked(this::onStart);
         torSwitch.onStateSet(state -> {
             // Tor enabled -> route through the local Tor SOCKS proxy
             return false; // let the switch apply its new state
@@ -392,25 +407,58 @@ public class NewDownloadDialog {
 
     private void onStart() {
         try {
-            Download download = createDownload();
-            applyRequestedFilename(download);
-            applyOptions(download);
-            registerChecksumVerification(download);
-            if (startAutomaticallyCheck.getActive()) {
-                downloadManager.queueDownload(download);
+            Download download = pendingDownload;
+            if (download == null) {
+                download = createDownload();
+                applyRequestedFilename(download);
+                applyOptions(download);
+                registerChecksumVerification(download);
             }
-            // Unchecked "start automatically": createDownload already registered
-            // the download in the repository; leaving it unqueued keeps it
-            // unstarted in the list.
-            LOGGER.info("Queued new download: " + download.getName());
-            if (onDownloadQueued != null) {
-                onDownloadQueued.run();
+            if (!startAutomaticallyCheck.getActive()) {
+                finishSubmission(download, false);
+                return;
             }
-            dialog.close();
+
+            pendingDownload = download;
+            startButton.setSensitive(false);
+            AccessibilitySupport.status(diskSpaceLabel, "Adding download to queue…");
+            Download submitted = download;
+            downloadManager.queueDownload(download).whenComplete((ignored, error) ->
+                    UiThread.marshal(() -> {
+                        if (error == null) {
+                            pendingDownload = null;
+                            finishSubmission(submitted, true);
+                        } else {
+                            startButton.setSensitive(true);
+                            AccessibilitySupport.status(diskSpaceLabel,
+                                    "Could not add to queue: " + rootMessage(error)
+                                            + ". Press Start to retry.",
+                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                            LOGGER.log(Level.WARNING, "Queue rejected new download", error);
+                        }
+                    }));
         } catch (IllegalArgumentException e) {
             LOGGER.warning("New download rejected: " + e.getMessage());
             urlEntry.getStyleContext().addClass("error");
+            AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + e.getMessage(),
+                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
+    }
+
+    private void finishSubmission(Download download, boolean queued) {
+        LOGGER.info((queued ? "Queued" : "Created") + " new download: " + download.getName());
+        if (onDownloadQueued != null) {
+            onDownloadQueued.run();
+        }
+        dialog.close();
+    }
+
+    private static String rootMessage(Throwable failure) {
+        Throwable cause = failure;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
     }
 
     private void applyRequestedFilename(Download download) {

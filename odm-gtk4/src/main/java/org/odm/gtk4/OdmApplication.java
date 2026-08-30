@@ -36,7 +36,10 @@ public final class OdmApplication {
         // primary instance; the startup gate single-flights the asynchronous
         // initialization so repeated activation cannot stack duplicate
         // core/scheduler/tray/window pipelines.
-        final StatusNotifierTray[] trayHolder = new StatusNotifierTray[1];
+        final java.util.concurrent.atomic.AtomicReference<StatusNotifierTray> trayHolder =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicBoolean appShuttingDown =
+                new java.util.concurrent.atomic.AtomicBoolean();
         // Holder so the window publisher can reach the gate it is defined in
         final StartupGate[] startupHolder = new StartupGate[1];
         // Quit timer scheduled by the failure notice; a successful retry
@@ -54,14 +57,40 @@ public final class OdmApplication {
                     ownedRelease.capture(refs);
                     MainWindow mainWindow = new MainWindow(
                             app, refs.manager(), refs.torService(), refs.scheduleManager());
-                    installGracefulShutdown(app, startupHolder[0], mainWindow, refs, ownedRelease);
+                    installGracefulShutdown(app, startupHolder[0], mainWindow, refs,
+                            ownedRelease, trayHolder, appShuttingDown);
                     LOGGER.info("onActivate: MainWindow constructed");
 
                     // Tray (best-effort: no-op when the session bus is unavailable)
                     final MainWindow raised = mainWindow;
-                    trayHolder[0] = new StatusNotifierTray(() -> UiThread.marshal(raised::present));
-                    mainWindow.setTrayAvailable(trayHolder[0].isAvailable());
-                    LOGGER.info("onActivate: tray constructed");
+                    mainWindow.setTrayAvailable(false);
+                    CompletableFuture.supplyAsync(
+                            () -> new StatusNotifierTray(
+                                    () -> UiThread.marshal(raised::present)),
+                            org.manager.util.ExecutorServiceManager.getInstance().getIoExecutor())
+                            .whenComplete((tray, error) -> {
+                                if (error != null || tray == null) {
+                                    LOGGER.warning("StatusNotifier tray initialization failed: "
+                                            + (error != null ? error.getMessage() : "no tray"));
+                                    return;
+                                }
+                                if (appShuttingDown.get()) {
+                                    tray.unregister();
+                                    return;
+                                }
+                                UiThread.marshal(() -> {
+                                    if (appShuttingDown.get()) {
+                                        CompletableFuture.runAsync(tray::unregister);
+                                        return;
+                                    }
+                                    StatusNotifierTray replaced = trayHolder.getAndSet(tray);
+                                    if (replaced != null) {
+                                        CompletableFuture.runAsync(replaced::unregister);
+                                    }
+                                    mainWindow.setTrayAvailable(tray.isAvailable());
+                                    LOGGER.info("onActivate: tray constructed");
+                                });
+                            });
 
                     mainWindow.present();
                     progress.close();
@@ -112,11 +141,14 @@ public final class OdmApplication {
         // plus the owned scheduler/Tor services the close path may not have
         // reached
         app.onShutdown(() -> {
+            appShuttingDown.set(true);
             startup.beginShutdown(); // never publish a window once shutdown begins
-            StatusNotifierTray tray = trayHolder[0];
+            StatusNotifierTray tray = trayHolder.getAndSet(null);
             if (tray != null) {
-                tray.unregister();
-                trayHolder[0] = null;
+                // The normal close path already drains this on its worker.
+                // Session-manager shutdown remains best-effort and must not
+                // synchronously wait on D-Bus from GTK.
+                CompletableFuture.runAsync(tray::unregister);
             }
             ownedRelease.release();
         });
@@ -327,8 +359,11 @@ public final class OdmApplication {
      * invisibly, racing System.exit.
      */
     private static void installGracefulShutdown(Application app, StartupGate startup,
-            MainWindow mainWindow, StartupGate.CoreRefs refs, OwnedServicesRelease ownedRelease) {
+            MainWindow mainWindow, StartupGate.CoreRefs refs, OwnedServicesRelease ownedRelease,
+            java.util.concurrent.atomic.AtomicReference<StatusNotifierTray> trayHolder,
+            java.util.concurrent.atomic.AtomicBoolean appShuttingDown) {
         mainWindow.setFinalCloseDelegate(() -> {
+            appShuttingDown.set(true);
             // No window publication past this point (a stale activation
             // observer would race the exit sequence otherwise)
             startup.beginShutdown();
@@ -338,7 +373,13 @@ public final class OdmApplication {
             StartShutdownDialog progress = new StartShutdownDialog(app);
             progress.show("Shutting down Open Download Manager…");
 
-            CompletableFuture.runAsync(() -> drainCoreForExit(refs))
+            CompletableFuture.runAsync(() -> {
+                StatusNotifierTray tray = trayHolder.getAndSet(null);
+                if (tray != null) {
+                    tray.unregister();
+                }
+                drainCoreForExit(refs);
+            })
                     .whenComplete((v, error) -> UiThread.marshal(() -> {
                         ownedRelease.markReleased();
                         progress.close();

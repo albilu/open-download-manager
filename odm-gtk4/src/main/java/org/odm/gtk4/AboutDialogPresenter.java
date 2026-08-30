@@ -19,6 +19,11 @@ public final class AboutDialogPresenter {
         AboutDialog about = Widgets.require(builder, "about_dialog", AboutDialog.class);
         about.setTransientFor(parent);
         about.setLogo(loadLogo());
+        String implementationVersion = AboutDialogPresenter.class.getPackage()
+                .getImplementationVersion();
+        if (implementationVersion != null && !implementationVersion.isBlank()) {
+            about.setVersion(implementationVersion);
+        }
         about.present();
     }
 

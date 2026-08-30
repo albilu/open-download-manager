@@ -344,10 +344,16 @@ public class Download {
         return overrideOutputPath;
     }
 
-    public void seOverrideOutputPath(boolean overrideOutputPath) {
+    public void setOverrideOutputPath(boolean overrideOutputPath) {
         synchronized (lock) {
             this.overrideOutputPath = overrideOutputPath;
         }
+    }
+
+    /** @deprecated use {@link #setOverrideOutputPath(boolean)}. */
+    @Deprecated(forRemoval = false)
+    public void seOverrideOutputPath(boolean overrideOutputPath) {
+        setOverrideOutputPath(overrideOutputPath);
     }
 
     public URI getUri() {

@@ -36,6 +36,15 @@ import org.gnome.gtk.TreeView;
 public class MainWindow {
 
     private static final Logger LOGGER = Logger.getLogger(MainWindow.class.getName());
+    private static final int HISTORY_WINDOW_SIZE = 500;
+    private static final Download.Status[] ALWAYS_VISIBLE_STATUSES = {
+        Download.Status.CREATED, Download.Status.QUEUED, Download.Status.PAUSED,
+        Download.Status.STARTING, Download.Status.CONNECTING, Download.Status.DOWNLOADING
+    };
+
+    private record RefreshSnapshot(List<Download> downloads, int totalCount,
+            java.util.Map<Download.Status, Integer> statusCounts) {
+    }
     private final ApplicationWindow window;
     private final ListStore statusStore;
     private final ListStore categoryStore;
@@ -67,6 +76,10 @@ public class MainWindow {
     private final DownloadListPresenter listPresenter;
     final DetailTabsPresenter detailTabsPresenter;
     private final java.util.concurrent.ExecutorService backgroundExecutor;
+    private final java.util.concurrent.atomic.AtomicBoolean refreshInFlight =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicBoolean refreshAgain =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     // Listeners registered with core services; kept as fields so the window
     // can detach them on final close instead of leaking refresh work forever
@@ -217,6 +230,8 @@ public class MainWindow {
         AccessibilitySupport.label(searchEntry, "Search downloads");
         AccessibilitySupport.label(torSwitch, "Global Tor routing");
         AccessibilitySupport.label(infoProgressBar, "Selected download progress");
+        Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
+        Widgets.require(builder, "category_label", Label.class).setMnemonicWidget(categoryTreeview);
 
         windowDownloadListener = new DownloadListener() {
             @Override public void onDownloadStart(Download d) { listPresenter.scheduleRefresh(); }
@@ -448,6 +463,45 @@ public class MainWindow {
         if (selectedDownload != null) downloadManager.cancelDownload(selectedDownload, false);
     }
 
+    /** Requires an explicit destructive confirmation and captures the target
+     * before showing the asynchronous dialog so a later selection change
+     * cannot delete a different download's files. */
+    private void confirmDeleteWithFiles(Download target) {
+        if (target == null) {
+            return;
+        }
+        org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
+        confirmation.setTransientFor(window);
+        confirmation.setModal(true);
+        confirmation.setMarkup("<b>Delete this download and its files?</b>");
+        confirmation.formatSecondaryText("This permanently removes files for \"%s\"."
+                .formatted(target.getName()));
+        int cancelResponse = org.gnome.gtk.ResponseType.CANCEL.getValue();
+        int acceptResponse = org.gnome.gtk.ResponseType.ACCEPT.getValue();
+        confirmation.addButton("Cancel", cancelResponse);
+        org.gnome.gtk.Widget deleteButton =
+                confirmation.addButton("Delete Files", acceptResponse);
+        deleteButton.addCssClass("destructive-action");
+        confirmation.setDefaultResponse(cancelResponse);
+        confirmation.onResponse(response -> {
+            confirmation.close();
+            if (response != acceptResponse) {
+                return;
+            }
+            downloadManager.cancelDownload(target, true).whenComplete((ignored, error) ->
+                    UiThread.marshal(() -> {
+                        if (error != null) {
+                            AccessibilitySupport.status(infoLabel,
+                                    "Could not delete download files: "
+                                            + failureMessage(error),
+                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                        }
+                        refresh();
+                    }));
+        });
+        confirmation.present();
+    }
+
     private void onPropertiesClicked() {
         onDownloadSelectionChanged();
         if (selectedDownload != null) {
@@ -505,7 +559,7 @@ public class MainWindow {
                     .separator()
                     .add("Delete", this::onDeleteClicked)
                     .add("Delete with Files", () ->
-                            downloadManager.cancelDownload(selectedDownload, true));
+                            confirmDeleteWithFiles(selectedDownload));
         }
         contextMenu.popupAt(downloadsTreeview, x, y);
     }
@@ -756,7 +810,7 @@ public class MainWindow {
         addAction("delete-with-files", () -> {
             onDownloadSelectionChanged();
             if (selectedDownload != null) {
-                downloadManager.cancelDownload(selectedDownload, true);
+                confirmDeleteWithFiles(selectedDownload);
             }
         });
         addAction("remove-finished", () -> downloadManager.pruneCompletedDownloads(java.time.Duration.ZERO)
@@ -1213,23 +1267,42 @@ public class MainWindow {
         org.gnome.gtk.Button startButton = new org.gnome.gtk.Button();
         startButton.setLabel("Start Scrape");
         startButton.addCssClass("suggested-action");
+        java.util.concurrent.atomic.AtomicReference<Download> pendingDownload =
+                new java.util.concurrent.atomic.AtomicReference<>();
         startButton.onClicked(() -> {
             String url = urlEntry.getText().trim();
             if (url.isEmpty()) {
-                AccessibilitySupport.status(infoLabel, "Enter a URL");
+                AccessibilitySupport.status(statusLabel, "Enter a URL");
                 return;
             }
             try {
-                java.util.Map<String, String> options = new java.util.HashMap<>();
-                options.put("depth", String.valueOf((int) depthSpin.getValue()));
-                Download download = downloadManager.createWebsiteDownload(new java.net.URI(url),
-                        java.nio.file.Path.of(downloadManager.getGlobalSettings()
-                                .getDefaultDownloadDirectory().toString()), options);
-                downloadManager.queueDownload(download);
-                refresh();
-                scraper.close();
-            } catch (java.net.URISyntaxException e) {
-                AccessibilitySupport.status(infoLabel, "Invalid URL",
+                Download download = pendingDownload.get();
+                if (download == null) {
+                    java.util.Map<String, String> options = new java.util.HashMap<>();
+                    options.put("depth", String.valueOf((int) depthSpin.getValue()));
+                    download = downloadManager.createWebsiteDownload(new java.net.URI(url),
+                            java.nio.file.Path.of(downloadManager.getGlobalSettings()
+                                    .getDefaultDownloadDirectory().toString()), options);
+                    pendingDownload.set(download);
+                }
+                startButton.setSensitive(false);
+                AccessibilitySupport.status(statusLabel, "Adding website scrape to queue…");
+                downloadManager.queueDownload(download).whenComplete((ignored, error) ->
+                        UiThread.marshal(() -> {
+                            if (error == null) {
+                                pendingDownload.set(null);
+                                refresh();
+                                scraper.close();
+                            } else {
+                                startButton.setSensitive(true);
+                                AccessibilitySupport.status(statusLabel,
+                                        "Could not add to queue: " + failureMessage(error)
+                                                + ". Press Start Scrape to retry.",
+                                        org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                            }
+                        }));
+            } catch (Exception e) {
+                AccessibilitySupport.status(statusLabel, "Invalid request: " + failureMessage(e),
                         org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             }
         });
@@ -1247,6 +1320,14 @@ public class MainWindow {
 
         scraper.setChild(box);
         scraper.present();
+    }
+
+    private static String failureMessage(Throwable failure) {
+        Throwable cause = failure;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
     }
 
     private void onStatusSelectionChanged() {
@@ -1302,8 +1383,78 @@ public class MainWindow {
      * repository state. GTK thread only.
      */
     private void refresh() {
-        DownloadListPresenter.RefreshSummary summary =
-                listPresenter.refresh(downloadManager.getAllDownloads());
+        if (!refreshInFlight.compareAndSet(false, true)) {
+            refreshAgain.set(true);
+            return;
+        }
+        String selectedId = selectedDownload != null ? selectedDownload.getId() : null;
+        try {
+            CompletableFuture.supplyAsync(() -> loadRefreshSnapshot(selectedId), backgroundExecutor)
+                .whenComplete((snapshot, error) -> UiThread.marshal(() -> {
+                    try {
+                        if (error != null) {
+                            LOGGER.log(Level.WARNING, "Failed to refresh download list", error);
+                            return;
+                        }
+                        applyRefresh(snapshot);
+                    } finally {
+                        refreshInFlight.set(false);
+                        if (refreshAgain.getAndSet(false)) {
+                            refresh();
+                        }
+                    }
+                }));
+        } catch (java.util.concurrent.RejectedExecutionException shuttingDown) {
+            refreshInFlight.set(false);
+        }
+    }
+
+    /** Loads a bounded recent-history window plus bounded active/queued
+     * status slices. Repository-wide status counts remain O(1) via indices. */
+    private RefreshSnapshot loadRefreshSnapshot(String selectedId) {
+        java.util.LinkedHashMap<String, Download> visible = new java.util.LinkedHashMap<>();
+        addRefreshRows(visible, downloadManager.getDownloads(0, HISTORY_WINDOW_SIZE));
+        for (Download.Status status : ALWAYS_VISIBLE_STATUSES) {
+            addRefreshRows(visible,
+                    downloadManager.getDownloadsByStatus(status, 0, HISTORY_WINDOW_SIZE));
+        }
+        if (selectedId != null) {
+            Download selected = downloadManager.getDownload(selectedId);
+            if (selected != null) {
+                visible.putIfAbsent(selected.getId(), selected);
+            }
+        }
+        java.util.EnumMap<Download.Status, Integer> statusCounts =
+                new java.util.EnumMap<>(Download.Status.class);
+        for (Download.Status status : Download.Status.values()) {
+            statusCounts.put(status, downloadManager.getDownloadCountByStatus(status));
+        }
+        return new RefreshSnapshot(new java.util.ArrayList<>(visible.values()),
+                downloadManager.getDownloadCount(), statusCounts);
+    }
+
+    private static void addRefreshRows(java.util.Map<String, Download> target,
+            List<Download> rows) {
+        if (rows == null) {
+            return;
+        }
+        for (Download download : rows) {
+            if (download != null) {
+                target.putIfAbsent(download.getId(), download);
+            }
+        }
+    }
+
+    /** Applies an already-fetched repository snapshot on the GTK thread. */
+    private void applyRefresh(RefreshSnapshot snapshot) {
+        DownloadListPresenter.RefreshSummary summary = listPresenter.refresh(
+                snapshot.downloads(), snapshot.totalCount(), snapshot.statusCounts());
+        if (summary.structureChanged()) {
+            // GtkTreeSelection emits no useful row when the model was just
+            // cleared, so explicitly invalidate the pointer used by actions.
+            downloadsTreeview.getSelection().unselectAll();
+            selectedDownload = null;
+        }
         infoLabel.setLabel(summary.totalCount() + " download(s)");
         downSpeedLabel.setLabel(DownloadFormats.size(summary.downBytesPerSec()) + "/s");
         upSpeedLabel.setLabel(summary.upBytesPerSec() > 0

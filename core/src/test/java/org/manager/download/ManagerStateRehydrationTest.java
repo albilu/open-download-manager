@@ -101,7 +101,7 @@ class ManagerStateRehydrationTest {
             Download resumable = new Download(new URI("http://example.test/resumable.bin"));
             resumable.setType(Download.Type.ARIA2);
             resumable.setName("resumable.bin");
-            resumable.setStatus(Download.Status.PAUSED);
+            resumable.setStatus(Download.Status.CONNECTING);
             Download idlePaused = new Download(new URI("http://example.test/idle-paused.bin"));
             idlePaused.setType(Download.Type.ARIA2);
             idlePaused.setName("idle-paused.bin");
@@ -110,12 +110,17 @@ class ManagerStateRehydrationTest {
             finished.setType(Download.Type.ARIA2);
             finished.setName("finished.bin");
             finished.setStatus(Download.Status.COMPLETED);
+            Download queued = new Download(new URI("http://example.test/queued.bin"));
+            queued.setType(Download.Type.ARIA2);
+            queued.setName("queued.bin");
+            queued.setStatus(Download.Status.QUEUED);
+            queued.setQueuePosition(1);
 
             try (SqliteDownloadStateStore seed = new SqliteDownloadStateStore(
                     xdg.resolve("odm").resolve("odm-state.db"),
                     xdg.resolve("odm").resolve("odm-state.json"),
                     DownloadManagerImpl.createStateObjectMapper())) {
-                seed.save(List.of(resumable, idlePaused, finished), Set.of(resumable.getId()));
+                seed.save(List.of(resumable, idlePaused, finished, queued), Set.of(resumable.getId()));
             }
 
             DownloadManagerImpl manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
@@ -130,7 +135,7 @@ class ManagerStateRehydrationTest {
 
             manager.loadState().join();
 
-            assertEquals(3, manager.getDownloadCount(), "all persisted downloads must be rehydrated");
+            assertEquals(4, manager.getDownloadCount(), "all persisted downloads must be rehydrated");
             assertEquals(Download.Status.COMPLETED, manager.getDownload(finished.getId()).getStatus());
             assertEquals(Download.Status.PAUSED, manager.getDownload(idlePaused.getId()).getStatus(),
                     "a paused download without the active flag must stay paused");
@@ -141,6 +146,9 @@ class ManagerStateRehydrationTest {
             boolean indexedDownloading = awaitTrue(() -> manager.getDownloadsByStatus(Download.Status.DOWNLOADING)
                     .stream().anyMatch(d -> d.getId().equals(resumable.getId())));
             assertTrue(indexedDownloading, "the resumed download must be indexed DOWNLOADING");
+            assertTrue(awaitTrue(() -> manager.getDownload(queued.getId()).getStatus()
+                    == Download.Status.DOWNLOADING),
+                    "persisted QUEUED work must enter the startup queue pump");
         });
     }
 }

@@ -326,13 +326,13 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
         }
         org.manager.util.PathSafety.requireSafeFileName(name);
         Path output = download.getDestination().resolve(name);
-        if (download.isOverrideOutputPath() && Files.exists(output)) {
-            if (!org.manager.util.PathSafety.deleteIfExistsConfined(output, download.getDestination())) {
-                throw new IllegalStateException(
-                        "Refusing to overwrite output outside destination: " + output);
-            }
-
-        } else if (Files.exists(output) && !download.isOverrideOutputPath()) {
+        // Never delete an existing output before the engine has accepted the
+        // transfer.  Apart from destroying resumable partial data, a launch
+        // failure after this point used to destroy a complete file without
+        // producing any replacement.  "Override" now means that the engine
+        // receives the requested path and applies its own atomic/resume
+        // policy; the non-override branch still chooses a unique name.
+        if (Files.exists(output) && !download.isOverrideOutputPath()) {
             // increment counter
             int counter = 1;
             while (Files.exists(output.resolveSibling(name + "_" + counter))) {

@@ -209,4 +209,22 @@ class ManagerGenerationIsolationTest {
         assertEquals("original-gid", download.getGid());
         assertEquals(Download.Status.DOWNLOADING, download.getStatus());
     }
+
+    @Test
+    @DisplayName("A late successful launch cannot regress a completed download")
+    void launchSuccessAfterCompletionIsIgnored() throws Exception {
+        setUp();
+
+        Download download = newDownload("gen-terminal-before-launch-result");
+        manager.queueDownload(download).join();
+        assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 1));
+
+        handler.fireComplete(download);
+        assertTrue(awaitTrue(() -> download.getStatus() == Download.Status.COMPLETED));
+
+        handler.start(download.getId(), 0).complete("late-gid");
+        assertTrue(awaitTrue(() -> download.getGid() == null));
+        assertEquals(Download.Status.COMPLETED, download.getStatus());
+        assertEquals(0, manager.getRunningDownloadCount());
+    }
 }

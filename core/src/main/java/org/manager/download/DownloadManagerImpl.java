@@ -84,6 +84,8 @@ public class DownloadManagerImpl implements DownloadManager {
     private final ConcurrentHashMap<String, Long> attemptGenerations;
     /** Generation that already reached a terminal state per download id; first terminal wins. */
     private final ConcurrentHashMap<String, Long> terminalGenerations;
+    /** Last generation that claimed the one-shot proxychains-to-Curl handoff. */
+    private final ConcurrentHashMap<String, Long> proxychainsCurlFallbackGenerations;
     /** Serializes generation bumping against terminal-CAS bookkeeping. */
     private final Object generationLock = new Object();
     /** Serializes the check-and-add concurrency-slot claim (the admission decision). */
@@ -137,6 +139,7 @@ public class DownloadManagerImpl implements DownloadManager {
         this.globallyProxiedDownloadIds = ConcurrentHashMap.newKeySet();
         this.attemptGenerations = new ConcurrentHashMap<>();
         this.terminalGenerations = new ConcurrentHashMap<>();
+        this.proxychainsCurlFallbackGenerations = new ConcurrentHashMap<>();
         this.isShuttingDown = new AtomicBoolean(false);
         this.objectMapper = createStateObjectMapper();
         this.stateStore = new SqliteDownloadStateStore(
@@ -555,6 +558,11 @@ public class DownloadManagerImpl implements DownloadManager {
                     LOGGER.warning("Dropping stale generation result for download: " + download.getName());
                     return;
                 }
+                if (isTerminalAttempt(download.getId(), startGeneration)) {
+                    LOGGER.warning("Dropping start result after terminal event for download: "
+                            + download.getName());
+                    return;
+                }
                 LOGGER.info("Download handler returned GID: " + gid + " for download: " + download.getName());
                 if (gid != null) {
                     download.setGid(gid);
@@ -572,8 +580,6 @@ public class DownloadManagerImpl implements DownloadManager {
                     LOGGER.warning("Dropping stale generation failure for download: " + download.getName());
                     return null;
                 }
-                // proxychains start failure: one-shot fallback to curl with
-                // the socks proxy for plain http(s)/ftp downloads
                 if (maybeFallbackProxychainsToCurl(download, e, startGeneration)) {
                     return null;
                 }
@@ -582,7 +588,8 @@ public class DownloadManagerImpl implements DownloadManager {
             });
 
         } catch (Exception e) {
-            if (download != null && maybeFallbackProxychainsToCurl(download, e, generation)) {
+            if (download != null && generation != 0
+                    && maybeFallbackProxychainsToCurl(download, e, generation)) {
                 return;
             }
             if (download != null) {
@@ -698,6 +705,12 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     private boolean tryBeginTerminal(String downloadId, long generation) {
         synchronized (generationLock) {
+            Long current = attemptGenerations.get(downloadId);
+            if (current == null || current.longValue() != generation) {
+                LOGGER.warning("Stale terminal event for download " + downloadId
+                        + " (generation " + generation + ") ignored");
+                return false;
+            }
             Long terminated = terminalGenerations.get(downloadId);
             if (terminated != null && terminated.longValue() == generation) {
                 LOGGER.warning("Duplicate terminal event for download " + downloadId
@@ -709,8 +722,89 @@ public class DownloadManagerImpl implements DownloadManager {
         }
     }
 
-    /** Download IDs already fallen back from proxychains to curl (one-shot). */
-    private final Set<String> proxychainsCurlFallback = ConcurrentHashMap.newKeySet();
+    /** Whether this generation has already reached any terminal outcome. */
+    private boolean isTerminalAttempt(String downloadId, long generation) {
+        synchronized (generationLock) {
+            Long terminated = terminalGenerations.get(downloadId);
+            return terminated != null && terminated.longValue() == generation;
+        }
+    }
+
+    /**
+     * Replaces a failed proxychains attempt with Curl exactly once for this
+     * generation, preserving the same SOCKS proxy. Curl is deliberately
+     * unavailable to torrent, magnet and Metalink inputs; the factory's
+     * read-only eligibility check enforces that boundary before this method
+     * consumes the failed generation.
+     *
+     * @return true when fallback was started, completed by another racing
+     *         error callback, or terminally consumed after an unexpected
+     *         preparation failure
+     */
+    private boolean maybeFallbackProxychainsToCurl(Download download, Throwable cause,
+            long generation) {
+        if (download == null || download.getType() != Download.Type.PROXYCHAINS
+                || !isCurrentAttempt(download.getId(), generation)) {
+            return false;
+        }
+
+        DownloadHandlerFactory factory = getHandlerFactory();
+        if (!factory.canPrepareCurlProxyFallback(download)) {
+            return false;
+        }
+
+        AtomicBoolean claimed = new AtomicBoolean(false);
+        proxychainsCurlFallbackGenerations.compute(download.getId(), (id, previous) -> {
+            if (previous == null || previous.longValue() != generation) {
+                claimed.set(true);
+                return generation;
+            }
+            return previous;
+        });
+        if (!claimed.get()) {
+            // A start-future callback and a handler error event can report
+            // the same proxychains failure. The winning callback owns the
+            // handoff; the duplicate must not mark the replacement ERROR.
+            return true;
+        }
+
+        if (!tryBeginTerminal(download.getId(), generation)) {
+            proxychainsCurlFallbackGenerations.remove(download.getId(), generation);
+            return false;
+        }
+
+        try {
+            if (!factory.prepareCurlProxyFallback(download)) {
+                String message = "Proxychains failed and the Curl fallback became unavailable: "
+                        + messageOf(cause);
+                download.setErrorMessage(message);
+                downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
+                cleanupDownloadResources(download.getId(), generation);
+                notifyDownloadError(download, message);
+                startNextQueuedDownload();
+                return true;
+            }
+
+            LOGGER.log(Level.WARNING, "Proxychains failed for " + download.getName()
+                    + "; falling back to Curl with the same SOCKS proxy", cause);
+            cleanupDownloadResources(download.getId(), generation);
+            download.setGid(null);
+            download.setErrorMessage(null);
+            downloadRepository.updateDownloadStatus(download, Download.Status.QUEUED);
+            startDownloadInternal(download);
+            return true;
+        } catch (RuntimeException fallbackFailure) {
+            String message = "Failed to prepare Curl fallback after proxychains error: "
+                    + messageOf(fallbackFailure);
+            download.setErrorMessage(message);
+            downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
+            cleanupDownloadResources(download.getId(), generation);
+            notifyDownloadError(download, message);
+            LOGGER.log(Level.SEVERE, message, fallbackFailure);
+            startNextQueuedDownload();
+            return true;
+        }
+    }
 
     /** Schedule gate: consulted before starting a download (null = allow all). */
     private volatile java.util.function.Predicate<String> downloadGate;
@@ -736,46 +830,6 @@ public class DownloadManagerImpl implements DownloadManager {
             LOGGER.log(Level.WARNING, "Schedule gate check failed; refusing start", e);
             return false;
         }
-    }
-
-    /**
-     * When a PROXYCHAINS download fails at start and the URL is plain
-     * http(s)/ftp work, retypes the download to CURL (curl carries the socks
-     * proxy natively via -x) and restarts it once. Torrents/magnets are
-     * excluded — only aria2 can perform those.
-     *
-     * @return true when the fallback was applied
-     */
-    private boolean maybeFallbackProxychainsToCurl(Download download, Throwable cause, long generation) {
-        if (download.getType() != Download.Type.PROXYCHAINS) {
-            return false;
-        }
-        URI uri = download.getUri();
-        String scheme = uri != null && uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
-        if (!scheme.equals("http") && !scheme.equals("https") && !scheme.equals("ftp")
-                && !scheme.equals("ftps")) {
-            return false;
-        }
-        if (!proxychainsCurlFallback.add(download.getId())) {
-            return false;
-        }
-        if (!getHandlerFactory().prepareCurlProxyFallback(download)) {
-            LOGGER.severe("Proxychains failed and no valid proxy-preserving curl fallback exists for "
-                    + download.getId() + "; refusing a direct retry");
-            return false;
-        }
-        LOGGER.log(Level.WARNING, "proxychains failed for " + download.getName()
-                + "; falling back to curl with socks proxy", cause);
-        if (generation != 0 && isCurrentAttempt(download.getId(), generation)) {
-            cleanupDownloadResources(download.getId(), generation);
-        } else {
-            releaseRunningSlot(download.getId());
-            activeHandlers.remove(download.getId());
-        }
-        download.setErrorMessage(null);
-        downloadRepository.updateDownloadStatus(download, Download.Status.QUEUED);
-        startDownloadInternal(download);
-        return true;
     }
 
     /**
@@ -1140,12 +1194,8 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public List<Download> getDownloadsByStatus(Download.Status status, int offset, int limit) {
-        // Cursor slicing for status queries too (see getDownloads)
-        List<Download> all = downloadRepository
-                .getDownloadsByStatus(status, 0, Integer.MAX_VALUE).getDownloads();
-        int fromIndex = Math.max(0, Math.min(offset, all.size()));
-        int toIndex = limit >= 0 ? Math.min(fromIndex + limit, all.size()) : all.size();
-        return new java.util.ArrayList<>(all.subList(fromIndex, toIndex));
+        return downloadRepository.getDownloadsByStatusByOffset(status, offset, limit)
+                .getDownloads();
     }
 
     @Override
@@ -1271,13 +1321,26 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public void applyGlobalSettingsToActiveDownloads() {
+        CompletableFuture.runAsync(this::applyGlobalSettingsToActiveDownloadsInternal,
+                executorManager.getGeneralExecutor()).exceptionally(error -> {
+                    LOGGER.log(Level.WARNING,
+                            "Failed to schedule global runtime settings update", error);
+                    return null;
+                });
+    }
+
+    private void applyGlobalSettingsToActiveDownloadsInternal() {
         try {
-            DownloadHandler handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
-            if (handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler) {
-                aria2Handler.applyGlobalRuntimeOptions();
-            }
             boolean proxyEnabled = getGlobalSettings().isGlobalProxyEnabled();
             String proxyAddress = getGlobalSettings().getGlobalProxyAddress();
+            boolean socksProxyEnabled = proxyEnabled
+                    && org.manager.download.handler.DownloadHandlerFactory
+                            .isSocksProxyAddress(proxyAddress);
+            DownloadHandler handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
+            if (!socksProxyEnabled
+                    && handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler) {
+                aria2Handler.applyGlobalRuntimeOptions();
+            }
             for (Map.Entry<String, DownloadHandler> entry : activeHandlers.entrySet()) {
                 Download download = downloadRepository.getDownload(entry.getKey());
                 if (download == null || download.getSettings() == null) {
@@ -1302,6 +1365,17 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
 
                 DownloadHandler active = entry.getValue();
+                if (changed && socksProxyEnabled && download.getType() == Download.Type.ARIA2) {
+                    restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
+                            "SOCKS proxychains route");
+                    continue;
+                }
+                if (changed && inherited && download.getType() == Download.Type.PROXYCHAINS
+                        && !socksProxyEnabled) {
+                    restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
+                            "native aria2 route");
+                    continue;
+                }
                 if (changed && !(active instanceof org.manager.download.handler.Aria2DownloadHandler)) {
                     active.changeSettings(download).exceptionally(error -> {
                         LOGGER.log(Level.SEVERE, "Failed to reroute active download "
@@ -1317,6 +1391,29 @@ public class DownloadManagerImpl implements DownloadManager {
             // Handler factory may not be initialized (e.g. tests); not fatal
             LOGGER.log(Level.WARNING, "Failed to apply global settings to running downloads", e);
         }
+    }
+
+    /**
+     * Stops a running process before changing the engine that owns its route.
+     * A failed pause is surfaced and never followed by a start on the new
+     * route; this keeps privacy changes fail-closed.
+     */
+    private void restartActiveDownloadForProxyRoute(Download download, Download.Type targetType,
+            String routeDescription) {
+        pauseDownload(download)
+                .thenCompose(ignored -> {
+                    download.setType(targetType);
+                    download.setGid(null);
+                    return startDownload(download);
+                })
+                .exceptionally(error -> {
+                    LOGGER.log(Level.SEVERE, "Failed to switch " + download.getId()
+                            + " to " + routeDescription, error);
+                    download.setErrorMessage("Failed to switch to " + routeDescription + ": "
+                            + messageOf(error));
+                    downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
+                    return null;
+                });
     }
 
     @Override
@@ -1861,15 +1958,6 @@ public class DownloadManagerImpl implements DownloadManager {
      * Automatically resumes downloads that were active before application exit.
      */
     private void autoResumeActiveDownloads() {
-        if (activeDownloadsBeforeExit.isEmpty()) {
-            return;
-        }
-        if (!getGlobalSettings().getBooleanProperty("ui.startAutomatically", true)) {
-            LOGGER.info("Automatic startup resume is disabled; recovered downloads remain paused");
-            activeDownloadsBeforeExit.clear();
-            return;
-        }
-
         CompletableFuture.runAsync(() -> {
             try {
                 // Gate on actual handler readiness instead of a fixed 2s
@@ -1884,17 +1972,22 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
 
                 int resumedCount = 0;
-                for (String downloadId : activeDownloadsBeforeExit) {
-                    try {
-                        Download download = getDownload(downloadId);
-                        if (download != null && download.getStatus() == Download.Status.PAUSED) {
-                            LOGGER.info("Auto-resuming download: " + download.getName());
-                            resumeDownload(download).join();
-                            resumedCount++;
+                if (getGlobalSettings().getBooleanProperty("ui.startAutomatically", true)) {
+                    for (String downloadId : activeDownloadsBeforeExit) {
+                        try {
+                            Download download = getDownload(downloadId);
+                            if (download != null && download.getStatus() == Download.Status.PAUSED) {
+                                LOGGER.info("Auto-resuming download: " + download.getName());
+                                resumeDownload(download).join();
+                                resumedCount++;
+                            }
+                        } catch (Exception e) {
+                            LOGGER.log(Level.WARNING, "Failed to auto-resume download: "
+                                    + downloadId, e);
                         }
-                    } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to auto-resume download: " + downloadId, e);
                     }
+                } else if (!activeDownloadsBeforeExit.isEmpty()) {
+                    LOGGER.info("Automatic startup resume is disabled; recovered downloads remain paused");
                 }
 
                 // Clear the set after attempting resume
@@ -1905,6 +1998,11 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to auto-resume downloads", e);
+            } finally {
+                // QUEUED rows represent prior explicit acceptance. They are
+                // not part of active_before_exit, so without this startup
+                // pump they could remain stranded forever.
+                startNextQueuedDownload();
             }
         }, executorManager.getGeneralExecutor());
     }
@@ -2119,6 +2217,7 @@ public class DownloadManagerImpl implements DownloadManager {
         @Override
         public void onDownloadError(Download d, String errorMessage) {
             LOGGER.info("Download error: " + d.getName() + " - " + errorMessage);
+            long errorGeneration = d.getAttemptGeneration();
 
             // A retry wrapper owns intermediate retryable failures: it
             // schedules the retry and the manager defers ALL terminal
@@ -2138,7 +2237,18 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
             }
 
-            if (!tryBeginTerminal(d.getId(), d.getAttemptGeneration())) {
+            if (!isCurrentAttempt(d.getId(), errorGeneration)) {
+                LOGGER.warning("Stale generation error for download " + d.getName()
+                        + " dropped after handler interception");
+                return;
+            }
+
+            if (maybeFallbackProxychainsToCurl(d, new RuntimeException(errorMessage),
+                    errorGeneration)) {
+                return;
+            }
+
+            if (!tryBeginTerminal(d.getId(), errorGeneration)) {
                 return;
             }
 
@@ -2147,7 +2257,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Clean up resources for this download (releases the running
             // slot exactly once; duplicate notifications are no-ops)
-            cleanupDownloadResources(d.getId(), d.getAttemptGeneration());
+            cleanupDownloadResources(d.getId(), errorGeneration);
 
             notifyDownloadError(d, errorMessage);
 

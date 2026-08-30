@@ -286,6 +286,60 @@ class YtDlpClientTest {
         assertCommandValue(command, "--user-agent", "odm-yt");
         assertCommandValue(command, "--referer", "https://referrer.test/");
         assertCommandValue(command, "--add-header", "Cookie: session=abc");
+        assertCommandValue(command, "--print", "after_move:|odmfile|%(filepath)s");
+    }
+
+    @Test
+    @DisplayName("Machine output and already-downloaded lines yield an output path")
+    void extractsReliableOutputPaths() {
+        assertEquals("/tmp/final video.mkv",
+                client.extractFilename("|odmfile|/tmp/final video.mkv"));
+        assertEquals("existing.mp4", client.extractFilename(
+                "[download] existing.mp4 has already been downloaded"));
+    }
+
+    @Test
+    @DisplayName("Exit zero without an output path is a failed download")
+    void successfulProcessWithoutOutputPathFailsLogically() throws Exception {
+        YtDlpClient silentClient = new YtDlpClient("/bin/true");
+        try {
+            CompletableFuture<String> result = silentClient.download(
+                    "https://example.test/video", new YtDlpSettings(), tempOutputDir, null);
+
+            ExecutionException failure = assertThrows(ExecutionException.class,
+                    () -> result.get(10, TimeUnit.SECONDS));
+            assertTrue(failure.getCause().getMessage().contains("without reporting an output file"));
+        } finally {
+            silentClient.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("Successful fast download publishes terminal progress before completion")
+    void successfulProcessWithoutProgressLinesPublishesTerminalProgress() throws Exception {
+        Path fakeYtDlp = tempOutputDir.resolve("fake-ytdlp");
+        Files.writeString(fakeYtDlp, "#!/bin/sh\n"
+                + "printf 'payload' > \"$PWD/final.mp4\"\n"
+                + "printf '|odmfile|%s/final.mp4\\n' \"$PWD\"\n");
+        assertTrue(fakeYtDlp.toFile().setExecutable(true));
+
+        YtDlpClient fastClient = new YtDlpClient(fakeYtDlp.toString());
+        YtDlpClient.ProgressCallback callback = mock(YtDlpClient.ProgressCallback.class);
+        try {
+            String result = fastClient.download(
+                    "https://example.test/video", new YtDlpSettings(), tempOutputDir, callback)
+                    .get(10, TimeUnit.SECONDS);
+
+            assertEquals(tempOutputDir.resolve("final.mp4").toString(), result);
+            var ordered = inOrder(callback);
+            ordered.verify(callback).onStart(result);
+            ordered.verify(callback).onProgress(100.0f, 7L, 7L, 0.0f);
+            ordered.verify(callback).onComplete(result);
+        } finally {
+            fastClient.shutdown();
+            Files.deleteIfExists(tempOutputDir.resolve("final.mp4"));
+            Files.deleteIfExists(fakeYtDlp);
+        }
     }
 
     private static void assertCommandValue(List<String> command, String flag, String expected) {

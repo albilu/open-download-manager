@@ -49,7 +49,8 @@ final class DownloadListPresenter {
      * spinner stay widget concerns of the window.
      */
     record RefreshSummary(int totalCount, long downBytesPerSec, long upBytesPerSec,
-            int totalSeeders, boolean anyActive, long totalBytes, long doneBytes) {
+            int totalSeeders, boolean anyActive, long totalBytes, long doneBytes,
+            boolean structureChanged) {
     }
 
     private final ListStore statusStore;
@@ -64,7 +65,8 @@ final class DownloadListPresenter {
     /** Last filter-store counts; filter stores rebuild only when these change. */
     private int[] lastStatusCounts = new int[0];
     private int[] lastCategoryCounts = new int[0];
-    private int lastTotalCount = -1;
+    private int lastStatusTotalCount = -1;
+    private int lastCategoryTotalCount = -1;
 
     private String statusFilter = "All Status";
     /** Selected category filter (extension-based), "All" = no restriction. */
@@ -154,6 +156,14 @@ final class DownloadListPresenter {
      * @return aggregate totals over ALL downloads (not just filtered rows)
      */
     RefreshSummary refresh(List<Download> downloads) {
+        return refresh(downloads, downloads.size(), null);
+    }
+
+    /** Refreshes a bounded visible window while using repository-wide status
+     * counts when supplied. This keeps sidebar totals exact without loading
+     * every historical Download object on every progress tick. */
+    RefreshSummary refresh(List<Download> downloads, int totalCount,
+            java.util.Map<Download.Status, Integer> repositoryStatusCounts) {
         long totalBytes = 0;
         long doneBytes = 0;
 
@@ -179,25 +189,30 @@ final class DownloadListPresenter {
                 }
             }
         }
+        display = orderQueuedRows(display);
 
-        int[] counts = computeCounts(downloads);
+        int[] counts = repositoryStatusCounts == null
+                ? computeCounts(downloads)
+                : computeCounts(repositoryStatusCounts);
         int[] categoryCounts = computeCategoryCounts(downloads);
         if (!java.util.Arrays.equals(counts, lastStatusCounts)
-                || downloads.size() != lastTotalCount) {
+                || totalCount != lastStatusTotalCount) {
             lastStatusCounts = counts;
-            lastTotalCount = downloads.size();
-            rebuildFilterStore(statusStore, STATUS_FILTERS, counts, downloads.size(), statusFilter);
+            lastStatusTotalCount = totalCount;
+            rebuildFilterStore(statusStore, STATUS_FILTERS, counts, totalCount, statusFilter);
         }
         if (!java.util.Arrays.equals(categoryCounts, lastCategoryCounts)
-                || downloads.size() != lastTotalCount) {
+                || downloads.size() != lastCategoryTotalCount) {
             lastCategoryCounts = categoryCounts;
+            lastCategoryTotalCount = downloads.size();
             rebuildFilterStore(categoryStore, CATEGORIES, categoryCounts, downloads.size(),
                     categoryFilter);
         }
 
         // In-place row updates when the visible id sequence is unchanged;
         // full rebuild only when the structure changed
-        if (rowStructureMatches(rowSnapshot, display)) {
+        boolean structureChanged = !rowStructureMatches(rowSnapshot, display);
+        if (!structureChanged) {
             TreeIter iter = new TreeIter();
             if (downloadsStore.getIterFirst(iter)) {
                 int row = 0;
@@ -226,8 +241,31 @@ final class DownloadListPresenter {
         ListStoreCells.setInt(globalProgressStore, progressIter, 0,
                 totalBytes > 0 ? (int) (doneBytes * 100 / totalBytes) : 0);
 
-        return new RefreshSummary(downloads.size(), (long) totalDownSpeed, (long) totalUpSpeed,
-                totalSeeders, anyActive, totalBytes, doneBytes);
+        return new RefreshSummary(totalCount, (long) totalDownSpeed, (long) totalUpSpeed,
+                totalSeeders, anyActive, totalBytes, doneBytes, structureChanged);
+    }
+
+    /**
+     * Reorders queued rows by the manager's queue position while leaving
+     * non-queued history in its repository order and slots. This makes the
+     * Move Up/Down commands visible without redesigning the mixed list.
+     */
+    static List<Download> orderQueuedRows(List<Download> input) {
+        List<Download> ordered = new ArrayList<>(input);
+        List<Download> queued = input.stream()
+                .filter(download -> download.getStatus() == Download.Status.QUEUED)
+                .sorted(java.util.Comparator.comparingInt(Download::getQueuePosition)
+                        .thenComparing(Download::getCreatedAt,
+                                java.util.Comparator.nullsLast(
+                                        java.util.Comparator.naturalOrder())))
+                .toList();
+        int queuedIndex = 0;
+        for (int row = 0; row < ordered.size(); row++) {
+            if (ordered.get(row).getStatus() == Download.Status.QUEUED) {
+                ordered.set(row, queued.get(queuedIndex++));
+            }
+        }
+        return ordered;
     }
 
     /** Whether the store's current row sequence matches the new display list. */
@@ -290,6 +328,22 @@ final class DownloadListPresenter {
         return new int[]{active, queuing, finished, deleted};
     }
 
+    static int[] computeCounts(java.util.Map<Download.Status, Integer> counts) {
+        java.util.function.ToIntFunction<Download.Status> count =
+                status -> counts.getOrDefault(status, 0);
+        return new int[]{
+            count.applyAsInt(Download.Status.STARTING)
+                    + count.applyAsInt(Download.Status.CONNECTING)
+                    + count.applyAsInt(Download.Status.DOWNLOADING),
+            count.applyAsInt(Download.Status.CREATED)
+                    + count.applyAsInt(Download.Status.QUEUED)
+                    + count.applyAsInt(Download.Status.PAUSED),
+            count.applyAsInt(Download.Status.COMPLETED),
+            count.applyAsInt(Download.Status.ERROR)
+                    + count.applyAsInt(Download.Status.CANCELED)
+        };
+    }
+
     /** Counts per category (extension-based), index-aligned with CATEGORIES. */
     static int[] computeCategoryCounts(List<Download> downloads) {
         int[] result = new int[CATEGORIES.length];
@@ -341,7 +395,11 @@ final class DownloadListPresenter {
         ListStoreCells.setString(store, iter, COL_UP_SPEED,
                 download.getUploadSpeed() > 0
                         ? DownloadFormats.size((long) download.getUploadSpeed()) + "/s" : "—");
-        ListStoreCells.setString(store, iter, COL_RETRY, "—");
+        ListStoreCells.setString(store, iter, COL_RETRY,
+                download.getStatus() == Download.Status.ERROR
+                        && download.getErrorMessage() != null
+                        && !download.getErrorMessage().isBlank()
+                                ? download.getErrorMessage() : "—");
         ListStoreCells.setString(store, iter, COL_START,
                 download.getStartedAt() != null
                         ? DownloadFormats.DATE_FORMAT.format(download.getStartedAt())

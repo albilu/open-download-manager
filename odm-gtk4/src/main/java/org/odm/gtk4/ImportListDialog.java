@@ -67,6 +67,32 @@ public class ImportListDialog {
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
 
         AccessibilitySupport.label(extensionFilterCombo, "Imported URL extension filter");
+        AccessibilitySupport.label(Widgets.require(builder, "url_treeview",
+                org.gnome.gtk.TreeView.class), "URLs to import");
+        AccessibilitySupport.label(Widgets.require(builder, "folder_destination", Button.class),
+                "Import destination folder");
+        AccessibilitySupport.label(Widgets.require(builder, "max_connections_spin", SpinButton.class),
+                "Maximum connections");
+        AccessibilitySupport.label(Widgets.require(builder, "retry_limit_spin", SpinButton.class),
+                "Retry limit");
+        AccessibilitySupport.label(Widgets.require(builder, "max_download_speed_spin", SpinButton.class),
+                "Maximum download speed in KB per second");
+        AccessibilitySupport.label(Widgets.require(builder, "max_upload_speed_spin", SpinButton.class),
+                "Maximum upload speed in KB per second");
+        AccessibilitySupport.label(Widgets.require(builder, "retry_after", SpinButton.class),
+                "Seconds before retry");
+        AccessibilitySupport.label(Widgets.require(builder, "referrer", Entry.class), "HTTP referrer");
+        AccessibilitySupport.label(Widgets.require(builder, "cookie", Entry.class), "HTTP cookie header");
+        AccessibilitySupport.label(Widgets.require(builder, "user_agent", Entry.class), "HTTP user agent");
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_type_combo", DropDown.class), "Proxy type");
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_host_entry", Entry.class), "Proxy host");
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_port_spin", SpinButton.class), "Proxy port");
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_username_entry", Entry.class),
+                "Proxy username");
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_password_entry", Entry.class),
+                "Proxy password");
+        AccessibilitySupport.label(Widgets.require(builder, "tor_switch", Switch.class),
+                "Route imported downloads through Tor");
 
         dialog.setTransientFor(parent);
 

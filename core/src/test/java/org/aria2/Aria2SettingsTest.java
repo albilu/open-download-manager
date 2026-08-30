@@ -287,13 +287,13 @@ class Aria2SettingsTest {
     @Test
     @DisplayName("Should include additional options in RPC options")
     void shouldIncludeAdditionalOptionsInRpcOptions() {
-        settings.setOption("custom-option", "custom-value");
-        settings.setOption("another-option", "another-value");
+        settings.setOption("split", "8");
+        settings.setOption("header", "X-Test: allowed");
 
         Map<String, Object> options = settings.toRpcOptions();
 
-        assertEquals("custom-value", options.get("custom-option"));
-        assertEquals("another-value", options.get("another-option"));
+        assertEquals("8", options.get("split"));
+        assertEquals("X-Test: allowed", options.get("header"));
     }
 
     @Test
@@ -417,6 +417,20 @@ class Aria2SettingsTest {
         Map<String, Object> options = settings.toRpcOptions();
 
         assertFalse(options.containsKey("all-proxy"));
+    }
+
+    @Test
+    @DisplayName("Internal and untrusted option keys never reach aria2 RPC")
+    void filtersAdditionalRpcOptions() {
+        settings.setOption("header", "Cookie: session=1");
+        settings.setOption("_current_proxy_host", "proxy.example.test");
+        settings.setOption("on-download-complete", "/tmp/execute-me");
+
+        Map<String, Object> options = settings.toRpcOptions();
+
+        assertEquals("Cookie: session=1", options.get("header"));
+        assertFalse(options.containsKey("_current_proxy_host"));
+        assertFalse(options.containsKey("on-download-complete"));
     }
 
     @Test

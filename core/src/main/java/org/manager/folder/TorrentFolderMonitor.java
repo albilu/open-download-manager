@@ -192,15 +192,11 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
             // Create torrent download
             Download torrentDownload = downloadManager.createTorrentDownload(filePath, downloadDestination);
 
-            // Add to download queue
-            downloadManager.queueDownload(torrentDownload)
-                    .thenRun(() -> {
-                        LOGGER.info("Successfully added torrent to download queue: " + filePath);
-                    })
-                    .exceptionally(throwable -> {
-                        LOGGER.log(Level.SEVERE, "Failed to add torrent to download queue: " + filePath, throwable);
-                        return null;
-                    });
+            // Listener return is the folder service's acceptance boundary.
+            // Wait for queue acceptance so a failed future prevents source
+            // disposition and leaves the staged descriptor retryable.
+            downloadManager.queueDownload(torrentDownload).join();
+            LOGGER.info("Successfully added torrent to download queue: " + filePath);
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error processing torrent file: " + filePath, e);

@@ -84,6 +84,8 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     /** The future returned by startDownload; at most one terminal outcome. */
     private final AtomicReference<CompletableFuture<String>> operation = new AtomicReference<>();
     private final AtomicReference<ScheduledFuture<?>> pendingRetry = new AtomicReference<>();
+    /** Exact pool object currently assigned, including credentials and health state. */
+    private final AtomicReference<Proxy> currentProxy = new AtomicReference<>();
     /** Backoff memory across a pause: what to re-schedule on resume. */
     private volatile int pendingRetryAttempt = -1;
     private volatile Proxy pendingRetryProxy;
@@ -202,9 +204,9 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
                             if (throwable != null) {
                                 handleFailure(download, throwable.getMessage());
                             } else {
-                                Proxy currentProxy = getCurrentProxy(download);
-                                if (currentProxy != null) {
-                                    proxyManager.recordSuccess(currentProxy, 0); // no response time here
+                                Proxy assignedProxy = getCurrentProxy();
+                                if (assignedProxy != null) {
+                                    proxyManager.recordSuccess(assignedProxy, 0); // no response time here
                                 }
                                 CompletableFuture<String> future = operation.get();
                                 if (future != null && !future.isDone()) {
@@ -240,10 +242,10 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             return state.get() == State.WAITING_RETRY;
         }
 
-        Proxy currentProxy = getCurrentProxy(download);
-        if (currentProxy != null) {
-            proxyManager.recordFailure(currentProxy, errorMessage);
-            proxyManager.releaseProxy(currentProxy, download.getId());
+        Proxy failedProxy = currentProxy.getAndSet(null);
+        if (failedProxy != null) {
+            proxyManager.recordFailure(failedProxy, errorMessage);
+            proxyManager.releaseProxy(failedProxy, download.getId());
         }
 
         // The retry budget is global and monotonic: never reset the
@@ -258,7 +260,7 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
         int nextAttempt = failedAttempt + 1;
         LOGGER.info("Retrying download " + download.getId() + " (attempt " + (nextAttempt + 1)
                 + "/" + (retrySettings.getMaxRetries() + 1) + ") due to: " + errorMessage);
-        scheduleRetry(download, nextAttempt, currentProxy);
+        scheduleRetry(download, nextAttempt, failedProxy);
         return state.get() == State.WAITING_RETRY;
     }
 
@@ -388,11 +390,11 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             if (!tryFinalize(State.TERMINAL)) {
                 return;
             }
-            Proxy currentProxy = getCurrentProxy(download);
-            if (currentProxy != null) {
+            Proxy assignedProxy = currentProxy.getAndSet(null);
+            if (assignedProxy != null) {
                 long responseTime = Instant.now().toEpochMilli() - attemptStart.toEpochMilli();
-                proxyManager.recordSuccess(currentProxy, responseTime);
-                proxyManager.releaseProxy(currentProxy, download.getId());
+                proxyManager.recordSuccess(assignedProxy, responseTime);
+                proxyManager.releaseProxy(assignedProxy, download.getId());
             }
             CompletableFuture<String> future = operation.get();
             if (future != null && !future.isDone()) {
@@ -541,9 +543,9 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     }
 
     private void releaseOwnedProxy(Download download) {
-        Proxy currentProxy = getCurrentProxy(download);
-        if (currentProxy != null) {
-            proxyManager.releaseProxy(currentProxy, download.getId());
+        Proxy assignedProxy = currentProxy.getAndSet(null);
+        if (assignedProxy != null) {
+            proxyManager.releaseProxy(assignedProxy, download.getId());
         }
     }
 
@@ -621,38 +623,20 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     private void configureProxyForDownload(Download download, Proxy proxy) {
         download.setUseProxy(true);
         download.setProxyAddress(proxy.toUrl());
-
-        // Store proxy reference in download options for later retrieval
-        download.getSettings().setOption("_current_proxy_host", proxy.getHost());
-        download.getSettings().setOption("_current_proxy_port", String.valueOf(proxy.getPort()));
-        download.getSettings().setOption("_current_proxy_type", proxy.getType().name());
+        currentProxy.set(proxy);
     }
 
     /**
      * Gets the current proxy being used by a download.
      */
-    private Proxy getCurrentProxy(Download download) {
-        try {
-            String host = download.getSettings().getOption("_current_proxy_host");
-            String portStr = download.getSettings().getOption("_current_proxy_port");
-            String typeStr = download.getSettings().getOption("_current_proxy_type");
-
-            if (host != null && portStr != null && typeStr != null) {
-                int port = Integer.parseInt(portStr);
-                Proxy.Type type = Proxy.Type.valueOf(typeStr);
-                return new Proxy(host, port, type);
-            }
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to retrieve current proxy for download " + download.getId(), e);
-        }
-        return null;
+    private Proxy getCurrentProxy() {
+        return currentProxy.get();
     }
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-        // Settings changes are forwarded to the delegate; the rotation-specific
-        // state (current proxy) lives in the download's settings options and is
-        // re-applied per attempt, so nothing extra is needed here.
+        // Rotation bookkeeping remains wrapper-local; only user-facing
+        // settings are forwarded to the native engine.
         return delegate.changeSettings(download);
     }
 }

@@ -43,7 +43,18 @@ final class AccessibilitySupport {
             // visual status working when a distribution provides older GTK.
             statusLabel.announce(message, priority);
         } catch (Throwable unavailableOnOlderGtk) {
-            // Optional compatibility fallback.
+            // GTK < 4.14 has no announce API. Updating an explicit
+            // accessible description still emits an accessibility-property
+            // change; status labels in the UI also carry the STATUS role.
+            Value value = new Value().init(Types.STRING);
+            try {
+                value.setString(message);
+                statusLabel.updatePropertyValue(
+                        new AccessibleProperty[] {AccessibleProperty.DESCRIPTION},
+                        new Value[] {value});
+            } finally {
+                value.unset();
+            }
         }
     }
 }

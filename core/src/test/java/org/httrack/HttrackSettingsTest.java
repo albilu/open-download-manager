@@ -476,6 +476,20 @@ class HttrackSettingsTest {
     }
 
     @Test
+    @DisplayName("User filters cannot become HTTrack command options")
+    void patternsStayInFilterGrammar() {
+        settings.setUrl("https://example.test")
+                .addExcludePattern("Vtouch /tmp/owned")
+                .addIncludePattern("-O/tmp/redirected");
+
+        List<String> commandLine = settings.buildCommandLine();
+
+        assertTrue(commandLine.contains("-*Vtouch /tmp/owned"));
+        assertTrue(commandLine.contains("+*O/tmp/redirected"));
+        assertFalse(commandLine.stream().anyMatch(arg -> arg.startsWith("-V")));
+    }
+
+    @Test
     @DisplayName("User agent validation should handle null values")
     void testUserAgentValidation() {
         // Test null user agent

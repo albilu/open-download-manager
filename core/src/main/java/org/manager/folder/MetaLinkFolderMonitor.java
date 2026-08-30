@@ -200,15 +200,11 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
             java.net.URI metaLinkUri = filePath.toUri();
             Download metaLinkDownload = downloadManager.createMetaLinkDownload(metaLinkUri, downloadDestination);
 
-            // Add to download queue
-            downloadManager.queueDownload(metaLinkDownload)
-                    .thenRun(() -> {
-                        LOGGER.info("Successfully added Metalink to download queue: " + filePath);
-                    })
-                    .exceptionally(throwable -> {
-                        LOGGER.log(Level.SEVERE, "Failed to add Metalink to download queue: " + filePath, throwable);
-                        return null;
-                    });
+            // Listener return is the folder service's acceptance boundary.
+            // A failed queue future must propagate before the descriptor is
+            // marked dispatched or the source is moved/deleted.
+            downloadManager.queueDownload(metaLinkDownload).join();
+            LOGGER.info("Successfully added Metalink to download queue: " + filePath);
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error processing Metalink file: " + filePath, e);

@@ -41,8 +41,8 @@ cp -a %{stage}/. %{buildroot}/
 /opt/open-download-manager/runtime/*
 /usr/bin/open-download-manager
 /usr/share/applications/open-download-manager.desktop
-/usr/share/icons/hicolor/128x128/apps/open-download-manager.png
-/usr/share/icons/hicolor/512x512/apps/open-download-manager.png
+/usr/share/icons/hicolor/scalable/apps/open-download-manager.svg
+/usr/share/icons/hicolor/1024x1024/apps/open-download-manager.png
 %doc /usr/share/doc/open-download-manager/copyright
 %license /usr/share/licenses/open-download-manager/LICENSE
 

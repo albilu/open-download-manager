@@ -5,16 +5,22 @@
 # image (or any Linux with JDK 25, maven, dpkg-deb, rpmbuild, makepkg).
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+PROJECT_VERSION="$(mvn -q -N help:evaluate -Dexpression=project.version -DforceStdout)"
+VERSION="${1:-$PROJECT_VERSION}"
 if [[ ! "$VERSION" =~ ^[0-9]+([.][0-9]+){1,3}$ ]]; then
     echo "Invalid package version: expected numeric dotted version" >&2
     exit 2
 fi
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ "$VERSION" != "$PROJECT_VERSION" ]]; then
+    echo "Package version $VERSION must match Maven version $PROJECT_VERSION" >&2
+    exit 2
+fi
 STAGE="$ROOT/packaging/stage"
 RUNTIME="$STAGE/opt/open-download-manager/runtime"
 APP="$STAGE/opt/open-download-manager"
-JAR="odm-gtk4/target/odm-gtk4-0.1.0-SNAPSHOT-jar-with-dependencies.jar"
+JAR="$ROOT/odm-gtk4/target/odm-gtk4-${PROJECT_VERSION}-jar-with-dependencies.jar"
 
 log() { echo "[odm-package] $*"; }
 
@@ -23,7 +29,6 @@ log() { echo "[odm-package] $*"; }
 JDK_MODULES="java.base,java.desktop,java.sql,java.logging,java.net.http,jdk.httpserver,jdk.crypto.ec,java.naming,java.management"
 
 log "Building shaded jar..."
-cd "$ROOT"
 mvn -q -pl odm-gtk4 -am package -DskipTests
 
 log "Assembling application tree under $STAGE..."
@@ -32,8 +37,8 @@ mkdir -p "$APP" "$RUNTIME" "$STAGE/usr/bin" \
     "$STAGE/usr/share/applications" \
     "$STAGE/usr/share/doc/open-download-manager" \
     "$STAGE/usr/share/licenses/open-download-manager" \
-    "$STAGE/usr/share/icons/hicolor/128x128/apps" \
-    "$STAGE/usr/share/icons/hicolor/512x512/apps"
+    "$STAGE/usr/share/icons/hicolor/scalable/apps" \
+    "$STAGE/usr/share/icons/hicolor/1024x1024/apps"
 
 cp "$JAR" "$APP/odm.jar"
 cp LICENSE "$STAGE/usr/share/licenses/open-download-manager/LICENSE"
@@ -68,10 +73,10 @@ EOF
 chmod 755 "$STAGE/usr/bin/open-download-manager"
 
 cp packaging/resources/open-download-manager.desktop "$STAGE/usr/share/applications/"
-cp packaging/resources/icons/open-download-manager-128.png \
-    "$STAGE/usr/share/icons/hicolor/128x128/apps/open-download-manager.png"
+cp odm-gtk4/src/main/resources/images/logo-128.svg \
+    "$STAGE/usr/share/icons/hicolor/scalable/apps/open-download-manager.svg"
 cp packaging/resources/icons/open-download-manager.png \
-    "$STAGE/usr/share/icons/hicolor/512x512/apps/open-download-manager.png"
+    "$STAGE/usr/share/icons/hicolor/1024x1024/apps/open-download-manager.png"
 
 log "Stage complete:"
 du -sh "$STAGE" "$RUNTIME"

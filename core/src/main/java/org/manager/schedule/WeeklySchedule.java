@@ -1,5 +1,6 @@
 package org.manager.schedule;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.DayOfWeek;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -396,12 +397,24 @@ public class WeeklySchedule {
      *
      * @return A defensive copy of the schedule
      */
+    @JsonProperty("scheduleMap")
     public Map<DayOfWeek, List<TimeRange>> getScheduleMap() {
         Map<DayOfWeek, List<TimeRange>> copy = new EnumMap<>(DayOfWeek.class);
         for (Map.Entry<DayOfWeek, List<TimeRange>> entry : schedule.entrySet()) {
             copy.put(entry.getKey(), new ArrayList<>(entry.getValue()));
         }
         return copy;
+    }
+
+    /** Restores the complete day/range map from persisted JSON. Missing days
+     * are intentionally inactive instead of inheriting stale constructor
+     * defaults. */
+    @JsonProperty("scheduleMap")
+    public void setScheduleMap(Map<DayOfWeek, List<TimeRange>> persisted) {
+        for (DayOfWeek day : DayOfWeek.values()) {
+            List<TimeRange> ranges = persisted != null ? persisted.get(day) : null;
+            schedule.put(day, ranges == null ? new ArrayList<>() : new ArrayList<>(ranges));
+        }
     }
 
     /**

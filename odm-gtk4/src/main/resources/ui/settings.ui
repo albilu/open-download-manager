@@ -376,7 +376,7 @@
             <property name="margin-end">12</property>
             <property name="margin-top">8</property>
             <property name="margin-bottom">12</property>
-            <child><object class="GtkLabel" id="settings_status_label"><property name="hexpand">true</property><property name="xalign">0</property></object></child>
+            <child><object class="GtkLabel" id="settings_status_label"><property name="accessible-role">status</property><property name="hexpand">true</property><property name="xalign">0</property></object></child>
             <child><object class="GtkButton" id="settings_cancel_button"><property name="label">_Cancel</property><property name="use-underline">true</property></object></child>
             <child><object class="GtkButton" id="settings_reset_button"><property name="label">_Reset</property><property name="use-underline">true</property></object></child>
             <child><object class="GtkButton" id="settings_apply_button"><property name="label">_Apply</property><property name="use-underline">true</property></object></child>

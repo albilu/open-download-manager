@@ -42,6 +42,13 @@ public class SettingsDialog {
     private final java.util.function.Consumer<Boolean> torPreferenceHandler;
     private final GtkBuilder builder;
     private final Label statusLabel;
+    private final java.util.concurrent.atomic.AtomicBoolean saveInProgress =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    private record SettingsApplication(GlobalSettings settings,
+            boolean previousStartAtLogin, boolean requestedStartAtLogin,
+            boolean schedulingEnabled, boolean[][] hourGrid, boolean torEnabled) {
+    }
 
     /** 7x24 toggle buttons of the scheduler grid (row 0 = Monday). */
     private final org.gnome.gtk.ToggleButton[][] schedulerToggles = new org.gnome.gtk.ToggleButton[7][24];
@@ -92,11 +99,10 @@ public class SettingsDialog {
 
         Widgets.require(builder, "settings_cancel_button", Button.class).onClicked(dialog::close);
         Widgets.require(builder, "settings_reset_button", Button.class).onClicked(this::load);
-        Widgets.require(builder, "settings_apply_button", Button.class).onClicked(this::onApply);
-        Widgets.require(builder, "settings_ok_button", Button.class).onClicked(() -> {
-            onApply();
-            dialog.close();
-        });
+        Widgets.require(builder, "settings_apply_button", Button.class)
+                .onClicked(() -> onApply(false));
+        Widgets.require(builder, "settings_ok_button", Button.class)
+                .onClicked(() -> onApply(true));
     }
 
     /**
@@ -369,14 +375,44 @@ public class SettingsDialog {
         entry("axel_path_entry").setText(s.getProperty("tools.axelPath", ""));
     }
 
-    private void onApply() {
-        applySettings();
+    private void onApply(boolean closeAfterSave) {
+        if (!saveInProgress.compareAndSet(false, true)) {
+            return;
+        }
+        SettingsApplication application = collectSettings();
+        setSaveButtonsSensitive(false);
+        AccessibilitySupport.status(statusLabel, "Saving settings…");
+        java.util.concurrent.CompletableFuture
+                .supplyAsync(() -> persistSettings(application),
+                        org.manager.util.ExecutorServiceManager.getInstance().getIoExecutor())
+                .whenComplete((saved, error) -> UiThread.marshal(() -> {
+                    saveInProgress.set(false);
+                    setSaveButtonsSensitive(true);
+                    boolean succeeded = error == null && Boolean.TRUE.equals(saved);
+                    applyTorPreference(application);
+                    reportSaveOutcome(succeeded);
+                    if (succeeded && closeAfterSave) {
+                        dialog.close();
+                    }
+                }));
+    }
+
+    private void setSaveButtonsSensitive(boolean sensitive) {
+        Widgets.require(builder, "settings_apply_button", Button.class).setSensitive(sensitive);
+        Widgets.require(builder, "settings_ok_button", Button.class).setSensitive(sensitive);
     }
 
     /** Applies every setting and persists them, updating the status label
      * with the actual save outcome. Package-private for presenter tests. */
     void applySettings() {
-        GlobalSettings s = downloadManager.getGlobalSettings();
+        SettingsApplication application = collectSettings();
+        boolean saved = persistSettings(application);
+        applyTorPreference(application);
+        reportSaveOutcome(saved);
+    }
+
+    private SettingsApplication collectSettings() {
+        GlobalSettings s = downloadManager.getGlobalSettings().copy();
         boolean previousStartAtLogin = s.getBooleanProperty("ui.startAtLogin", false);
         // tor proxy default
         s.setProperty("tor.enabled", String.valueOf(torSwitchGet()));
@@ -484,36 +520,54 @@ public class SettingsDialog {
                 effectiveSchedulingEnabled
                         ? org.manager.schedule.WeeklySchedule.hourGridToString(hourGrid)
                         : "");
-        applySchedulerRuntime(effectiveSchedulingEnabled, hourGrid);
         s.setProxychainsPath(entry("proxychains_path_entry").getText().trim());
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());
 
+        return new SettingsApplication(s, previousStartAtLogin,
+                check("startup_check").getActive(), effectiveSchedulingEnabled,
+                hourGrid, torEnabled);
+    }
+
+    /** Performs filesystem and core/service work away from the GTK thread. */
+    private boolean persistSettings(SettingsApplication application) {
+        GlobalSettings s = application.settings();
+        applySchedulerRuntime(application.schedulingEnabled(), application.hourGrid());
         boolean autostartApplied = true;
         try {
-            AutostartManager.setEnabled(check("startup_check").getActive());
+            AutostartManager.setEnabled(application.requestedStartAtLogin());
         } catch (java.io.IOException e) {
             autostartApplied = false;
             // Keep persisted settings consistent with the desktop entry that
             // is still on disk when the external operation fails.
-            s.setProperty("ui.startAtLogin", String.valueOf(previousStartAtLogin));
+            s.setProperty("ui.startAtLogin",
+                    String.valueOf(application.previousStartAtLogin()));
             LOGGER.log(Level.WARNING, "Failed to update the login autostart entry", e);
         }
         boolean settingsSaved = s.save();
         if (!settingsSaved && autostartApplied
-                && check("startup_check").getActive() != previousStartAtLogin) {
+                && application.requestedStartAtLogin()
+                        != application.previousStartAtLogin()) {
             try {
-                AutostartManager.setEnabled(previousStartAtLogin);
-                s.setProperty("ui.startAtLogin", String.valueOf(previousStartAtLogin));
+                AutostartManager.setEnabled(application.previousStartAtLogin());
+                s.setProperty("ui.startAtLogin",
+                        String.valueOf(application.previousStartAtLogin()));
             } catch (java.io.IOException rollbackFailure) {
                 LOGGER.log(Level.WARNING, "Failed to roll back the login autostart entry", rollbackFailure);
             }
         }
         boolean saved = settingsSaved && autostartApplied;
         downloadManager.setGlobalSettings(s);
+        return saved;
+    }
+
+    private void applyTorPreference(SettingsApplication application) {
         if (torPreferenceHandler != null) {
-            torPreferenceHandler.accept(torEnabled);
+            torPreferenceHandler.accept(application.torEnabled());
         }
+    }
+
+    private void reportSaveOutcome(boolean saved) {
         if (saved) {
             AccessibilitySupport.status(statusLabel, "Settings saved.");
             LOGGER.info("Settings saved to " + GlobalSettings.getConfigFilePath());
