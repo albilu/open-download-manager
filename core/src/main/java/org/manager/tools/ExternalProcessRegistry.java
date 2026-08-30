@@ -3,6 +3,7 @@ package org.manager.tools;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -29,8 +30,19 @@ public final class ExternalProcessRegistry {
 
     private static final Logger LOGGER = Logger.getLogger(ExternalProcessRegistry.class.getName());
 
-    private final Map<String, Process> processes = new ConcurrentHashMap<>();
+    /**
+     * A key is installed before its worker is submitted.  Keeping the pending
+     * launch in the same registry as a running process closes the otherwise
+     * unavoidable window in which cancel() can run after submission but
+     * before ProcessBuilder.start()/register().
+     */
+    private final Map<String, Entry> processes = new ConcurrentHashMap<>();
     private final String ownerName;
+
+    private static final class Entry {
+        private Process process;
+        private boolean cancelled;
+    }
 
     /** @param ownerName client name for log messages */
     public ExternalProcessRegistry(String ownerName) {
@@ -46,17 +58,19 @@ public final class ExternalProcessRegistry {
 
         private final ExternalProcessRegistry registry;
         private final String key;
-        private final Process process;
+        private final Entry entry;
 
-        private Registration(ExternalProcessRegistry registry, String key, Process process) {
+        private Registration(ExternalProcessRegistry registry, String key, Entry entry) {
             this.registry = registry;
             this.key = key;
-            this.process = process;
+            this.entry = entry;
         }
 
         /** The registered process. */
         public Process process() {
-            return process;
+            synchronized (entry) {
+                return entry.process;
+            }
         }
 
         /**
@@ -66,8 +80,63 @@ public final class ExternalProcessRegistry {
          * @return true when this exact registration was removed
          */
         public boolean unregister() {
-            return registry.removeIfCurrent(key, process);
+            return registry.removeIfCurrent(key, entry);
         }
+    }
+
+    /**
+     * A cancellation-visible process launch.  Reserve synchronously, before
+     * dispatching work to an executor, then call {@link #start} in that work.
+     * If cancellation won the race, start throws without spawning a child. If
+     * it arrives while ProcessBuilder.start() is in progress, terminate waits
+     * for publication and kills the just-created process before returning.
+     */
+    public static final class LaunchReservation {
+        private final ExternalProcessRegistry registry;
+        private final String key;
+        private final Entry entry;
+
+        private LaunchReservation(ExternalProcessRegistry registry, String key, Entry entry) {
+            this.registry = registry;
+            this.key = key;
+            this.entry = entry;
+        }
+
+        public Registration start(ProcessBuilder builder) throws java.io.IOException {
+            synchronized (entry) {
+                if (entry.cancelled || registry.processes.get(key) != entry) {
+                    throw new CancellationException("Process launch was cancelled: " + key);
+                }
+                entry.process = builder.start();
+                return new Registration(registry, key, entry);
+            }
+        }
+
+        public boolean isCancelled() {
+            synchronized (entry) {
+                return entry.cancelled || registry.processes.get(key) != entry;
+            }
+        }
+
+        public boolean unregister() {
+            return registry.removeIfCurrent(key, entry);
+        }
+    }
+
+    /** Installs a pending launch so cancellation is effective immediately. */
+    public LaunchReservation reserve(String key) {
+        Entry entry = new Entry();
+        Entry previous = processes.put(key, entry);
+        if (previous != null) {
+            synchronized (previous) {
+                previous.cancelled = true;
+                if (previous.process != null && previous.process.isAlive()) {
+                    // A replacement generation must not orphan its predecessor.
+                    terminateProcess(ownerName, key, previous.process, 5);
+                }
+            }
+        }
+        return new LaunchReservation(this, key, entry);
     }
 
     /**
@@ -79,18 +148,32 @@ public final class ExternalProcessRegistry {
      *         a no-op once this process has been replaced under the key
      */
     public Registration register(String key, Process process) {
-        processes.put(key, process);
-        return new Registration(this, key, process);
+        Entry entry = new Entry();
+        entry.process = process;
+        processes.put(key, entry);
+        return new Registration(this, key, entry);
     }
 
     /** Looks up a live registration. */
     public Process get(String key) {
-        return processes.get(key);
+        Entry entry = processes.get(key);
+        if (entry == null) {
+            return null;
+        }
+        synchronized (entry) {
+            return entry.process;
+        }
     }
 
     /** Removes a registration (e.g. after normal completion). */
     public Process remove(String key) {
-        return processes.remove(key);
+        Entry entry = processes.remove(key);
+        if (entry == null) {
+            return null;
+        }
+        synchronized (entry) {
+            return entry.process;
+        }
     }
 
     /**
@@ -102,6 +185,16 @@ public final class ExternalProcessRegistry {
      * @return true when the mapping existed and was removed
      */
     public boolean removeIfCurrent(String key, Process expected) {
+        Entry entry = processes.get(key);
+        if (entry == null) {
+            return false;
+        }
+        synchronized (entry) {
+            return entry.process == expected && processes.remove(key, entry);
+        }
+    }
+
+    private boolean removeIfCurrent(String key, Entry expected) {
         return processes.remove(key, expected);
     }
 
@@ -129,11 +222,18 @@ public final class ExternalProcessRegistry {
      * @return true if a live process was terminated
      */
     public boolean terminate(String key, int graceSeconds) {
-        Process process = processes.remove(key);
-        if (process == null) {
+        Entry entry = processes.remove(key);
+        if (entry == null) {
             return false;
         }
-        terminateProcess(ownerName, key, process, graceSeconds);
+        Process process;
+        synchronized (entry) {
+            entry.cancelled = true;
+            process = entry.process;
+        }
+        if (process != null) {
+            terminateProcess(ownerName, key, process, graceSeconds);
+        }
         return true;
     }
 

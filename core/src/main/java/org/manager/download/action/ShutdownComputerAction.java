@@ -14,8 +14,12 @@ public class ShutdownComputerAction implements AfterCompletionAction {
     private static final Logger LOGGER = Logger.getLogger(ShutdownComputerAction.class.getName());
 
     private final int delayInSeconds;
-    private Process shutdownProcess;
-    private boolean shutdownInitiated;
+    private volatile Process shutdownProcess;
+    private volatile boolean shutdownInitiated;
+    private final java.util.concurrent.atomic.AtomicBoolean cancelled =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.CountDownLatch delayCancelled =
+            new java.util.concurrent.CountDownLatch(1);
 
     /**
      * Creates a new ShutdownComputerAction with the specified delay.
@@ -33,28 +37,25 @@ public class ShutdownComputerAction implements AfterCompletionAction {
         String[] command;
 
         try {
+            // Unix shutdown accepts a minute count, so converting 30 seconds
+            // produced +0 (immediate). Keep the advertised delay in-process,
+            // where it is exact and cancellable, then issue an immediate OS
+            // command.
+            if (delayInSeconds > 0
+                    && delayCancelled.await(delayInSeconds, TimeUnit.SECONDS)) {
+                return false;
+            }
+            if (cancelled.get()) {
+                return false;
+            }
+
             // Different shutdown commands based on operating system
             if (osName.contains("linux") || osName.contains("unix")) {
-                // Linux/Unix shutdown command
-                if (delayInSeconds > 0) {
-                    command = new String[] { "shutdown", "-h", "+" + (delayInSeconds / 60) };
-                } else {
-                    command = new String[] { "shutdown", "-h", "now" };
-                }
+                command = new String[] { "shutdown", "-h", "now" };
             } else if (osName.contains("mac") || osName.contains("darwin")) {
-                // macOS shutdown command
-                if (delayInSeconds > 0) {
-                    command = new String[] { "shutdown", "-h", "+" + (delayInSeconds / 60) };
-                } else {
-                    command = new String[] { "shutdown", "-h", "now" };
-                }
+                command = new String[] { "shutdown", "-h", "now" };
             } else if (osName.contains("windows")) {
-                // Windows shutdown command
-                if (delayInSeconds > 0) {
-                    command = new String[] { "shutdown", "/s", "/t", String.valueOf(delayInSeconds) };
-                } else {
-                    command = new String[] { "shutdown", "/s", "/t", "0" };
-                }
+                command = new String[] { "shutdown", "/s", "/t", "0" };
             } else {
                 LOGGER.severe("Unsupported operating system for shutdown: " + osName);
                 return false;
@@ -73,6 +74,8 @@ public class ShutdownComputerAction implements AfterCompletionAction {
             boolean completed = shutdownProcess.waitFor(5, TimeUnit.SECONDS);
             if (!completed) {
                 LOGGER.warning("Shutdown command did not complete within timeout period");
+                shutdownProcess.destroyForcibly();
+                return false;
             }
 
             // Check exit value
@@ -110,6 +113,8 @@ public class ShutdownComputerAction implements AfterCompletionAction {
 
     @Override
     public boolean cancel() {
+        cancelled.set(true);
+        delayCancelled.countDown();
         if (!shutdownInitiated) {
             return true; // Nothing to cancel
         }

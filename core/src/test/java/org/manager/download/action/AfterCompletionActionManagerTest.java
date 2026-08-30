@@ -233,7 +233,14 @@ class AfterCompletionActionManagerTest {
         listener2.reset();
         testListener.reset();
 
-        actionManager.executeActions(testDownload).get(5, TimeUnit.SECONDS);
+        // Completion actions are exactly-once per download. Use a distinct
+        // completion to verify listener removal instead of attempting to
+        // execute the first download's actions a second time.
+        Download secondDownload = createTestDownload("listener-removal");
+        TestAfterCompletionAction secondAction = new TestAfterCompletionAction(
+                AfterCompletionAction.ActionType.PLAY_SOUND, true);
+        actionManager.addAction(secondDownload, secondAction);
+        actionManager.executeActions(secondDownload).get(5, TimeUnit.SECONDS);
 
         // Only the remaining listener should be notified
         assertTrue(testListener.getActionStartCount() > 0);

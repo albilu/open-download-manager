@@ -89,10 +89,10 @@ public class UrlDetector {
                 URI uri = normalizeUrl(urlString);
                 if (uri != null && isValidDownloadUrl(uri)) {
                     urls.add(uri);
-                    LOGGER.fine("Detected valid URL: " + uri);
+                    LOGGER.fine("Detected a valid URL");
                 }
             } catch (Exception e) {
-                LOGGER.fine("Invalid URL detected: " + urlString + " - " + e.getMessage());
+                LOGGER.fine("Ignored an invalid URL: " + e.getClass().getSimpleName());
             }
         }
 

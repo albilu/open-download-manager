@@ -25,6 +25,8 @@ package() {
     cp -a "${srcdir}/opt" "${pkgdir}/"
     cp -a "${srcdir}/usr" "${pkgdir}/"
     chmod 755 "${pkgdir}/usr/bin/open-download-manager"
+    install -Dm644 "${srcdir}/usr/share/licenses/open-download-manager/LICENSE" \
+        "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
 
 # The source tarball is assembled by packaging/build-packages.sh from the

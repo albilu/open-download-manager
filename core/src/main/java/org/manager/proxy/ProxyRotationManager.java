@@ -141,7 +141,7 @@ public class ProxyRotationManager {
         try {
             if (!proxyPool.contains(proxy)) {
                 proxyPool.add(proxy);
-                LOGGER.fine("Added proxy: " + proxy.getAddress());
+                LOGGER.fine("Added proxy to rotation pool");
                 return true;
             }
             return false;
@@ -166,7 +166,7 @@ public class ProxyRotationManager {
             boolean removed = proxyPool.remove(proxy);
             if (removed) {
                 usedProxies.remove(proxy.getAddress());
-                LOGGER.fine("Removed proxy: " + proxy.getAddress());
+                LOGGER.fine("Removed proxy from rotation pool");
             }
             return removed;
         } finally {
@@ -256,7 +256,7 @@ public class ProxyRotationManager {
         if (proxy != null && downloadId != null) {
             usedProxies.computeIfAbsent(proxy.getAddress(), k -> ConcurrentHashMap.newKeySet())
                     .add(downloadId);
-            LOGGER.fine("Marked proxy " + proxy.getAddress() + " as in use by download " + downloadId);
+            LOGGER.fine("Assigned a rotation proxy to download " + downloadId);
         }
     }
 
@@ -276,7 +276,7 @@ public class ProxyRotationManager {
                     usedProxies.remove(proxy.getAddress());
                 }
             }
-            LOGGER.fine("Released proxy " + proxy.getAddress() + " from download " + downloadId);
+            LOGGER.fine("Released a rotation proxy from download " + downloadId);
         }
     }
 
@@ -306,8 +306,8 @@ public class ProxyRotationManager {
         }
 
         proxy.recordFailure(error);
-        LOGGER.warning("Recorded failure for proxy " + proxy.getAddress() + ": " + error
-                + " (total failures: " + proxy.getFailureCount() + ")");
+        LOGGER.warning("Recorded proxy failure (total failures: "
+                + proxy.getFailureCount() + ")");
 
         // Mark the terminal tier first so any holder of this proxy instance
         // observes BLOCKED (the standalone 10-failure threshold in Proxy was
@@ -317,7 +317,7 @@ public class ProxyRotationManager {
             lock.writeLock().lock();
             try {
                 removeProxy(proxy);
-                LOGGER.warning("Removed proxy " + proxy.getAddress() + " due to excessive failures");
+                LOGGER.warning("Removed proxy due to excessive failures");
             } finally {
                 lock.writeLock().unlock();
             }
@@ -392,7 +392,7 @@ public class ProxyRotationManager {
                 if (proxy.getLastTested() != null && proxy.getLastTested().isBefore(cutoff)) {
                     if (proxy.getStatus() == Proxy.Status.UNHEALTHY) {
                         proxy.reset();
-                        LOGGER.fine("Reset unhealthy proxy " + proxy.getAddress() + " for retry");
+                        LOGGER.fine("Reset an unhealthy proxy for retry");
                     }
                 }
             }

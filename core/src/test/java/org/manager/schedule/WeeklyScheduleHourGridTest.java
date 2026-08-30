@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.LocalDateTime;
+import java.time.DayOfWeek;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -74,5 +75,25 @@ class WeeklyScheduleHourGridTest {
             assertTrue(schedule.isActiveAt(LocalDateTime.parse("2026-08-19T"
                     + String.format("%02d", hour) + ":15:00")));
         }
+    }
+
+    @Test
+    void crossMidnightRangeBelongsToTheDayOnWhichItStarts() {
+        WeeklySchedule schedule = new WeeklySchedule()
+                .addTimeRange(DayOfWeek.MONDAY, new TimeRange("22:00", "06:00"));
+
+        assertFalse(schedule.isActiveAt(LocalDateTime.parse("2026-08-17T05:00:00")),
+                "early Monday must not borrow Monday night's range");
+        assertTrue(schedule.isActiveAt(LocalDateTime.parse("2026-08-17T23:00:00")));
+        assertTrue(schedule.isActiveAt(LocalDateTime.parse("2026-08-18T05:00:00")),
+                "early Tuesday belongs to Monday's cross-midnight range");
+        assertFalse(schedule.isActiveAt(LocalDateTime.parse("2026-08-18T06:00:01")));
+    }
+
+    @Test
+    void neverAndEmptySchedulesAreRestrictions() {
+        assertTrue(ScheduleSettings.neverActive().hasRestrictions());
+        assertTrue(new ScheduleSettings(new WeeklySchedule()).hasRestrictions());
+        assertFalse(ScheduleSettings.alwaysActive().hasRestrictions());
     }
 }

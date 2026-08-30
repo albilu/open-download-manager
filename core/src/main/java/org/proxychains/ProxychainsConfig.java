@@ -366,7 +366,7 @@ public class ProxychainsConfig {
             // the closing bracket instead of the last colon.
             int schemeEnd = proxyString.indexOf("://");
             if (schemeEnd <= 0) {
-                LOGGER.warning("Invalid proxy string format: " + proxyString);
+                LOGGER.warning("Invalid proxy string format");
                 return this;
             }
 
@@ -400,7 +400,7 @@ public class ProxychainsConfig {
                 // [ipv6]:port
                 int bracketEnd = rest.indexOf(']');
                 if (bracketEnd < 0 || bracketEnd + 1 >= rest.length() || rest.charAt(bracketEnd + 1) != ':') {
-                    LOGGER.warning("Invalid bracketed IPv6 proxy (expected [host]:port): " + proxyString);
+                    LOGGER.warning("Invalid bracketed IPv6 proxy (expected [host]:port)");
                     return this;
                 }
                 host = rest.substring(1, bracketEnd);
@@ -414,7 +414,7 @@ public class ProxychainsConfig {
                 // A single colon means IPv4/hostname:port; multiple colons
                 // without brackets is a malformed bare IPv6 with no port
                 if (rest.indexOf(':') != lastColon) {
-                    LOGGER.warning("IPv6 proxies must be bracketed ([host]:port): " + proxyString);
+                    LOGGER.warning("IPv6 proxies must be bracketed ([host]:port)");
                     return this;
                 }
                 host = rest.substring(0, lastColon);
@@ -428,7 +428,7 @@ public class ProxychainsConfig {
             }
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error parsing proxy string: " + proxyString, e);
+            LOGGER.log(Level.WARNING, "Error parsing proxy string", e);
         }
 
         return this;

@@ -106,6 +106,9 @@ public class DownloadSettingsFactory {
         settings.setFileAllocation(g.getProperty("aria2.fileAllocation", "prealloc"));
         settings.setAutoFileRenaming(true);
         settings.setCheckIntegrity(g.getBooleanProperty("aria2.checkIntegrity", false));
+        settings.setBtMaxPeers(Math.max(0, g.getIntProperty("aria2.maxPeers", 100)));
+        settings.setBtRequestPeerSpeedLimit(
+                Math.max(0, g.getIntProperty("aria2.peerSpeedLimitKb", 0)));
 
         int maxTries = g.getIntProperty("aria2.maxTries", 0);
         if (maxTries > 0) {
@@ -276,7 +279,6 @@ public class DownloadSettingsFactory {
         // Configure for Tor
         settings.setUseProxy(true);
         settings.setProxyAddress("socks5h://127.0.0.1:9050");
-        settings.setOption("check-certificate", "false");
         settings.setOption("http-accept-gzip", "true");
         settings.setOption("retry-wait", "5");
         settings.setOption("max-tries", "5");

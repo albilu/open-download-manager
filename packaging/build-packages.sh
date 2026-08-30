@@ -6,6 +6,10 @@
 set -euo pipefail
 
 VERSION="${1:-0.1.0}"
+if [[ ! "$VERSION" =~ ^[0-9]+([.][0-9]+){1,3}$ ]]; then
+    echo "Invalid package version: expected numeric dotted version" >&2
+    exit 2
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STAGE="$ROOT/packaging/stage"
 RUNTIME="$STAGE/opt/open-download-manager/runtime"
@@ -16,7 +20,7 @@ log() { echo "[odm-package] $*"; }
 
 # Modules from jdeps over the shaded jar (+ crypto/naming/management for
 # TLS, WebSocket client usage, and runtime introspection)
-JDK_MODULES="java.base,java.desktop,java.sql,java.logging,jdk.httpserver,jdk.crypto.ec,java.naming,java.management"
+JDK_MODULES="java.base,java.desktop,java.sql,java.logging,java.net.http,jdk.httpserver,jdk.crypto.ec,java.naming,java.management"
 
 log "Building shaded jar..."
 cd "$ROOT"
@@ -26,16 +30,30 @@ log "Assembling application tree under $STAGE..."
 rm -rf "$STAGE"
 mkdir -p "$APP" "$RUNTIME" "$STAGE/usr/bin" \
     "$STAGE/usr/share/applications" \
+    "$STAGE/usr/share/doc/open-download-manager" \
+    "$STAGE/usr/share/licenses/open-download-manager" \
     "$STAGE/usr/share/icons/hicolor/128x128/apps" \
     "$STAGE/usr/share/icons/hicolor/512x512/apps"
 
 cp "$JAR" "$APP/odm.jar"
+cp LICENSE "$STAGE/usr/share/licenses/open-download-manager/LICENSE"
+cp LICENSE "$STAGE/usr/share/doc/open-download-manager/copyright"
 
 log "Creating jlink runtime (modules: $JDK_MODULES)..."
 rm -rf "$RUNTIME"
 jlink --add-modules "$JDK_MODULES" \
     --strip-debug --no-header-files --no-man-pages --compress zip-6 \
     --output "$RUNTIME"
+runtime_modules=$("$RUNTIME/bin/java" --list-modules | cut -d@ -f1)
+grep -qx 'java.net.http' <<<"$runtime_modules"
+required_modules=$(jdeps --ignore-missing-deps --multi-release 25 \
+    --print-module-deps "$APP/odm.jar")
+for module in ${required_modules//,/ }; do
+    if ! grep -qx "$module" <<<"$runtime_modules"; then
+        echo "Bundled runtime is missing required module: $module" >&2
+        exit 1
+    fi
+done
 
 cat > "$STAGE/usr/bin/open-download-manager" <<'EOF'
 #!/bin/sh
@@ -71,7 +89,8 @@ build_deb() {
     [ -f "$debroot/DEBIAN/postinst" ] && chmod 755 "$debroot/DEBIAN/postinst"
     [ -f "$debroot/DEBIAN/prerm" ] && chmod 755 "$debroot/DEBIAN/prerm"
     sed -i "s/__VERSION__/${VERSION}/g" "$debroot/DEBIAN/control"
-    (cd "$debroot" && dpkg-deb --build -Zxz . "$ROOT/packaging/open-download-manager_${VERSION}_amd64.deb")
+    dpkg-deb --root-owner-group --build -Zxz "$debroot" \
+        "$ROOT/packaging/open-download-manager_${VERSION}_amd64.deb"
     log "Built open-download-manager_${VERSION}_amd64.deb"
 }
 
@@ -100,7 +119,10 @@ build_arch() {
     chmod 755 "$archroot/pkg/usr/bin/open-download-manager"
 
     # Minimal pacman package: .PKGINFO + payload, compressed with zstd
-    local size=$(du -sk "$archroot/pkg" | cut -f1)
+    local size
+    size=$(du -sk "$archroot/pkg" | cut -f1)
+    local builddate
+    builddate=$(date +%s)
     cat > "$archroot/pkg/.PKGINFO" <<EOF
 pkgname = open-download-manager
 pkgbase = open-download-manager
@@ -119,15 +141,45 @@ optdepend = tor: anonymous downloads
 optdepend = ffmpeg: video processing
 packager = ODM Development Team <dev@odm-project.org>
 size = $((size * 1024))
-builddate = $(date +%s)
+builddate = ${builddate}
 EOF
-    (cd "$archroot/pkg" && find . -type f \
-        -exec sha256sum {} + | sed 's| \./| |' > "$archroot/pkg/.MTREE" \
-        && printf 'mtree = .MTREE\n' >> /dev/null)
+    cat > "$archroot/pkg/.BUILDINFO" <<EOF
+format = 2
+pkgname = open-download-manager
+pkgbase = open-download-manager
+pkgver = ${VERSION}-1
+pkgarch = x86_64
+pkgbuild_sha256sum = $(sha256sum packaging/arch/PKGBUILD | cut -d' ' -f1)
+packager = ODM Development Team <dev@odm-project.org>
+builddate = ${builddate}
+builddir = /app
+startdir = /app
+buildtool = odm-package-builder
+buildtoolver = 1.0.0
+buildenv = !distcc
+buildenv = color
+buildenv = !ccache
+buildenv = check
+buildenv = !sign
+options = strip
+options = docs
+options = !libtool
+options = !staticlibs
+options = emptydirs
+options = zipman
+options = purge
+options = !debug
+options = lto
+EOF
+    (cd "$archroot/pkg" && LANG=C bsdtar -czf .MTREE --format=mtree \
+        --uid 0 --gid 0 \
+        --options='!all,use-set,type,uid,gid,mode,time,size,sha256,link' \
+        .PKGINFO .BUILDINFO opt usr)
     (cd "$archroot/pkg" && tar -C "$archroot/pkg" \
+        --owner=0 --group=0 --numeric-owner \
         --use-compress-program="zstd -19 -T0" \
         -cf "$ROOT/packaging/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst" \
-        .PKGINFO .MTREE opt usr)
+        .PKGINFO .BUILDINFO .MTREE opt usr)
     rm -rf "$archroot"
     log "Built open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
 }

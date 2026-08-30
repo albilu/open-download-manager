@@ -90,7 +90,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                 return false;
             }
 
-            LOGGER.info("Starting antivirus scan with command: " + String.join(" ", command));
+            LOGGER.info("Starting configured antivirus scan");
 
             // Execute the scan command
             ProcessBuilder processBuilder = new ProcessBuilder(command);

@@ -318,7 +318,7 @@ public class YtDlpFactory {
         // Track active tasks
         activeTasks.put(taskId, task);
 
-        LOGGER.info("Created YtDlpDownloadTask: " + taskId + " for URL: " + url);
+        LOGGER.info("Created YtDlpDownloadTask: " + taskId);
         return task;
     }
 

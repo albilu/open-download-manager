@@ -334,13 +334,20 @@ public class ShutdownCoordinator {
                         totalFailed.incrementAndGet();
                         if (hook.isEssential()) {
                             Throwable cause;
-                            try {
-                                future.get();
+                            if (!future.isDone()) {
+                                future.cancel(true);
                                 cause = new IllegalStateException(
-                                        "Essential hook '" + hook.getName() + "' never completed");
-                            } catch (Exception e) {
-                                cause = (e instanceof java.util.concurrent.ExecutionException
-                                        && e.getCause() != null) ? e.getCause() : e;
+                                        "Essential hook '" + hook.getName() + "' did not complete");
+                            } else {
+                                try {
+                                    future.join();
+                                    cause = new IllegalStateException(
+                                            "Essential hook '" + hook.getName() + "' failed");
+                                } catch (java.util.concurrent.CompletionException e) {
+                                    cause = e.getCause() != null ? e.getCause() : e;
+                                } catch (java.util.concurrent.CancellationException e) {
+                                    cause = e;
+                                }
                             }
                             LOGGER.log(Level.SEVERE,
                                     "Essential shutdown hook '" + hook.getName() + "' failed", cause);

@@ -92,12 +92,12 @@ public class ExecuteCommandAction implements AfterCompletionAction {
 
         List<String> command = tokenize(substitute(commandTemplate, download, filePath));
         if (command.isEmpty()) {
-            LOGGER.warning("Custom command produced no tokens: " + commandTemplate);
+            LOGGER.warning("Custom command produced no tokens");
             return false;
         }
 
         try {
-            LOGGER.info("Executing custom command: " + String.join(" ", command));
+            LOGGER.info("Executing configured after-completion command");
             process = new ProcessBuilder(command).inheritIO().start();
             boolean finished = timeoutSeconds > 0
                     ? process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
@@ -106,18 +106,18 @@ public class ExecuteCommandAction implements AfterCompletionAction {
                 return false;
             }
             if (!finished) {
-                LOGGER.warning("Custom command timed out after " + timeoutSeconds + "s: " + commandTemplate);
+                LOGGER.warning("Custom command timed out after " + timeoutSeconds + "s");
                 process.destroyForcibly();
                 return false;
             }
             int exit = process.exitValue();
             if (exit != 0) {
-                LOGGER.warning("Custom command exited with code " + exit + ": " + commandTemplate);
+                LOGGER.warning("Custom command exited with code " + exit);
                 return false;
             }
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to execute custom command: " + commandTemplate, e);
+            LOGGER.log(Level.SEVERE, "Failed to execute custom command", e);
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

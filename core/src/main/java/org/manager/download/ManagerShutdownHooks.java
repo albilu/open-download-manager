@@ -127,6 +127,7 @@ class ManagerShutdownHooks {
                         pauseAllDownloads.get().get(30, TimeUnit.SECONDS);
                     } catch (Exception e) {
                         LOGGER.log(Level.WARNING, "Failed to pause all downloads during shutdown", e);
+                        throw new RuntimeException("Active downloads could not be paused", e);
                     }
                 }, 35, true);
     }
@@ -158,7 +159,7 @@ class ManagerShutdownHooks {
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.SERVICES,
                 "shutdown-action-manager",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown action manager"),
+                () -> ErrorHandler.executeSafely(() -> actionManager.get().shutdown(),
                         "shutdown action manager"),
                 30, false);
 
@@ -166,7 +167,7 @@ class ManagerShutdownHooks {
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.SERVICES,
                 "shutdown-clipboard-service",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown clipboard service"),
+                () -> ErrorHandler.executeSafely(clipboardService::cleanup,
                         "shutdown clipboard service"),
                 30, false);
 
@@ -194,19 +195,25 @@ class ManagerShutdownHooks {
     }
 
     private void registerCleanupHooks() {
-        // Phase 7: Shutdown dependency manager (best-effort)
+        // Phase 7: Shut down the replacement for the legacy dependency
+        // manager. The old string-dispatch branch was a no-op that only
+        // logged "Unknown shutdown step".
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.RESOURCES,
-                "shutdown-dependency-manager",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown dependency manager"),
-                        "shutdown dependency manager"),
+                "shutdown-tool-manager-factory",
+                () -> ErrorHandler.executeSafely(() -> {
+                    ToolManagerFactory toolFactory = container.get(ToolManagerFactory.class);
+                    if (toolFactory != null) {
+                        toolFactory.cleanup();
+                    }
+                }, "shutdown tool manager factory"),
                 30, false);
 
         // Phase 8: Shutdown container (best-effort)
         coordinator.registerShutdownHook(
                 ShutdownCoordinator.ShutdownPhase.CLEANUP,
                 "shutdown-container",
-                () -> ErrorHandler.executeSafely(() -> performShutdownStep("shutdown container"),
+                () -> ErrorHandler.executeSafely(container::shutdown,
                         "shutdown container"),
                 30, false);
 
@@ -228,36 +235,4 @@ class ManagerShutdownHooks {
                 30, false);
     }
 
-    /**
-     * Performs a specific shutdown step with error handling.
-     */
-    private void performShutdownStep(String step) {
-        try {
-            switch (step) {
-                case "save state" ->
-                    saveState.get().join();
-                case "shutdown handlers" -> {
-                    servicesScheduler.stopTrackerRefreshJob();
-                    handlerFactory.get().shutdownHandlers();
-                }
-                case "shutdown action manager" ->
-                    actionManager.get().shutdown();
-                case "shutdown clipboard service" ->
-                    clipboardService.cleanup();
-                case "shutdown tool manager factory" -> {
-                    ToolManagerFactory toolFactory = container.get(ToolManagerFactory.class);
-                    if (toolFactory != null) {
-                        toolFactory.cleanup();
-                    }
-                }
-                case "shutdown container" ->
-                    container.shutdown();
-                default ->
-                    LOGGER.warning("Unknown shutdown step: " + step);
-            }
-            LOGGER.fine("Completed shutdown step: " + step);
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed shutdown step: " + step, e);
-        }
-    }
 }

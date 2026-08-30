@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -126,6 +127,11 @@ public class CurlClient {
         // Add to active downloads
         activeDownloads.put(download.getId(), download);
 
+        // Reserve synchronously so pause/cancel cannot miss a child that has
+        // been submitted but has not reached ProcessBuilder.start() yet.
+        ExternalProcessRegistry.LaunchReservation launch =
+                activeProcesses.reserve(download.getId());
+
         // Start download in a separate thread
         executorService.submit(() -> {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
@@ -150,8 +156,8 @@ public class CurlClient {
                 // Don't redirect error stream - we need to read stderr separately for progress
                 // processBuilder.redirectErrorStream(true);
 
-                Process process = processBuilder.start();
-                registration = activeProcesses.register(download.getId(), process);
+                registration = launch.start(processBuilder);
+                Process process = registration.process();
 
                 // Gobble stdout on a daemon thread: the command normally
                 // writes to -o, but if a flag ever routes the document to
@@ -168,7 +174,11 @@ public class CurlClient {
                 stdoutDrain.start();
 
                 // Update download status
-                download.setStatus(Download.Status.DOWNLOADING);
+                if (!download.compareAndSetStatus(Download.Status.CONNECTING,
+                        Download.Status.DOWNLOADING)) {
+                    activeProcesses.terminate(download.getId(), 5);
+                    return;
+                }
                 if (listener != null) {
                     listener.onDownloadStart(download);
                 }
@@ -249,24 +259,32 @@ public class CurlClient {
 
                 // Handle process completion
                 if (exitCode == 0) {
-                    download.setStatus(Download.Status.COMPLETED);
-                    if (listener != null) {
+                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                            Download.Status.COMPLETED) && listener != null) {
                         listener.onDownloadComplete(download);
                     }
                 } else {
-                    // Only set error status if the download wasn't paused
-                    if (download.getStatus() != Download.Status.PAUSED) {
-                        download.setStatus(Download.Status.ERROR);
+                    // Terminal user states always win over late process exit.
+                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                            Download.Status.ERROR)
+                            || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                    Download.Status.ERROR)) {
                         download.setErrorMessage("curl process exited with code: " + exitCode);
                         if (listener != null) {
                             listener.onDownloadError(download, download.getErrorMessage());
                         }
                     }
                 }
+            } catch (CancellationException e) {
+                // Cancellation before launch is an expected terminal path.
             } catch (IOException | InterruptedException e) {
-                // Handle errors - only set error status if the download wasn't paused
-                if (download.getStatus() != Download.Status.PAUSED) {
-                    download.setStatus(Download.Status.ERROR);
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                        Download.Status.ERROR)
+                        || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                Download.Status.ERROR)) {
                     download.setErrorMessage("Error during download: " + e.getMessage());
                     if (listener != null) {
                         listener.onDownloadError(download, download.getErrorMessage());
@@ -279,7 +297,7 @@ public class CurlClient {
                 if (registration != null) {
                     registration.unregister();
                 }
-                activeDownloads.remove(download.getId());
+                activeDownloads.remove(download.getId(), download);
             }
         });
     }

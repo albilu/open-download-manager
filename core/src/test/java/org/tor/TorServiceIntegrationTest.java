@@ -257,6 +257,7 @@ class TorServiceIntegrationTest {
 
     @Test
     @Order(7)
+    @Timeout(90)
     @DisplayName("Should notify listeners of service events")
     void testServiceEventNotification() throws Exception {
         CountDownLatch startedLatch = new CountDownLatch(1);
@@ -285,12 +286,16 @@ class TorServiceIntegrationTest {
             }
         });
 
-        torService.start().get(60, TimeUnit.SECONDS);
-        assertTrue(startedLatch.await(5, TimeUnit.SECONDS), "Should receive STARTED event");
-        assertTrue(bootstrapLatch.await(30, TimeUnit.SECONDS), "Should receive BOOTSTRAP_COMPLETE event");
+        assertTrue(torService.start().get(60, TimeUnit.SECONDS), "Tor should start");
+        // start() completes only after the managed process has bootstrapped,
+        // so both lifecycle events must already have been published. Short
+        // latch grace periods test asynchronous listener dispatch without
+        // stacking 45 seconds of waits under a 30-second global timeout.
+        assertTrue(startedLatch.await(2, TimeUnit.SECONDS), "Should receive STARTED event");
+        assertTrue(bootstrapLatch.await(2, TimeUnit.SECONDS), "Should receive BOOTSTRAP_COMPLETE event");
 
         torService.stop();
-        assertTrue(stoppedLatch.await(10, TimeUnit.SECONDS), "Should receive STOPPED event");
+        assertTrue(stoppedLatch.await(5, TimeUnit.SECONDS), "Should receive STOPPED event");
 
         assertTrue(eventCount.get() >= 3, "Should receive at least 3 events");
     }

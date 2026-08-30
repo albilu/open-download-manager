@@ -4,6 +4,7 @@ import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.Orientation;
 import org.gnome.gtk.Popover;
+import org.gnome.gtk.Widget;
 
 /**
  * Simple menu built from a GtkPopover containing a vertical box of buttons.
@@ -28,8 +29,7 @@ public class PopupMenu {
         Button item = new Button();
         item.setLabel(label);
         item.setHalign(org.gnome.gtk.Align.START);
-        item.setHexpand(false);
-        item.setCanFocus(false);
+        item.setHexpand(true);
         item.addCssClass("flat");
         item.onClicked(() -> {
             popover.popdown();
@@ -48,6 +48,27 @@ public class PopupMenu {
     public PopupMenu popup() {
         popover.popup();
         return this;
+    }
+
+    /** Parents and anchors a standalone context popover to a widget position. */
+    public PopupMenu popupAt(Widget anchor, int x, int y) {
+        Widget currentParent = popover.getParent();
+        if (currentParent != anchor) {
+            if (currentParent != null) {
+                popover.unparent();
+            }
+            popover.setParent(anchor);
+        }
+        popover.setPointingTo(new org.gnome.gdk.Rectangle(x, y, 1, 1));
+        popover.popup();
+        return this;
+    }
+
+    public void dispose() {
+        popover.popdown();
+        if (popover.getParent() != null) {
+            popover.unparent();
+        }
     }
 
     public Popover getPopover() {

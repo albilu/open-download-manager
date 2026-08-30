@@ -268,8 +268,11 @@ public class ScheduleSettings {
      * @return true if there are restrictions, false if always active
      */
     public boolean hasRestrictions() {
-        return weeklySchedule.isEnabled() && weeklySchedule.hasAnyTimeRanges() &&
-               !weeklySchedule.equals(WeeklySchedule.alwaysActive());
+        // Any schedule other than the explicit 24/7 schedule can deny a
+        // start. This includes neverActive() (enabled=false) and an enabled
+        // but empty grid. Treating those as unrestricted made the scheduler's
+        // fast path skip pause enforcement entirely.
+        return !weeklySchedule.equals(WeeklySchedule.alwaysActive());
     }
 
     @Override

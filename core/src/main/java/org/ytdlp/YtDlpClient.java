@@ -6,12 +6,16 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -32,6 +36,8 @@ public class YtDlpClient {
 
     private static final Logger LOGGER = Logger.getLogger(YtDlpClient.class.getName());
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final int MAX_METADATA_OUTPUT_BYTES = 4 * 1024 * 1024;
+    private static final long METADATA_TIMEOUT_SECONDS = 60;
 
     // Progress patterns for parsing yt-dlp output
     private static final Pattern PROGRESS_PATTERN = Pattern.compile(
@@ -452,49 +458,54 @@ public class YtDlpClient {
      * @return CompletableFuture containing video information
      */
     public CompletableFuture<VideoInfo> extractInfo(String url) {
-        return CompletableFuture.supplyAsync(() -> {
+        return extractInfo(url, null);
+    }
+
+    /** Extracts metadata through the supplied proxy when non-blank. */
+    public CompletableFuture<VideoInfo> extractInfo(String url, String proxyAddress) {
+        String processId = "metadata-" + UUID.randomUUID();
+        ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
+        CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
             try {
                 List<String> command = new ArrayList<>();
                 command.add(ytDlpPath);
                 command.add("--dump-json");
                 command.add("--no-download");
+                command.add("--no-playlist");
+                addProxy(command, proxyAddress);
                 command.add(url);
 
-                ProcessBuilder pb = new ProcessBuilder(command);
-                pb.redirectErrorStream(true);
-                Process process = pb.start();
-
-                StringBuilder output = new StringBuilder();
+                String output = runMetadataCommand(command, processId, launch);
                 String jsonLine = null;
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
-                        // yt-dlp prints WARNING/ERROR lines ahead of the JSON
-                        // payload; the first JSON line carries the video info
-                        if (jsonLine == null && line.trim().startsWith("{")) {
-                            jsonLine = line;
-                        }
+                for (String line : output.lines().toList()) {
+                    // yt-dlp prints WARNING/ERROR lines ahead of the JSON
+                    // payload; the first JSON line carries the video info.
+                    if (line.trim().startsWith("{")) {
+                        jsonLine = line;
+                        break;
                     }
                 }
-
-                int exitCode = process.waitFor();
-                if (exitCode != 0) {
-                    throw new RuntimeException("yt-dlp failed with exit code: " + exitCode + "\nOutput: " + output);
-                }
                 if (jsonLine == null) {
-                    throw new RuntimeException("yt-dlp produced no JSON output\nOutput: " + output);
+                    throw new RuntimeException("yt-dlp produced no JSON metadata");
                 }
 
                 // Parse JSON output
                 JsonNode jsonNode = OBJECT_MAPPER.readTree(jsonLine);
                 return parseVideoInfo(jsonNode);
 
+            } catch (CancellationException e) {
+                throw e;
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to extract video info", e);
                 throw new RuntimeException("Failed to extract video info: " + e.getMessage(), e);
             }
         }, executor);
+        result.whenComplete((ignored, failure) -> {
+            if (result.isCancelled()) {
+                activeProcesses.terminate(processId, 1);
+            }
+        });
+        return result;
     }
 
     /**
@@ -504,30 +515,24 @@ public class YtDlpClient {
      * @return CompletableFuture containing list of available formats
      */
     public CompletableFuture<List<VideoFormat>> listFormats(String url) {
-        return CompletableFuture.supplyAsync(() -> {
+        return listFormats(url, null);
+    }
+
+    /** Lists formats through the supplied proxy when non-blank. */
+    public CompletableFuture<List<VideoFormat>> listFormats(String url, String proxyAddress) {
+        String processId = "formats-" + UUID.randomUUID();
+        ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
+        CompletableFuture<List<VideoFormat>> result = CompletableFuture.supplyAsync(() -> {
             try {
                 List<String> command = new ArrayList<>();
                 command.add(ytDlpPath);
                 command.add("-F");
                 command.add("--dump-json");
+                command.add("--no-playlist");
+                addProxy(command, proxyAddress);
                 command.add(url);
 
-                ProcessBuilder pb = new ProcessBuilder(command);
-                pb.redirectErrorStream(true);
-                Process process = pb.start();
-
-                List<String> lines = new ArrayList<>();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        lines.add(line);
-                    }
-                }
-
-                int exitCode = process.waitFor();
-                if (exitCode != 0) {
-                    throw new RuntimeException("yt-dlp failed with exit code: " + exitCode);
-                }
+                List<String> lines = runMetadataCommand(command, processId, launch).lines().toList();
 
                 // Parse formats from JSON or text output
                 List<VideoFormat> formats = new ArrayList<>();
@@ -551,11 +556,81 @@ public class YtDlpClient {
 
                 return formats;
 
+            } catch (CancellationException e) {
+                throw e;
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to list formats", e);
                 throw new RuntimeException("Failed to list formats: " + e.getMessage(), e);
             }
         }, executor);
+        result.whenComplete((ignored, failure) -> {
+            if (result.isCancelled()) {
+                activeProcesses.terminate(processId, 1);
+            }
+        });
+        return result;
+    }
+
+    private static void addProxy(List<String> command, String proxyAddress) {
+        if (proxyAddress != null && !proxyAddress.isBlank()) {
+            command.add("--proxy");
+            command.add(proxyAddress);
+        }
+    }
+
+    /** Runs a short-lived metadata command with strict ownership, size and time bounds. */
+    private String runMetadataCommand(List<String> command, String processId,
+            ExternalProcessRegistry.LaunchReservation launch) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(true);
+        ExternalProcessRegistry.Registration registration = null;
+        try {
+            registration = launch.start(pb);
+            Process process = registration.process();
+            StringBuilder output = new StringBuilder();
+            java.util.concurrent.atomic.AtomicReference<Throwable> readFailure =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            Thread reader = new Thread(() -> {
+                try (var input = process.getInputStream()) {
+                    byte[] buffer = new byte[8192];
+                    int total = 0;
+                    int count;
+                    while ((count = input.read(buffer)) >= 0) {
+                        total += count;
+                        if (total > MAX_METADATA_OUTPUT_BYTES) {
+                            throw new IOException("yt-dlp metadata exceeded the 4 MiB limit");
+                        }
+                        output.append(new String(buffer, 0, count, StandardCharsets.UTF_8));
+                    }
+                } catch (Throwable e) {
+                    readFailure.set(e);
+                    activeProcesses.terminate(processId, 1);
+                }
+            }, "yt-dlp-metadata-reader");
+            reader.setDaemon(true);
+            reader.start();
+
+            if (!process.waitFor(METADATA_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                activeProcesses.terminate(processId, 1);
+                throw new RuntimeException("yt-dlp metadata request timed out after 60 seconds");
+            }
+            reader.join(TimeUnit.SECONDS.toMillis(5));
+            Throwable readerError = readFailure.get();
+            if (readerError != null) {
+                throw new RuntimeException(readerError.getMessage(), readerError);
+            }
+            if (process.exitValue() != 0) {
+                throw new RuntimeException("yt-dlp metadata command failed with exit code "
+                        + process.exitValue());
+            }
+            return output.toString();
+        } finally {
+            if (registration != null) {
+                registration.unregister();
+            } else {
+                launch.unregister();
+            }
+        }
     }
 
     /**
@@ -588,6 +663,7 @@ public class YtDlpClient {
      */
     public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
             ProgressCallback callback, String processId) {
+        ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         return CompletableFuture.supplyAsync(() -> {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
             try {
@@ -605,9 +681,9 @@ public class YtDlpClient {
                     pb.directory(outputPath.toFile());
                 }
 
-                LOGGER.info("Starting yt-dlp download: " + String.join(" ", command));
-                Process process = pb.start();
-                registration = activeProcesses.register(processId, process);
+                LOGGER.info("Starting yt-dlp process " + processId);
+                registration = launch.start(pb);
+                Process process = registration.process();
 
                 // Monitor progress
                 String filename = null;
@@ -615,8 +691,6 @@ public class YtDlpClient {
                     String line;
                     while (!Thread.currentThread().isInterrupted()
                             && (line = reader.readLine()) != null) {
-                        LOGGER.fine("yt-dlp output: " + line);
-
                         // Extract filename if not yet known
                         if (filename == null) {
                             filename = extractFilename(line);
@@ -637,13 +711,15 @@ public class YtDlpClient {
 
                         // Check for errors
                         if (line.contains("ERROR:") && callback != null) {
-                            callback.onError(line);
+                            callback.onError("yt-dlp reported an error");
                         }
                     }
                 }
 
                 int exitCode = process.waitFor();
-                if (exitCode == 0) {
+                if (launch.isCancelled()) {
+                    throw new CancellationException("yt-dlp download was cancelled");
+                } else if (exitCode == 0) {
                     if (callback != null && filename != null) {
                         callback.onComplete(filename);
                     }
@@ -657,7 +733,12 @@ public class YtDlpClient {
                     throw new RuntimeException(error);
                 }
 
+            } catch (CancellationException e) {
+                throw e;
             } catch (Exception e) {
+                if (launch.isCancelled()) {
+                    throw new CancellationException("yt-dlp download was cancelled");
+                }
                 LOGGER.log(Level.SEVERE, "Download failed", e);
                 if (callback != null) {
                     callback.onError(e.getMessage());
@@ -666,6 +747,8 @@ public class YtDlpClient {
             } finally {
                 if (registration != null) {
                     registration.unregister();
+                } else {
+                    launch.unregister();
                 }
             }
         }, executor);

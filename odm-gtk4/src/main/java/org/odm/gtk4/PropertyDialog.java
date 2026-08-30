@@ -64,6 +64,19 @@ public class PropertyDialog {
         this.proxyPasswordEntry = Widgets.require(builder, "proxy_password_entry", Entry.class);
         this.torSwitch = Widgets.require(builder, "tor_switch", Switch.class);
 
+        AccessibilitySupport.label(maxConnectionsSpin, "Maximum connections");
+        AccessibilitySupport.label(retryLimitSpin, "Retry limit");
+        AccessibilitySupport.label(maxDownloadSpeedSpin,
+                "Maximum download speed in KiB per second");
+        AccessibilitySupport.label(maxUploadSpeedSpin,
+                "Maximum upload speed in KiB per second");
+        AccessibilitySupport.label(proxyTypeCombo, "Proxy type");
+        AccessibilitySupport.label(proxyHostEntry, "Proxy host");
+        AccessibilitySupport.label(proxyPortSpin, "Proxy port");
+        AccessibilitySupport.label(proxyUsernameEntry, "Proxy username");
+        AccessibilitySupport.label(proxyPasswordEntry, "Proxy password");
+        AccessibilitySupport.label(torSwitch, "Route this download through Tor");
+
         dialog.setTransientFor(parent);
         dialog.setTitle("Properties — " + download.getName());
 
@@ -72,6 +85,14 @@ public class PropertyDialog {
             proxyTypes.append(type);
         }
         proxyTypeCombo.setModel(proxyTypes);
+
+        CheckButton startAutomatically = Widgets.require(builder,
+                "start_automatically_check", CheckButton.class);
+        CheckButton moveTorrent = Widgets.require(builder, "move_torrent_check", CheckButton.class);
+        startAutomatically.setSensitive(false);
+        startAutomatically.setTooltipText("Starting is controlled from the main download list");
+        moveTorrent.setSensitive(false);
+        moveTorrent.setTooltipText("Descriptor movement only applies while adding a new download");
 
         loadCurrentSettings();
 
@@ -85,6 +106,7 @@ public class PropertyDialog {
 
     public void present() {
         dialog.present();
+        maxConnectionsSpin.grabFocus();
     }
 
     private void loadCurrentSettings() {
@@ -110,38 +132,44 @@ public class PropertyDialog {
         if (settings.getCookieHeader() != null && settings.getCookieHeader().startsWith("Cookie: ")) {
             cookieEntry.setText(settings.getCookieHeader().substring("Cookie: ".length()));
         }
+        DialogOptions.ProxyFields proxy = download.isUseProxy()
+                ? DialogOptions.parseProxy(download.getProxyAddress())
+                : DialogOptions.ProxyFields.none();
+        boolean torProxy = proxy.typeIndex() == 4
+                && "127.0.0.1".equals(proxy.host()) && proxy.port() == 9050;
+        torSwitch.setActive(torProxy);
+        proxyTypeCombo.setSelected(torProxy ? 0 : proxy.typeIndex());
+        proxyHostEntry.setText(torProxy ? "" : proxy.host());
+        proxyPortSpin.setValue(torProxy ? 0 : proxy.port());
+        proxyUsernameEntry.setText(torProxy ? "" : proxy.username());
+        proxyPasswordEntry.setText(torProxy ? "" : proxy.password());
     }
 
     private void onApply() {
         org.manager.download.ExternalToolSettings settings = download.getSettings();
         settings.setMaxConnections((int) maxConnectionsSpin.getValue());
         settings.setDownloadLimitKB((int) maxDownloadSpeedSpin.getValue());
-        int upKb = (int) maxUploadSpeedSpin.getValue();
-        if (upKb > 0) {
-            settings.setUploadLimitKB(upKb);
-        }
-        int retry = (int) retryLimitSpin.getValue();
-        if (retry > 0) {
-            settings.setMaxRetries(retry);
-        }
-        int retryWait = (int) retryAfterSpin.getValue();
-        if (retryWait > 0) {
-            settings.setRetryDelaySeconds(retryWait);
-        }
-        if (!referrerEntry.getText().isBlank()) {
-            settings.setReferer(referrerEntry.getText().trim());
-        }
-        if (!userAgentEntry.getText().isBlank()) {
-            settings.setUserAgent(userAgentEntry.getText().trim());
-        }
-        if (!cookieEntry.getText().isBlank()) {
-            settings.setCookieHeader("Cookie: " + cookieEntry.getText().trim());
-        }
+        settings.setUploadLimitKB((int) maxUploadSpeedSpin.getValue());
+        settings.setMaxRetries((int) retryLimitSpin.getValue());
+        settings.setRetryDelaySeconds((int) retryAfterSpin.getValue());
+        settings.setReferer(blankToNull(referrerEntry.getText()));
+        settings.setUserAgent(blankToNull(userAgentEntry.getText()));
+        String cookie = cookieEntry.getText().trim();
+        settings.setCookieHeader(cookie.isEmpty() ? null : "Cookie: " + cookie);
+        DialogOptions.applyProxy(download, torSwitch.getActive(),
+                (int) proxyTypeCombo.getSelected(), proxyHostEntry.getText(),
+                (int) proxyPortSpin.getValue(), proxyUsernameEntry.getText(),
+                proxyPasswordEntry.getText());
         downloadManager.changeSettings(download)
                 .thenRun(() -> LOGGER.info("Applied settings to download: " + download.getName()))
                 .exceptionally(e -> {
                     LOGGER.log(Level.WARNING, "Failed to apply settings to " + download.getName(), e);
                     return null;
                 });
+    }
+
+    private static String blankToNull(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

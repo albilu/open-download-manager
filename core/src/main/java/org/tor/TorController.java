@@ -503,12 +503,19 @@ public class TorController {
         for (Path path : cookiePaths) {
             if (Files.exists(path)) {
                 try {
-                    byte[] cookieData = Files.readAllBytes(path);
+                    byte[] cookieData;
+                    try (java.io.InputStream input = Files.newInputStream(path)) {
+                        cookieData = input.readNBytes(65);
+                    }
+                    if (cookieData.length != 32) {
+                        LOGGER.warning("Ignoring an invalid Tor authentication cookie");
+                        continue;
+                    }
                     String hexCookie = bytesToHex(cookieData);
-                    LOGGER.info("Using cookie authentication from: " + path);
+                    LOGGER.info("Using Tor cookie authentication");
                     return hexCookie;
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to read cookie file: " + path, e);
+                    LOGGER.log(Level.WARNING, "Failed to read Tor authentication cookie", e);
                 }
             }
         }
@@ -578,16 +585,18 @@ public class TorController {
                     return null;
                 }
 
-                LOGGER.fine("Sending command: " + command);
+                String commandName = command == null || command.isBlank()
+                        ? "<empty>" : command.strip().split("\\s+", 2)[0];
+                LOGGER.fine("Sending Tor control command: " + commandName);
                 writer.println(command);
 
                 String response = readResponse(reader);
-                LOGGER.fine("Received response: " + response);
+                LOGGER.fine("Received Tor control response");
 
                 return response;
 
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error sending command: " + command, e);
+                LOGGER.log(Level.WARNING, "Error sending Tor control command", e);
                 // Connection might be broken, mark as disconnected
                 isConnected.set(false);
                 return null;

@@ -6,8 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.concurrent.CompletableFuture;
 import org.gnome.gio.File;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.FileDialog;
@@ -16,6 +18,7 @@ import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
+import org.gnome.gtk.Switch;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.Window;
 import org.gnome.gobject.Value;
@@ -33,6 +36,7 @@ public class ImportSequenceDialog {
 
     private static final Logger LOGGER = Logger.getLogger(ImportSequenceDialog.class.getName());
     private static final String[] RANGE_MODES = {"Number", "Character"};
+    static final int MAX_IMPORT_URLS = 1_000;
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -65,6 +69,13 @@ public class ImportSequenceDialog {
         this.previewStore = Widgets.require(builder, "preview_liststore", ListStore.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
 
+        AccessibilitySupport.label(uriEntry, "URL sequence pattern");
+        AccessibilitySupport.label(numStartSpin, "Sequence start number");
+        AccessibilitySupport.label(numVersSpin, "Sequence end number");
+        AccessibilitySupport.label(numCountSpin, "Maximum generated URLs");
+        AccessibilitySupport.label(charEntry, "Sequence start character");
+        AccessibilitySupport.label(charVersEntry, "Sequence end character");
+
         dialog.setTransientFor(parent);
 
         StringList modes = new StringList(new String[0]);
@@ -73,6 +84,12 @@ public class ImportSequenceDialog {
         }
         Widgets.require(builder, "num_combo", DropDown.class).setModel(modes);
         Widgets.require(builder, "char_combo", DropDown.class).setModel(modes);
+        StringList proxyTypes = new StringList(new String[0]);
+        for (String type : DialogOptions.PROXY_TYPES) {
+            proxyTypes.append(type);
+        }
+        Widgets.require(builder, "proxy_type_combo", DropDown.class).setModel(proxyTypes);
+        loadGlobalDefaults();
 
         Button destinationButton = Widgets.require(builder, "destination_folder", Button.class);
         destinationButton.setLabel(currentDefaultDirectory());
@@ -95,6 +112,7 @@ public class ImportSequenceDialog {
 
     public void present() {
         dialog.present();
+        uriEntry.grabFocus();
     }
 
     private void onChooseFolder() {
@@ -124,7 +142,8 @@ public class ImportSequenceDialog {
         }
         int start = (int) numStartSpin.getValue();
         int end = (int) numVersSpin.getValue();
-        int count = Math.max(1, (int) numCountSpin.getValue());
+        int count = Math.min(MAX_IMPORT_URLS,
+                Math.max(1, (int) numCountSpin.getValue()));
 
         // Character range takes precedence when both char fields are filled
         String charFrom = charEntry.getText().trim();
@@ -169,21 +188,95 @@ public class ImportSequenceDialog {
         }
         Path destination = destinationFolder != null ? destinationFolder
                 : Path.of(currentDefaultDirectory());
+        ImportOptions options = captureOptions();
+        Widgets.require(builder, "validate_button", Button.class).setSensitive(false);
+        CompletableFuture.supplyAsync(() -> queueUrls(urls, destination, options))
+                .whenComplete((queued, error) -> UiThread.marshal(() -> {
+                    if (error != null) {
+                        LOGGER.log(Level.WARNING, "URL sequence import failed", error);
+                    } else {
+                        LOGGER.info("Imported " + queued + " downloads from URL sequence");
+                        if (onImportDone != null) {
+                            onImportDone.run();
+                        }
+                    }
+                    dialog.close();
+                }));
+    }
+
+    private ImportOptions captureOptions() {
+        return new ImportOptions(
+                Widgets.require(builder, "tor_switch", Switch.class).getActive(),
+                (int) Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected(),
+                Widgets.require(builder, "proxy_host_entry", Entry.class).getText(),
+                (int) Widgets.require(builder, "proxy_port_spin", SpinButton.class).getValue(),
+                Widgets.require(builder, "proxy_username_entry", Entry.class).getText(),
+                Widgets.require(builder, "proxy_password_entry", Entry.class).getText(),
+                (int) Widgets.require(builder, "max_connections_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "max_download_speed_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "max_upload_speed_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "retry_limit_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "retry_after", SpinButton.class).getValue(),
+                Widgets.require(builder, "start_automatically_check1", CheckButton.class).getActive());
+    }
+
+    private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
         int queued = 0;
-        for (String url : urls) {
+        for (String url : urls.stream().limit(MAX_IMPORT_URLS).toList()) {
             try {
                 Download download = downloadManager.createDownload(new URI(url), destination);
-                downloadManager.queueDownload(download);
+                options.apply(download);
+                if (options.startAutomatically()) {
+                    downloadManager.queueDownload(download);
+                }
                 queued++;
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to queue " + url, e);
+                LOGGER.log(Level.FINE, "Skipped an invalid URL-sequence entry", e);
             }
         }
-        LOGGER.info("Imported " + queued + " downloads from URL sequence");
-        if (onImportDone != null) {
-            onImportDone.run();
+        return queued;
+    }
+
+    private record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,
+            String proxyUser, String proxyPassword, int connections, int downloadLimitKb,
+            int uploadLimitKb, int retries, int retryDelay, boolean startAutomatically) {
+        void apply(Download download) {
+            DialogOptions.applyProxy(download, tor, proxyType, proxyHost, proxyPort,
+                    proxyUser, proxyPassword);
+            DialogOptions.applyCommon(download.getSettings(), connections, downloadLimitKb,
+                    uploadLimitKb, retries, retryDelay, null, null, null);
         }
-        dialog.close();
+    }
+
+    private void loadGlobalDefaults() {
+        org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
+        Widgets.require(builder, "max_connections_spin", SpinButton.class)
+                .setValue(settings.getIntProperty("aria2.maxConnections", 8));
+        Widgets.require(builder, "max_download_speed_spin", SpinButton.class)
+                .setValue(settings.getIntProperty("aria2.maxDownloadSpeedKb", 0));
+        Widgets.require(builder, "max_upload_speed_spin", SpinButton.class)
+                .setValue(settings.getIntProperty("aria2.maxUploadSpeedKb", 0));
+        Widgets.require(builder, "retry_limit_spin", SpinButton.class)
+                .setValue(settings.getIntProperty("aria2.maxTries", 5));
+        Widgets.require(builder, "retry_after", SpinButton.class)
+                .setValue(settings.getIntProperty("aria2.retryWait", 0));
+        Widgets.require(builder, "start_automatically_check1", CheckButton.class)
+                .setActive(settings.getBooleanProperty("ui.startAutomatically", true));
+        CheckButton moveDescriptor = Widgets.require(builder, "move_torrent_check1", CheckButton.class);
+        moveDescriptor.setActive(false);
+        moveDescriptor.setSensitive(false);
+        moveDescriptor.setTooltipText("URL sequences do not move local descriptor files");
+        Widgets.require(builder, "tor_switch", Switch.class)
+                .setActive(settings.getBooleanProperty("tor.enabled", false));
+
+        DialogOptions.ProxyFields proxy = settings.isGlobalProxyEnabled()
+                ? DialogOptions.parseProxy(settings.getGlobalProxyAddress())
+                : DialogOptions.ProxyFields.none();
+        Widgets.require(builder, "proxy_type_combo", DropDown.class).setSelected(proxy.typeIndex());
+        Widgets.require(builder, "proxy_host_entry", Entry.class).setText(proxy.host());
+        Widgets.require(builder, "proxy_port_spin", SpinButton.class).setValue(proxy.port());
+        Widgets.require(builder, "proxy_username_entry", Entry.class).setText(proxy.username());
+        Widgets.require(builder, "proxy_password_entry", Entry.class).setText(proxy.password());
     }
 
     private void updateDiskSpace(String dir) {

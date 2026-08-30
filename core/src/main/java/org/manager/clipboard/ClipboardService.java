@@ -334,11 +334,11 @@ public class ClipboardService implements ClipboardListener {
                 downloadManager.queueDownload(download);
             }
 
-            LOGGER.fine("Created download for URL: " + url);
+            LOGGER.fine("Created clipboard download");
             return download;
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to create download for URL: " + url, e);
+            LOGGER.log(Level.WARNING, "Failed to create clipboard download", e);
             return null;
         }
     }

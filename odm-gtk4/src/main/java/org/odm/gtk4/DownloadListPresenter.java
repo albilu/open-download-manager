@@ -177,12 +177,15 @@ final class DownloadListPresenter {
         }
 
         int[] counts = computeCounts(downloads);
+        int[] categoryCounts = computeCategoryCounts(downloads);
         if (!java.util.Arrays.equals(counts, lastStatusCounts)
                 || downloads.size() != lastTotalCount) {
             lastStatusCounts = counts;
             lastTotalCount = downloads.size();
             rebuildFilterStore(statusStore, STATUS_FILTERS, counts, downloads.size(), statusFilter);
-            int[] categoryCounts = computeCategoryCounts(downloads);
+        }
+        if (!java.util.Arrays.equals(categoryCounts, lastCategoryCounts)
+                || downloads.size() != lastTotalCount) {
             lastCategoryCounts = categoryCounts;
             rebuildFilterStore(categoryStore, CATEGORIES, categoryCounts, downloads.size(),
                     categoryFilter);
@@ -329,11 +332,13 @@ final class DownloadListPresenter {
                 DownloadFormats.size(Math.max(0, download.getSize() - download.getDownloaded())));
         ListStoreCells.setString(store, iter, COL_SPEED,
                 DownloadFormats.size((long) download.getSpeed()) + "/s");
-        ListStoreCells.setString(store, iter, COL_UP_SPEED, "—");
+        ListStoreCells.setString(store, iter, COL_UP_SPEED,
+                download.getUploadSpeed() > 0
+                        ? DownloadFormats.size((long) download.getUploadSpeed()) + "/s" : "—");
         ListStoreCells.setString(store, iter, COL_RETRY, "—");
         ListStoreCells.setString(store, iter, COL_START,
-                download.getCreatedAt() != null
-                        ? DownloadFormats.DATE_FORMAT.format(download.getCreatedAt())
+                download.getStartedAt() != null
+                        ? DownloadFormats.DATE_FORMAT.format(download.getStartedAt())
                         : "—");
         ListStoreCells.setString(store, iter, COL_END,
                 download.getCompletedAt() != null
@@ -346,7 +351,9 @@ final class DownloadListPresenter {
             String selected) {
         store.clear();
         for (int i = 0; i < labels.length; i++) {
-            int count = i < counts.length ? counts[i] : (i == 0 ? total : 0);
+            int count = store == statusStore
+                    ? (i == 0 ? total : (i - 1 < counts.length ? counts[i - 1] : 0))
+                    : (i < counts.length ? counts[i] : 0);
             TreeIter iter = new TreeIter();
             store.append(iter);
             ListStoreCells.setString(store, iter, SC_ICON, iconForFilterRow(labels[i]));

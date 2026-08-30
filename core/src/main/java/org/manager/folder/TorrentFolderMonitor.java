@@ -271,7 +271,6 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
             String content = new String(data, 0, length, "ISO-8859-1");
 
             // Check for required torrent fields using improved detection
-            boolean hasAnnounce = hasBencodeField(content, "announce") || hasBencodeField(content, "announce-list");
             boolean hasInfo = hasBencodeField(content, "info");
 
             // Check for basic bencode dictionary structure
@@ -283,9 +282,9 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
             boolean hasPieces = hasBencodeField(content, "pieces");
             boolean hasName = hasBencodeField(content, "name");
 
-            // A valid torrent should have announce/announce-list, info dict, and basic
-            // structure
-            boolean isValidTorrent = hasAnnounce && hasInfo && hasValidStructure;
+            // Trackerless torrents are valid (for example when peers are found
+            // through DHT), so announce fields cannot be mandatory.
+            boolean isValidTorrent = hasInfo && hasValidStructure;
 
             // For more confidence, check if info dict contains expected fields
             if (isValidTorrent && (hasPieceLength || hasPieces || hasName)) {

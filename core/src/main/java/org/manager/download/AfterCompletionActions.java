@@ -21,6 +21,9 @@ public interface AfterCompletionActions {
      */
     void addAfterCompletionAction(Download download, AfterCompletionAction action);
 
+    /** Sets the one application-wide action included in every completion. */
+    void setGlobalAfterCompletionAction(AfterCompletionAction action);
+
     /**
      * Removes an after-completion action from a download.
      *

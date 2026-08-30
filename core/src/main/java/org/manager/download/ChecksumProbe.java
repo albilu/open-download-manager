@@ -1,12 +1,7 @@
 package org.manager.download;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -61,6 +56,11 @@ public final class ChecksumProbe {
      * @return the first detected checksum, or empty when none is published
      */
     public static Optional<DetectedChecksum> probe(URI url) {
+        return probe(url, null);
+    }
+
+    /** Probes through the supplied proxy when configured. */
+    public static Optional<DetectedChecksum> probe(URI url, String proxyAddress) {
         if (url == null) {
             return Optional.empty();
         }
@@ -73,7 +73,7 @@ public final class ChecksumProbe {
         }
         for (Map.Entry<String, String> candidate : EXTENSIONS_BY_ALGORITHM.entrySet()) {
             URI sibling = URI.create(url + candidate.getValue());
-            Optional<String> checksum = fetchAndParse(sibling, candidate.getKey());
+            Optional<String> checksum = fetchAndParse(sibling, candidate.getKey(), proxyAddress);
             if (checksum.isPresent()) {
                 return Optional.of(new DetectedChecksum(
                         candidate.getKey(), checksum.get(), sibling));
@@ -82,45 +82,18 @@ public final class ChecksumProbe {
         return Optional.empty();
     }
 
-    /** Shared, redirect-following client: a new HttpClient per probe wasted a connection pool per call. */
-    private static final HttpClient SHARED_CLIENT = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
-
     /**
      * Fetches a sibling checksum file and extracts the digest for the base
      * filename when the file lists multiple entries.
      */
-    private static Optional<String> fetchAndParse(URI sibling, String algorithm) {
+    private static Optional<String> fetchAndParse(URI sibling, String algorithm, String proxyAddress) {
         try {
-            HttpRequest request = HttpRequest.newBuilder(sibling)
-                    .timeout(Duration.ofSeconds(8))
-                    .GET()
-                    .build();
-            HttpResponse<InputStream> response = SHARED_CLIENT.send(request,
-                    HttpResponse.BodyHandlers.ofInputStream());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                return Optional.empty();
-            }
-            String body;
-            try (InputStream in = response.body();
-                    ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                byte[] buffer = new byte[2048];
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    if (out.size() + read > MAX_CHECKSUM_FILE_BYTES) {
-                        return Optional.empty(); // not a checksum file
-                    }
-                    out.write(buffer, 0, read);
-                }
-                body = out.toString(java.nio.charset.StandardCharsets.UTF_8);
-            }
+            byte[] bytes = org.manager.tools.BoundedHttpFetcher.fetch(sibling,
+                    MAX_CHECKSUM_FILE_BYTES, Duration.ofSeconds(5), Duration.ofSeconds(8),
+                    proxyAddress);
+            String body = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
             return parse(body, algorithm);
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
+        } catch (IOException e) {
             return Optional.empty();
         } catch (IllegalArgumentException e) {
             return Optional.empty(); // malformed sibling URI

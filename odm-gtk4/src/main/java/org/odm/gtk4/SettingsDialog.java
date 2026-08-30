@@ -39,6 +39,7 @@ public class SettingsDialog {
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final org.manager.schedule.ScheduleManager scheduleManager;
+    private final java.util.function.Consumer<Boolean> torPreferenceHandler;
     private final GtkBuilder builder;
     private final Label statusLabel;
 
@@ -47,11 +48,25 @@ public class SettingsDialog {
 
     public SettingsDialog(Window parent, DownloadManager downloadManager,
             org.manager.schedule.ScheduleManager scheduleManager) {
+        this(parent, downloadManager, scheduleManager, null);
+    }
+
+    public SettingsDialog(Window parent, DownloadManager downloadManager,
+            org.manager.schedule.ScheduleManager scheduleManager,
+            java.util.function.Consumer<Boolean> torPreferenceHandler) {
         this.downloadManager = downloadManager;
         this.scheduleManager = scheduleManager;
+        this.torPreferenceHandler = torPreferenceHandler;
         this.builder = UiLoader.load("/ui/settings.ui");
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
         this.statusLabel = Widgets.require(builder, "settings_status_label", Label.class);
+
+        AccessibilitySupport.label(spin("max_concurrent_downloads_spin"),
+                "Maximum concurrent downloads");
+        AccessibilitySupport.label(entry("proxy_host_entry"), "Global proxy host");
+        AccessibilitySupport.label(spin("proxy_port_spin"), "Global proxy port");
+        AccessibilitySupport.label(entry("proxy_username_entry"), "Global proxy username");
+        AccessibilitySupport.label(entry("proxy_password_entry"), "Global proxy password");
 
         dialog.setTransientFor(parent);
 
@@ -61,14 +76,17 @@ public class SettingsDialog {
         buildSchedulerGrid();
 
         // File/folder pickers
-        onPick("default_download_folder_chooser", "Select download folder", this::setDefaultDir);
-        onPick("monitored_folder_chooser", "Select monitored folder", this::setMonitoredDir);
-        onPick("browse_aria2_button", "Select aria2c binary", e -> setText("aria2_path_entry", e));
-        onPick("browse_ytdlp_button", "Select yt-dlp binary", e -> setText("ytdlp_path_entry", e));
-        onPick("browse_httrack_button", "Select httrack binary", e -> setText("httrack_path_entry", e));
-        onPick("browse_proxychains_button", "Select proxychains binary", e -> setText("proxychains_path_entry", e));
-        onPick("browse_tor_button", "Select tor binary", e -> setText("tor_path_entry", e));
-        onPick("browse_axel_button", "Select axel binary", e -> setText("axel_path_entry", e));
+        onPickFolder("default_download_folder_chooser", "Select download folder", this::setDefaultDir);
+        onPickFolder("monitored_folder_chooser", "Select monitored folder", this::setMonitoredDir);
+        onPickFile("browse_aria2_button", "Select aria2c binary", e -> setText("aria2_path_entry", e));
+        onPickFile("browse_ytdlp_button", "Select yt-dlp binary", e -> setText("ytdlp_path_entry", e));
+        onPickFile("browse_httrack_button", "Select httrack binary", e -> setText("httrack_path_entry", e));
+        onPickFile("browse_proxychains_button", "Select proxychains binary", e -> setText("proxychains_path_entry", e));
+        onPickFile("browse_tor_button", "Select tor binary", e -> setText("tor_path_entry", e));
+        onPickFile("browse_axel_button", "Select axel binary", e -> setText("axel_path_entry", e));
+
+        mirrorCheckButtons("start_automatically_check", "start_automatically_check2");
+        mirrorCheckButtons("move_torrent_check", "move_torrent_check2");
 
         load();
 
@@ -114,6 +132,7 @@ public class SettingsDialog {
 
     public void present() {
         dialog.present();
+        spin("max_concurrent_downloads_spin").grabFocus();
     }
 
     /** Current status label text (test seam for save-outcome reporting). */
@@ -207,7 +226,8 @@ public class SettingsDialog {
         Widgets.require(builder, id, DropDown.class).setModel(list);
     }
 
-    private void onPick(String buttonId, String title, java.util.function.Consumer<String> consumer) {
+    private void onPickFolder(String buttonId, String title,
+            java.util.function.Consumer<String> consumer) {
         Widgets.require(builder, buttonId, Button.class).onClicked(() -> {
             FileDialog fileDialog = new FileDialog();
             fileDialog.setTitle(title);
@@ -221,6 +241,39 @@ public class SettingsDialog {
                     LOGGER.log(Level.FINE, title + " selection cancelled or failed", e);
                 }
             });
+        });
+    }
+
+    private void onPickFile(String buttonId, String title,
+            java.util.function.Consumer<String> consumer) {
+        Widgets.require(builder, buttonId, Button.class).onClicked(() -> {
+            FileDialog fileDialog = new FileDialog();
+            fileDialog.setTitle(title);
+            fileDialog.open(dialog, null, result -> {
+                try {
+                    File file = fileDialog.openFinish(result);
+                    if (file != null && file.getPath() != null) {
+                        consumer.accept(file.getPath().toString());
+                    }
+                } catch (Exception e) {
+                    LOGGER.log(Level.FINE, title + " selection cancelled or failed", e);
+                }
+            });
+        });
+    }
+
+    private void mirrorCheckButtons(String firstId, String secondId) {
+        CheckButton first = check(firstId);
+        CheckButton second = check(secondId);
+        first.onToggled(() -> {
+            if (second.getActive() != first.getActive()) {
+                second.setActive(first.getActive());
+            }
+        });
+        second.onToggled(() -> {
+            if (first.getActive() != second.getActive()) {
+                first.setActive(second.getActive());
+            }
         });
     }
 
@@ -266,7 +319,14 @@ public class SettingsDialog {
         entry("referer_entry").setText(s.getProperty("aria2.referer", ""));
         entry("cookie_entry").setText(s.getProperty("aria2.cookie", ""));
         entry("user_agent_entry").setText(s.getProperty("aria2.userAgent", ""));
-        entry("proxy_host_entry").setText(s.getGlobalProxyAddress() != null ? s.getGlobalProxyAddress() : "");
+        DialogOptions.ProxyFields proxy = s.isGlobalProxyEnabled()
+                ? DialogOptions.parseProxy(s.getGlobalProxyAddress())
+                : DialogOptions.ProxyFields.none();
+        Widgets.require(builder, "proxy_type_combo", DropDown.class).setSelected(proxy.typeIndex());
+        entry("proxy_host_entry").setText(proxy.host());
+        spin("proxy_port_spin").setValue(proxy.port());
+        entry("proxy_username_entry").setText(proxy.username());
+        entry("proxy_password_entry").setText(proxy.password());
         // Aria2
         entry("aria2_path_entry").setText(s.getAria2Path() != null ? s.getAria2Path() : "");
         spin("min_split_size_spin1").setValue(s.getIntProperty("aria2.minSplitSizeMb", 10));
@@ -275,6 +335,10 @@ public class SettingsDialog {
         spin("seed_time_spin").setValue(s.getIntProperty("aria2.seedTimeMin", 60));
         check("continue_download_check").setActive(s.getBooleanProperty("aria2.continueDownload", true));
         check("check_integrity_check").setActive(s.getBooleanProperty("aria2.checkIntegrity", false));
+        String fileAllocation = s.getProperty("aria2.fileAllocation", "prealloc");
+        int allocationIndex = java.util.Arrays.asList(FILE_ALLOCATIONS).indexOf(fileAllocation);
+        Widgets.require(builder, "file_allocation_combo", DropDown.class)
+                .setSelected(Math.max(0, allocationIndex));
         check("enable_auto_save_check").setActive(s.getBooleanProperty("aria2.autoSave", true));
         check("enable_seeding_check").setActive(s.getBooleanProperty("aria2.enableSeeding", false));
         entry("tracker_list_entry").setText(s.getProperty("tracker.list", ""));
@@ -313,6 +377,7 @@ public class SettingsDialog {
      * with the actual save outcome. Package-private for presenter tests. */
     void applySettings() {
         GlobalSettings s = downloadManager.getGlobalSettings();
+        boolean previousStartAtLogin = s.getBooleanProperty("ui.startAtLogin", false);
         // tor proxy default
         s.setProperty("tor.enabled", String.valueOf(torSwitchGet()));
         // General
@@ -357,8 +422,16 @@ public class SettingsDialog {
         s.setProperty("aria2.referer", entry("referer_entry").getText().trim());
         s.setProperty("aria2.cookie", entry("cookie_entry").getText().trim());
         s.setProperty("aria2.userAgent", entry("user_agent_entry").getText().trim());
-        String proxyAddress = entry("proxy_host_entry").getText().trim();
-        s.setGlobalProxyEnabled(!proxyAddress.isEmpty());
+        boolean torEnabled = torSwitchGet();
+        String proxyAddress = torEnabled
+                ? "socks5h://127.0.0.1:9050"
+                : DialogOptions.buildProxyAddress(
+                        (int) Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected(),
+                        entry("proxy_host_entry").getText(),
+                        (int) spin("proxy_port_spin").getValue(),
+                        entry("proxy_username_entry").getText(),
+                        entry("proxy_password_entry").getText());
+        s.setGlobalProxyEnabled(proxyAddress != null);
         s.setGlobalProxyAddress(proxyAddress);
         // Aria2
         s.setAria2Path(entry("aria2_path_entry").getText().trim());
@@ -368,6 +441,10 @@ public class SettingsDialog {
         s.setProperty("aria2.seedTimeMin", String.valueOf((int) spin("seed_time_spin").getValue()));
         s.setProperty("aria2.continueDownload", String.valueOf(check("continue_download_check").getActive()));
         s.setProperty("aria2.checkIntegrity", String.valueOf(check("check_integrity_check").getActive()));
+        long allocationIndex = Widgets.require(builder, "file_allocation_combo", DropDown.class).getSelected();
+        if (allocationIndex >= 0 && allocationIndex < FILE_ALLOCATIONS.length) {
+            s.setProperty("aria2.fileAllocation", FILE_ALLOCATIONS[(int) allocationIndex]);
+        }
         s.setProperty("aria2.autoSave", String.valueOf(check("enable_auto_save_check").getActive()));
         s.setProperty("aria2.enableSeeding", String.valueOf(check("enable_seeding_check").getActive()));
         s.setProperty("tracker.list", entry("tracker_list_entry").getText().trim());
@@ -411,14 +488,38 @@ public class SettingsDialog {
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());
 
-        boolean saved = s.save();
+        boolean autostartApplied = true;
+        try {
+            AutostartManager.setEnabled(check("startup_check").getActive());
+        } catch (java.io.IOException e) {
+            autostartApplied = false;
+            // Keep persisted settings consistent with the desktop entry that
+            // is still on disk when the external operation fails.
+            s.setProperty("ui.startAtLogin", String.valueOf(previousStartAtLogin));
+            LOGGER.log(Level.WARNING, "Failed to update the login autostart entry", e);
+        }
+        boolean settingsSaved = s.save();
+        if (!settingsSaved && autostartApplied
+                && check("startup_check").getActive() != previousStartAtLogin) {
+            try {
+                AutostartManager.setEnabled(previousStartAtLogin);
+                s.setProperty("ui.startAtLogin", String.valueOf(previousStartAtLogin));
+            } catch (java.io.IOException rollbackFailure) {
+                LOGGER.log(Level.WARNING, "Failed to roll back the login autostart entry", rollbackFailure);
+            }
+        }
+        boolean saved = settingsSaved && autostartApplied;
         downloadManager.setGlobalSettings(s);
+        if (torPreferenceHandler != null) {
+            torPreferenceHandler.accept(torEnabled);
+        }
         if (saved) {
-            statusLabel.setLabel("Settings saved.");
+            AccessibilitySupport.status(statusLabel, "Settings saved.");
             LOGGER.info("Settings saved to " + GlobalSettings.getConfigFilePath());
         } else {
-            statusLabel.setLabel("Failed to save settings — check permissions for "
-                    + GlobalSettings.getConfigFilePath());
+            AccessibilitySupport.status(statusLabel,
+                    "Failed to save settings — check configuration permissions",
+                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             LOGGER.severe("Failed to save settings to " + GlobalSettings.getConfigFilePath());
         }
     }

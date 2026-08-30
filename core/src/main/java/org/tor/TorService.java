@@ -40,6 +40,8 @@ public class TorService {
     private final AtomicReference<Process> torProcess = new AtomicReference<>();
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
+    /** Set only after Tor reports a fully built circuit (100% bootstrap). */
+    private final AtomicBoolean bootstrapComplete = new AtomicBoolean(false);
     /** Serializes start(): concurrent callers coalesce onto one process. */
     private final Object startLock = new Object();
 
@@ -125,10 +127,18 @@ public class TorService {
                         // Write configuration to file
                         writeConfigFile();
 
+                        // A listener that predates our child is not evidence
+                        // that the managed Tor instance is ready.
+                        if (isPortListening(getSocksPort())) {
+                            throw new IllegalStateException("Configured Tor SOCKS port is already in use: "
+                                    + getSocksPort());
+                        }
+
                         // Build command
                         List<String> command = buildTorCommand();
 
                         // Start process
+                        bootstrapComplete.set(false);
                         ProcessBuilder processBuilder = new ProcessBuilder(command);
                         processBuilder.environment().put("HOME", System.getProperty("user.home"));
                         // Don't redirect error stream - we'll handle stdout and stderr separately
@@ -269,7 +279,7 @@ public class TorService {
      * @return SOCKS proxy port
      */
     public int getSocksPort() {
-        return Integer.parseInt(torConfig.getOrDefault("SocksPort", String.valueOf(DEFAULT_SOCKS_PORT)));
+        return parsePort(torConfig.getOrDefault("SocksPort", String.valueOf(DEFAULT_SOCKS_PORT)));
     }
 
     /**
@@ -278,7 +288,7 @@ public class TorService {
      * @return Control port
      */
     public int getControlPort() {
-        return Integer.parseInt(torConfig.getOrDefault("ControlPort", String.valueOf(DEFAULT_CONTROL_PORT)));
+        return parsePort(torConfig.getOrDefault("ControlPort", String.valueOf(DEFAULT_CONTROL_PORT)));
     }
 
     /**
@@ -408,18 +418,7 @@ public class TorService {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null && !isShuttingDown.get()) {
-                    // One line, one log record (FINE for the verbatim tor
-                    // output; INFO is reserved for lifecycle events)
-                    LOGGER.fine("Tor stdout: " + line);
-
-                    // Notify listeners of important events
-                    if (line.contains("Bootstrapped 100%")) {
-                        notifyListeners(TorServiceEvent.BOOTSTRAP_COMPLETE);
-                    } else if (line.contains("Bootstrapped")) {
-                        notifyListeners(TorServiceEvent.BOOTSTRAP_PROGRESS);
-                    } else if (line.contains("[err]")) {
-                        notifyListeners(TorServiceEvent.ERROR);
-                    }
+                    handleTorOutput(line, false);
                 }
             } catch (IOException e) {
                 if (!isShuttingDown.get()) {
@@ -433,15 +432,7 @@ public class TorService {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null && !isShuttingDown.get()) {
-                    // tor routinely writes warnings to stderr; only [err]
-                    // lines are error conditions — treating every line as
-                    // ERROR produced event storms for ordinary notices
-                    if (line.contains("[err]")) {
-                        LOGGER.warning("Tor stderr: " + line);
-                        notifyListeners(TorServiceEvent.ERROR);
-                    } else {
-                        LOGGER.fine("Tor stderr: " + line);
-                    }
+                    handleTorOutput(line, true);
                 }
             } catch (IOException e) {
                 if (!isShuttingDown.get()) {
@@ -451,12 +442,42 @@ public class TorService {
         });
     }
 
+    /**
+     * Interprets lifecycle lines from either stream. Tor commonly writes its
+     * notice-level bootstrap messages to stderr, so watching stdout alone
+     * loses the completion event. The verbatim line is intentionally not
+     * logged because it can contain local paths and configuration details.
+     */
+    private void handleTorOutput(String line, boolean stderr) {
+        if (line.contains("Bootstrapped 100%")) {
+            if (bootstrapComplete.compareAndSet(false, true)) {
+                notifyListeners(TorServiceEvent.BOOTSTRAP_COMPLETE);
+            }
+        } else if (line.contains("Bootstrapped")) {
+            notifyListeners(TorServiceEvent.BOOTSTRAP_PROGRESS);
+        }
+
+        if (line.contains("[err]")) {
+            LOGGER.warning("Tor reported an error on " + (stderr ? "stderr" : "stdout"));
+            notifyListeners(TorServiceEvent.ERROR);
+        } else {
+            LOGGER.fine("Tor emitted " + (stderr ? "stderr" : "stdout") + " output");
+        }
+    }
+
     private boolean waitForTorReady(int timeoutSeconds) {
         long startTime = System.currentTimeMillis();
         long timeoutMs = timeoutSeconds * 1000L;
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
-            if (testSocksConnection()) {
+            Process managed = torProcess.get();
+            if (managed == null || !managed.isAlive()) {
+                return false;
+            }
+            // A SOCKS listener opens near the beginning of bootstrap. It is
+            // usable for privacy-sensitive recovery only once Tor has also
+            // reported a complete circuit.
+            if (bootstrapComplete.get() && testSocksConnection()) {
                 return true;
             }
 
@@ -473,9 +494,31 @@ public class TorService {
 
     private boolean testSocksConnection() {
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", getSocksPort()), 5000);
-            return true;
+            socket.connect(new InetSocketAddress("127.0.0.1", getSocksPort()), 2000);
+            socket.setSoTimeout(2000);
+            socket.getOutputStream().write(new byte[] {0x05, 0x01, 0x00});
+            socket.getOutputStream().flush();
+            byte[] response = socket.getInputStream().readNBytes(2);
+            return response.length == 2 && response[0] == 0x05 && response[1] == 0x00;
         } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static int parsePort(String configured) {
+        String firstToken = configured == null ? "" : configured.trim().split("\\s+", 2)[0];
+        int port = Integer.parseInt(firstToken);
+        if (port < 1 || port > 65535) {
+            throw new IllegalArgumentException("Invalid Tor port: " + configured);
+        }
+        return port;
+    }
+
+    private static boolean isPortListening(int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 250);
+            return true;
+        } catch (IOException e) {
             return false;
         }
     }

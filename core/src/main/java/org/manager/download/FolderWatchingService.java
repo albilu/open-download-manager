@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -98,15 +99,17 @@ class FolderWatchingService {
     }
 
     CompletableFuture<Void> stopTorrentFolderMonitoring(Path folderPath) {
-        return torrentFolderMonitor.stopTorrentMonitoring(folderPath);
+        return stopExtensions(folderPath, Set.of(".torrent"));
     }
 
     List<Path> getMonitoredTorrentFolders() {
-        return folderMonitorService.getMonitoredFolders();
+        return folderMonitorService.getMonitoredFolders().stream()
+                .filter(path -> hasAnyExtension(path, Set.of(".torrent")))
+                .toList();
     }
 
     boolean isTorrentFolderMonitored(Path folderPath) {
-        return folderMonitorService.isMonitoring(folderPath);
+        return hasAnyExtension(folderPath, Set.of(".torrent"));
     }
 
     void setTorrentFolderMonitoringEnabled(boolean enabled) {
@@ -117,8 +120,8 @@ class FolderWatchingService {
             startConfiguredFolderMonitoring();
         } else {
             LOGGER.info("Torrent folder monitoring disabled");
-            // Stop all current monitoring when disabled
-            folderMonitorService.stopAllMonitoring();
+            folderMonitorService.getMonitoredFolders()
+                    .forEach(path -> stopExtensions(path, Set.of(".torrent")));
         }
     }
 
@@ -127,6 +130,10 @@ class FolderWatchingService {
     }
 
     CompletableFuture<Void> startDefaultTorrentFolderMonitoring() {
+        if (!torrentFolderMonitoringEnabled.get()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("Torrent folder monitoring is disabled"));
+        }
         return torrentFolderMonitor.startDefaultTorrentMonitoring();
     }
 
@@ -149,11 +156,11 @@ class FolderWatchingService {
     }
 
     CompletableFuture<Void> stopMetaLinkFolderMonitoring(Path folderPath) {
-        return metaLinkFolderMonitor.stopMetaLinkMonitoring(folderPath);
+        return stopExtensions(folderPath, Set.of(".metalink", ".meta4"));
     }
 
     boolean isMetaLinkFolderMonitored(Path folderPath) {
-        return folderMonitorService.isMonitoring(folderPath);
+        return hasAnyExtension(folderPath, Set.of(".metalink", ".meta4"));
     }
 
     void setMetaLinkFolderMonitoringEnabled(boolean enabled) {
@@ -164,6 +171,8 @@ class FolderWatchingService {
             startConfiguredFolderMonitoring();
         } else {
             LOGGER.info("Metalink folder monitoring disabled");
+            folderMonitorService.getMonitoredFolders()
+                    .forEach(path -> stopExtensions(path, Set.of(".metalink", ".meta4")));
         }
     }
 
@@ -211,11 +220,6 @@ class FolderWatchingService {
             LOGGER.warning("Configured monitored folder does not exist: " + folder);
             return;
         }
-        if (folderMonitorService.isMonitoring(folder)) {
-            LOGGER.fine("Folder already monitored: " + folder);
-            return;
-        }
-
         boolean recursive = settings.get().getBooleanProperty("ui.folderRecursive", false);
         boolean moveToTrash = settings.get().getBooleanProperty("ui.moveToTrash", false);
         FolderMonitorSettings.FileAction action = moveToTrash
@@ -225,26 +229,45 @@ class FolderWatchingService {
         LOGGER.info("Starting folder monitoring on " + folder
                 + " (recursive=" + recursive + ", action=" + action + ")");
 
+        Set<String> extensions = new java.util.HashSet<>();
         if (torrentFolderMonitoringEnabled.get()) {
-            torrentFolderMonitor.startTorrentMonitoring(folder,
-                            TorrentFolderMonitor.createDefaultTorrentSettings()
-                                    .setRecursive(recursive)
-                                    .setFileAction(action))
-                    .exceptionally(e -> {
-                        LOGGER.log(Level.WARNING, "Failed to start torrent folder monitoring on " + folder, e);
-                        return null;
-                    });
+            extensions.add(".torrent");
         }
         if (metaLinkFolderMonitoringEnabled.get()) {
-            metaLinkFolderMonitor.startMetaLinkMonitoring(folder,
-                            MetaLinkFolderMonitor.createDefaultMetaLinkSettings()
-                                    .setRecursive(recursive)
-                                    .setFileAction(action))
-                    .exceptionally(e -> {
-                        LOGGER.log(Level.WARNING, "Failed to start Metalink folder monitoring on " + folder, e);
-                        return null;
-                    });
+            extensions.add(".metalink");
+            extensions.add(".meta4");
         }
+        if (!extensions.isEmpty()) {
+            FolderMonitorSettings combined = new FolderMonitorSettings()
+                    .setFileExtensions(extensions)
+                    .setRecursive(recursive)
+                    .setFileAction(action)
+                    .setMinFileSize(50L)
+                    .setMaxFileSize(10L * 1024 * 1024);
+            folderMonitorService.startMonitoring(folder, combined).exceptionally(e -> {
+                LOGGER.log(Level.WARNING, "Failed to start descriptor folder monitoring", e);
+                return null;
+            });
+        }
+    }
+
+    private boolean hasAnyExtension(Path folder, Set<String> extensions) {
+        FolderMonitorSettings current = folderMonitorService.getMonitoringSettings(folder);
+        return current != null && current.getFileExtensions().stream().anyMatch(extensions::contains);
+    }
+
+    private CompletableFuture<Void> stopExtensions(Path folder, Set<String> extensions) {
+        FolderMonitorSettings current = folderMonitorService.getMonitoringSettings(folder);
+        if (current == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        java.util.Set<String> remaining = new java.util.HashSet<>(current.getFileExtensions());
+        remaining.removeAll(extensions);
+        if (remaining.isEmpty()) {
+            return folderMonitorService.stopMonitoring(folder);
+        }
+        current.setFileExtensions(remaining);
+        return folderMonitorService.updateMonitoringSettings(folder, current);
     }
 
     /**
@@ -257,6 +280,7 @@ class FolderWatchingService {
             LOGGER.info("Shutting down folder monitoring services...");
 
             CompletableFuture<Void> torrentShutdown = null;
+            CompletableFuture<Void> metaLinkShutdown = null;
             CompletableFuture<Void> folderShutdown = null;
 
             try {
@@ -265,6 +289,14 @@ class FolderWatchingService {
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Error initiating torrent folder monitor shutdown", e);
+            }
+
+            try {
+                if (metaLinkFolderMonitor != null) {
+                    metaLinkShutdown = metaLinkFolderMonitor.shutdown();
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error initiating Metalink folder monitor shutdown", e);
             }
 
             try {
@@ -280,6 +312,14 @@ class FolderWatchingService {
                     torrentShutdown.get(8, TimeUnit.SECONDS);
                 } catch (Exception e) {
                     LOGGER.log(Level.WARNING, "Torrent folder monitor shutdown timeout or error", e);
+                }
+            }
+
+            if (metaLinkShutdown != null) {
+                try {
+                    metaLinkShutdown.get(8, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Metalink folder monitor shutdown timeout or error", e);
                 }
             }
 

@@ -77,6 +77,8 @@ public class DownloadScheduler {
         this.globalSchedule = ScheduleSettings.alwaysActive();
         this.running = false;
 
+        restorePersistedSchedules();
+
         // Create a single-threaded scheduler for periodic checks
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "download-scheduler");
@@ -97,6 +99,7 @@ public class DownloadScheduler {
                 return CompletableFuture.completedFuture(null);
             }
 
+            restorePersistedSchedules();
             LOGGER.info("Starting download scheduler with check interval: " + checkIntervalSeconds + " seconds");
             running = true;
 
@@ -176,6 +179,11 @@ public class DownloadScheduler {
 
         synchronized (lock) {
             downloadSchedules.put(downloadId, schedule.copy());
+            Download download = downloadManager.getDownload(downloadId);
+            if (download != null) {
+                download.setScheduleSettings(schedule);
+                downloadManager.saveState();
+            }
             LOGGER.fine("Set schedule for download " + downloadId + ": " + schedule);
 
             // Immediately check this download's schedule if scheduler is running
@@ -197,12 +205,26 @@ public class DownloadScheduler {
         synchronized (lock) {
             ScheduleSettings removed = downloadSchedules.remove(downloadId);
             if (removed != null) {
+                Download download = downloadManager.getDownload(downloadId);
+                if (download != null) {
+                    download.setScheduleSettings(null);
+                    downloadManager.saveState();
+                }
                 LOGGER.fine("Removed schedule for download " + downloadId);
 
                 // Check if download should be controlled by global schedule now
                 if (running) {
                     checkDownloadSchedule(downloadId);
                 }
+            }
+        }
+    }
+
+    private void restorePersistedSchedules() {
+        for (Download download : downloadManager.getAllDownloads()) {
+            ScheduleSettings persisted = download.getScheduleSettings();
+            if (persisted != null) {
+                downloadSchedules.put(download.getId(), persisted);
             }
         }
     }
@@ -273,9 +295,33 @@ public class DownloadScheduler {
         Objects.requireNonNull(downloadId, "Download ID cannot be null");
 
         synchronized (lock) {
-            ScheduleSettings downloadSchedule = downloadSchedules.get(downloadId);
+            ScheduleSettings downloadSchedule = findPersistedDownloadSchedule(downloadId);
             return downloadSchedule != null ? downloadSchedule.copy() : globalSchedule.copy();
         }
+    }
+
+    /**
+     * Resolves a restored per-download schedule on first use.  The GTK startup
+     * path installs the admission gate before DownloadManager.initialize(), so
+     * the scheduler is constructed while the repository is still empty.  A
+     * recovery resume can therefore be the first observer of the persisted
+     * schedule and must not fall through to the global schedule.
+     */
+    private ScheduleSettings findPersistedDownloadSchedule(String downloadId) {
+        ScheduleSettings schedule = downloadSchedules.get(downloadId);
+        if (schedule != null) {
+            return schedule;
+        }
+
+        Download download = downloadManager.getDownload(downloadId);
+        ScheduleSettings persisted = download != null ? download.getScheduleSettings() : null;
+        if (persisted == null) {
+            return null;
+        }
+
+        ScheduleSettings copy = persisted.copy();
+        ScheduleSettings existing = downloadSchedules.putIfAbsent(downloadId, copy);
+        return existing != null ? existing : copy;
     }
 
     /**
@@ -305,7 +351,7 @@ public class DownloadScheduler {
 
         // If the download has its own schedule and respects global schedule,
         // both must be active
-        ScheduleSettings downloadSchedule = downloadSchedules.get(downloadId);
+        ScheduleSettings downloadSchedule = findPersistedDownloadSchedule(downloadId);
         if (downloadSchedule != null && downloadSchedule.isRespectGlobalSchedule()) {
             boolean globalScheduleActive = globalSchedule.isActiveAt(dateTime);
             return downloadScheduleActive && globalScheduleActive;

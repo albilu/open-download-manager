@@ -1,13 +1,14 @@
 package org.odm.gtk4;
 
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.util.EnumSet;
-import java.util.Set;
-import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.gnome.gio.DBusCallFlags;
 import org.gnome.gio.DBusConnection;
 import org.gnome.gio.DBusConnectionFlags;
+import org.gnome.gio.DBusInterfaceVTable;
 import org.gnome.gio.DBusMethodInfo;
 import org.gnome.gio.DBusPropertyInfo;
 import org.gnome.gio.DBusPropertyInfoFlags;
@@ -16,7 +17,6 @@ import org.gnome.gio.DBusAnnotationInfo;
 import org.gnome.gio.DBusArgInfo;
 import org.gnome.gio.DBusInterfaceInfo;
 import org.gnome.glib.Variant;
-import org.javagi.gobject.JavaClosure;
 
 /**
  * StatusNotifier tray export. Registers org.kde.StatusNotifierItem on the
@@ -33,6 +33,7 @@ public class StatusNotifierTray {
     private static final String WATCHER_PATH = "/StatusNotifierWatcher";
 
     private final DBusConnection connection;
+    private final Arena callbackArena;
     private int registrationId = -1;
     private boolean registeredWithWatcher = false;
 
@@ -43,48 +44,82 @@ public class StatusNotifierTray {
 
     public StatusNotifierTray(TrayHandlers handlers) {
         DBusConnection conn = null;
+        Arena arena = Arena.ofShared();
         try {
             String address = System.getenv("DBUS_SESSION_BUS_ADDRESS");
             if (address == null || address.isBlank()) {
                 throw new IllegalStateException("No session bus address; tray unavailable");
             }
-            conn = DBusConnection.forAddressSync(address, EnumSet.noneOf(DBusConnectionFlags.class), null, null);
+            conn = DBusConnection.forAddressSync(address,
+                    EnumSet.of(DBusConnectionFlags.AUTHENTICATION_CLIENT,
+                            DBusConnectionFlags.MESSAGE_BUS_CONNECTION), null, null);
 
             DBusPropertyInfo[] properties = {
                 new DBusPropertyInfo(0, "Title", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0]),
+                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
                 new DBusPropertyInfo(0, "Id", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0]),
+                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
+                new DBusPropertyInfo(0, "Category", "s",
+                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
                 new DBusPropertyInfo(0, "Status", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0]),
+                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
                 new DBusPropertyInfo(0, "IconName", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0])
+                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
+                new DBusPropertyInfo(0, "ItemIsMenu", "b",
+                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
+                new DBusPropertyInfo(0, "WindowId", "u",
+                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena)
+            };
+            DBusArgInfo[] activateArgs = {
+                new DBusArgInfo(0, "x", "i", new DBusAnnotationInfo[0], arena),
+                new DBusArgInfo(0, "y", "i", new DBusAnnotationInfo[0], arena)
             };
             DBusMethodInfo[] methods = {
-                new DBusMethodInfo(0, "Activate", new DBusArgInfo[0], new DBusArgInfo[0],
-                        new DBusAnnotationInfo[0])
+                new DBusMethodInfo(0, "Activate", activateArgs, new DBusArgInfo[0],
+                        new DBusAnnotationInfo[0], arena),
+                new DBusMethodInfo(0, "SecondaryActivate", activateArgs, new DBusArgInfo[0],
+                        new DBusAnnotationInfo[0], arena)
             };
             DBusSignalInfo[] signals = new DBusSignalInfo[0];
 
             DBusInterfaceInfo info = new DBusInterfaceInfo(0, "org.kde.StatusNotifierItem",
-                    methods, signals, properties, new DBusAnnotationInfo[0]);
+                    methods, signals, properties, new DBusAnnotationInfo[0], arena);
+            DBusInterfaceVTable vtable = new DBusInterfaceVTable(
+                    (connection, sender, objectPath, interfaceName, methodName, parameters, invocation) -> {
+                        if ("Activate".equals(methodName) || "SecondaryActivate".equals(methodName)) {
+                            handlers.onActivate();
+                            invocation.returnValue(Variant.tuple(new Variant[0]));
+                        } else {
+                            invocation.returnDbusError("org.freedesktop.DBus.Error.UnknownMethod",
+                                    "Unsupported tray method");
+                        }
+                    },
+                    (connection, sender, objectPath, interfaceName, propertyName, error) ->
+                            trayProperty(propertyName),
+                    null, arena);
 
-            // The closure shape exposes no per-property context; all four
-            // properties are strings, and a human-readable title is the only
-            // sane shared value (the old code returned "oDM" for everything)
-            JavaClosure getProperty = new JavaClosure((Supplier<Variant>) () ->
-                    Variant.string("Open Download Manager"));
-            JavaClosure setProperty = new JavaClosure((Runnable) () -> { /* ignore writes */ });
-            JavaClosure methodCall = new JavaClosure((Runnable) handlers::onActivate);
-
-            registrationId = conn.registerObjectWithClosures(OBJECT_PATH, info,
-                    getProperty, setProperty, methodCall);
+            registrationId = conn.registerObject(OBJECT_PATH, info, vtable,
+                    MemorySegment.NULL, null);
             registerWithWatcher(conn);
             LOGGER.info("StatusNotifierTray registered (id " + registrationId + ")");
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "StatusNotifier tray unavailable", e);
         }
         this.connection = conn;
+        this.callbackArena = arena;
+    }
+
+    private static Variant trayProperty(String propertyName) {
+        return switch (propertyName) {
+            case "Title" -> Variant.string("Open Download Manager");
+            case "Id" -> Variant.string("open-download-manager");
+            case "Category" -> Variant.string("ApplicationStatus");
+            case "Status" -> Variant.string("Active");
+            case "IconName" -> Variant.string("open-download-manager");
+            case "ItemIsMenu" -> Variant.boolean_(false);
+            case "WindowId" -> Variant.uint32(0);
+            default -> null;
+        };
     }
 
     /**
@@ -102,6 +137,12 @@ public class StatusNotifierTray {
             LOGGER.log(Level.WARNING,
                     "StatusNotifierWatcher not reachable; tray icon will not appear", e);
         }
+    }
+
+    /** True only when both the exported item and the desktop watcher are live. */
+    public boolean isAvailable() {
+        return connection != null && !connection.isClosed()
+                && registrationId > 0 && registeredWithWatcher;
     }
 
     public void unregister() {
@@ -123,6 +164,9 @@ public class StatusNotifierTray {
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Error closing tray DBus connection", e);
             }
+        }
+        if (callbackArena.scope().isAlive()) {
+            callbackArena.close();
         }
     }
 }

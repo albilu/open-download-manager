@@ -167,7 +167,7 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
                 if (proxy != null) {
                     configureProxyForDownload(download, proxy);
                     proxyManager.markProxyInUse(proxy, download.getId());
-                    LOGGER.info("Using proxy " + proxy.getAddress() + " for download " + download.getId()
+                    LOGGER.info("Using a rotation proxy for download " + download.getId()
                             + " (attempt " + (attemptNumber + 1) + ")");
                 }
             }

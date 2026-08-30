@@ -102,6 +102,17 @@ public class NewDownloadDialog {
         this.checksumLabel = Widgets.require(builder, "checksum_label", Label.class);
         this.verifyChecksumCheck = Widgets.require(builder, "verify_checksum_check", CheckButton.class);
 
+        AccessibilitySupport.label(urlEntry, "Download URL");
+        AccessibilitySupport.label(torrentFileChooser, "Choose torrent or Metalink descriptor");
+        AccessibilitySupport.label(saveFolderChooser, "Download destination folder");
+        AccessibilitySupport.label(filenameEntry, "Output filename");
+        AccessibilitySupport.label(proxyTypeCombo, "Proxy type");
+        AccessibilitySupport.label(proxyHostEntry, "Proxy host");
+        AccessibilitySupport.label(proxyPortSpin, "Proxy port");
+        AccessibilitySupport.label(proxyUsernameEntry, "Proxy username");
+        AccessibilitySupport.label(proxyPasswordEntry, "Proxy password");
+        AccessibilitySupport.label(torSwitch, "Route this download through Tor");
+
         dialog.setTransientFor(parent);
 
         StringList proxyTypes = new StringList(new String[0]);
@@ -109,6 +120,8 @@ public class NewDownloadDialog {
             proxyTypes.append(type);
         }
         proxyTypeCombo.setModel(proxyTypes);
+
+        loadGlobalDefaults();
 
         saveFolderChooser.setLabel(currentDefaultDirectory());
         updateDiskSpace(currentDefaultDirectory());
@@ -129,6 +142,7 @@ public class NewDownloadDialog {
 
     public void present() {
         dialog.present();
+        urlEntry.grabFocus();
     }
 
     /**
@@ -207,8 +221,10 @@ public class NewDownloadDialog {
         }
         lastProbedUrl = uri;
         detectedChecksum = null;
+        String proxy = downloadManager.getGlobalSettings().isGlobalProxyEnabled()
+                ? downloadManager.getGlobalSettings().getGlobalProxyAddress() : null;
         java.util.concurrent.CompletableFuture
-                .supplyAsync(() -> org.manager.download.ChecksumProbe.probe(uri)
+                .supplyAsync(() -> org.manager.download.ChecksumProbe.probe(uri, proxy)
                         .orElse(null))
                 .thenAccept(found -> UiThread.marshal(() -> {
                     // URL may have changed while probing
@@ -223,7 +239,7 @@ public class NewDownloadDialog {
                     }
                 }))
                 .exceptionally(e -> {
-                    LOGGER.log(Level.FINE, "Checksum probe failed for " + uri, e);
+                    LOGGER.log(Level.FINE, "Checksum probe failed", e);
                     return null;
                 });
     }
@@ -406,7 +422,14 @@ public class NewDownloadDialog {
                 : Path.of(currentDefaultDirectory());
 
         if (selectedTorrentFile != null) {
-            return downloadManager.createTorrentDownload(selectedTorrentFile, destination);
+            Path descriptor = moveTorrentCheck.getActive()
+                    ? moveDescriptorToDrafts(selectedTorrentFile)
+                    : selectedTorrentFile;
+            String lowerName = descriptor.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+            if (lowerName.endsWith(".meta4") || lowerName.endsWith(".metalink")) {
+                return downloadManager.createMetaLinkDownload(descriptor.toUri(), destination);
+            }
+            return downloadManager.createTorrentDownload(descriptor, destination);
         }
 
         String url = urlEntry.getText().trim();
@@ -416,8 +439,52 @@ public class NewDownloadDialog {
         try {
             return downloadManager.createDownload(new URI(url), destination);
         } catch (java.net.URISyntaxException e) {
-            throw new IllegalArgumentException("Invalid URL: " + url);
+            throw new IllegalArgumentException("Invalid URL");
         }
+    }
+
+    private Path moveDescriptorToDrafts(Path source) {
+        try {
+            Path drafts = org.manager.util.OdmPaths.dataDirectory().resolve("drafts");
+            java.nio.file.Files.createDirectories(drafts);
+            Path target = drafts.resolve(source.getFileName());
+            if (java.nio.file.Files.exists(target)) {
+                String name = source.getFileName().toString();
+                int dot = name.lastIndexOf('.');
+                String base = dot > 0 ? name.substring(0, dot) : name;
+                String extension = dot > 0 ? name.substring(dot) : "";
+                target = drafts.resolve(base + "-" + java.util.UUID.randomUUID() + extension);
+            }
+            return java.nio.file.Files.move(source, target);
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException("Could not move the descriptor to ODM drafts: "
+                    + e.getMessage(), e);
+        }
+    }
+
+    private void loadGlobalDefaults() {
+        org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
+        maxConnectionsSpin.setValue(settings.getIntProperty("aria2.maxConnections", 8));
+        retryLimitSpin.setValue(settings.getIntProperty("aria2.maxTries", 5));
+        maxDownloadSpeedSpin.setValue(settings.getIntProperty("aria2.maxDownloadSpeedKb", 0));
+        maxUploadSpeedSpin.setValue(settings.getIntProperty("aria2.maxUploadSpeedKb", 0));
+        retryAfterSpin.setValue(settings.getIntProperty("aria2.retryWait", 0));
+        referrerEntry.setText(settings.getProperty("aria2.referer", ""));
+        cookieEntry.setText(settings.getProperty("aria2.cookie", ""));
+        userAgentEntry.setText(settings.getProperty("aria2.userAgent", ""));
+        startAutomaticallyCheck.setActive(
+                settings.getBooleanProperty("ui.startAutomatically", true));
+        moveTorrentCheck.setActive(settings.getBooleanProperty("ui.moveTorrent", false));
+        torSwitch.setActive(settings.getBooleanProperty("tor.enabled", false));
+
+        DialogOptions.ProxyFields proxy = settings.isGlobalProxyEnabled()
+                ? DialogOptions.parseProxy(settings.getGlobalProxyAddress())
+                : DialogOptions.ProxyFields.none();
+        proxyTypeCombo.setSelected(proxy.typeIndex());
+        proxyHostEntry.setText(proxy.host());
+        proxyPortSpin.setValue(proxy.port());
+        proxyUsernameEntry.setText(proxy.username());
+        proxyPasswordEntry.setText(proxy.password());
     }
 
     private void applyOptions(Download download) {

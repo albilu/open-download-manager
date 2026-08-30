@@ -28,7 +28,7 @@ public final class ToolOptionFilter {
         YTDLP, ARIA2, CURL, HTTRACK
     }
 
-    private static final Pattern KEY_SYNTAX = Pattern.compile("[A-Za-z][A-Za-z0-9_-]*");
+    private static final Pattern KEY_SYNTAX = Pattern.compile("%?[A-Za-z][A-Za-z0-9_-]*");
 
     /**
      * Safe yt-dlp option keys. Deliberately excludes every execution or

@@ -13,8 +13,6 @@ import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.TreeIter;
-import org.gnome.gobject.Value;
-import org.javagi.gobject.types.Types;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,16 +49,25 @@ class DetailTabsPresenterGtkTest {
     private final AtomicReference<Download> selection = new AtomicReference<>();
     private DetailTabsPresenter presenter;
 
+    private record PresenterFixture(ListStore trackers, ListStore peers, ListStore files,
+            DetailTabsPresenter presenter) {
+    }
+
     @BeforeAll
-    static void initGtk() {
-        Gtk.init();
-        loop = new MainLoop(null, false);
+    static void initGtk() throws Exception {
+        CountDownLatch ready = new CountDownLatch(1);
         loopThread = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "test-glib-loop");
             t.setDaemon(true);
             return t;
         });
-        loopThread.execute(loop::run);
+        loopThread.execute(() -> {
+            Gtk.init();
+            loop = new MainLoop(null, false);
+            ready.countDown();
+            loop.run();
+        });
+        assertTrue(ready.await(10, TimeUnit.SECONDS), "GTK loop did not initialize");
     }
 
     @AfterAll
@@ -70,14 +77,20 @@ class DetailTabsPresenterGtkTest {
     }
 
     @BeforeEach
-    void setUpPresenter() {
+    void setUpPresenter() throws Exception {
         manager = Mockito.mock(DownloadManager.class);
-        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
-        trackersStore = Widgets.require(builder, "trackers_store", ListStore.class);
-        peersStore = Widgets.require(builder, "peers_store", ListStore.class);
-        filesStore = Widgets.require(builder, "files_store", ListStore.class);
-        presenter = new DetailTabsPresenter(manager, trackersStore, peersStore, filesStore,
-                selection::get);
+        PresenterFixture fixture = onLoop(() -> {
+            GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+            ListStore trackers = Widgets.require(builder, "trackers_store", ListStore.class);
+            ListStore peers = Widgets.require(builder, "peers_store", ListStore.class);
+            ListStore files = Widgets.require(builder, "files_store", ListStore.class);
+            return new PresenterFixture(trackers, peers, files,
+                    new DetailTabsPresenter(manager, trackers, peers, files, selection::get));
+        });
+        trackersStore = fixture.trackers();
+        peersStore = fixture.peers();
+        filesStore = fixture.files();
+        presenter = fixture.presenter();
     }
 
     @Test
@@ -175,8 +188,8 @@ class DetailTabsPresenterGtkTest {
     @DisplayName("MainWindow teardown shuts the detail presenter's executor down")
     void mainWindowTeardownShutsPresenterDown() throws Exception {
         DownloadManager stub = stubManager();
-        MainWindow window = new MainWindow(null, stub, new TorService("tor"),
-                new ScheduleManager(stub));
+        MainWindow window = onLoop(() -> new MainWindow(null, stub, new TorService("tor"),
+                new ScheduleManager(stub)));
         try {
             assertFalse(window.detailTabsPresenter.isShutdown(),
                     "a live window must keep its detail fetch executor running");
@@ -255,10 +268,7 @@ class DetailTabsPresenterGtkTest {
         TreeIter iter = new TreeIter();
         if (store.getIterFirst(iter)) {
             do {
-                Value v = new Value().init(Types.STRING);
-                store.getValue(iter, 0, v);
-                values.add(v.getString());
-                v.unset();
+                values.add(ListStoreCells.getString(store, iter, 0));
             } while (store.iterNext(iter));
         }
         return values;

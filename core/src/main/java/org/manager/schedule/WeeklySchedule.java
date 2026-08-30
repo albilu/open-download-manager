@@ -326,8 +326,20 @@ public class WeeklySchedule {
         DayOfWeek day = dateTime.getDayOfWeek();
         LocalTime time = dateTime.toLocalTime();
 
-        List<TimeRange> dayRanges = schedule.get(day);
-        return dayRanges.stream().anyMatch(range -> range.contains(time));
+        // A range belongs to the calendar day on which it starts. Therefore
+        // Monday 22:00-06:00 covers late Monday and early Tuesday, but does
+        // not make early Monday active. TimeRange.contains() alone cannot
+        // express that day ownership.
+        boolean startsToday = schedule.get(day).stream().anyMatch(range ->
+                range.spansMidnight()
+                        ? !time.isBefore(range.getStartTime())
+                        : range.contains(time));
+        if (startsToday) {
+            return true;
+        }
+        DayOfWeek previousDay = day.minus(1);
+        return schedule.get(previousDay).stream().anyMatch(range ->
+                range.spansMidnight() && !time.isAfter(range.getEndTime()));
     }
 
     /**

@@ -16,7 +16,7 @@
     </columns>
   </object>
   <object class="GtkListStore" id="files_store">
-    <columns><column type="gboolean"/><column type="gchararray"/><column type="gchararray"/><column type="gchararray"/><column type="gchararray"/></columns>
+    <columns><column type="gboolean"/><column type="gchararray"/><column type="gchararray"/><column type="gint"/><column type="gchararray"/><column type="gint"/></columns>
   </object>
   <object class="GtkListStore" id="global_progress_store">
     <columns><column type="gint"/></columns>
@@ -78,7 +78,7 @@
                         </child>
                         <child>
                           <object class="GtkTreeViewColumn" id="count_column">
-                            <child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child>
+                            <child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child>
                           </object>
                         </child>
                       </object>
@@ -106,7 +106,7 @@
                         </child>
                         <child>
                           <object class="GtkTreeViewColumn" id="category_count_column">
-                            <child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child>
+                            <child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child>
                           </object>
                         </child>
                       </object>
@@ -176,13 +176,13 @@
                                 <child><object class="GtkTreeViewColumn" id="complete_column"><property name="title">Complete</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="size_column"><property name="title">Size</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="percent_progress_column"><property name="title">Progress</property><child><object class="GtkCellRendererProgress"/><attributes><attribute name="value">12</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="elapsed_column"><property name="title">Elapsed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">5</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="left_column"><property name="title">Left</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">6</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="speed_column"><property name="title">Down speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">7</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="up_speed_column"><property name="title">Up speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title">Retry</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title">Start date</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title">End date</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">11</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="elapsed_column"><property name="title">Elapsed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="left_column"><property name="title">Left</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">5</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="speed_column"><property name="title">Down speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">6</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="up_speed_column"><property name="title">Up speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">7</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title">Retry</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title">Start date</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title">End date</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Type</property><child><object class="GtkCellRendererPixbuf"/><attributes><attribute name="icon-name">11</attribute></attributes></child></object></child>
                               </object>
                             </child>
@@ -280,10 +280,11 @@
                                 <child>
                                   <object class="GtkTreeView" id="peers_view">
                                     <property name="model">peers_store</property>
-                                    <child><object class="GtkTreeViewColumn" id="country_column"><property name="title">Country</property><child><object class="GtkCellRendererPixbuf" id="country_flag_renderer"/></child><child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="drapeaux_column"><property name="title">Flag</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="adresse_column"><property name="title">Address</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="client_column"><property name="title">Client</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="country_column"><property name="title">Address</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="drapeaux_column"><property name="title">Peer ID</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="adresse_column"><property name="title">Down speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="client_column"><property name="title">Up speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="peer_state_column"><property name="title">State</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
                                   </object>
                                 </child>
                               </object>
@@ -379,4 +380,3 @@
     </child>
   </object>
 </interface>
-

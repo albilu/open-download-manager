@@ -27,6 +27,9 @@ public class AfterCompletionActionManager {
     private final Map<String, List<AfterCompletionAction>> downloadActions;
     private final List<AfterCompletionActionListener> listeners;
     private final ExecutorService executorService;
+    private final java.util.Set<String> executedDownloads =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile AfterCompletionAction globalAction;
     private final java.util.concurrent.atomic.AtomicBoolean shutdown =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -73,6 +76,10 @@ public class AfterCompletionActionManager {
                 actions.add(action);
             }
         }
+    }
+
+    public void setGlobalAction(AfterCompletionAction action) {
+        this.globalAction = action;
     }
 
     /**
@@ -128,8 +135,18 @@ public class AfterCompletionActionManager {
     public CompletableFuture<Void> executeActions(Download download) {
         String downloadId = download.getId();
 
-        List<AfterCompletionAction> actions = downloadActions.get(downloadId);
-        if (actions == null || actions.isEmpty()) {
+        if (!executedDownloads.add(downloadId)) {
+            LOGGER.warning("Ignoring duplicate completion-action execution for " + downloadId);
+            return CompletableFuture.completedFuture(null);
+        }
+        List<AfterCompletionAction> registered = downloadActions.remove(downloadId);
+        List<AfterCompletionAction> actions = registered != null
+                ? new ArrayList<>(registered) : new ArrayList<>();
+        AfterCompletionAction currentGlobal = globalAction;
+        if (currentGlobal != null && !actions.contains(currentGlobal)) {
+            actions.add(currentGlobal);
+        }
+        if (actions.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
 
@@ -137,7 +154,7 @@ public class AfterCompletionActionManager {
         List<AfterCompletionAction> failedActions = Collections.synchronizedList(new ArrayList<>());
         List<CompletableFuture<Void>> futures = new ArrayList<>();
 
-        for (AfterCompletionAction action : new ArrayList<>(actions)) {
+        for (AfterCompletionAction action : actions) {
             futures.add(submitAsync(() -> {
                 try {
                     // Notify listeners that action is starting

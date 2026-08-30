@@ -29,7 +29,9 @@ RUN apt-get update && apt-get install -y \
     dpkg-dev \
     fakeroot \
     rpm \
+    file \
     zstd \
+    libarchive-tools \
     # Utilities
     vim \
     tree \

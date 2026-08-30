@@ -21,6 +21,8 @@ import org.manager.download.DownloadOperations;
 final class HtmlImportExport {
 
     private static final Logger LOGGER = Logger.getLogger(HtmlImportExport.class.getName());
+    static final long MAX_HTML_BYTES = 8L * 1024 * 1024;
+    static final int MAX_IMPORT_LINKS = 1_000;
 
     private HtmlImportExport() {
     }
@@ -36,10 +38,11 @@ final class HtmlImportExport {
                 .compile("href\\s*=\\s*[\"']([^\"']+)[\"']",
                         java.util.regex.Pattern.CASE_INSENSITIVE)
                 .matcher(html);
-        while (m.find()) {
+        while (m.find() && urls.size() < MAX_IMPORT_LINKS) {
             try {
                 URI uri = new URI(m.group(1));
-                if (uri.getScheme() != null && uri.getScheme().startsWith("http")) {
+                if ("http".equalsIgnoreCase(uri.getScheme())
+                        || "https".equalsIgnoreCase(uri.getScheme())) {
                     urls.add(uri);
                 }
             } catch (Exception ignored) {
@@ -57,7 +60,14 @@ final class HtmlImportExport {
      */
     static int importHtmlFile(Path path, DownloadOperations operations) {
         try {
-            List<URI> urls = extractHttpLinks(Files.readString(path));
+            byte[] bytes;
+            try (java.io.InputStream input = Files.newInputStream(path)) {
+                bytes = input.readNBytes(Math.toIntExact(MAX_HTML_BYTES) + 1);
+            }
+            if (bytes.length > MAX_HTML_BYTES) {
+                return -1;
+            }
+            List<URI> urls = extractHttpLinks(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
             int queued = 0;
             for (URI uri : urls) {
                 try {

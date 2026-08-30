@@ -261,16 +261,15 @@ public class HttrackSettings extends DownloadSettings {
     }
 
     /**
-     * Sets the maximum download rate in KB/s. Must be positive; 0 (the field
-     * default) means no limit flag is emitted.
+     * Sets the maximum download rate in KiB/s. Zero means unlimited.
      *
      * @param maxRate The maximum download rate in KB/s
      * @return This settings object for chaining
-     * @throws IllegalArgumentException if maxRate is zero or negative
+     * @throws IllegalArgumentException if maxRate is negative
      */
     public HttrackSettings setMaxRate(int maxRate) {
-        if (maxRate <= 0) {
-            throw new IllegalArgumentException("Max rate must be positive (KB/s): " + maxRate);
+        if (maxRate < 0) {
+            throw new IllegalArgumentException("Max rate cannot be negative (KiB/s): " + maxRate);
         }
         this.maxRate = maxRate;
         return this;
@@ -575,7 +574,10 @@ public class HttrackSettings extends DownloadSettings {
         // depth 1 (note: -x is NOT this; it replaces external links with
         // error pages)
         if (followExternalLinks) {
-            args.add("%e1");
+            args.add("-%e1");
+        }
+        if (!mirrorMode) {
+            args.add("-g");
         }
 
         // File type filters: enabled types get include filters, explicitly
@@ -617,9 +619,9 @@ public class HttrackSettings extends DownloadSettings {
             args.add("+" + pattern);
         }
 
-        // Speed limit (httrack short form: -A51200 = 50 KB/s cap)
+        // ExternalToolSettings defines KiB/s; httrack -A expects bytes/s.
         if (maxRate > 0) {
-            args.add("-A" + maxRate);
+            args.add("-A" + (maxRate * 1024L));
         }
 
         // Number of connections
@@ -628,34 +630,43 @@ public class HttrackSettings extends DownloadSettings {
         // User agent
         if (userAgent != null && !userAgent.isEmpty()) {
             args.add("-F");
-            args.add("\"" + userAgent + "\"");
+            args.add(userAgent);
         }
 
         // Proxy settings (a missing address is skipped gracefully)
         if (useProxy && proxyAddress != null && !proxyAddress.isEmpty()) {
             args.add("-P");
-            args.add(proxyAddress);
-
-            if (proxyUsername != null && !proxyUsername.isEmpty()) {
-                args.add("%proxy-user:" + proxyUsername);
-
-                if (proxyPassword != null && !proxyPassword.isEmpty()) {
-                    args.add("%proxy-pass:" + proxyPassword);
-                }
-            }
+            args.add(proxyWithCredentials());
         }
 
         // Additional user-specified options (flag-style or with a value)
-        for (Map.Entry<String, String> entry : getAdditionalOptions().entrySet()) {
+        for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
+                .filter(org.manager.tools.ToolOptionFilter.Tool.HTTRACK,
+                        getAdditionalOptions()).entrySet()) {
             String key = entry.getKey();
-            args.add(key.startsWith("-") ? key : "-" + key);
             String value = entry.getValue();
-            if (value != null && !value.isBlank()) {
-                args.add(value);
-            }
+            args.add("-" + key + (value == null ? "" : value));
         }
         return args;
 
+    }
+
+    private String proxyWithCredentials() {
+        if (proxyUsername == null || proxyUsername.isBlank() || proxyAddress.contains("@")) {
+            return proxyAddress;
+        }
+        try {
+            boolean hadScheme = proxyAddress.contains("://");
+            java.net.URI parsed = java.net.URI.create(hadScheme
+                    ? proxyAddress : "http://" + proxyAddress);
+            String userInfo = proxyPassword == null || proxyPassword.isEmpty()
+                    ? proxyUsername : proxyUsername + ':' + proxyPassword;
+            String value = new java.net.URI(parsed.getScheme(), userInfo, parsed.getHost(),
+                    parsed.getPort(), null, null, null).toASCIIString();
+            return hadScheme ? value : value.substring("http://".length());
+        } catch (Exception invalidProxy) {
+            return proxyAddress;
+        }
     }
 
     /**

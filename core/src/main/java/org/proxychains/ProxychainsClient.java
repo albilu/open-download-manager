@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -167,6 +168,9 @@ public class ProxychainsClient {
         // Add to active downloads
         activeDownloads.put(download.getId(), download);
 
+        ExternalProcessRegistry.LaunchReservation launch =
+                activeProcesses.reserve(download.getId());
+
         // Start download in a separate thread
         executorService.submit(() -> {
             Process process = null;
@@ -216,13 +220,19 @@ public class ProxychainsClient {
                 ProcessBuilder processBuilder = new ProcessBuilder(command);
                 // Don't redirect error stream - read both separately
 
-                LOGGER.info("Executing command: " + String.join(" ", command));
-                process = processBuilder.start();
+                // Do not log the command: it can contain signed URLs and
+                // proxy credentials. The download id is sufficient to trace.
+                LOGGER.info("Starting proxychains process for download " + download.getId());
+                registration = launch.start(processBuilder);
+                process = registration.process();
                 final Process finalProcess = process; // Make final for lambda usage
-                registration = activeProcesses.register(download.getId(), process);
 
                 // Update download status
-                download.setStatus(Download.Status.DOWNLOADING);
+                if (!download.compareAndSetStatus(Download.Status.CONNECTING,
+                        Download.Status.DOWNLOADING)) {
+                    activeProcesses.terminate(download.getId(), 5);
+                    return;
+                }
                 if (listener != null) {
                     listener.onDownloadStart(download);
                 }
@@ -260,32 +270,41 @@ public class ProxychainsClient {
 
                 // Handle process completion
                 if (exitCode == 0) {
-                    download.setStatus(Download.Status.COMPLETED);
-                    if (listener != null) {
+                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                            Download.Status.COMPLETED) && listener != null) {
                         listener.onDownloadComplete(download);
                     }
-                } else if (download.getStatus() == Download.Status.PAUSED) {
+                } else if (download.getStatus() == Download.Status.PAUSED
+                        || download.getStatus() == Download.Status.CANCELED) {
                     // Intentionally stopped by pauseDownload (process destroy):
                     // keep the PAUSED state so a later resume works
                     LOGGER.info("Process of paused download " + download.getId()
                             + " terminated (exit " + exitCode + ")");
                 } else {
-                    download.setStatus(Download.Status.ERROR);
-                    download.setErrorMessage("proxychains process exited with code: " + exitCode);
+                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                            Download.Status.ERROR)
+                            || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                    Download.Status.ERROR)) {
+                        download.setErrorMessage("proxychains process exited with code: " + exitCode);
+                        if (listener != null) {
+                            listener.onDownloadError(download, download.getErrorMessage());
+                        }
+                    }
+                }
+            } catch (CancellationException e) {
+                // Expected when pause/cancel wins before child launch.
+            } catch (IOException | InterruptedException e) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                        Download.Status.ERROR)
+                        || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                Download.Status.ERROR)) {
+                    download.setErrorMessage("Error during download: " + e.getMessage());
                     if (listener != null) {
                         listener.onDownloadError(download, download.getErrorMessage());
                     }
-                }
-            } catch (IOException | InterruptedException e) {
-                // Handle errors
-                if (download.getStatus() == Download.Status.PAUSED) {
-                    // Reader failure caused by the intentional pause-destroy
-                    return;
-                }
-                download.setStatus(Download.Status.ERROR);
-                download.setErrorMessage("Error during download: " + e.getMessage());
-                if (listener != null) {
-                    listener.onDownloadError(download, download.getErrorMessage());
                 }
             } finally {
                 // Generation-safe cleanup: an old worker whose run was
@@ -295,7 +314,7 @@ public class ProxychainsClient {
                     registration.unregister();
                 }
                 gidMap.remove(download.getId());
-                activeDownloads.remove(download.getId());
+                activeDownloads.remove(download.getId(), download);
             }
         });
     }
@@ -403,7 +422,6 @@ public class ProxychainsClient {
         // progress
         command.add("--summary-interval=1"); // Show progress every 1 second
         command.add("--console-log-level=notice"); // More verbose output to see progress
-        command.add("--check-certificate=false"); // Optional, makes HTTPS more reliable with some proxies
         command.add("--human-readable=false"); // Use exact byte values
         command.add("--show-console-readout=true"); // Force console progress display
 

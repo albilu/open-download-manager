@@ -35,6 +35,10 @@ public class NewMediaDialog {
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final Runnable onDownloadQueued;
+    private final YtDlpClient ytDlpClient;
+    private final java.util.concurrent.atomic.AtomicBoolean closed =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private volatile java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> metadataFuture;
 
     private final Entry urlEntry;
     private final Button fetchInfoButton;
@@ -57,6 +61,8 @@ public class NewMediaDialog {
     public NewMediaDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
         this.downloadManager = downloadManager;
         this.onDownloadQueued = onDownloadQueued;
+        String ytDlpPath = downloadManager.getGlobalSettings().getYtDlpPath();
+        this.ytDlpClient = new YtDlpClient(ytDlpPath != null ? ytDlpPath : "yt-dlp");
 
         GtkBuilder builder = UiLoader.load("/ui/new-media.ui");
         this.dialog = Widgets.require(builder, "new_media_dialog", Window.class);
@@ -72,6 +78,12 @@ public class NewMediaDialog {
         this.cookieFileChooser = Widgets.require(builder, "cookie_file_chooser", Button.class);
         this.folderChooser = Widgets.require(builder, "media_folder_chooser", Button.class);
         this.startButton = Widgets.require(builder, "media_start_button", Button.class);
+
+        AccessibilitySupport.label(urlEntry, "Media URL");
+        AccessibilitySupport.label(formatDrop, "Media format");
+        AccessibilitySupport.label(subtitleLangEntry, "Subtitle languages");
+        AccessibilitySupport.label(cookieFileChooser, "Browser cookie file");
+        AccessibilitySupport.label(folderChooser, "Media destination folder");
 
         dialog.setTransientFor(parent);
 
@@ -93,10 +105,15 @@ public class NewMediaDialog {
         folderChooser.onClicked(this::onChooseFolder);
         Widgets.require(builder, "media_cancel_button", Button.class).onClicked(dialog::close);
         startButton.onClicked(this::onStart);
+        dialog.onCloseRequest(() -> {
+            closeMetadataClient();
+            return false;
+        });
     }
 
     public void present() {
         dialog.present();
+        urlEntry.grabFocus();
     }
 
     /** Triggers asynchronous metadata/format discovery for the entered URL. */
@@ -107,15 +124,29 @@ public class NewMediaDialog {
         }
         fetchInfoButton.setSensitive(false);
         startButton.setSensitive(false);
-        statusLabel.setLabel("Fetching media info…");
+        AccessibilitySupport.status(statusLabel, "Fetching media info…");
 
-        ytDlpClient().extractInfo(url)
-                .thenAccept(info -> UiThread.marshal(() -> onInfoFetched(url, info)))
+        java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> previous = metadataFuture;
+        if (previous != null && !previous.isDone()) {
+            previous.cancel(true);
+        }
+        String proxy = downloadManager.getGlobalSettings().isGlobalProxyEnabled()
+                ? downloadManager.getGlobalSettings().getGlobalProxyAddress() : null;
+        metadataFuture = ytDlpClient.extractInfo(url, proxy);
+        metadataFuture.thenAccept(info -> UiThread.marshal(() -> {
+                    if (!closed.get() && url.equals(urlEntry.getText().trim())) {
+                        onInfoFetched(url, info);
+                    }
+                }))
                 .exceptionally(e -> {
                     UiThread.marshal(() -> {
-                        statusLabel.setLabel("Could not fetch info: "
+                        if (closed.get()) {
+                            return;
+                        }
+                        AccessibilitySupport.status(statusLabel, "Could not fetch info: "
                                 + rootMessage(e)
-                                + " — you can still download with the default best format.");
+                                + " — you can still download with the default best format.",
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         fetchInfoButton.setSensitive(true);
                         startButton.setSensitive(true);
                     });
@@ -126,7 +157,7 @@ public class NewMediaDialog {
     private void onInfoFetched(String url, YtDlpClient.VideoInfo info) {
         fetchInfoButton.setSensitive(true);
         startButton.setSensitive(true);
-        statusLabel.setLabel("Formats fetched for: " + url);
+        AccessibilitySupport.status(statusLabel, "Formats fetched");
 
         infoLabel.setVisible(true);
         infoLabel.setLabel(String.format("%s — %s, %s",
@@ -194,7 +225,8 @@ public class NewMediaDialog {
             dialog.close();
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Media download rejected: " + e.getMessage(), e);
-            statusLabel.setLabel("Cannot start: " + e.getMessage());
+            AccessibilitySupport.status(statusLabel, "Cannot start: " + e.getMessage(),
+                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
 
@@ -230,9 +262,15 @@ public class NewMediaDialog {
         }
     }
 
-    private YtDlpClient ytDlpClient() {
-        String path = downloadManager.getGlobalSettings().getYtDlpPath();
-        return new YtDlpClient(path != null ? path : "yt-dlp");
+    private void closeMetadataClient() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> pending = metadataFuture;
+        if (pending != null) {
+            pending.cancel(true);
+        }
+        java.util.concurrent.CompletableFuture.runAsync(ytDlpClient::shutdown);
     }
 
     private static String describeFormat(YtDlpClient.VideoFormat format) {

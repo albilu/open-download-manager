@@ -118,10 +118,11 @@ public class HttrackClient {
      */
     public CompletableFuture<String> startMirror(HttrackSettings settings) {
         return CompletableFuture.supplyAsync(() -> {
+            String jobId = null;
             try {
                 validateSettings(settings);
 
-                String jobId = generateJobId();
+                jobId = generateJobId();
                 HttrackJob job = new HttrackJob(jobId, settings);
                 activeJobs.put(jobId, job);
 
@@ -140,9 +141,11 @@ public class HttrackClient {
                     processBuilder.directory(settings.getOutputDirectory().toFile());
                 }
 
-                Process process = processBuilder.start();
+                org.manager.tools.ExternalProcessRegistry.LaunchReservation launch =
+                        activeProcesses.reserve(jobId);
                 org.manager.tools.ExternalProcessRegistry.Registration registration =
-                        activeProcesses.register(jobId, process);
+                        launch.start(processBuilder);
+                Process process = registration.process();
 
                 // Update job status
                 job.setStatus(HttrackJob.Status.RUNNING);
@@ -152,10 +155,18 @@ public class HttrackClient {
                 Future<?> monitoringFuture = executorService.submit(() -> monitorProcess(process, job, registration));
                 monitoringFutures.put(jobId, monitoringFuture);
 
-                LOGGER.info("Started httrack job " + jobId + " for URL: " + settings.getUrl());
+                LOGGER.info("Started httrack job " + jobId);
                 return jobId;
 
             } catch (Exception e) {
+                if (jobId != null) {
+                    activeProcesses.terminate(jobId, 1);
+                    Future<?> monitor = monitoringFutures.remove(jobId);
+                    if (monitor != null) {
+                        monitor.cancel(true);
+                    }
+                    activeJobs.remove(jobId);
+                }
                 LOGGER.log(Level.SEVERE, "Failed to start httrack mirror", e);
                 throw new RuntimeException("Failed to start httrack mirror: " + e.getMessage(), e);
             }
@@ -205,10 +216,11 @@ public class HttrackClient {
      */
     public CompletableFuture<Void> resumeJob(String jobId) {
         return CompletableFuture.runAsync(() -> {
-            HttrackJob job = activeJobs.get(jobId);
+            synchronized (this) {
+                HttrackJob job = activeJobs.get(jobId);
 
-            if (job != null && job.getStatus() == HttrackJob.Status.PAUSED) {
-                try {
+                if (job != null && job.getStatus() == HttrackJob.Status.PAUSED) {
+                    try {
                     // Add update flag to continue existing mirror
                     HttrackSettings settings = job.getSettings().copySettings();
                     settings.addAdditionalOption("i", ""); // Update existing mirror
@@ -221,9 +233,11 @@ public class HttrackClient {
                         processBuilder.directory(settings.getOutputDirectory().toFile());
                     }
 
-                    Process process = processBuilder.start();
+                    org.manager.tools.ExternalProcessRegistry.LaunchReservation launch =
+                            activeProcesses.reserve(jobId);
                     org.manager.tools.ExternalProcessRegistry.Registration registration =
-                            activeProcesses.register(jobId, process);
+                            launch.start(processBuilder);
+                    Process process = registration.process();
 
                     job.setStatus(HttrackJob.Status.RUNNING);
                     notifyJobResumed(job);
@@ -234,11 +248,14 @@ public class HttrackClient {
 
                     LOGGER.info("Resumed httrack job: " + jobId);
 
-                } catch (Exception e) {
-                    job.setStatus(HttrackJob.Status.ERROR);
-                    job.setErrorMessage("Failed to resume: " + e.getMessage());
-                    notifyJobError(job, e.getMessage());
-                    LOGGER.log(Level.SEVERE, "Failed to resume httrack job", e);
+                    } catch (Exception e) {
+                        if (job.getStatus() != HttrackJob.Status.CANCELED) {
+                            job.setStatus(HttrackJob.Status.ERROR);
+                            job.setErrorMessage("Failed to resume: " + e.getMessage());
+                            notifyJobError(job, e.getMessage());
+                        }
+                        LOGGER.log(Level.SEVERE, "Failed to resume httrack job", e);
+                    }
                 }
             }
         }, executorService);
@@ -253,9 +270,10 @@ public class HttrackClient {
      */
     public CompletableFuture<Void> cancelJob(String jobId, boolean deleteFiles) {
         return CompletableFuture.runAsync(() -> {
-            HttrackJob job = activeJobs.get(jobId);
+            synchronized (this) {
+                HttrackJob job = activeJobs.get(jobId);
 
-            if (job != null) {
+                if (job != null) {
                 // CANCELED lands before termination so the monitoring
                 // thread's completion handler (woken by the dying process)
                 // observes the intentional state instead of converting the
@@ -267,20 +285,25 @@ public class HttrackClient {
             // save its index/state files, then SIGKILL): the old bare
             // destroyForcibly returned before the process (and its spawned
             // helpers) were actually dead, racing the deletion below
-            activeProcesses.terminate(jobId, 5);
+                activeProcesses.terminate(jobId, 5);
 
-            if (job != null) {
-                if (deleteFiles && job.getSettings().getOutputDirectory() != null) {
-                    try {
-                        deleteDirectory(job.getSettings().getOutputDirectory());
-                    } catch (IOException e) {
-                        LOGGER.log(Level.WARNING, "Failed to delete output directory", e);
+                if (job != null) {
+                    Future<?> monitor = monitoringFutures.remove(jobId);
+                    if (monitor != null) {
+                        monitor.cancel(true);
                     }
-                }
+                    if (deleteFiles && job.getSettings().getOutputDirectory() != null) {
+                        try {
+                            deleteDirectory(job.getSettings().getOutputDirectory());
+                        } catch (IOException e) {
+                            LOGGER.log(Level.WARNING, "Failed to delete output directory", e);
+                        }
+                    }
 
-                notifyJobCanceled(job);
-                activeJobs.remove(jobId);
-                LOGGER.info("Canceled httrack job: " + jobId);
+                    notifyJobCanceled(job);
+                    activeJobs.remove(jobId);
+                    LOGGER.info("Canceled httrack job: " + jobId);
+                }
             }
         }, executorService);
     }
@@ -368,106 +391,10 @@ public class HttrackClient {
     private List<String> buildCommand(HttrackSettings settings) {
         List<String> command = new ArrayList<>();
         command.add(httrackPath);
-
-        // Add URL
-        command.add(settings.getUrl());
-
-        // Add output directory
-        if (settings.getOutputDirectory() != null) {
-            command.add("-O");
-            command.add(settings.getOutputDirectory().toString());
-        }
-
-        // Add basic options
+        command.addAll(settings.buildCommandLine());
+        // Client-owned output settings used by the progress parser.
         command.add("-q"); // Quiet mode
         command.add("-%v"); // Verbose status
-
-        // Add depth limit
-        command.add("-r" + settings.getDepth());
-
-        // External links
-        if (settings.isFollowExternalLinks()) {
-            command.add("-*");
-        } else {
-            command.add("-%e");
-        }
-
-        // Connection settings
-        command.add("-c" + settings.getConnections());
-
-        // Rate limiting
-        if (settings.getMaxRate() > 0) {
-            command.add("-A" + (settings.getMaxRate() * 1024)); // Convert KB/s to bytes/s
-        }
-
-        // User agent
-        if (settings.getUserAgent() != null) {
-            command.add("-F");
-            command.add(settings.getUserAgent());
-        }
-
-        // Proxy settings
-        if (settings.isUseProxy() && settings.getProxyAddress() != null) {
-            command.add("-P");
-            command.add(settings.getProxyAddress());
-        }
-
-        // File type filters
-        List<String> filters = new ArrayList<>();
-        if (settings.isIncludeImages()) {
-            filters.add("+*.jpg");
-            filters.add("+*.png");
-            filters.add("+*.gif");
-            filters.add("+*.jpeg");
-            filters.add("+*.webp");
-            filters.add("+*.svg");
-        }
-        if (settings.isIncludeVideos()) {
-            filters.add("+*.mp4");
-            filters.add("+*.webm");
-            filters.add("+*.avi");
-            filters.add("+*.mov");
-        }
-        if (settings.isIncludeAudio()) {
-            filters.add("+*.mp3");
-            filters.add("+*.wav");
-            filters.add("+*.ogg");
-        }
-        if (settings.isIncludeDocuments()) {
-            filters.add("+*.pdf");
-            filters.add("+*.doc");
-            filters.add("+*.docx");
-            filters.add("+*.txt");
-        }
-
-        // Add include patterns
-        for (String pattern : settings.getIncludePatterns()) {
-            filters.add("+" + pattern);
-        }
-
-        // Add exclude patterns
-        for (String pattern : settings.getExcludePatterns()) {
-            filters.add("-" + pattern);
-        }
-
-        // Add filters to command
-        if (!filters.isEmpty()) {
-            command.add(String.join(",", filters));
-        }
-
-        // Add additional options; imported settings are untrusted, so only
-        // allowlisted flags survive (the '#' filter-command flag can execute)
-        for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
-                .filter(org.manager.tools.ToolOptionFilter.Tool.HTTRACK,
-                        settings.getAdditionalOptions())
-                .entrySet()) {
-            if (entry.getValue() == null || entry.getValue().isEmpty()) {
-                command.add("-" + entry.getKey());
-            } else {
-                command.add("-" + entry.getKey() + entry.getValue());
-            }
-        }
-
         return command;
     }
 
@@ -508,8 +435,13 @@ public class HttrackClient {
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            job.setStatus(HttrackJob.Status.CANCELED);
-            notifyJobCanceled(job);
+            synchronized (this) {
+                if (job.getStatus() != HttrackJob.Status.PAUSED
+                        && job.getStatus() != HttrackJob.Status.CANCELED) {
+                    job.setStatus(HttrackJob.Status.CANCELED);
+                    notifyJobCanceled(job);
+                }
+            }
         } catch (IOException e) {
             // Don't change status if thread was interrupted or if job is
             // already paused/canceled (intentionally destroyed process)

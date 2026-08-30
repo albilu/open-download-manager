@@ -52,6 +52,8 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     private final Map<Path, WatchKey> watchKeys = new ConcurrentHashMap<>();
     private final Map<Path, Set<WatchKey>> recursiveWatchKeys = new ConcurrentHashMap<>();
     private final Map<Path, FolderMonitorSettings> folderSettings = new ConcurrentHashMap<>();
+    private final Set<Path> monitoredRoots = ConcurrentHashMap.newKeySet();
+    private final Object monitorMutationLock = new Object();
     private final List<FolderMonitorListener> listeners = new CopyOnWriteArrayList<>();
     private final ExecutorService executorService;
     private final ScheduledExecutorService scheduledExecutorService;
@@ -148,36 +150,76 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                     throw new IllegalArgumentException("Path is not a directory: " + folderPath);
                 }
 
-                // Stop existing monitoring for this folder if any
-                stopMonitoringInternal(folderPath);
+                FolderMonitorSettings effectiveSettings;
+                synchronized (monitorMutationLock) {
+                    FolderMonitorSettings existing = folderSettings.get(folderPath);
+                    effectiveSettings = existing == null
+                            ? settings.copy()
+                            : mergeSettings(existing, settings);
 
-                // Register the folder for monitoring
-                WatchKey watchKey = registerFolder(folderPath, settings);
-                watchKeys.put(folderPath, watchKey);
-                folderSettings.put(folderPath, settings.copy());
+                    if (existing == null || (!existing.isRecursive() && effectiveSettings.isRecursive())) {
+                        if (existing != null) {
+                            stopMonitoringInternal(folderPath);
+                        }
+                        WatchKey watchKey = registerFolder(folderPath, effectiveSettings);
+                        watchKeys.put(folderPath, watchKey);
+                        monitoredRoots.add(folderPath);
+                    }
+                    folderSettings.put(folderPath, effectiveSettings.copy());
+                    folderSettings.replaceAll((path, current) ->
+                            !path.equals(folderPath) && path.startsWith(folderPath)
+                                    ? effectiveSettings.copy() : current);
 
-                // The loop starts with the first monitored folder (lazy)
-                ensureMonitoringLoopStarted();
+                    // The loop starts with the first monitored folder (lazy)
+                    ensureMonitoringLoopStarted();
 
-                // Reconcile staged descriptors left by earlier rounds:
-                // orphans are re-announced, duplicates removed
-                reconcileStagedDescriptors(folderPath, settings);
+                    // Reconcile staged descriptors left by earlier rounds:
+                    // orphans are re-announced, duplicates removed
+                    reconcileStagedDescriptors(folderPath, effectiveSettings);
 
-                // Process existing files if enabled
-                if (settings.isProcessExistingFiles()) {
-                    scanFolderInternal(folderPath, settings);
+                    // When settings are merged into an existing watch, scan only
+                    // for the newly requested extensions. Re-scanning the merged
+                    // set would enqueue already processed descriptors twice.
+                    if (settings.isProcessExistingFiles()) {
+                        scanFolderInternal(folderPath, settings);
+                    }
                 }
 
                 updateStatistics();
-                notifyListeners(listener -> listener.onMonitoringStarted(folderPath, settings));
+                FolderMonitorSettings notificationSettings = effectiveSettings;
+                notifyListeners(listener -> listener.onMonitoringStarted(folderPath, notificationSettings));
 
-                LOGGER.info("Started monitoring folder: " + folderPath + " with settings: " + settings);
+                LOGGER.info("Started monitoring folder: " + folderPath
+                        + " for " + effectiveSettings.getFileExtensions());
 
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Failed to start monitoring folder: " + folderPath, e);
                 throw new RuntimeException("Failed to start monitoring folder: " + folderPath, e);
             }
         }, executorService);
+    }
+
+    private static FolderMonitorSettings mergeSettings(FolderMonitorSettings existing,
+            FolderMonitorSettings requested) {
+        FolderMonitorSettings merged = requested.copy();
+        java.util.Set<String> extensions = new java.util.HashSet<>(existing.getFileExtensions());
+        extensions.addAll(requested.getFileExtensions());
+        java.util.Set<String> exclusions = new java.util.HashSet<>(existing.getExcludePatterns());
+        exclusions.addAll(requested.getExcludePatterns());
+        merged.setFileExtensions(extensions)
+                .setExcludePatterns(exclusions)
+                .setRecursive(existing.isRecursive() || requested.isRecursive())
+                .setProcessExistingFiles(existing.isProcessExistingFiles()
+                        || requested.isProcessExistingFiles())
+                .setEnabled(existing.isEnabled() || requested.isEnabled())
+                .setCaseSensitive(existing.isCaseSensitive() && requested.isCaseSensitive())
+                .setMaxFilesPerBatch(Math.max(existing.getMaxFilesPerBatch(),
+                        requested.getMaxFilesPerBatch()))
+                .setMinFileSize(Math.min(existing.getMinFileSize(), requested.getMinFileSize()))
+                .setMaxFileSize(Math.max(existing.getMaxFileSize(), requested.getMaxFileSize()))
+                .setDebounceDelay(existing.getDebounceDelay().compareTo(requested.getDebounceDelay()) <= 0
+                        ? existing.getDebounceDelay() : requested.getDebounceDelay());
+        return merged;
     }
 
     private WatchKey registerFolder(Path folderPath, FolderMonitorSettings settings) throws IOException {
@@ -220,6 +262,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     }
 
     private void stopMonitoringInternal(Path folderPath) {
+        synchronized (monitorMutationLock) {
         WatchKey watchKey = watchKeys.remove(folderPath);
         if (watchKey != null) {
             watchKey.cancel();
@@ -239,6 +282,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         }
 
         FolderMonitorSettings settings = folderSettings.remove(folderPath);
+        monitoredRoots.remove(folderPath);
 
         // Remove settings registered for recursively monitored subdirectories
         folderSettings.keySet().removeIf(path -> path.startsWith(folderPath) && !path.equals(folderPath));
@@ -272,6 +316,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         }
 
         LOGGER.info("Stopped monitoring folder: " + folderPath);
+        }
     }
 
     @Override
@@ -283,7 +328,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         }
 
         return CompletableFuture.runAsync(() -> {
-            List<Path> foldersToStop = new ArrayList<>(watchKeys.keySet());
+            List<Path> foldersToStop = new ArrayList<>(monitoredRoots);
             for (Path folderPath : foldersToStop) {
                 stopMonitoringInternal(folderPath);
             }
@@ -295,7 +340,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
     @Override
     public List<Path> getMonitoredFolders() {
-        return new ArrayList<>(folderSettings.keySet());
+        return new ArrayList<>(monitoredRoots);
     }
 
     @Override
@@ -317,6 +362,9 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             }
 
             folderSettings.put(folderPath, settings.copy());
+            folderSettings.replaceAll((path, current) ->
+                    !path.equals(folderPath) && path.startsWith(folderPath)
+                            ? settings.copy() : current);
             LOGGER.info("Updated monitoring settings for folder: " + folderPath);
         }, executorService);
     }
@@ -1046,7 +1094,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
     private void updateStatistics() {
         statistics.put("processedFiles", processedFilesCount.get());
         statistics.put("errors", errorCount.get());
-        statistics.put("monitoredFolders", folderSettings.size());
+        statistics.put("monitoredFolders", monitoredRoots.size());
         statistics.put("lastUpdate", System.currentTimeMillis());
     }
 
@@ -1094,7 +1142,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
     private void stopAllMonitoringSynchronously() {
         try {
-            List<Path> foldersToStop = new ArrayList<>(watchKeys.keySet());
+            List<Path> foldersToStop = new ArrayList<>(monitoredRoots);
             for (Path folderPath : foldersToStop) {
                 stopMonitoringInternal(folderPath);
             }

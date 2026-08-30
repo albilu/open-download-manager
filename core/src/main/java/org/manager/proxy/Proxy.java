@@ -86,6 +86,9 @@ public class Proxy {
         } else if (url.startsWith("socks4://")) {
             type = Type.SOCKS4;
             url = url.substring(9);
+        } else if (url.startsWith("socks5h://")) {
+            type = Type.SOCKS5;
+            url = url.substring(10);
         } else if (url.startsWith("socks5://")) {
             type = Type.SOCKS5;
             url = url.substring(9);
@@ -251,7 +254,9 @@ public class Proxy {
             case HTTP -> sb.append("http://");
             case HTTPS -> sb.append("https://");
             case SOCKS4 -> sb.append("socks4://");
-            case SOCKS5 -> sb.append("socks5://");
+            // Prefer proxy-side DNS for SOCKS5. Plain socks5 may resolve the
+            // destination locally in curl and leak DNS outside the proxy.
+            case SOCKS5 -> sb.append("socks5h://");
         }
 
         if (hasAuthentication()) {

@@ -60,6 +60,7 @@ public final class OdmApplication {
                     // Tray (best-effort: no-op when the session bus is unavailable)
                     final MainWindow raised = mainWindow;
                     trayHolder[0] = new StatusNotifierTray(() -> UiThread.marshal(raised::present));
+                    mainWindow.setTrayAvailable(trayHolder[0].isAvailable());
                     LOGGER.info("onActivate: tray constructed");
 
                     mainWindow.present();
@@ -141,8 +142,39 @@ public final class OdmApplication {
             ApplicationContext.initialize();
             DownloadManager manager = ApplicationContext.getDownloadManager();
 
+            // Make persisted privacy state effective before manager.initialize
+            // can auto-resume anything. Failure is fail-closed: startup stops
+            // instead of allowing a direct recovery window.
+            org.tor.TorService torService = createTorService();
+            if (manager.getGlobalSettings().getBooleanProperty("tor.enabled", false)) {
+                manager.getGlobalSettings().setGlobalProxyEnabled(true);
+                manager.getGlobalSettings().setGlobalProxyAddress(
+                        "socks5h://127.0.0.1:" + torService.getSocksPort());
+                try {
+                    if (!Boolean.TRUE.equals(torService.start().get(40, TimeUnit.SECONDS))) {
+                        throw new IllegalStateException("Persisted Tor mode could not start");
+                    }
+                } catch (Exception e) {
+                    torService.shutdown();
+                    throw new IllegalStateException(
+                            "Tor is enabled, so recovery was stopped to prevent direct traffic", e);
+                }
+            }
+
+            // Install the persisted schedule verdict before state recovery:
+            // manager.initialize() loads the state and may immediately
+            // auto-resume downloads that were active at shutdown.  Starting
+            // the periodic scheduler itself is deliberately deferred until
+            // the manager has finished initializing.
+            org.manager.schedule.ScheduleManager scheduleManager =
+                    new org.manager.schedule.ScheduleManager(manager);
+            boolean schedulingEnabled = configureSchedulerGate(manager, scheduleManager);
+
             progress.setMessage("Initializing download engines…");
             manager.initialize().join();
+            if (schedulingEnabled) {
+                scheduleManager.start().join();
+            }
             try {
                 awaitHandlersReady();
             } catch (InterruptedException e) {
@@ -151,10 +183,6 @@ public final class OdmApplication {
             }
 
             progress.setMessage("Starting privacy and scheduling services…");
-            org.tor.TorService torService = createTorService();
-            org.manager.schedule.ScheduleManager scheduleManager =
-                    new org.manager.schedule.ScheduleManager(manager);
-            configureScheduler(manager, scheduleManager);
 
             progress.setMessage("Ready");
             return new StartupGate.CoreRefs(manager, torService, scheduleManager);
@@ -264,15 +292,11 @@ public final class OdmApplication {
      * scheduler.enabled=false means NO restrictions: the scheduler is simply
      * not started (the default alwaysActive gate allows all).
      */
-    private static void configureScheduler(DownloadManager manager,
+    private static boolean configureSchedulerGate(DownloadManager manager,
             org.manager.schedule.ScheduleManager scheduleManager) {
         boolean schedulingEnabled = manager.getGlobalSettings()
                 .getBooleanProperty("scheduler.enabled", false);
         if (schedulingEnabled) {
-            scheduleManager.start().exceptionally(e -> {
-                LOGGER.warning("ScheduleManager failed to start: " + e.getMessage());
-                return null;
-            });
             String grid = manager.getGlobalSettings().getProperty("scheduler.grid", "");
             if (!grid.isBlank()) {
                 boolean[][] hourGrid = org.manager.schedule.WeeklySchedule.hourGridFromString(grid);
@@ -292,6 +316,7 @@ public final class OdmApplication {
         // Gate download starts on the scheduler's verdict; with scheduling
         // disabled the global schedule stays alwaysActive, so all starts pass
         manager.setDownloadGate(id -> scheduleManager.getScheduler().shouldDownloadBeActive(id));
+        return schedulingEnabled;
     }
 
     /**

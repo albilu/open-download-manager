@@ -175,7 +175,7 @@ class HttrackSettingsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = { 1024, 25600, 51200, 102400 })
+    @ValueSource(ints = { 0, 1024, 25600, 51200, 102400 })
     @DisplayName("Max rate setting should accept valid values")
     void testMaxRateSettingValid(int rate) {
         // When
@@ -186,7 +186,7 @@ class HttrackSettingsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = { 0, -1, -1000 })
+    @ValueSource(ints = { -1, -1000 })
     @DisplayName("Max rate setting should reject invalid values")
     void testMaxRateSettingInvalid(int rate) {
         // When & Then
@@ -314,8 +314,8 @@ class HttrackSettingsTest {
         List<String> commandLine = settings.buildCommandLine();
         assertTrue(commandLine.contains("-i"), "Command line should contain -i option");
         assertTrue(commandLine.contains("-v"), "Command line should contain -v option");
-        assertTrue(commandLine.contains("-f"), "Command line should contain -f option");
-        assertTrue(commandLine.contains("logfile.txt"), "Command line should contain logfile.txt");
+        assertTrue(commandLine.contains("-flogfile.txt"),
+                "HTTrack single-letter options concatenate their value");
     }
 
     @Test
@@ -369,11 +369,12 @@ class HttrackSettingsTest {
         assertTrue(commandLine.contains("-r3"), "Command line should contain depth option");
         // %e1 = httrack external-depth 1 (travel external links); -x is NOT
         // used for this (it replaces external links with error pages)
-        assertTrue(commandLine.contains("%e1"), "Command line should contain follow external links option");
+        assertTrue(commandLine.contains("-%e1"), "Command line should contain follow external links option");
         // includeImages=false emits explicit exclude filters (httrack has no
         // -j "exclude images" flag)
         assertTrue(commandLine.contains("-*.png"), "Command line should exclude images when disabled");
-        assertTrue(commandLine.contains("-A51200"), "Command line should contain max rate option");
+        assertTrue(commandLine.contains("-A52428800"),
+                "KiB/s should be converted to the bytes/s expected by HTTrack");
         assertTrue(commandLine.contains("-c8"), "Command line should contain connections option");
 
         // Check exclude and include patterns
@@ -538,7 +539,7 @@ class HttrackSettingsTest {
 
         assertTrue(commandString.contains("https://example.com/path"), "Should contain URL");
         assertTrue(commandString.contains("-r2"), "Should contain depth");
-        assertTrue(commandString.contains("-A102400"), "Should contain max rate");
+        assertTrue(commandString.contains("-A104857600"), "Should contain byte-per-second max rate");
         assertTrue(commandString.contains("-c2"), "Should contain connections");
         assertTrue(commandString.contains("Test Agent 2.0"), "Should contain user agent");
         assertTrue(commandString.contains("proxy.test.com:3128"), "Should contain proxy address");

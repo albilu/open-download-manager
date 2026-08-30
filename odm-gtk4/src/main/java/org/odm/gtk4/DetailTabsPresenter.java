@@ -149,11 +149,17 @@ final class DetailTabsPresenter {
         for (Map<String, Object> peer : data.peers()) {
             TreeIter iter = new TreeIter();
             peersStore.append(iter);
-            ListStoreCells.setString(peersStore, iter, 0, String.valueOf(peer.getOrDefault("peerId", "—")));
-            ListStoreCells.setString(peersStore, iter, 1, String.valueOf(peer.getOrDefault("downloadSpeed", "—")));
-            ListStoreCells.setString(peersStore, iter, 2, String.valueOf(peer.getOrDefault("ip", "—"))
+            ListStoreCells.setString(peersStore, iter, 0, String.valueOf(peer.getOrDefault("ip", "—"))
                     + ":" + peer.getOrDefault("port", ""));
-            ListStoreCells.setString(peersStore, iter, 3, String.valueOf(peer.getOrDefault("peChoking", false)));
+            ListStoreCells.setString(peersStore, iter, 1, String.valueOf(peer.getOrDefault("peerId", "—")));
+            ListStoreCells.setString(peersStore, iter, 2,
+                    DownloadFormats.size(parseLong(peer.get("downloadSpeed"), 0)) + "/s");
+            ListStoreCells.setString(peersStore, iter, 3,
+                    DownloadFormats.size(parseLong(peer.get("uploadSpeed"), 0)) + "/s");
+            String state = Boolean.parseBoolean(String.valueOf(peer.getOrDefault("seeder", false)))
+                    ? "Seeder" : (Boolean.parseBoolean(String.valueOf(peer.getOrDefault("peerChoking", false)))
+                            ? "Choking" : "Transferring");
+            ListStoreCells.setString(peersStore, iter, 4, state);
         }
 
         // Files
@@ -168,10 +174,12 @@ final class DetailTabsPresenter {
             ListStoreCells.setString(filesStore, iter, 1, String.valueOf(file.getOrDefault("path", "—")));
             ListStoreCells.setString(filesStore, iter, 2,
                     DownloadFormats.size(parseLong(file.get("length"), 0)));
-            ListStoreCells.setString(filesStore, iter, 3, String.valueOf(
+            ListStoreCells.setInt(filesStore, iter, 3, (int) Math.round(
                     progressPercent(parseLong(file.get("completedLength"), 0),
                             parseLong(file.get("length"), 1))));
             ListStoreCells.setString(filesStore, iter, 4, "—");
+            ListStoreCells.setInt(filesStore, iter, 5,
+                    (int) parseLong(file.get("index"), filesStore.iterNChildren(null)));
         }
     }
 

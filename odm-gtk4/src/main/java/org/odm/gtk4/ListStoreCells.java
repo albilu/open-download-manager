@@ -35,4 +35,34 @@ final class ListStoreCells {
         store.setValue(iter, column, v);
         v.unset();
     }
+
+    static String getString(ListStore store, TreeIter iter, int column) {
+        Value v = new Value();
+        store.getValue(iter, column, v);
+        try {
+            return v.getString();
+        } finally {
+            v.unset();
+        }
+    }
+
+    static int getInt(ListStore store, TreeIter iter, int column) {
+        Value v = new Value();
+        store.getValue(iter, column, v);
+        try {
+            return v.getInt();
+        } finally {
+            v.unset();
+        }
+    }
+
+    static boolean getBoolean(ListStore store, TreeIter iter, int column) {
+        Value v = new Value();
+        store.getValue(iter, column, v);
+        try {
+            return v.getBoolean();
+        } finally {
+            v.unset();
+        }
+    }
 }

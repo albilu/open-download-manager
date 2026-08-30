@@ -6,6 +6,7 @@ import java.util.logging.Logger;
 import org.gnome.gtk.Application;
 import org.gnome.gtk.ApplicationWindow;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.EventControllerKey;
 import org.gnome.gtk.GestureClick;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
@@ -15,9 +16,7 @@ import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreeModel;
-import org.gnome.gobject.Value;
 import org.javagi.base.Out;
-import org.javagi.gobject.types.Types;
 import org.manager.download.Download;
 import org.manager.download.DownloadListener;
 import org.manager.download.DownloadManager;
@@ -78,13 +77,13 @@ public class MainWindow {
     private Download selectedDownload;
     /** Guard so menu actions register on the window only once. */
     private boolean menuActionsRegistered;
+    private volatile boolean trayAvailable;
     private final ListStore trackersStore;
     private final ListStore peersStore;
     private final ListStore filesStore;
     private final ListStore globalProgressStore;
     private final org.tor.TorService torService;
     private final org.manager.schedule.ScheduleManager scheduleManager;
-    private org.manager.download.action.AfterCompletionAction completionAction;
     /** Builder reference kept for window-state persistence from menu actions. */
     private final GtkBuilder uiBuilder;
 
@@ -140,7 +139,7 @@ public class MainWindow {
         restoreWindowState(builder);
         window.onCloseRequest(() -> {
             boolean toTray = downloadManager.getGlobalSettings().getBooleanProperty("ui.systemTray", false);
-            if (toTray) {
+            if (toTray && trayAvailable) {
                 saveWindowState(builder); // persist geometry; destroy() skips this handler
                 window.setVisible(false);
                 return true; // suppress the close; tray keeps the app running
@@ -168,8 +167,19 @@ public class MainWindow {
 
         var rightClick = new GestureClick();
         rightClick.setButton(3);
-        rightClick.onPressed((nPress, x, y) -> showContextMenu());
+        rightClick.onPressed((nPress, x, y) -> showContextMenu(x, y));
         downloadsTreeview.addController(rightClick);
+        var contextKey = new EventControllerKey();
+        contextKey.onKeyPressed((keyval, keycode, state) -> {
+            boolean keyboardMenu = keyval == org.gnome.gdk.Gdk.KEY_Menu
+                    || (keyval == org.gnome.gdk.Gdk.KEY_F10
+                    && state.contains(org.gnome.gdk.ModifierType.SHIFT_MASK));
+            if (keyboardMenu) {
+                showContextMenuForSelection();
+            }
+            return keyboardMenu;
+        });
+        downloadsTreeview.addController(contextKey);
 
         Widgets.require(builder, "new_download_button", Button.class).onClicked(this::onAddClicked);
         Widgets.require(builder, "pause_button", Button.class).onClicked(this::onPauseClicked);
@@ -188,11 +198,18 @@ public class MainWindow {
         searchEntry.onSearchChanged(this::onSearchChanged);
         // tor_switch: wired below
         this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        torSwitchSet(torService.isRunning());
         torSwitch.onStateSet(this::onTorToggled);
         this.menuButton = Widgets.require(builder, "menu_button", MenuButton.class);
         this.leftPanelWidget = Widgets.require(builder, "left_panel", org.gnome.gtk.Widget.class);
         this.infoPanelWidget = Widgets.require(builder, "info_panel_box", org.gnome.gtk.Widget.class);
         menuButton.setMenuModel(buildMainMenu());
+        AccessibilitySupport.label(statusTreeview, "Download status filters");
+        AccessibilitySupport.label(categoryTreeview, "Download category filters");
+        AccessibilitySupport.label(downloadsTreeview, "Downloads");
+        AccessibilitySupport.label(searchEntry, "Search downloads");
+        AccessibilitySupport.label(torSwitch, "Global Tor routing");
+        AccessibilitySupport.label(infoProgressBar, "Selected download progress");
 
         windowDownloadListener = new DownloadListener() {
             @Override public void onDownloadStart(Download d) { listPresenter.scheduleRefresh(); }
@@ -202,7 +219,6 @@ public class MainWindow {
             @Override public void onDownloadPause(Download d) { listPresenter.scheduleRefresh(); }
             @Override public void onDownloadResume(Download d) { listPresenter.scheduleRefresh(); }
             @Override public void onDownloadComplete(Download d) {
-                executeCompletionAction(d);
                 listPresenter.scheduleRefresh();
             }
             @Override public void onDownloadError(Download d, String errorMessage) {
@@ -225,12 +241,15 @@ public class MainWindow {
                 if (a instanceof org.manager.download.action.AntivirusCheckAction av) {
                     UiThread.marshal(() -> {
                         if (av.isThreatDetected()) {
-                            infoLabel.setLabel("THREAT DETECTED in " + d.getName()
-                                    + " — scan result: " + av.getScanResult());
+                            AccessibilitySupport.status(infoLabel,
+                                    "THREAT DETECTED in " + d.getName()
+                                            + " — scan result: " + av.getScanResult(),
+                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             LOGGER.warning("Antivirus threat detected in " + d.getName()
                                     + ": " + av.getScanResult());
                         } else {
-                            infoLabel.setLabel("Antivirus scan completed for " + d.getName());
+                            AccessibilitySupport.status(infoLabel,
+                                    "Antivirus scan completed for " + d.getName());
                         }
                     });
                 }
@@ -294,6 +313,7 @@ public class MainWindow {
 
     public void present() {
         window.present();
+        downloadsTreeview.grabFocus();
     }
 
     /**
@@ -309,6 +329,11 @@ public class MainWindow {
         this.finalCloseDelegate = delegate;
     }
 
+    /** Controls whether closing to the notification area can keep the app reachable. */
+    public void setTrayAvailable(boolean available) {
+        this.trayAvailable = available;
+    }
+
     /** Really destroys the window (bypasses the close-request handler). */
     public void dispose() {
         shutdownBackgroundWork();
@@ -320,6 +345,10 @@ public class MainWindow {
      * I/O). Idempotent; part of every real teardown path.
      */
     private void shutdownBackgroundWork() {
+        if (contextMenu != null) {
+            contextMenu.dispose();
+            contextMenu = null;
+        }
         detailTabsPresenter.shutdown();
         backgroundExecutor.shutdown();
     }
@@ -374,7 +403,19 @@ public class MainWindow {
     }
 
     private void onSettingsClicked() {
-        new SettingsDialog(window, downloadManager, scheduleManager).present();
+        new SettingsDialog(window, downloadManager, scheduleManager, this::applyTorPreference).present();
+    }
+
+    /** Applies a Tor preference changed in Settings while preserving any explicit proxy selected there. */
+    private void applyTorPreference(boolean active) {
+        torSwitchSet(active);
+        if (active) {
+            onTorToggled(true);
+        } else {
+            torService.stop();
+            downloadManager.applyGlobalSettingsToActiveDownloads();
+            LOGGER.info("Tor stopped; Settings proxy preference retained");
+        }
     }
 
     private void onSearchChanged() {
@@ -404,9 +445,36 @@ public class MainWindow {
     /** Context menu built once and reused; the actions re-read the selection at click time. */
     private PopupMenu contextMenu;
 
-    private void showContextMenu() {
+    private void showContextMenu(double x, double y) {
+        Out<TreePath> path = new Out<>();
+        Out<org.gnome.gtk.TreeViewColumn> column = new Out<>();
+        if (!downloadsTreeview.getPathAtPos((int) x, (int) y,
+                path, column, new Out<>(), new Out<>()) || path.get() == null) {
+            return;
+        }
+        downloadsTreeview.setCursor(path.get(), column.get(), false);
         onDownloadSelectionChanged();
         if (selectedDownload == null) return;
+        showContextMenuAt((int) x, (int) y);
+    }
+
+    private void showContextMenuForSelection() {
+        onDownloadSelectionChanged();
+        if (selectedDownload == null) {
+            return;
+        }
+        Out<TreePath> path = new Out<>();
+        Out<org.gnome.gtk.TreeViewColumn> column = new Out<>();
+        downloadsTreeview.getCursor(path, column);
+        var area = new org.gnome.gdk.Rectangle();
+        if (path.get() != null) {
+            downloadsTreeview.getCellArea(path.get(), column.get(), area);
+        }
+        showContextMenuAt(area.readX() + Math.max(1, area.readWidth() / 2),
+                area.readY() + Math.max(1, area.readHeight() / 2));
+    }
+
+    private void showContextMenuAt(int x, int y) {
         // 1:1 port of download_context_menu from the original glade
         if (contextMenu == null) {
             contextMenu = new PopupMenu()
@@ -426,7 +494,7 @@ public class MainWindow {
                     .add("Delete with Files", () ->
                             downloadManager.cancelDownload(selectedDownload, true));
         }
-        contextMenu.popup();
+        contextMenu.popupAt(downloadsTreeview, x, y);
     }
 
     /** Copies the selected download's magnet URI (or builds one from its info hash). */
@@ -447,7 +515,7 @@ public class MainWindow {
         }
         if (magnet != null) {
             downloadsTreeview.getClipboard().setText(magnet);
-            infoLabel.setLabel("Magnet URI copied");
+            AccessibilitySupport.status(infoLabel, "Magnet URI copied");
         }
     }
 
@@ -481,7 +549,7 @@ public class MainWindow {
         if (selectedDownload.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
             aria2Settings.setOption("check-integrity", "true");
             downloadManager.changeSettings(selectedDownload);
-            infoLabel.setLabel("Integrity check requested");
+            AccessibilitySupport.status(infoLabel, "Integrity check requested");
         }
     }
 
@@ -828,7 +896,8 @@ public class MainWindow {
                         return;
                     }
                     UiThread.marshal(() -> {
-                        infoLabel.setLabel("Imported " + count + " link(s) from HTML");
+                        AccessibilitySupport.status(infoLabel,
+                                "Imported " + count + " link(s) from HTML");
                         refresh();
                     });
                 });
@@ -856,7 +925,8 @@ public class MainWindow {
                 CompletableFuture.runAsync(() -> {
                     try {
                         HtmlImportExport.writeText(path, contents);
-                        UiThread.marshal(() -> infoLabel.setLabel("Exported download list"));
+                        UiThread.marshal(() -> AccessibilitySupport.status(
+                                infoLabel, "Exported download list"));
                     } catch (Exception e) {
                         LOGGER.log(java.util.logging.Level.FINE, "Export failed", e);
                     }
@@ -884,30 +954,19 @@ public class MainWindow {
     private void applySchedulePreset(String preset) {
         scheduleManager.setGlobalPresetSchedule(preset);
         downloadManager.getGlobalSettings().setProperty("scheduler.preset", preset);
+        // A selected preset replaces a previously configured hour grid;
+        // otherwise startup gives the stale grid precedence and silently
+        // loses the user's latest menu choice.
+        downloadManager.getGlobalSettings().setProperty("scheduler.grid", "");
+        downloadManager.getGlobalSettings().setProperty("scheduler.enabled", "true");
         downloadManager.getGlobalSettings().save();
         LOGGER.info("Schedule preset applied: " + preset);
     }
 
     private void setCompletionAction(org.manager.download.action.AfterCompletionAction action) {
-        this.completionAction = action;
+        downloadManager.setGlobalAfterCompletionAction(action);
         LOGGER.info("After-completion action set to: "
                 + (action == null ? "none" : action.getClass().getSimpleName()));
-    }
-
-    private void executeCompletionAction(Download download) {
-        if (completionAction == null) {
-            return;
-        }
-        // Single mechanism: register through the core facade (idempotent per
-        // instance, additive with per-download actions set elsewhere such as
-        // the new-download dialog) and execute through it as well
-        downloadManager.addAfterCompletionAction(download, completionAction);
-        downloadManager.executeAfterCompletionActions(download)
-                .exceptionally(e -> {
-                    LOGGER.log(java.util.logging.Level.WARNING,
-                            "Completion action failed for " + download.getName(), e);
-                    return null;
-                });
     }
 
     private boolean onTorToggled(boolean active) {
@@ -916,20 +975,34 @@ public class MainWindow {
                 if (Boolean.TRUE.equals(ok)) {
                     LOGGER.info("Tor started; downloads can route via SOCKS5 127.0.0.1:9050");
                     downloadManager.getGlobalSettings().setGlobalProxyEnabled(true);
-                    downloadManager.getGlobalSettings().setGlobalProxyAddress("socks5://127.0.0.1:9050");
+                    downloadManager.getGlobalSettings().setGlobalProxyAddress(
+                            "socks5h://127.0.0.1:" + torService.getSocksPort());
+                    downloadManager.getGlobalSettings().setProperty("tor.enabled", "true");
+                    downloadManager.getGlobalSettings().save();
                     // Reconfigure running downloads to use the new proxy
                     downloadManager.applyGlobalSettingsToActiveDownloads();
                     verifyTorCircuit();
                 } else {
                     LOGGER.warning("Tor failed to start");
-                    UiThread.marshal(() -> torSwitchSet(false));
+                    downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
+                    // Keep the dead SOCKS endpoint enabled so a failed Tor
+                    // launch cannot turn an intended private transfer into a
+                    // direct one.
+                    downloadManager.getGlobalSettings().setGlobalProxyEnabled(true);
+                    downloadManager.getGlobalSettings().setGlobalProxyAddress(
+                            "socks5h://127.0.0.1:" + torService.getSocksPort());
+                    downloadManager.getGlobalSettings().save();
+                    downloadManager.applyGlobalSettingsToActiveDownloads();
+                    torSwitchSet(false);
                 }
             });
         } else {
-            torService.stop();
             downloadManager.getGlobalSettings().setGlobalProxyEnabled(false);
+            downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
+            downloadManager.getGlobalSettings().save();
             // Clear the proxy from running downloads
             downloadManager.applyGlobalSettingsToActiveDownloads();
+            torService.stop();
             LOGGER.info("Tor stopped");
         }
         return false; // let the switch apply its new state
@@ -963,7 +1036,7 @@ public class MainWindow {
                                 + result.message;
                     }
                     LOGGER.info("Tor leak check: " + message);
-                    UiThread.marshal(() -> infoLabel.setLabel(message));
+                    UiThread.marshal(() -> AccessibilitySupport.status(infoLabel, message));
                 });
     }
 
@@ -980,7 +1053,7 @@ public class MainWindow {
      */
     private void onTorNewIdentity() {
         if (!torService.isRunning()) {
-            infoLabel.setLabel("Tor is not running");
+            AccessibilitySupport.status(infoLabel, "Tor is not running");
             return;
         }
         int controlPort;
@@ -1010,7 +1083,7 @@ public class MainWindow {
                     } catch (Exception ignore) {
                         // best-effort
                     }
-                    UiThread.marshal(() -> infoLabel.setLabel(message));
+                    UiThread.marshal(() -> AccessibilitySupport.status(infoLabel, message));
                 });
     }
 
@@ -1082,7 +1155,7 @@ public class MainWindow {
         startButton.onClicked(() -> {
             String url = urlEntry.getText().trim();
             if (url.isEmpty()) {
-                infoLabel.setLabel("Enter a URL");
+                AccessibilitySupport.status(infoLabel, "Enter a URL");
                 return;
             }
             try {
@@ -1095,7 +1168,8 @@ public class MainWindow {
                 refresh();
                 scraper.close();
             } catch (java.net.URISyntaxException e) {
-                infoLabel.setLabel("Invalid URL");
+                AccessibilitySupport.status(infoLabel, "Invalid URL",
+                        org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             }
         });
 
@@ -1197,25 +1271,17 @@ public class MainWindow {
         if (!filesStore.getIterFromString(iter, pathStr)) {
             return;
         }
-        Value current = new Value().init(Types.BOOLEAN);
-        filesStore.getValue(iter, 0, current);
-        boolean newValue = !current.getBoolean();
-        current.unset();
+        boolean newValue = !ListStoreCells.getBoolean(filesStore, iter, 0);
         ListStoreCells.setBoolean(filesStore, iter, 0, newValue);
 
         // Collect all selected indexes (row order == getDownloadFiles order)
         java.util.List<Integer> selectedIndexes = new java.util.ArrayList<>();
-        int index = 0;
         TreeIter walk = new TreeIter();
         if (filesStore.getIterFirst(walk)) {
             do {
-                Value v = new Value().init(Types.BOOLEAN);
-                filesStore.getValue(walk, 0, v);
-                if (v.getBoolean()) {
-                    selectedIndexes.add(index);
+                if (ListStoreCells.getBoolean(filesStore, walk, 0)) {
+                    selectedIndexes.add(ListStoreCells.getInt(filesStore, walk, 5));
                 }
-                v.unset();
-                index++;
             } while (filesStore.iterNext(walk));
         }
         if (selectedIndexes.isEmpty()) {

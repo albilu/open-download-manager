@@ -5,9 +5,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -1263,7 +1260,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
     private List<String> startHttpDownload(Download download) throws IOException, Aria2RpcException {
-        LOGGER.info("Starting HTTP download for: " + download.getUri());
+        LOGGER.info("Starting HTTP download " + download.getId());
         Map<String, Object> options = new HashMap<>();
         options.put("dir", download.getDestination().toString());
 
@@ -1292,8 +1289,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         // Start download with aria2 as ONE multi-source task
         String[] uriArray = uris.toArray(new String[0]);
-        LOGGER.info("Calling aria2.addUri for: " + uriArray[0] + " with " + uriArray.length
-                + " URI(s) and options: " + options);
+        LOGGER.info("Calling aria2.addUri for download " + download.getId()
+                + " with " + uriArray.length + " source URI(s) and " + options.size() + " option(s)");
         String gid = aria2Client.addUriRpc(uriArray, options);
         LOGGER.info("aria2.addUri returned GID: " + gid);
 
@@ -1332,7 +1329,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         } else if ("http".equals(torrentUri.getScheme()) || "https".equals(torrentUri.getScheme())) {
             // Remote torrent file: fetch it into memory, then hand the bytes
             // to aria2's addTorrent
-            torrentData = fetchRemoteBytes(torrentUri);
+            torrentData = fetchRemoteBytes(torrentUri, download);
             torrentSource = torrentUri.toString();
         } else {
             throw new IOException("Unsupported torrent source URI: " + torrentUri);
@@ -1368,7 +1365,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             DescriptorStaging.deleteIfStaged(localTorrentFile);
         }
 
-        LOGGER.info("Started torrent download with GID: " + gid + " for source: " + torrentSource);
+        LOGGER.info("Started torrent download with GID: " + gid);
         return List.of(gid);
     }
 
@@ -1427,7 +1424,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         if (lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
             return startMetaLinkDownload(download);
         }
-        LOGGER.warning("Unsupported local file type for aria2 download: " + path);
+        LOGGER.warning("Unsupported local descriptor type for aria2 download");
         return null;
     }
 
@@ -1465,8 +1462,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         } else if ("http".equals(metaLinkUri.getScheme()) || "https".equals(metaLinkUri.getScheme())) {
             // Remote Metalink file: fetch it into memory and hand the bytes
             // to aria2's addMetalink
-            metaLinkData = fetchRemoteBytes(metaLinkUri);
-            metaLinkSource = metaLinkUri.toString();
+            metaLinkData = fetchRemoteBytes(metaLinkUri, download);
+            metaLinkSource = "remote Metalink descriptor";
         } else {
             throw new IOException("Unsupported Metalink source URI: " + metaLinkUri);
         }
@@ -1500,7 +1497,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             DescriptorStaging.deleteIfStaged(localMetaLinkFile);
         }
 
-        LOGGER.info("Started Metalink download with " + gids.size() + " GID(s) for source: " + metaLinkSource);
+        LOGGER.info("Started Metalink download with " + gids.size() + " GID(s)");
         return gids;
     }
 
@@ -1518,7 +1515,16 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             throw new IOException(kind + " file not found or not readable: " + file);
         }
         try {
-            return Files.readAllBytes(file);
+            if (Files.size(file) > MAX_REMOTE_DESCRIPTOR_BYTES) {
+                throw new IOException(kind + " descriptor exceeds the 16 MiB limit");
+            }
+            try (InputStream input = Files.newInputStream(file)) {
+                byte[] data = input.readNBytes((int) MAX_REMOTE_DESCRIPTOR_BYTES + 1);
+                if (data.length > MAX_REMOTE_DESCRIPTOR_BYTES) {
+                    throw new IOException(kind + " descriptor exceeds the 16 MiB limit");
+                }
+                return data;
+            }
         } catch (IOException e) {
             throw new IOException("Failed to read " + kind + " file: " + file, e);
         }
@@ -1540,40 +1546,19 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @throws IOException on connection failure, non-2xx response, empty body,
      *             or a body exceeding {@link #MAX_REMOTE_DESCRIPTOR_BYTES}
      */
-    /** Shared, redirect-following client: a new HttpClient per fetch wasted a connection pool per call. */
-    private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
-
-    private static byte[] fetchRemoteBytes(URI uri) throws IOException {
-        HttpRequest request = HttpRequest.newBuilder(uri)
-                .timeout(Duration.ofSeconds(60))
-                .GET()
-                .build();
-        HttpResponse<InputStream> response;
-        try {
-            response = SHARED_HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while fetching " + uri, e);
+    private byte[] fetchRemoteBytes(URI uri, Download download) throws IOException {
+        String proxy = null;
+        if (download.getSettings() != null && download.getSettings().isUseProxy()) {
+            proxy = download.getSettings().getProxyAddress();
+        } else if (globalSettings.isGlobalProxyEnabled()) {
+            proxy = globalSettings.getGlobalProxyAddress();
         }
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Failed to fetch " + uri + ": HTTP " + response.statusCode());
+        byte[] data = org.manager.tools.BoundedHttpFetcher.fetch(uri,
+                MAX_REMOTE_DESCRIPTOR_BYTES, Duration.ofSeconds(30), Duration.ofSeconds(60), proxy);
+        if (data.length == 0) {
+            throw new IOException("Remote descriptor is empty");
         }
-        try (InputStream in = response.body();
-                ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            in.transferTo(out);
-            byte[] data = out.toByteArray();
-            if (data.length == 0) {
-                throw new IOException("Remote descriptor is empty: " + uri);
-            }
-            if (data.length > MAX_REMOTE_DESCRIPTOR_BYTES) {
-                throw new IOException("Remote descriptor exceeds " + MAX_REMOTE_DESCRIPTOR_BYTES
-                        + " bytes (not a .torrent/.metalink file?): " + uri);
-            }
-            return data;
-        }
+        return data;
     }
 
     /**

@@ -94,7 +94,9 @@ class DownloadServicesScheduler {
      * session.
      */
     void startStateSnapshotJob() {
-        if (stateSnapshotTask != null) {
+        stopStateSnapshotJob();
+        if (!settings.get().getBooleanProperty("aria2.autoSave", true)) {
+            LOGGER.info("Periodic state snapshots disabled by settings");
             return;
         }
         stateSnapshotTask = executorManager.getScheduledExecutor()

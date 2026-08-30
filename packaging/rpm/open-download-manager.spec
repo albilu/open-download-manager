@@ -36,12 +36,15 @@ mkdir -p %{buildroot}
 cp -a %{stage}/. %{buildroot}/
 
 %files
+%defattr(-,root,root,-)
 /opt/open-download-manager/odm.jar
 /opt/open-download-manager/runtime/*
 /usr/bin/open-download-manager
 /usr/share/applications/open-download-manager.desktop
 /usr/share/icons/hicolor/128x128/apps/open-download-manager.png
 /usr/share/icons/hicolor/512x512/apps/open-download-manager.png
+%doc /usr/share/doc/open-download-manager/copyright
+%license /usr/share/licenses/open-download-manager/LICENSE
 
 %post
 sysctl -w fs.inotify.max_user_watches=524288 >/dev/null 2>&1 || :

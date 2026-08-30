@@ -16,7 +16,9 @@ import java.util.logging.Logger;
 import org.manager.GlobalSettings;
 import org.manager.StartupCoordinator;
 import org.manager.download.Download;
+import org.manager.download.DownloadSettings;
 import org.manager.download.DownloadSettingsFactory;
+import org.curl.CurlSettings;
 import org.manager.tools.ToolManagerFactory;
 
 /**
@@ -252,9 +254,13 @@ public class DownloadHandlerFactory {
         // -x socks support); torrents/magnets stay on aria2 (native
         // all-proxy socks). Downloads already typed PROXYCHAINS/CURL keep
         // their handler so routing stays stable across later lookups.
-        DownloadHandler socksHandler = routeSocksDownload(download);
-        if (socksHandler != null) {
-            return socksHandler;
+        String effectiveProxy = effectiveProxyAddress(download);
+        boolean socksRoutingRequired = download.getType() == Download.Type.ARIA2
+                && isSocksProxy(effectiveProxy) && !isTorrentLike(download);
+        if (socksRoutingRequired) {
+            // Fail closed: null means there is no proxy-capable handler. Do
+            // not continue into the ordinary aria2/curl fallback path.
+            return routeSocksDownload(download, effectiveProxy);
         }
 
         // Get the registered handler for this type
@@ -283,20 +289,10 @@ public class DownloadHandlerFactory {
      *
      * @return a handler, or null when no socks routing applies
      */
-    private DownloadHandler routeSocksDownload(Download download) {
-        if (download.getType() != Download.Type.ARIA2) {
-            return null;
-        }
-        String proxy = effectiveProxyAddress(download);
-        if (proxy == null || !isSocksProxy(proxy)) {
-            return null;
-        }
-        // Torrents/magnets cannot run through curl; aria2 handles their
-        // socks proxy natively via all-proxy
-        if (isTorrentLike(download)) {
-            return null;
-        }
-
+    private DownloadHandler routeSocksDownload(Download download, String proxy) {
+        DownloadSettings settings = download.getSettings();
+        settings.setUseProxy(true);
+        settings.setProxyAddress(proxy);
         DownloadHandler proxychains = handlers.get(Download.Type.PROXYCHAINS);
         if (proxychains != null) {
             download.setType(Download.Type.PROXYCHAINS);
@@ -307,18 +303,51 @@ public class DownloadHandlerFactory {
             }
         }
 
-        DownloadHandler curl = handlers.get(Download.Type.CURL);
-        if (curl != null) {
-            download.setType(Download.Type.CURL);
-            if (curl.canHandle(download)) {
+        if (prepareCurlProxyFallback(download)) {
+            DownloadHandler curl = handlers.get(Download.Type.CURL);
+            if (curl != null && curl.canHandle(download)) {
                 LOGGER.info("proxychains unavailable; falling back to curl with socks proxy: "
                         + download.getName());
                 return curl;
             }
         }
 
-        // No socks-capable alternative: let the normal path decide
+        LOGGER.severe("Refusing direct fallback for proxied download " + download.getId());
         return null;
+    }
+
+    /**
+     * Retypes a plain URL for curl while translating the effective proxy and
+     * engine-neutral settings. Merely changing Download.type is unsafe:
+     * CurlClient intentionally ignores non-CurlSettings proxy fields.
+     *
+     * @return true when a valid proxy and curl handler are available
+     */
+    public boolean prepareCurlProxyFallback(Download download) {
+        String proxy = effectiveProxyAddress(download);
+        if (!isSocksProxy(proxy) || !isValidProxyAddress(proxy)
+                || handlers.get(Download.Type.CURL) == null) {
+            return false;
+        }
+        DownloadSettings old = download.getSettings();
+        CurlSettings curl = old instanceof CurlSettings existing
+                ? existing : new CurlSettings();
+        if (old != curl) {
+            curl.setConnections(old.getConnections());
+            curl.setDownloadLimitKB(old.getDownloadLimitKB());
+            curl.setUploadLimitKB(old.getUploadLimitKB());
+            curl.setMaxRetries(old.getMaxRetries());
+            curl.setRetryDelaySeconds(old.getRetryDelaySeconds());
+            curl.setReferer(old.getReferer());
+            curl.setUserAgent(old.getUserAgent());
+            curl.setCookieHeader(old.getCookieHeader());
+            old.getAdditionalOptions().forEach(curl::setOption);
+        }
+        curl.setUseProxy(true);
+        curl.setProxyAddress(proxy);
+        download.setSettings(curl);
+        download.setType(Download.Type.CURL);
+        return true;
     }
 
     /**
@@ -339,9 +368,21 @@ public class DownloadHandlerFactory {
     }
 
     private static boolean isSocksProxy(String address) {
+        if (address == null) {
+            return false;
+        }
         String lower = address.toLowerCase();
         return lower.startsWith("socks4://") || lower.startsWith("socks5://")
                 || lower.startsWith("socks5h://");
+    }
+
+    private static boolean isValidProxyAddress(String address) {
+        try {
+            URI uri = URI.create(address);
+            return uri.getHost() != null && uri.getPort() > 0 && uri.getPort() <= 65535;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /**

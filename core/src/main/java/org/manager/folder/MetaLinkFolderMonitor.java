@@ -84,6 +84,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
      */
     public static FolderMonitorSettings createDefaultMetaLinkSettings() {
         return new FolderMonitorSettings()
+                .setFileExtensions(java.util.Set.of())
                 .addFileExtension(".metalink")
                 .addFileExtension(".meta4")
                 .setRecursive(false)
@@ -272,9 +273,6 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
         try {
             String content = new String(data, 0, length, "UTF-8").toLowerCase();
 
-            // Check for XML declaration
-            boolean hasXmlDeclaration = content.contains("<?xml");
-
             // Check for Metalink namespace and root element
             boolean hasMetalinkNamespace = content.contains("urn:ietf:params:xml:ns:metalink")
                     || content.contains("http://www.metalinker.org/");
@@ -285,8 +283,8 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
             boolean hasUrlElements = content.contains("<url") || content.contains("<resources");
 
             // Check for well-formed XML structure
-            boolean hasValidXmlStructure = hasXmlDeclaration
-                    && content.contains("<")
+            // An XML declaration is optional under the XML specification.
+            boolean hasValidXmlStructure = content.contains("<")
                     && content.contains(">");
 
             // Additional validation for common Metalink attributes/elements
@@ -295,8 +293,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
                     || content.contains("hash")
                     || content.contains("verification");
 
-            // A valid Metalink should have XML declaration, metalink root, and basic
-            // structure
+            // A valid Metalink needs the root and basic XML structure.
             boolean isValidMetalink = hasValidXmlStructure && hasMetalinkRoot;
 
             // For higher confidence, check for namespace and file elements

@@ -1,5 +1,6 @@
 package org.odm.gtk4;
 
+import java.net.URI;
 import org.manager.download.Download;
 import org.manager.download.ExternalToolSettings;
 
@@ -18,6 +19,73 @@ final class DialogOptions {
     private DialogOptions() {
     }
 
+    /** Parsed fields used to round-trip a persisted proxy URI through GTK controls. */
+    record ProxyFields(int typeIndex, String host, int port, String username, String password) {
+        static ProxyFields none() {
+            return new ProxyFields(0, "", 0, "", "");
+        }
+    }
+
+    static ProxyFields parseProxy(String address) {
+        if (address == null || address.isBlank()) {
+            return ProxyFields.none();
+        }
+        try {
+            URI uri = URI.create(address.trim());
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+            int type = switch (scheme) {
+                case "http" -> 1;
+                case "https" -> 2;
+                case "socks4", "socks4a" -> 3;
+                case "socks5", "socks5h" -> 4;
+                default -> 0;
+            };
+            if (type == 0 || uri.getHost() == null || uri.getHost().isBlank()) {
+                return ProxyFields.none();
+            }
+            String username = "";
+            String password = "";
+            String userInfo = uri.getUserInfo();
+            if (userInfo != null) {
+                int separator = userInfo.indexOf(':');
+                username = separator >= 0 ? userInfo.substring(0, separator) : userInfo;
+                password = separator >= 0 ? userInfo.substring(separator + 1) : "";
+            }
+            int port = uri.getPort();
+            if (port < 1) {
+                port = switch (type) {
+                    case 1 -> 80;
+                    case 2 -> 443;
+                    default -> 1080;
+                };
+            }
+            return new ProxyFields(type, uri.getHost(), port, username, password);
+        } catch (RuntimeException invalidProxy) {
+            return ProxyFields.none();
+        }
+    }
+
+    static String buildProxyAddress(int typeIndex, String host, int port,
+            String user, String password) {
+        if (typeIndex <= 0 || typeIndex >= PROXY_TYPES.length
+                || host == null || host.isBlank() || port < 1 || port > 65_535) {
+            return null;
+        }
+        String userInfo = null;
+        if (user != null && !user.isBlank()) {
+            userInfo = password == null || password.isEmpty()
+                    ? user.trim() : user.trim() + ':' + password;
+        }
+        try {
+            // socks5h delegates DNS resolution to the proxy, preventing the
+            // otherwise easy-to-miss local DNS leak of plain socks5.
+            String scheme = typeIndex == 4 ? "socks5h" : PROXY_TYPES[typeIndex].toLowerCase();
+            return new URI(scheme, userInfo, host.trim(), port, null, null, null).toASCIIString();
+        } catch (Exception invalidProxy) {
+            return null;
+        }
+    }
+
     /**
      * Applies the proxy selection to a download: Tor SOCKS wins over the
      * explicit proxy fields; an empty host clears proxying.
@@ -34,24 +102,23 @@ final class DialogOptions {
             String host, int port, String user, String password) {
         if (torActive) {
             download.setUseProxy(true);
-            download.setProxyAddress("socks5://127.0.0.1:9050");
+            download.setProxyAddress("socks5h://127.0.0.1:9050");
             return;
         }
-        if (typeIndex <= 0 || host == null || host.isBlank()) {
+        if (typeIndex <= 0 || typeIndex >= PROXY_TYPES.length
+                || host == null || host.isBlank()) {
+            download.setUseProxy(false);
+            download.setProxyAddress(null);
             return;
         }
-        StringBuilder proxy = new StringBuilder(PROXY_TYPES[typeIndex].toLowerCase())
-                .append("://");
-        if (user != null && !user.isBlank()) {
-            proxy.append(user.trim());
-            if (password != null && !password.isEmpty()) {
-                proxy.append(':').append(password);
-            }
-            proxy.append('@');
+        String proxy = buildProxyAddress(typeIndex, host, port, user, password);
+        if (proxy != null) {
+            download.setUseProxy(true);
+            download.setProxyAddress(proxy);
+        } else {
+            download.setUseProxy(false);
+            download.setProxyAddress(null);
         }
-        proxy.append(host.trim()).append(':').append(port);
-        download.setUseProxy(true);
-        download.setProxyAddress(proxy.toString());
     }
 
     /**

@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.manager.schedule.ScheduleSettings;
 
 /**
  * Represents a download task in the download manager.
@@ -65,6 +66,7 @@ public class Download {
     private volatile DownloadSettings settings; // unified settings object
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
     private volatile String expectedChecksum; // detected expected hash in hex
+    private volatile ScheduleSettings scheduleSettings;
     private volatile long attemptGeneration; // per-start operation token, never persisted
 
     /**
@@ -335,6 +337,28 @@ public class Download {
         }
     }
 
+    /**
+     * Atomically changes status only when the current value is the expected
+     * one. External-process workers use this to avoid overwriting a PAUSED or
+     * CANCELED state after their child process exits or finishes launching.
+     *
+     * @return true when the transition was applied
+     */
+    public boolean compareAndSetStatus(Status expected, Status replacement) {
+        synchronized (lock) {
+            if (this.status != expected) {
+                return false;
+            }
+            this.status = replacement;
+            if (replacement == Status.DOWNLOADING && startedAt == null) {
+                this.startedAt = Instant.now();
+            } else if (replacement == Status.COMPLETED && completedAt == null) {
+                this.completedAt = Instant.now();
+            }
+            return true;
+        }
+    }
+
     public long getSize() {
         return size;
     }
@@ -544,6 +568,19 @@ public class Download {
     public void setExpectedChecksum(String expectedChecksum) {
         synchronized (lock) {
             this.expectedChecksum = expectedChecksum;
+        }
+    }
+
+    /** Per-download schedule persisted with the download state. */
+    public ScheduleSettings getScheduleSettings() {
+        synchronized (lock) {
+            return scheduleSettings != null ? scheduleSettings.copy() : null;
+        }
+    }
+
+    public void setScheduleSettings(ScheduleSettings scheduleSettings) {
+        synchronized (lock) {
+            this.scheduleSettings = scheduleSettings != null ? scheduleSettings.copy() : null;
         }
     }
 
