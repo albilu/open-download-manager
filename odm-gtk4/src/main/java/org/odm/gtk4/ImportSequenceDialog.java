@@ -7,15 +7,14 @@ import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.concurrent.CompletableFuture;
-import org.gnome.gio.File;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
-import org.gnome.gtk.FileDialog;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
+import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
@@ -53,6 +52,7 @@ public class ImportSequenceDialog {
     private final DropDown charModeCombo;
     private final ListStore previewStore;
     private final Label diskSpaceLabel;
+    private final PathChooserButton destinationChooser;
 
     private Path destinationFolder;
     private boolean syncingRangeMode;
@@ -98,9 +98,16 @@ public class ImportSequenceDialog {
         Widgets.require(builder, "proxy_type_combo", DropDown.class).setModel(proxyTypes);
         loadGlobalDefaults();
 
-        Button destinationButton = Widgets.require(builder, "destination_folder", Button.class);
-        destinationButton.setLabel(currentDefaultDirectory());
-        destinationButton.onClicked(this::onChooseFolder);
+        MenuButton destinationButton = Widgets.require(builder, "destination_folder", MenuButton.class);
+        AccessibilitySupport.label(destinationButton, "Sequence destination folder");
+        Path defaultDestination = Path.of(currentDefaultDirectory());
+        this.destinationFolder = defaultDestination;
+        this.destinationChooser = PathChooserButton.forFolder(destinationButton, dialog,
+                "Select destination folder", defaultDestination, path -> {
+                    destinationFolder = path;
+                    updateDiskSpace(path.toString());
+                });
+        updateDiskSpace(defaultDestination.toString());
 
         // Regenerate preview on any input change
         Runnable regen = this::regeneratePreview;
@@ -122,24 +129,6 @@ public class ImportSequenceDialog {
     public void present() {
         dialog.present();
         uriEntry.grabFocus();
-    }
-
-    private void onChooseFolder() {
-        FileDialog fileDialog = new FileDialog();
-        fileDialog.setTitle("Select destination folder");
-        fileDialog.selectFolder(dialog, null, result -> {
-            try {
-                File folder = fileDialog.selectFolderFinish(result);
-                if (folder != null && folder.getPath() != null) {
-                    destinationFolder = Path.of(folder.getPath().toString());
-                    Widgets.require(builder, "destination_folder", Button.class)
-                            .setLabel(destinationFolder.toString());
-                    updateDiskSpace(destinationFolder.toString());
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Folder selection cancelled or failed", e);
-            }
-        });
     }
 
     /** Generates the URL list from the pattern + range. */

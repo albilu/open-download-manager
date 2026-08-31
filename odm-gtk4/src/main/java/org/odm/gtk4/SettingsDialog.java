@@ -11,6 +11,7 @@ import org.gnome.gtk.Entry;
 import org.gnome.gtk.FileDialog;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
+import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
@@ -42,6 +43,8 @@ public class SettingsDialog {
     private final java.util.function.Consumer<Boolean> torPreferenceHandler;
     private final GtkBuilder builder;
     private final Label statusLabel;
+    private final PathChooserButton defaultDirectoryChooser;
+    private final PathChooserButton monitoredDirectoryChooser;
     private final java.util.concurrent.atomic.AtomicBoolean saveInProgress =
             new java.util.concurrent.atomic.AtomicBoolean();
 
@@ -84,9 +87,20 @@ public class SettingsDialog {
 
         buildSchedulerGrid();
 
-        // File/folder pickers
-        onPickFolder("default_download_folder_chooser", "Select download folder", this::setDefaultDir);
-        onPickFolder("monitored_folder_chooser", "Select monitored folder", this::setMonitoredDir);
+        // File/folder pickers. The folder controls reproduce GTK3's
+        // GtkFileChooserButton visuals while using GTK4's async FileDialog.
+        MenuButton defaultDirectoryButton = Widgets.require(builder,
+                "default_download_folder_chooser", MenuButton.class);
+        MenuButton monitoredDirectoryButton = Widgets.require(builder,
+                "monitored_folder_chooser", MenuButton.class);
+        AccessibilitySupport.label(defaultDirectoryButton, "Default download folder");
+        AccessibilitySupport.label(monitoredDirectoryButton, "Monitored folder");
+        this.defaultDirectoryChooser = PathChooserButton.forFolder(defaultDirectoryButton,
+                dialog, "Select download folder", null,
+                path -> setDefaultDir(path.toString()));
+        this.monitoredDirectoryChooser = PathChooserButton.forFolder(monitoredDirectoryButton,
+                dialog, "Select monitored folder", null,
+                path -> setMonitoredDir(path.toString()));
         onPickFile("browse_aria2_button", "Select aria2c binary", e -> setText("aria2_path_entry", e));
         onPickFile("browse_ytdlp_button", "Select yt-dlp binary", e -> setText("ytdlp_path_entry", e));
         onPickFile("browse_httrack_button", "Select httrack binary", e -> setText("httrack_path_entry", e));
@@ -236,24 +250,6 @@ public class SettingsDialog {
         Widgets.require(builder, id, DropDown.class).setModel(list);
     }
 
-    private void onPickFolder(String buttonId, String title,
-            java.util.function.Consumer<String> consumer) {
-        Widgets.require(builder, buttonId, Button.class).onClicked(() -> {
-            FileDialog fileDialog = new FileDialog();
-            fileDialog.setTitle(title);
-            fileDialog.selectFolder(dialog, null, result -> {
-                try {
-                    File folder = fileDialog.selectFolderFinish(result);
-                    if (folder != null && folder.getPath() != null) {
-                        consumer.accept(folder.getPath().toString());
-                    }
-                } catch (Exception e) {
-                    LOGGER.log(Level.FINE, title + " selection cancelled or failed", e);
-                }
-            });
-        });
-    }
-
     private void onPickFile(String buttonId, String title,
             java.util.function.Consumer<String> consumer) {
         Widgets.require(builder, buttonId, Button.class).onClicked(() -> {
@@ -290,11 +286,15 @@ public class SettingsDialog {
     // ---- load / apply ----
 
     private void setDefaultDir(String dir) {
-        Widgets.require(builder, "default_download_folder_chooser", Button.class).setLabel(dir);
+        defaultDirectoryChooser.setPath(Path.of(dir));
     }
 
     private void setMonitoredDir(String dir) {
-        Widgets.require(builder, "monitored_folder_chooser", Button.class).setLabel(dir);
+        if (dir == null || dir.isBlank()) {
+            monitoredDirectoryChooser.clear();
+        } else {
+            monitoredDirectoryChooser.setPath(Path.of(dir));
+        }
     }
 
     private void load() {
@@ -316,9 +316,7 @@ public class SettingsDialog {
         check("move_to_trash_check").setActive(s.getBooleanProperty("ui.moveToTrash", false));
         // Restore the persisted monitored folder (empty until first configured)
         String monitoredDir = s.getProperty("folder.monitorPath", "");
-        if (!monitoredDir.isBlank()) {
-            setMonitoredDir(monitoredDir);
-        }
+        setMonitoredDir(monitoredDir);
         // Network (aria2 defaults + proxy)
         torSwitchSet(s.getBooleanProperty("tor.enabled", false));
         spin("max_connections_spin").setValue(s.getIntProperty("aria2.maxConnections", 8));
@@ -435,8 +433,11 @@ public class SettingsDialog {
         // tor proxy default
         s.setProperty("tor.enabled", String.valueOf(torSwitchGet()));
         // General
-        s.setDefaultDownloadDirectory(Path.of(
-                Widgets.require(builder, "default_download_folder_chooser", Button.class).getLabel()));
+        Path defaultDirectory = defaultDirectoryChooser.getPath();
+        if (defaultDirectory == null) {
+            throw new IllegalArgumentException("Select a default download folder");
+        }
+        s.setDefaultDownloadDirectory(defaultDirectory);
         s.setMaxConcurrentDownloads((int) spin("max_concurrent_downloads_spin").getValue());
         s.setSaveDownloadHistory(check("save_download_history_check").getActive());
         s.setProperty("ui.systemTray", String.valueOf(check("system_tray_check").getActive()));
@@ -458,11 +459,10 @@ public class SettingsDialog {
         // Runtime toggles apply immediately
         downloadManager.setClipboardMonitoringEnabled(check("clipboard_monitor_check").getActive());
         boolean folderMonitoring = check("folder_monitoring_check").getActive();
-        // Persist the monitored folder so monitoring survives restarts; the
-        // chooser button keeps its placeholder label until a folder is picked
-        String monitoredDir = Widgets.require(builder, "monitored_folder_chooser", Button.class).getLabel();
-        boolean hasMonitoredDir = monitoredDir != null && !monitoredDir.isBlank()
-                && !monitoredDir.startsWith("Select");
+        // Persist the monitored folder so monitoring survives restarts.
+        Path monitoredDirectory = monitoredDirectoryChooser.getPath();
+        String monitoredDir = monitoredDirectory == null ? "" : monitoredDirectory.toString();
+        boolean hasMonitoredDir = !monitoredDir.isBlank();
         s.setProperty("folder.monitorPath", hasMonitoredDir ? monitoredDir : "");
         s.setProperty("folder.monitorEnabled", String.valueOf(folderMonitoring && hasMonitoredDir));
         downloadManager.setTorrentFolderMonitoringEnabled(folderMonitoring && hasMonitoredDir);

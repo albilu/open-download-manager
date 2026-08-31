@@ -20,6 +20,7 @@ import org.gnome.gtk.FileDialog;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
+import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
@@ -52,6 +53,7 @@ public class ImportListDialog {
     private final ListStore extensionFilterStore;
     private final DropDown extensionFilterCombo;
     private final Label diskSpaceLabel;
+    private final PathChooserButton destinationChooser;
 
     private Path destinationFolder;
 
@@ -69,7 +71,7 @@ public class ImportListDialog {
         AccessibilitySupport.label(extensionFilterCombo, "Imported URL extension filter");
         AccessibilitySupport.label(Widgets.require(builder, "url_treeview",
                 org.gnome.gtk.TreeView.class), "URLs to import");
-        AccessibilitySupport.label(Widgets.require(builder, "folder_destination", Button.class),
+        AccessibilitySupport.label(Widgets.require(builder, "folder_destination", MenuButton.class),
                 "Import destination folder");
         AccessibilitySupport.label(Widgets.require(builder, "max_connections_spin", SpinButton.class),
                 "Maximum connections");
@@ -103,9 +105,15 @@ public class ImportListDialog {
         Widgets.require(builder, "proxy_type_combo", DropDown.class).setModel(proxyTypes);
         loadGlobalDefaults();
 
-        Button folderButton = Widgets.require(builder, "folder_destination", Button.class);
-        folderButton.setLabel(currentDefaultDirectory());
-        folderButton.onClicked(this::onChooseFolder);
+        MenuButton folderButton = Widgets.require(builder, "folder_destination", MenuButton.class);
+        Path defaultDestination = Path.of(currentDefaultDirectory());
+        this.destinationFolder = defaultDestination;
+        this.destinationChooser = PathChooserButton.forFolder(folderButton, dialog,
+                "Select destination folder", defaultDestination, path -> {
+                    destinationFolder = path;
+                    updateDiskSpace(path.toString());
+                });
+        updateDiskSpace(defaultDestination.toString());
 
         // Extension filter model (rebuilt when URLs are loaded)
         rebuildExtensionFilter(List.of());
@@ -133,24 +141,6 @@ public class ImportListDialog {
 
     public void present() {
         dialog.present();
-    }
-
-    private void onChooseFolder() {
-        FileDialog fileDialog = new FileDialog();
-        fileDialog.setTitle("Select destination folder");
-        fileDialog.selectFolder(dialog, null, result -> {
-            try {
-                File folder = fileDialog.selectFolderFinish(result);
-                if (folder != null && folder.getPath() != null) {
-                    destinationFolder = Path.of(folder.getPath().toString());
-                    Widgets.require(builder, "folder_destination", Button.class)
-                            .setLabel(destinationFolder.toString());
-                    updateDiskSpace(destinationFolder.toString());
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Folder selection cancelled or failed", e);
-            }
-        });
     }
 
     private void onFromFile() {

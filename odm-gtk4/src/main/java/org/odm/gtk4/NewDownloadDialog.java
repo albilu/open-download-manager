@@ -4,15 +4,14 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import org.gnome.gio.File;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
-import org.gnome.gtk.FileDialog;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
+import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
@@ -39,8 +38,8 @@ public class NewDownloadDialog {
     private final Runnable onDownloadQueued;
 
     private final Entry urlEntry;
-    private final Button torrentFileChooser;
-    private final Button saveFolderChooser;
+    private final PathChooserButton torrentFileChooser;
+    private final PathChooserButton saveFolderChooser;
     private final Label diskSpaceLabel;
     private final Entry filenameEntry;
     private final ListStore filesListstore;
@@ -83,8 +82,8 @@ public class NewDownloadDialog {
         GtkBuilder builder = UiLoader.load("/ui/new-download.ui");
         this.dialog = Widgets.require(builder, "new_download_dialog", Window.class);
         this.urlEntry = Widgets.require(builder, "url_entry", Entry.class);
-        this.torrentFileChooser = Widgets.require(builder, "torrent_file_chooser", Button.class);
-        this.saveFolderChooser = Widgets.require(builder, "save_folder_chooser", Button.class);
+        Button torrentFileButton = Widgets.require(builder, "torrent_file_chooser", Button.class);
+        MenuButton saveFolderButton = Widgets.require(builder, "save_folder_chooser", MenuButton.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
         this.filenameEntry = Widgets.require(builder, "filename_entry", Entry.class);
         this.filesListstore = Widgets.require(builder, "files_liststore", ListStore.class);
@@ -108,8 +107,8 @@ public class NewDownloadDialog {
         this.verifyChecksumCheck = Widgets.require(builder, "verify_checksum_check", CheckButton.class);
 
         AccessibilitySupport.label(urlEntry, "Download URL");
-        AccessibilitySupport.label(torrentFileChooser, "Choose torrent or Metalink descriptor");
-        AccessibilitySupport.label(saveFolderChooser, "Download destination folder");
+        AccessibilitySupport.label(torrentFileButton, "Choose torrent or Metalink descriptor");
+        AccessibilitySupport.label(saveFolderButton, "Download destination folder");
         AccessibilitySupport.label(filenameEntry, "Output filename");
         AccessibilitySupport.label(proxyTypeCombo, "Proxy type");
         AccessibilitySupport.label(proxyHostEntry, "Proxy host");
@@ -139,8 +138,19 @@ public class NewDownloadDialog {
 
         loadGlobalDefaults();
 
-        saveFolderChooser.setLabel(currentDefaultDirectory());
-        updateDiskSpace(currentDefaultDirectory());
+        Path defaultDestination = Path.of(currentDefaultDirectory());
+        this.torrentFileChooser = PathChooserButton.forFile(torrentFileButton, dialog,
+                "Select torrent or metalink file", null, path -> {
+                    selectedTorrentFile = path;
+                    analyzeTorrentFile();
+                });
+        this.saveFolderChooser = PathChooserButton.forFolder(saveFolderButton, dialog,
+                "Select destination folder", defaultDestination, path -> {
+                    destinationFolder = path;
+                    updateDiskSpace(path.toString());
+                });
+        this.destinationFolder = defaultDestination;
+        updateDiskSpace(defaultDestination.toString());
 
         // Live URL analysis (mirrors the approved old UI): filename auto-fill
         // + magnet metadata + multi-file listing in the Files tab
@@ -151,8 +161,6 @@ public class NewDownloadDialog {
         });
         urlEntry.onChanged(this::analyzeUrl);
 
-        torrentFileChooser.onClicked(this::onChooseTorrent);
-        saveFolderChooser.onClicked(this::onChooseFolder);
         Widgets.require(builder, "new_download_cancel_button", Button.class).onClicked(dialog::close);
         this.startButton = Widgets.require(builder, "new_download_start_button", Button.class);
         startButton.onClicked(this::onStart);
@@ -178,23 +186,6 @@ public class NewDownloadDialog {
             urlEntry.setText(url);
             analyzeUrl();
         }
-    }
-
-    private void onChooseTorrent() {
-        FileDialog fileDialog = new FileDialog();
-        fileDialog.setTitle("Select torrent or metalink file");
-        fileDialog.open(dialog, null, result -> {
-            try {
-                File file = fileDialog.openFinish(result);
-                if (file != null && file.getPath() != null) {
-                    selectedTorrentFile = Path.of(file.getPath().toString());
-                    torrentFileChooser.setLabel(selectedTorrentFile.getFileName().toString());
-                    analyzeTorrentFile();
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Torrent file selection cancelled or failed", e);
-            }
-        });
     }
 
     /**
@@ -377,23 +368,6 @@ public class NewDownloadDialog {
         p.setString(priority);
         filesListstore.setValue(iter, 3, p);
         p.unset();
-    }
-
-    private void onChooseFolder() {
-        FileDialog fileDialog = new FileDialog();
-        fileDialog.setTitle("Select destination folder");
-        fileDialog.selectFolder(dialog, null, result -> {
-            try {
-                File folder = fileDialog.selectFolderFinish(result);
-                if (folder != null && folder.getPath() != null) {
-                    destinationFolder = Path.of(folder.getPath().toString());
-                    saveFolderChooser.setLabel(destinationFolder.toString());
-                    updateDiskSpace(destinationFolder.toString());
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Folder selection cancelled or failed", e);
-            }
-        });
     }
 
     private void updateDiskSpace(String dir) {

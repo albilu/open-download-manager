@@ -6,14 +6,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import org.gnome.gio.File;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
-import org.gnome.gtk.FileDialog;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
+import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Window;
 import org.manager.download.Download;
@@ -49,8 +48,8 @@ public class NewMediaDialog {
     private final CheckButton playlistCheck;
     private final CheckButton subtitlesCheck;
     private final Entry subtitleLangEntry;
-    private final Button cookieFileChooser;
-    private final Button folderChooser;
+    private final PathChooserButton cookieFileChooser;
+    private final PathChooserButton folderChooser;
     private final Button startButton;
 
     /** Formats shown in the dropdown, parallel to the StringList model. */
@@ -77,15 +76,15 @@ public class NewMediaDialog {
         this.playlistCheck = Widgets.require(builder, "playlist_check", CheckButton.class);
         this.subtitlesCheck = Widgets.require(builder, "subtitles_check", CheckButton.class);
         this.subtitleLangEntry = Widgets.require(builder, "subtitle_lang_entry", Entry.class);
-        this.cookieFileChooser = Widgets.require(builder, "cookie_file_chooser", Button.class);
-        this.folderChooser = Widgets.require(builder, "media_folder_chooser", Button.class);
+        Button cookieFileButton = Widgets.require(builder, "cookie_file_chooser", Button.class);
+        MenuButton folderButton = Widgets.require(builder, "media_folder_chooser", MenuButton.class);
         this.startButton = Widgets.require(builder, "media_start_button", Button.class);
 
         AccessibilitySupport.label(urlEntry, "Media URL");
         AccessibilitySupport.label(formatDrop, "Media format");
         AccessibilitySupport.label(subtitleLangEntry, "Subtitle languages");
-        AccessibilitySupport.label(cookieFileChooser, "Browser cookie file");
-        AccessibilitySupport.label(folderChooser, "Media destination folder");
+        AccessibilitySupport.label(cookieFileButton, "Browser cookie file");
+        AccessibilitySupport.label(folderButton, "Media destination folder");
 
         dialog.setTransientFor(parent);
 
@@ -93,9 +92,12 @@ public class NewMediaDialog {
         placeholder.append("Fetch info to list formats");
         formatDrop.setModel(placeholder);
 
-        String defaultDir = currentDefaultDirectory();
-        folderChooser.setLabel(defaultDir);
-        destinationFolder = Path.of(defaultDir);
+        destinationFolder = Path.of(currentDefaultDirectory());
+        this.cookieFileChooser = PathChooserButton.forFile(cookieFileButton, dialog,
+                "Select cookies file", null, path -> cookieFile = path);
+        this.folderChooser = PathChooserButton.forFolder(folderButton, dialog,
+                "Select destination folder", destinationFolder,
+                path -> destinationFolder = path);
 
         // Enable Download once a URL is present; info fetch is optional
         urlEntry.onChanged(() -> startButton.setSensitive(!urlEntry.getText().isBlank()));
@@ -103,8 +105,6 @@ public class NewMediaDialog {
         fetchInfoButton.onClicked(this::onFetchInfo);
         subtitlesCheck.onToggled(() ->
                 subtitleLangEntry.setSensitive(subtitlesCheck.getActive()));
-        cookieFileChooser.onClicked(this::onChooseCookieFile);
-        folderChooser.onClicked(this::onChooseFolder);
         Widgets.require(builder, "media_cancel_button", Button.class).onClicked(dialog::close);
         startButton.onClicked(this::onStart);
         dialog.onCloseRequest(() -> {
@@ -180,38 +180,6 @@ public class NewMediaDialog {
         }
         formatDrop.setModel(list);
         formatDrop.setSensitive(!formats.isEmpty());
-    }
-
-    private void onChooseCookieFile() {
-        FileDialog fileDialog = new FileDialog();
-        fileDialog.setTitle("Select cookies file");
-        fileDialog.open(dialog, null, result -> {
-            try {
-                File file = fileDialog.openFinish(result);
-                if (file != null && file.getPath() != null) {
-                    cookieFile = Path.of(file.getPath().toString());
-                    cookieFileChooser.setLabel(cookieFile.getFileName().toString());
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Cookie file selection cancelled or failed", e);
-            }
-        });
-    }
-
-    private void onChooseFolder() {
-        FileDialog fileDialog = new FileDialog();
-        fileDialog.setTitle("Select destination folder");
-        fileDialog.selectFolder(dialog, null, result -> {
-            try {
-                File folder = fileDialog.selectFolderFinish(result);
-                if (folder != null && folder.getPath() != null) {
-                    destinationFolder = Path.of(folder.getPath().toString());
-                    folderChooser.setLabel(destinationFolder.toString());
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Folder selection cancelled or failed", e);
-            }
-        });
     }
 
     private void onStart() {

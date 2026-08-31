@@ -12,7 +12,7 @@ import org.gnome.gtk.GestureClick;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
-import org.gnome.gtk.MenuButton;
+import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.SelectionMode;
 import org.gnome.gtk.Spinner;
@@ -69,7 +69,7 @@ public class MainWindow {
     private final Label seedsPeersValue;
     private final org.gnome.gtk.Switch torSwitch;
     private final org.gnome.gtk.SearchEntry searchEntry;
-    private final MenuButton menuButton;
+    private final PopoverMenuBar menuBar;
     private final org.gnome.gtk.Widget leftPanelWidget;
     private final org.gnome.gtk.Widget infoPanelWidget;
     private final DownloadManager downloadManager;
@@ -223,15 +223,16 @@ public class MainWindow {
         this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         torSwitchSet(torService.isRunning());
         torSwitch.onStateSet(this::onTorToggled);
-        this.menuButton = Widgets.require(builder, "menu_button", MenuButton.class);
+        this.menuBar = Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
         this.leftPanelWidget = Widgets.require(builder, "left_panel", org.gnome.gtk.Widget.class);
         this.infoPanelWidget = Widgets.require(builder, "info_panel_box", org.gnome.gtk.Widget.class);
-        menuButton.setMenuModel(buildMainMenu());
+        menuBar.setMenuModel(buildMainMenu());
         AccessibilitySupport.label(statusTreeview, "Download status filters");
         AccessibilitySupport.label(categoryTreeview, "Download category filters");
         AccessibilitySupport.label(downloadsTreeview, "Downloads");
         AccessibilitySupport.label(searchEntry, "Search downloads");
         AccessibilitySupport.label(torSwitch, "Global Tor routing");
+        AccessibilitySupport.label(menuBar, "Application menu");
         AccessibilitySupport.label(infoProgressBar, "Selected download progress");
         Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
         Widgets.require(builder, "category_label", Label.class).setMnemonicWidget(categoryTreeview);
@@ -646,7 +647,7 @@ public class MainWindow {
     /**
      * Builds the full main menu as a Gio.Menu — 1:1 port of the original
      * menu bar (File/Edit/View/Download/Help with submenus, toggles, and
-     * radio items), shown from the toolbar's MenuButton.
+     * radio items), shown in GTK4's classic horizontal PopoverMenuBar.
      */
     private org.gnome.gio.Menu buildMainMenu() {
         registerMenuActions();
@@ -667,7 +668,7 @@ public class MainWindow {
         file.appendSubmenu("Batch Process", batch);
         file.append("Offline Mode", "win.offline");
         file.append("Exit", "win.quit");
-        menu.appendSubmenu("File", file);
+        menu.appendSubmenu("_File", file);
 
         // Edit
         org.gnome.gio.Menu edit = new org.gnome.gio.Menu();
@@ -692,7 +693,7 @@ public class MainWindow {
         edit.appendSubmenu("Schedule", schedule);
         edit.append("New Tor Identity", "win.tor-new-identity");
         edit.append("Preferences", "win.preferences");
-        menu.appendSubmenu("Edit", edit);
+        menu.appendSubmenu("_Edit", edit);
 
         // View
         org.gnome.gio.Menu view = new org.gnome.gio.Menu();
@@ -705,7 +706,7 @@ public class MainWindow {
             columns.append(columnLabels[i], "win.col-" + i);
         }
         view.appendSubmenu("Columns", columns);
-        menu.appendSubmenu("View", view);
+        menu.appendSubmenu("_View", view);
 
         // Download
         org.gnome.gio.Menu download = new org.gnome.gio.Menu();
@@ -718,14 +719,14 @@ public class MainWindow {
         download.append("Delete with Files", "win.delete-with-files");
         download.append("Remove All Finished", "win.remove-finished");
         download.append("Properties", "win.properties");
-        menu.appendSubmenu("Download", download);
+        menu.appendSubmenu("_Download", download);
 
         // Help
         org.gnome.gio.Menu help = new org.gnome.gio.Menu();
         help.append("Statistics", "win.statistics");
         help.append("Donation", "win.donation");
         help.append("About", "win.about");
-        menu.appendSubmenu("Help", help);
+        menu.appendSubmenu("_Help", help);
 
         return menu;
     }
@@ -1472,6 +1473,11 @@ public class MainWindow {
 
     SelectionMode downloadSelectionMode() {
         return downloadsTreeview.getSelection().getMode();
+    }
+
+    int mainMenuTopLevelCount() {
+        org.gnome.gio.MenuModel model = menuBar.getMenuModel();
+        return model == null ? 0 : model.getNItems();
     }
 
     private void selectRow(TreeSelection selection, SelectionConsumer consumer) {

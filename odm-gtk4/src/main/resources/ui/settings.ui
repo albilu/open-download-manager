@@ -74,7 +74,7 @@
                         <property name="orientation">horizontal</property>
                         <property name="spacing">8</property>
                         <child><object class="GtkLabel"><property name="label">Default download directory:</property><property name="xalign">0</property><property name="hexpand">true</property></object></child>
-                        <child><object class="GtkButton" id="default_download_folder_chooser"><property name="label">Select folder…</property></object></child>
+                        <child><object class="GtkMenuButton" id="default_download_folder_chooser"><property name="label">Select folder…</property></object></child>
                         <child><object class="GtkLabel" id="available_space_label"><property name="label"></property></object></child>
                       </object>
                     </child>
@@ -83,7 +83,7 @@
                         <property name="orientation">horizontal</property>
                         <property name="spacing">8</property>
                         <child><object class="GtkLabel"><property name="label">Monitored Folder:</property><property name="xalign">0</property><property name="hexpand">true</property></object></child>
-                        <child><object class="GtkButton" id="monitored_folder_chooser"><property name="label">Select Monitored Folder…</property></object></child>
+                        <child><object class="GtkMenuButton" id="monitored_folder_chooser"><property name="label">Select Monitored Folder…</property></object></child>
                       </object>
                     </child>
                     <child>

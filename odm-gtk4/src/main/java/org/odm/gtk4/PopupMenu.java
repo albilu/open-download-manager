@@ -8,8 +8,7 @@ import org.gnome.gtk.Widget;
 
 /**
  * Simple menu built from a GtkPopover containing a vertical box of buttons.
- * Used for the main menu (via {@code MenuButton.setPopover}) and the download
- * context menu (via {@code popup()}). Each entry is a real button with a
+ * Used for the download context menu (via {@code popup()}). Each entry is a real button with a
  * connected lambda — no string handler names, so a typo'd handler is a
  * compile error, not a dead menu item.
  */

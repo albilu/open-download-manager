@@ -121,7 +121,7 @@
                         <property name="spacing">8</property>
                         <layout><property name="row">2</property><property name="column">1</property></layout>
                         <child>
-                          <object class="GtkButton" id="save_folder_chooser">
+                          <object class="GtkMenuButton" id="save_folder_chooser">
                             <property name="hexpand">true</property>
                           </object>
                         </child>

@@ -40,8 +40,13 @@
       <object class="GtkBox" id="main_container">
         <property name="orientation">vertical</property>
 
-        <!-- Menu bar -> GTK4: MenuButton in the toolbar (see download_toolbar). The 40 menu items
-             are built as a Gio.Menu in MainWindow.buildMainMenu, preserved 1:1. -->
+        <!-- GTK4's supported classic menubar presentation. MainWindow attaches
+             the existing Gio.Menu action model after loading the builder. -->
+        <child>
+          <object class="GtkPopoverMenuBar" id="menu_bar">
+            <property name="hexpand">true</property>
+          </object>
+        </child>
 
         <child>
           <object class="GtkPaned" id="main_paned">
@@ -125,35 +130,33 @@
                   <object class="GtkBox" id="download_toolbar">
                     <property name="orientation">horizontal</property>
                     <property name="spacing">6</property>
-                    <property name="margin-start">6</property>
-                    <property name="margin-end">6</property>
-                    <property name="margin-top">6</property>
-                    <property name="margin-bottom">6</property>
+                    <style><class name="toolbar"/></style>
                     <child><object class="GtkButton" id="new_download_button"><property name="icon-name">list-add</property><property name="tooltip-text">New download</property></object></child>
                     <child><object class="GtkButton" id="pause_button"><property name="icon-name">media-playback-pause</property><property name="tooltip-text">Pause</property></object></child>
                     <child><object class="GtkButton" id="resume_button"><property name="icon-name">media-playback-start</property><property name="tooltip-text">Resume</property></object></child>
                     <child><object class="GtkButton" id="delete_button"><property name="icon-name">edit-delete</property><property name="tooltip-text">Delete</property></object></child>
-                    <child><object class="GtkSeparator"/></child>
+                    <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
                     <child><object class="GtkButton" id="move_up_button"><property name="icon-name">go-up</property><property name="tooltip-text">Move up</property></object></child>
                     <child><object class="GtkButton" id="move_top_button"><property name="icon-name">go-top</property><property name="tooltip-text">Move to top</property></object></child>
                     <child><object class="GtkButton" id="move_down_button"><property name="icon-name">go-down</property><property name="tooltip-text">Move down</property></object></child>
                     <child><object class="GtkButton" id="move_bottom_button"><property name="icon-name">go-bottom</property><property name="tooltip-text">Move to bottom</property></object></child>
-                    <child><object class="GtkSeparator"/></child>
-                    <child><object class="GtkButton" id="settings_button"><property name="icon-name">emblem-system</property><property name="tooltip-text">Settings</property></object></child>
-                    <child><object class="GtkSeparator"/></child>
+                    <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
+                    <child><object class="GtkButton" id="settings_button"><property name="icon-name">preferences-system-symbolic</property><property name="tooltip-text">Settings</property></object></child>
+                    <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
                     <child>
                       <object class="GtkBox" id="tor_box">
-                        <child><object class="GtkImage" id="tor_icon"><property name="icon-name">network-wireless-symbolic</property></object></child>
-                        <child><object class="GtkSwitch" id="tor_switch"/></child>
+                        <property name="spacing">4</property>
+                        <child><object class="GtkImage" id="tor_icon"><property name="icon-name">network-vpn-symbolic</property><property name="tooltip-text">Tor service</property></object></child>
+                        <child><object class="GtkSwitch" id="tor_switch"><property name="valign">center</property><property name="tooltip-text">Enable Tor network</property></object></child>
                       </object>
                     </child>
-                    <child><object class="GtkSeparator"/></child>
+                    <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
                     <child>
                       <object class="GtkBox" id="search_tool_item">
-                        <child><object class="GtkSearchEntry" id="search_entry"><property name="placeholder-text">Search…</property><property name="hexpand">true</property></object></child>
+                        <property name="hexpand">true</property>
+                        <child><object class="GtkSearchEntry" id="search_entry"><property name="placeholder-text">Search downloads…</property><property name="width-request">280</property><property name="halign">end</property></object></child>
                       </object>
                     </child>
-                    <child><object class="GtkMenuButton" id="menu_button"><property name="icon-name">open-menu-symbolic</property><property name="tooltip-text">Menu</property></object></child>
                   </object>
                 </child>
 

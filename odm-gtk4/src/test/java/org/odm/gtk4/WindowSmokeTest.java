@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.gnome.gtk.ApplicationWindow;
 import org.gnome.gtk.Button;
@@ -10,7 +11,9 @@ import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
+import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.ProgressBar;
+import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TextView;
@@ -50,13 +53,16 @@ class WindowSmokeTest {
         Widgets.require(builder, "category_treeview", TreeView.class);
         Widgets.require(builder, "category_column", org.gnome.gtk.TreeViewColumn.class);
         Widgets.require(builder, "category_count_column", org.gnome.gtk.TreeViewColumn.class);
+        Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
+        org.gnome.gtk.Box toolbar = Widgets.require(builder, "download_toolbar",
+                org.gnome.gtk.Box.class);
+        assertTrue(toolbar.hasCssClass("toolbar"));
         // toolbar buttons
         for (String id : new String[]{"new_download_button", "pause_button", "resume_button",
                 "delete_button", "move_up_button", "move_top_button", "move_down_button", "move_bottom_button",
                 "settings_button"}) {
             Widgets.require(builder, id, Button.class);
         }
-        Widgets.require(builder, "menu_button", org.gnome.gtk.MenuButton.class);
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         // download treeview + columns
@@ -95,13 +101,14 @@ class WindowSmokeTest {
         for (String id : new String[]{"max_concurrent_downloads_spin"}) {
             Widgets.require(builder, id, SpinButton.class);
         }
-        for (String id : new String[]{"default_download_folder_chooser", "monitored_folder_chooser",
-                "browse_aria2_button", "browse_ytdlp_button", "browse_httrack_button",
+        for (String id : new String[]{"browse_aria2_button", "browse_ytdlp_button", "browse_httrack_button",
                 "browse_proxychains_button", "browse_tor_button", "browse_axel_button",
                 "browse_subliminal_button",
                 "settings_cancel_button", "settings_reset_button", "settings_apply_button", "settings_ok_button"}) {
             Widgets.require(builder, id, Button.class);
         }
+        Widgets.require(builder, "default_download_folder_chooser", MenuButton.class);
+        Widgets.require(builder, "monitored_folder_chooser", MenuButton.class);
         for (String id : new String[]{"save_download_history_check", "clipboard_monitor_check",
                 "clipboard_silent_check", "system_tray_check", "start_automatically_check",
                 "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
@@ -139,7 +146,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "new_download_dialog", Window.class);
         Widgets.require(builder, "url_entry", Entry.class);
         Widgets.require(builder, "torrent_file_chooser", Button.class);
-        Widgets.require(builder, "save_folder_chooser", Button.class);
+        Widgets.require(builder, "save_folder_chooser", MenuButton.class);
         Widgets.require(builder, "disk_space_label", Label.class);
         Widgets.require(builder, "filename_entry", Entry.class);
         Widgets.require(builder, "files_treeview", TreeView.class);
@@ -180,7 +187,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "subtitles_check", CheckButton.class);
         Widgets.require(builder, "subtitle_lang_entry", Entry.class);
         Widgets.require(builder, "cookie_file_chooser", Button.class);
-        Widgets.require(builder, "media_folder_chooser", Button.class);
+        Widgets.require(builder, "media_folder_chooser", MenuButton.class);
         Widgets.require(builder, "media_cancel_button", Button.class);
         Widgets.require(builder, "media_start_button", Button.class);
     }
@@ -237,7 +244,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "url_treeview", TreeView.class);
         Widgets.require(builder, "url_liststore", ListStore.class);
         Widgets.require(builder, "mark_renderer", org.gnome.gtk.CellRendererToggle.class);
-        Widgets.require(builder, "folder_destination", Button.class);
+        Widgets.require(builder, "folder_destination", MenuButton.class);
         Widgets.require(builder, "disk_space_label", Label.class);
         Widgets.require(builder, "import_spinnet", Spinner.class);
         Widgets.require(builder, "cancel_button", Button.class);
@@ -265,7 +272,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "char_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "preview_treeview", TreeView.class);
         Widgets.require(builder, "preview_liststore", ListStore.class);
-        Widgets.require(builder, "destination_folder", Button.class);
+        Widgets.require(builder, "destination_folder", MenuButton.class);
         Widgets.require(builder, "disk_space_label", Label.class);
         Widgets.require(builder, "import_sequence_spinner", Spinner.class);
         Widgets.require(builder, "cancel_button", Button.class);
@@ -292,6 +299,7 @@ class WindowSmokeTest {
         // Constructing is the test: every Widgets.require in the constructor
         // must resolve. (Null app: the window is a standalone toplevel here.)
         assertEquals(org.gnome.gtk.SelectionMode.MULTIPLE, window.downloadSelectionMode());
+        assertEquals(5, window.mainMenuTopLevelCount());
     }
 
     private static Object defaultValue(Class<?> type) {

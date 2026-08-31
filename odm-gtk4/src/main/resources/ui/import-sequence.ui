@@ -113,7 +113,7 @@
                   <object class="GtkBox">
                     <property name="orientation">horizontal</property><property name="spacing">8</property>
                     <child><object class="GtkLabel"><property name="label">Save to:</property></object></child>
-                    <child><object class="GtkButton" id="destination_folder"><property name="hexpand">true</property></object></child>
+                    <child><object class="GtkMenuButton" id="destination_folder"><property name="hexpand">true</property></object></child>
                     <child><object class="GtkLabel" id="disk_space_label"><property name="label"></property></object></child>
                   </object>
                 </child>
