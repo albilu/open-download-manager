@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import org.gnome.gdk.Texture;
+import org.gnome.gdkpixbuf.PixbufLoader;
 import org.gnome.gtk.AboutDialog;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Window;
@@ -10,6 +11,8 @@ import org.gnome.gtk.Window;
  * original program name, author, website, license) plus the oDM logo.
  */
 public final class AboutDialogPresenter {
+
+    static final String LOGO_RESOURCE = "/images/logo-128.svg";
 
     private AboutDialogPresenter() {
     }
@@ -29,9 +32,15 @@ public final class AboutDialogPresenter {
 
     /** Loads the oDM logo from the module's classpath resources. */
     static Texture loadLogo() {
-        try (var in = AboutDialogPresenter.class.getResourceAsStream("/images/logo-128.png")) {
+        try (var in = AboutDialogPresenter.class.getResourceAsStream(LOGO_RESOURCE)) {
             if (in != null) {
-                return Texture.fromBytes(in.readAllBytes());
+                PixbufLoader loader = PixbufLoader.withType("svg");
+                loader.setSize(105, 128);
+                loader.write(in.readAllBytes());
+                loader.close();
+                if (loader.getPixbuf() != null) {
+                    return Texture.forPixbuf(loader.getPixbuf());
+                }
             }
         } catch (Exception e) {
             // fall through to icon-name fallback in the .ui

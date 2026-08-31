@@ -151,9 +151,9 @@
                       </object>
                     </child>
                     <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
+                    <child><object class="GtkBox" id="toolbar_spacer"><property name="hexpand">true</property></object></child>
                     <child>
                       <object class="GtkBox" id="search_tool_item">
-                        <property name="hexpand">true</property>
                         <child><object class="GtkSearchEntry" id="search_entry"><property name="placeholder-text">Search downloads…</property><property name="width-request">280</property><property name="halign">end</property></object></child>
                       </object>
                     </child>
@@ -212,47 +212,56 @@
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="GtkFrame">
-                                    <property name="label">Information</property>
+                                  <object class="GtkBox" id="general_columns">
+                                    <property name="orientation">horizontal</property>
+                                    <property name="homogeneous">true</property>
+                                    <property name="spacing">8</property>
                                     <child>
-                                      <object class="GtkGrid" id="general_info_grid">
-                                        <property name="row-spacing">4</property>
-                                        <property name="column-spacing">12</property>
-                                        <property name="margin-start">8</property>
-                                        <property name="margin-end">8</property>
-                                        <property name="margin-top">8</property>
-                                        <property name="margin-bottom">8</property>
-                                        <child><object class="GtkLabel"><property name="label">Total size:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="total_size_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
-                                        <child><object class="GtkLabel"><property name="label">Added on:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="added_on_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
-                                        <child><object class="GtkLabel"><property name="label">Info hash:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="info_hash_v1_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
-                                        <child><object class="GtkLabel"><property name="label">Save folder:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="folder_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                                      <object class="GtkFrame" id="information_frame">
+                                        <property name="label">Information</property>
+                                        <property name="hexpand">true</property>
+                                        <child>
+                                          <object class="GtkGrid" id="general_info_grid">
+                                            <property name="row-spacing">4</property>
+                                            <property name="column-spacing">12</property>
+                                            <property name="margin-start">8</property>
+                                            <property name="margin-end">8</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child><object class="GtkLabel"><property name="label">Total size:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="total_size_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+                                            <child><object class="GtkLabel"><property name="label">Added on:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="added_on_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                                            <child><object class="GtkLabel"><property name="label">Info hash:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="info_hash_v1_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                                            <child><object class="GtkLabel"><property name="label">Save folder:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="folder_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkFrame">
-                                    <property name="label">Transfer</property>
                                     <child>
-                                      <object class="GtkGrid" id="transfer_info_grid">
-                                        <property name="row-spacing">4</property>
-                                        <property name="column-spacing">12</property>
-                                        <property name="margin-start">8</property>
-                                        <property name="margin-end">8</property>
-                                        <property name="margin-top">8</property>
-                                        <property name="margin-bottom">8</property>
-                                        <child><object class="GtkLabel"><property name="label">ETA:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="eta_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
-                                        <child><object class="GtkLabel"><property name="label">Downloaded:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="downloaded_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
-                                        <child><object class="GtkLabel"><property name="label">Connections:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="connections_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
-                                        <child><object class="GtkLabel"><property name="label">Seeds/peers:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
-                                        <child><object class="GtkLabel" id="seeds_peers_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                                      <object class="GtkFrame" id="transfer_frame">
+                                        <property name="label">Transfer</property>
+                                        <property name="hexpand">true</property>
+                                        <child>
+                                          <object class="GtkGrid" id="transfer_info_grid">
+                                            <property name="row-spacing">4</property>
+                                            <property name="column-spacing">12</property>
+                                            <property name="margin-start">8</property>
+                                            <property name="margin-end">8</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child><object class="GtkLabel"><property name="label">ETA:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="eta_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+                                            <child><object class="GtkLabel"><property name="label">Downloaded:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="downloaded_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                                            <child><object class="GtkLabel"><property name="label">Connections:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="connections_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                                            <child><object class="GtkLabel"><property name="label">Seeds/peers:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                                            <child><object class="GtkLabel" id="seeds_peers_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
                                   </object>
@@ -342,6 +351,14 @@
                         <property name="orientation">horizontal</property>
                         <property name="spacing">8</property>
                         <property name="halign">end</property>
+                        <child><object class="GtkSpinner" id="activity_spinner"/></child>
+                        <child><object class="GtkSeparator" id="dht_inner_separator"/></child>
+                        <child>
+                          <object class="GtkBox" id="dht_progress_box">
+                            <child><object class="GtkLabel" id="dht_status_label"><property name="label">DHT: —</property></object></child>
+                          </object>
+                        </child>
+                        <child><object class="GtkSeparator" id="dht_separator"/></child>
                         <child>
                           <object class="GtkBox" id="upload_speed_box">
                             <child><object class="GtkImage" id="upload_speed_icon"><property name="icon-name">go-up-symbolic</property></object></child>
@@ -355,22 +372,16 @@
                             <child><object class="GtkLabel" id="down_speed_label"><property name="label">0 B/s</property></object></child>
                           </object>
                         </child>
-                        <child><object class="GtkSeparator" id="dht_separator"/></child>
+                        <child><object class="GtkSeparator" id="download_separator"/></child>
                         <child>
-                          <object class="GtkBox" id="dht_progress_box">
-                            <child><object class="GtkLabel" id="dht_status_label"><property name="label">DHT: —</property></object></child>
-                            <child><object class="GtkSeparator" id="dht_inner_separator"/></child>
-                            <child>
-                              <object class="GtkTreeView" id="global_progress_tree">
-                                <property name="model">global_progress_store</property>
-                                <property name="headers-visible">false</property>
-                                <child><object class="GtkTreeViewColumn" id="global_progress_column"><child><object class="GtkCellRendererProgress" id="global_progress_renderer"/><attributes><attribute name="value">0</attribute></attributes></child></object></child>
-                              </object>
-                            </child>
+                          <object class="GtkTreeView" id="global_progress_tree">
+                            <property name="model">global_progress_store</property>
+                            <property name="headers-visible">false</property>
+                            <property name="width-request">180</property>
+                            <property name="height-request">22</property>
+                            <child><object class="GtkTreeViewColumn" id="global_progress_column"><child><object class="GtkCellRendererProgress" id="global_progress_renderer"/><attributes><attribute name="value">0</attribute></attributes></child></object></child>
                           </object>
                         </child>
-                        <child><object class="GtkSeparator" id="download_separator"/></child>
-                        <child><object class="GtkSpinner" id="activity_spinner"/></child>
                       </object>
                     </child>
                   </object>

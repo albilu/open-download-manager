@@ -1,24 +1,32 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.gnome.gtk.Align;
 import org.gnome.gtk.ApplicationWindow;
+import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.Entry;
+import org.gnome.gtk.Grid;
 import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
+import org.gnome.gtk.Orientation;
 import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TextView;
 import org.gnome.gtk.TreeView;
+import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
+import org.javagi.base.Out;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,8 +62,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "category_column", org.gnome.gtk.TreeViewColumn.class);
         Widgets.require(builder, "category_count_column", org.gnome.gtk.TreeViewColumn.class);
         Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
-        org.gnome.gtk.Box toolbar = Widgets.require(builder, "download_toolbar",
-                org.gnome.gtk.Box.class);
+        Box toolbar = Widgets.require(builder, "download_toolbar", Box.class);
         assertTrue(toolbar.hasCssClass("toolbar"));
         // toolbar buttons
         for (String id : new String[]{"new_download_button", "pause_button", "resume_button",
@@ -65,6 +72,11 @@ class WindowSmokeTest {
         }
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
+        Box toolbarSpacer = Widgets.require(builder, "toolbar_spacer", Box.class);
+        Box searchToolItem = Widgets.require(builder, "search_tool_item", Box.class);
+        assertTrue(toolbarSpacer.getHexpand());
+        assertSame(searchToolItem, toolbar.getLastChild(),
+                "the search control must be the toolbar's trailing item");
         // download treeview + columns
         Widgets.require(builder, "download_treeview", TreeView.class);
         for (String id : new String[]{"number_column", "name_column", "complete_column", "size_column",
@@ -75,6 +87,13 @@ class WindowSmokeTest {
         // info panel
         Widgets.require(builder, "info_notebook", org.gnome.gtk.Notebook.class);
         Widgets.require(builder, "info_progress_bar", ProgressBar.class);
+        Box generalColumns = Widgets.require(builder, "general_columns", Box.class);
+        assertEquals(Orientation.HORIZONTAL, generalColumns.getOrientation());
+        assertTrue(generalColumns.getHomogeneous());
+        assertSame(Widgets.require(builder, "information_frame", org.gnome.gtk.Frame.class),
+                generalColumns.getFirstChild());
+        assertSame(Widgets.require(builder, "transfer_frame", org.gnome.gtk.Frame.class),
+                generalColumns.getLastChild());
         for (String id : new String[]{"total_size_value", "added_on_value", "info_hash_v1_value",
                 "folder_value", "eta_value", "downloaded_value", "connections_value", "seeds_peers_value"}) {
             Widgets.require(builder, id, Label.class);
@@ -89,6 +108,18 @@ class WindowSmokeTest {
             Widgets.require(builder, id, Label.class);
         }
         Widgets.require(builder, "activity_spinner", Spinner.class);
+        Box rightStatus = Widgets.require(builder, "statusbar_right_box", Box.class);
+        assertChildrenOrdered(rightStatus,
+                Widgets.require(builder, "activity_spinner", Spinner.class),
+                Widgets.require(builder, "dht_progress_box", Box.class),
+                Widgets.require(builder, "upload_speed_box", Box.class),
+                Widgets.require(builder, "download_speed_box", Box.class),
+                Widgets.require(builder, "global_progress_tree", TreeView.class));
+        TreeView globalProgress = Widgets.require(builder, "global_progress_tree", TreeView.class);
+        Out<Integer> progressWidth = new Out<>();
+        globalProgress.getSizeRequest(progressWidth, new Out<>());
+        assertTrue(progressWidth.get() >= 180,
+                "global progress should remain readable in the status bar");
     }
 
     @Test
@@ -137,6 +168,18 @@ class WindowSmokeTest {
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         Widgets.require(builder, "available_space_label", Label.class);
         Widgets.require(builder, "settings_status_label", Label.class);
+        assertDiskLabelBelowChooser(builder, "default_download_folder_chooser",
+                "available_space_label");
+        Grid networkGrid = Widgets.require(builder, "settings_grid", Grid.class);
+        assertEquals(3, gridColumn(networkGrid,
+                Widgets.require(builder, "retry_limit_spin", SpinButton.class)));
+        Widgets.require(builder, "scheduler_selection_label", Label.class);
+        Box legend = Widgets.require(builder, "scheduler_legend_box", Box.class);
+        assertEquals(Orientation.VERTICAL, legend.getOrientation());
+        assertTrue(Widgets.require(builder, "scheduler_active_swatch", Box.class)
+                .hasCssClass("scheduler-active-swatch"));
+        assertTrue(Widgets.require(builder, "scheduler_inactive_swatch", Box.class)
+                .hasCssClass("scheduler-inactive-swatch"));
     }
 
     @Test
@@ -170,6 +213,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "new_download_spinner", Spinner.class);
         Widgets.require(builder, "new_download_cancel_button", Button.class);
         Widgets.require(builder, "new_download_start_button", Button.class);
+        assertDiskLabelBelowChooser(builder, "save_folder_chooser", "disk_space_label");
     }
 
     @Test
@@ -213,6 +257,9 @@ class WindowSmokeTest {
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "apply_button", Button.class);
         Widgets.require(builder, "ok_button", Button.class);
+        Grid propertyGrid = Widgets.require(builder, "settings_grid", Grid.class);
+        assertEquals(3, gridColumn(propertyGrid,
+                Widgets.require(builder, "retry_limit_spin", SpinButton.class)));
     }
 
     @Test
@@ -220,6 +267,8 @@ class WindowSmokeTest {
     void about() {
         GtkBuilder builder = UiLoader.load("/ui/about.ui");
         Widgets.require(builder, "about_dialog", org.gnome.gtk.AboutDialog.class);
+        assertTrue(AboutDialogPresenter.LOGO_RESOURCE.endsWith(".svg"));
+        assertNotNull(AboutDialogPresenter.loadLogo(), "the SVG logo must load as a paintable");
     }
 
     @Test
@@ -249,6 +298,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "import_spinnet", Spinner.class);
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "validate_button", Button.class);
+        assertDiskLabelBelowChooser(builder, "folder_destination", "disk_space_label");
         // Options tab ids
         for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
                 "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "proxy_port_spin"}) {
@@ -277,6 +327,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "import_sequence_spinner", Spinner.class);
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "validate_button", Button.class);
+        assertDiskLabelBelowChooser(builder, "destination_folder", "disk_space_label");
     }
 
     @Test
@@ -313,5 +364,43 @@ class WindowSmokeTest {
         if (type == short.class) return (short) 0;
         if (type == char.class) return (char) 0;
         return null;
+    }
+
+    private static void assertChildrenOrdered(Widget parent, Widget... expected) {
+        int previous = -1;
+        for (Widget child : expected) {
+            int index = childIndex(parent, child);
+            assertTrue(index > previous, "status-bar child order is incorrect");
+            previous = index;
+        }
+    }
+
+    private static int childIndex(Widget parent, Widget expected) {
+        int index = 0;
+        for (Widget child = parent.getFirstChild(); child != null;
+                child = child.getNextSibling()) {
+            if (child == expected) {
+                return index;
+            }
+            index++;
+        }
+        return -1;
+    }
+
+    private static int gridColumn(Grid grid, Widget child) {
+        Out<Integer> column = new Out<>();
+        grid.queryChild(child, column, new Out<>(), new Out<>(), new Out<>());
+        return column.get();
+    }
+
+    private static void assertDiskLabelBelowChooser(GtkBuilder builder, String chooserId,
+            String labelId) {
+        MenuButton chooser = Widgets.require(builder, chooserId, MenuButton.class);
+        Label label = Widgets.require(builder, labelId, Label.class);
+        Box stack = (Box) chooser.getParent();
+        assertSame(stack, label.getParent());
+        assertEquals(Orientation.VERTICAL, stack.getOrientation());
+        assertSame(label, chooser.getNextSibling());
+        assertEquals(Align.END, label.getHalign());
     }
 }

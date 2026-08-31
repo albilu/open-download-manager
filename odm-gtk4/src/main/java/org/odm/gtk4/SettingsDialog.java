@@ -3,18 +3,22 @@ package org.odm.gtk4;
 import java.nio.file.Path;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.gnome.gdk.Display;
 import org.gnome.gio.File;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
+import org.gnome.gtk.CssProvider;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.FileDialog;
+import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
+import org.gnome.gtk.ToggleButton;
 import org.gnome.gtk.Window;
 import org.manager.GlobalSettings;
 import org.manager.download.DownloadManager;
@@ -36,6 +40,38 @@ public class SettingsDialog {
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
 
     private static final String[] DAY_LABELS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+    private static final String SCHEDULER_CSS = """
+            .scheduler-hour {
+              min-width: 20px;
+              min-height: 20px;
+              padding: 0;
+              margin: 0;
+              border-radius: 0;
+              color: transparent;
+              background: alpha(@theme_fg_color, 0.12);
+              border: 1px solid alpha(@theme_fg_color, 0.45);
+            }
+            .scheduler-hour:checked {
+              color: transparent;
+              background: #20c53a;
+              border-color: #118527;
+            }
+            .scheduler-active-swatch,
+            .scheduler-inactive-swatch {
+              min-width: 20px;
+              min-height: 20px;
+              border-radius: 0;
+            }
+            .scheduler-active-swatch {
+              background: #20c53a;
+              border: 1px solid #118527;
+            }
+            .scheduler-inactive-swatch {
+              background: alpha(@theme_fg_color, 0.12);
+              border: 1px solid alpha(@theme_fg_color, 0.45);
+            }
+            """;
+    private static CssProvider schedulerCssProvider;
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -43,6 +79,7 @@ public class SettingsDialog {
     private final java.util.function.Consumer<Boolean> torPreferenceHandler;
     private final GtkBuilder builder;
     private final Label statusLabel;
+    private final Label availableSpaceLabel;
     private final PathChooserButton defaultDirectoryChooser;
     private final PathChooserButton monitoredDirectoryChooser;
     private final java.util.concurrent.atomic.AtomicBoolean saveInProgress =
@@ -54,7 +91,9 @@ public class SettingsDialog {
     }
 
     /** 7x24 toggle buttons of the scheduler grid (row 0 = Monday). */
-    private final org.gnome.gtk.ToggleButton[][] schedulerToggles = new org.gnome.gtk.ToggleButton[7][24];
+    private final ToggleButton[][] schedulerToggles = new ToggleButton[7][24];
+    private Label schedulerSelectionLabel;
+    private boolean loadingSchedulerGrid;
 
     public SettingsDialog(Window parent, DownloadManager downloadManager,
             org.manager.schedule.ScheduleManager scheduleManager) {
@@ -70,6 +109,7 @@ public class SettingsDialog {
         this.builder = UiLoader.load("/ui/settings.ui");
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
         this.statusLabel = Widgets.require(builder, "settings_status_label", Label.class);
+        this.availableSpaceLabel = Widgets.require(builder, "available_space_label", Label.class);
 
         AccessibilitySupport.label(spin("max_concurrent_downloads_spin"),
                 "Maximum concurrent downloads");
@@ -125,26 +165,51 @@ public class SettingsDialog {
 
     /**
      * Builds the uGet-style 7x24 hour grid inside the
-     * {@code scheduler_grid_box} container: one row of day-label + 24 small
-     * toggle buttons per weekday. The grid is enabled/disabled together with
-     * the "Enable Scheduling" checkbox.
+     * {@code scheduler_grid_box} container. Hour headers, square state cells,
+     * a current-cell caption and the active/inactive legend mirror the visual
+     * language of the GTK3 scheduler reference while preserving the existing
+     * persisted 7x24 schedule contract.
      */
     private void buildSchedulerGrid() {
+        installSchedulerCss();
         org.gnome.gtk.Box gridBox = Widgets.require(builder, "scheduler_grid_box", org.gnome.gtk.Box.class);
+        schedulerSelectionLabel = Widgets.require(builder, "scheduler_selection_label", Label.class);
         org.gnome.gtk.Grid grid = new org.gnome.gtk.Grid();
-        grid.setColumnHomogeneous(true);
+        grid.setHexpand(true);
+        grid.setColumnHomogeneous(false);
         grid.setColumnSpacing(1);
         grid.setRowSpacing(1);
 
+        for (int hour = 0; hour < 24; hour++) {
+            Label hourLabel = new Label(hour % 3 == 0 ? String.format("%02d", hour) : "");
+            hourLabel.addCssClass("caption");
+            hourLabel.setTooltipText(String.format("%02d:00–%02d:59", hour, hour));
+            grid.attach(hourLabel, hour + 1, 0, 1, 1);
+        }
+
         for (int day = 0; day < 7; day++) {
-            org.gnome.gtk.Label dayLabel = new org.gnome.gtk.Label(DAY_LABELS[day]);
-            grid.attach(dayLabel, 0, day, 1, 1);
+            Label dayLabel = new Label(DAY_LABELS[day]);
+            dayLabel.setXalign(1);
+            dayLabel.setMarginEnd(6);
+            grid.attach(dayLabel, 0, day + 1, 1, 1);
             for (int hour = 0; hour < 24; hour++) {
-                org.gnome.gtk.ToggleButton toggle = new org.gnome.gtk.ToggleButton();
-                toggle.setLabel(String.valueOf(hour));
-                toggle.setHasFrame(false);
-                toggle.setSizeRequest(6, -1);
-                grid.attach(toggle, hour + 1, day, 1, 1);
+                ToggleButton toggle = new ToggleButton();
+                toggle.setLabel("");
+                toggle.setHasFrame(true);
+                toggle.setSizeRequest(22, 22);
+                toggle.addCssClass("scheduler-hour");
+                String hourDescription = String.format("%s %02d:00–%02d:59",
+                        DAY_LABELS[day], hour, hour);
+                toggle.setTooltipText(hourDescription);
+                AccessibilitySupport.label(toggle, hourDescription);
+                int selectedDay = day;
+                int selectedHour = hour;
+                toggle.onToggled(() -> {
+                    if (!loadingSchedulerGrid) {
+                        showSchedulerSelection(selectedDay, selectedHour, toggle.getActive());
+                    }
+                });
+                grid.attach(toggle, hour + 1, day + 1, 1, 1);
                 schedulerToggles[day][hour] = toggle;
             }
         }
@@ -152,6 +217,27 @@ public class SettingsDialog {
 
         CheckButton enableCheck = check("enable_scheduling_check");
         enableCheck.onToggled(() -> gridBox.setSensitive(enableCheck.getActive()));
+    }
+
+    private static synchronized void installSchedulerCss() {
+        if (schedulerCssProvider != null) {
+            return;
+        }
+        Display display = Display.getDefault();
+        if (display == null) {
+            return;
+        }
+        CssProvider provider = new CssProvider();
+        provider.loadFromString(SCHEDULER_CSS);
+        Gtk.styleContextAddProviderForDisplay(display, provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+        schedulerCssProvider = provider;
+    }
+
+    private void showSchedulerSelection(int day, int hour, boolean active) {
+        schedulerSelectionLabel.setLabel(String.format("%s %02d:00–%02d:59 — %s",
+                DAY_LABELS[day], hour, hour,
+                active ? "downloads allowed" : "downloads paused"));
     }
 
     public void present() {
@@ -164,15 +250,36 @@ public class SettingsDialog {
         return statusLabel.getLabel();
     }
 
+    int schedulerCellCount() {
+        return schedulerToggles.length * schedulerToggles[0].length;
+    }
+
+    void setSchedulerCellActive(int day, int hour, boolean active) {
+        schedulerToggles[day][hour].setActive(active);
+    }
+
+    String schedulerSelectionText() {
+        return schedulerSelectionLabel.getLabel();
+    }
+
+    String availableSpaceText() {
+        return availableSpaceLabel.getLabel();
+    }
+
     // ---- widget helpers ----
 
     /** Fills the scheduler grid toggles from a persisted hex grid. */
     private void loadSchedulerGrid(String hex) {
         boolean[][] grid = org.manager.schedule.WeeklySchedule.hourGridFromString(hex);
-        for (int day = 0; day < 7; day++) {
-            for (int hour = 0; hour < 24; hour++) {
-                schedulerToggles[day][hour].setActive(grid[day][hour]);
+        loadingSchedulerGrid = true;
+        try {
+            for (int day = 0; day < 7; day++) {
+                for (int hour = 0; hour < 24; hour++) {
+                    schedulerToggles[day][hour].setActive(grid[day][hour]);
+                }
             }
+        } finally {
+            loadingSchedulerGrid = false;
         }
     }
 
@@ -286,7 +393,15 @@ public class SettingsDialog {
     // ---- load / apply ----
 
     private void setDefaultDir(String dir) {
-        defaultDirectoryChooser.setPath(Path.of(dir));
+        Path directory = Path.of(dir);
+        defaultDirectoryChooser.setPath(directory);
+        try {
+            long free = directory.toFile().getUsableSpace();
+            availableSpaceLabel.setLabel(String.format("%.2f GB free",
+                    free / (1024.0 * 1024 * 1024)));
+        } catch (RuntimeException invalidDirectory) {
+            availableSpaceLabel.setLabel("");
+        }
     }
 
     private void setMonitoredDir(String dir) {

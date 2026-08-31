@@ -1,5 +1,6 @@
 package org.odm.gtk4;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -77,6 +78,20 @@ class SettingsDialogSaveOutcomeTest {
 
     private SettingsDialog buildDialog() {
         return new SettingsDialog(null, newStubManager(), null);
+    }
+
+    @Test
+    @DisplayName("scheduler exposes 7 x 24 styled cells and describes the selected hour")
+    void schedulerGridDescribesSelectedHour() {
+        SettingsDialog dialog = buildDialog();
+
+        assertEquals(168, dialog.schedulerCellCount());
+        assertTrue(dialog.availableSpaceText().contains("GB free"));
+        dialog.setSchedulerCellActive(0, 3, false);
+        dialog.setSchedulerCellActive(0, 3, true);
+
+        assertEquals("Mon 03:00–03:59 — downloads allowed",
+                dialog.schedulerSelectionText());
     }
 
     @Test
