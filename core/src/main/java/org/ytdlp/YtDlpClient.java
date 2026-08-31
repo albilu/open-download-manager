@@ -772,6 +772,56 @@ public class YtDlpClient {
     }
 
     /**
+     * Runs yt-dlp in subtitle-only mode using the same process registry,
+     * cancellation key, executor, and network settings as normal downloads.
+     */
+    public CompletableFuture<Void> downloadSubtitles(String url, YtDlpSettings settings,
+            Path outputDirectory, String processId) {
+        ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
+        return CompletableFuture.runAsync(() -> {
+            ExternalProcessRegistry.Registration registration = null;
+            try {
+                if (outputDirectory != null) {
+                    Files.createDirectories(outputDirectory);
+                }
+                ProcessBuilder builder = new ProcessBuilder(
+                        buildSubtitleCommand(url, settings, outputDirectory))
+                        .redirectErrorStream(true)
+                        .redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                registration = launch.start(builder);
+                int exitCode = registration.process().waitFor();
+                if (launch.isCancelled()) {
+                    throw new CancellationException(
+                            "yt-dlp subtitle download was cancelled");
+                }
+                if (exitCode != 0) {
+                    throw new IllegalStateException(
+                            "yt-dlp subtitle download failed with exit code: " + exitCode);
+                }
+            } catch (CancellationException e) {
+                throw e;
+            } catch (InterruptedException e) {
+                activeProcesses.terminate(processId, 5);
+                Thread.currentThread().interrupt();
+                throw new CancellationException(
+                        "yt-dlp subtitle download was interrupted");
+            } catch (Exception e) {
+                if (launch.isCancelled()) {
+                    throw new CancellationException(
+                            "yt-dlp subtitle download was cancelled");
+                }
+                throw new RuntimeException("Subtitle download failed: " + e.getMessage(), e);
+            } finally {
+                if (registration != null) {
+                    registration.unregister();
+                } else {
+                    launch.unregister();
+                }
+            }
+        }, executor);
+    }
+
+    /**
      * Number of currently registered download processes. Exposed for
      * lifecycle tests.
      *
@@ -975,6 +1025,60 @@ public class YtDlpClient {
             }
         }
 
+        command.add(url);
+        return command;
+    }
+
+    /** Builds a no-overwrite, subtitle-only yt-dlp invocation. */
+    List<String> buildSubtitleCommand(String url, YtDlpSettings settings,
+            Path outputDirectory) {
+        java.util.Objects.requireNonNull(url, "url");
+        java.util.Objects.requireNonNull(settings, "settings");
+        List<String> command = new ArrayList<>();
+        command.add(ytDlpPath);
+        command.add("--skip-download");
+        if (settings.isWriteSubtitles()) {
+            command.add("--write-subs");
+        }
+        if (settings.isWriteAutoSubs()) {
+            command.add("--write-auto-subs");
+        }
+        if (!settings.getSubtitleLanguages().isEmpty()) {
+            command.add("--sub-langs");
+            command.add(String.join(",", settings.getSubtitleLanguages()));
+        }
+        command.add("--sub-format");
+        command.add("srt/best");
+        command.add("--no-overwrites");
+        if (outputDirectory != null) {
+            command.add("--paths");
+            command.add("subtitle:" + outputDirectory.toAbsolutePath().normalize());
+        }
+        if (settings.getOutputTemplate() != null) {
+            command.add("--output");
+            command.add("subtitle:" + settings.getOutputTemplate());
+        }
+        if (settings.isUseProxy() && settings.getProxyAddress() != null
+                && !settings.getProxyAddress().isBlank()) {
+            command.add("--proxy");
+            command.add(settings.getProxyAddress());
+        }
+        if (settings.getReferer() != null && !settings.getReferer().isBlank()) {
+            command.add("--referer");
+            command.add(settings.getReferer());
+        }
+        if (settings.getUserAgent() != null && !settings.getUserAgent().isBlank()) {
+            command.add("--user-agent");
+            command.add(settings.getUserAgent());
+        }
+        if (settings.getCookieHeader() != null && !settings.getCookieHeader().isBlank()) {
+            command.add("--add-header");
+            command.add(settings.getCookieHeader());
+        }
+        if (settings.getCookieFile() != null && !settings.getCookieFile().isBlank()) {
+            command.add("--cookies");
+            command.add(settings.getCookieFile());
+        }
         command.add(url);
         return command;
     }

@@ -29,6 +29,20 @@ final class ListStoreCells {
         v.unset();
     }
 
+    static void setLong(ListStore store, TreeIter iter, int column, long value) {
+        Value v = new Value().init(Types.INT64);
+        v.setInt64(value);
+        store.setValue(iter, column, v);
+        v.unset();
+    }
+
+    static void setDouble(ListStore store, TreeIter iter, int column, double value) {
+        Value v = new Value().init(Types.DOUBLE);
+        v.setDouble(value);
+        store.setValue(iter, column, v);
+        v.unset();
+    }
+
     static void setBoolean(ListStore store, TreeIter iter, int column, boolean value) {
         Value v = new Value().init(Types.BOOLEAN);
         v.setBoolean(value);

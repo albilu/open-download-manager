@@ -8,7 +8,7 @@
     <property name="default-width">620</property>
     <property name="default-height">520</property>
     <child>
-      <object class="GtkBox">
+      <object class="GtkBox" id="new_media_content">
         <property name="orientation">vertical</property>
         <property name="spacing">10</property>
         <property name="margin-start">12</property>
@@ -17,68 +17,62 @@
         <property name="margin-bottom">12</property>
 
         <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">8</property>
-            <child><object class="GtkLabel"><property name="label">Media URL:</property></object></child>
-            <child><object class="GtkEntry" id="media_url_entry"><property name="hexpand">true</property><property name="placeholder-text">Video page, playlist, or m3u8/DASH manifest URL</property></object></child>
-            <child><object class="GtkButton" id="fetch_info_button"><property name="label">Fetch info</property></object></child>
-          </object>
-        </child>
+          <object class="GtkGrid" id="media_fields_grid">
+            <property name="hexpand">true</property>
+            <property name="vexpand">true</property>
+            <property name="row-spacing">10</property>
+            <property name="column-spacing">12</property>
 
-        <child><object class="GtkLabel" id="media_status_label"><property name="accessible-role">status</property><property name="label">Paste a media URL, then Fetch info to list formats.</property><property name="xalign">0</property><property name="wrap">true</property></object></child>
-        <child><object class="GtkLabel" id="media_info_label"><property name="label"></property><property name="xalign">0</property><property name="wrap">true</property><property name="visible">false</property></object></child>
+            <child><object class="GtkLabel" id="media_url_label"><property name="label">Media URL:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+            <child>
+              <object class="GtkBox" id="media_url_controls">
+                <property name="orientation">horizontal</property><property name="spacing">8</property><property name="hexpand">true</property>
+                <layout><property name="row">0</property><property name="column">1</property></layout>
+                <child><object class="GtkEntry" id="media_url_entry"><property name="hexpand">true</property><property name="placeholder-text">Video page, playlist, or m3u8/DASH manifest URL</property></object></child>
+                <child><object class="GtkButton" id="fetch_info_button"><property name="label">Fetch info</property></object></child>
+              </object>
+            </child>
 
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">8</property>
-            <child><object class="GtkLabel"><property name="label">Format:</property></object></child>
-            <child><object class="GtkDropDown" id="format_drop"><property name="hexpand">true</property><property name="sensitive">false</property></object></child>
-          </object>
-        </child>
+            <child><object class="GtkLabel" id="media_status_label"><property name="accessible-role">status</property><property name="label">Paste a media URL, then Fetch info to list formats.</property><property name="xalign">0</property><property name="wrap">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+            <child><object class="GtkLabel" id="media_info_label"><property name="label"></property><property name="xalign">0</property><property name="wrap">true</property><property name="visible">false</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
 
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">16</property>
-            <child><object class="GtkCheckButton" id="audio_only_check"><property name="label">Audio only</property></object></child>
-            <child><object class="GtkCheckButton" id="playlist_check"><property name="label">Download whole playlist</property></object></child>
-            <child><object class="GtkCheckButton" id="subtitles_check"><property name="label">Subtitles</property></object></child>
-          </object>
-        </child>
+            <child><object class="GtkLabel" id="media_format_label"><property name="label">Format:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkDropDown" id="format_drop"><property name="hexpand">true</property><property name="sensitive">false</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
 
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">8</property>
-            <child><object class="GtkLabel"><property name="label">Subtitle languages:</property></object></child>
-            <child><object class="GtkEntry" id="subtitle_lang_entry"><property name="hexpand">true</property><property name="placeholder-text">en,fr</property><property name="sensitive">false</property></object></child>
-          </object>
-        </child>
+            <child><object class="GtkLabel" id="media_options_label"><property name="label">Options:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+            <child>
+              <object class="GtkBox" id="media_options_box">
+                <property name="orientation">vertical</property><property name="spacing">6</property><property name="hexpand">true</property>
+                <layout><property name="row">4</property><property name="column">1</property></layout>
+                <child><object class="GtkCheckButton" id="audio_only_check"><property name="label">Audio only</property></object></child>
+                <child><object class="GtkCheckButton" id="playlist_check"><property name="label">Download whole playlist</property></object></child>
+                <child><object class="GtkCheckButton" id="subtitles_check"><property name="label">Subtitles</property></object></child>
+              </object>
+            </child>
 
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property><property name="spacing">8</property>
-            <child><object class="GtkLabel"><property name="label">Cookies file:</property></object></child>
-            <child><object class="GtkButton" id="cookie_file_chooser"><property name="label">None (no cookies)</property><property name="hexpand">true</property><property name="halign">start</property></object></child>
-          </object>
-        </child>
+            <child><object class="GtkLabel" id="subtitle_languages_label"><property name="label">Subtitle languages:</property><property name="xalign">0</property><layout><property name="row">5</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkEntry" id="subtitle_lang_entry"><property name="hexpand">true</property><property name="placeholder-text">en,fr</property><property name="sensitive">false</property><layout><property name="row">5</property><property name="column">1</property></layout></object></child>
 
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property><property name="spacing">8</property>
-            <child><object class="GtkLabel"><property name="label">Save to:</property></object></child>
-            <child><object class="GtkMenuButton" id="media_folder_chooser"><property name="hexpand">true</property><property name="halign">start</property></object></child>
+            <child><object class="GtkLabel" id="cookies_file_label"><property name="label">Cookies file:</property><property name="xalign">0</property><layout><property name="row">6</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkButton" id="cookie_file_chooser"><property name="label">None (no cookies)</property><property name="hexpand">true</property><layout><property name="row">6</property><property name="column">1</property></layout></object></child>
+
+            <child><object class="GtkLabel" id="media_destination_label"><property name="label">Save to:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
+            <child>
+              <object class="GtkBox" id="media_destination_stack">
+                <property name="orientation">vertical</property><property name="spacing">2</property><property name="hexpand">true</property>
+                <layout><property name="row">7</property><property name="column">1</property></layout>
+                <child><object class="GtkMenuButton" id="media_folder_chooser"><property name="hexpand">true</property></object></child>
+                <child><object class="GtkLabel" id="media_disk_space_label"><property name="xalign">1</property><property name="halign">end</property></object></child>
+              </object>
+            </child>
           </object>
         </child>
 
         <child>
-          <object class="GtkBox">
+          <object class="GtkBox" id="media_actions_box">
             <property name="orientation">horizontal</property><property name="spacing">8</property>
             <property name="halign">end</property>
             <property name="valign">end</property>
-            <property name="vexpand">true</property>
             <child><object class="GtkButton" id="media_cancel_button"><property name="label">Cancel</property></object></child>
             <child><object class="GtkButton" id="media_start_button"><property name="label">Download</property><property name="sensitive">false</property></object></child>
           </object>

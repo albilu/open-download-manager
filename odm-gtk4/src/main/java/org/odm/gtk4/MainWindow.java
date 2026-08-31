@@ -10,9 +10,11 @@ import org.gnome.gtk.Button;
 import org.gnome.gtk.EventControllerKey;
 import org.gnome.gtk.GestureClick;
 import org.gnome.gtk.GtkBuilder;
+import org.gnome.gtk.Image;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.PopoverMenuBar;
+import org.gnome.gtk.PropagationPhase;
 import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.SelectionMode;
 import org.gnome.gtk.Spinner;
@@ -38,6 +40,9 @@ public class MainWindow {
 
     private static final Logger LOGGER = Logger.getLogger(MainWindow.class.getName());
     private static final int HISTORY_WINDOW_SIZE = 500;
+    private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
+            "#", "Status", "Name", "Completed", "Size", "Progress", "Elapsed",
+            "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Type");
     private static final Download.Status[] ALWAYS_VISIBLE_STATUSES = {
         Download.Status.CREATED, Download.Status.QUEUED, Download.Status.PAUSED,
         Download.Status.STARTING, Download.Status.CONNECTING, Download.Status.DOWNLOADING
@@ -53,6 +58,7 @@ public class MainWindow {
     private final TreeView statusTreeview;
     private final TreeView categoryTreeview;
     private final TreeView downloadsTreeview;
+    private final GestureClick downloadContextClick;
     private final Label infoLabel;
     private final Label downSpeedLabel;
     private final Label upSpeedLabel;
@@ -62,7 +68,10 @@ public class MainWindow {
     private final Label totalSizeValue;
     private final Label addedOnValue;
     private final Label infoHashValue;
+    private final Button folderOpenButton;
     private final Label folderValue;
+    private final Image engineIcon;
+    private final Label engineValue;
     private final Label etaValue;
     private final Label downloadedValue;
     private final Label connectionsValue;
@@ -138,7 +147,10 @@ public class MainWindow {
         this.filesStore = Widgets.require(builder, "files_store", ListStore.class);
         this.globalProgressStore = Widgets.require(builder, "global_progress_store", ListStore.class);
         this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
+        this.folderOpenButton = Widgets.require(builder, "folder_open_button", Button.class);
         this.folderValue = Widgets.require(builder, "folder_value", Label.class);
+        this.engineIcon = Widgets.require(builder, "engine_icon", Image.class);
+        this.engineValue = Widgets.require(builder, "engine_value", Label.class);
         this.etaValue = Widgets.require(builder, "eta_value", Label.class);
         this.downloadedValue = Widgets.require(builder, "downloaded_value", Label.class);
         this.connectionsValue = Widgets.require(builder, "connections_value", Label.class);
@@ -188,10 +200,14 @@ public class MainWindow {
         Widgets.require(builder, "files_selected_renderer", org.gnome.gtk.CellRendererToggle.class)
                 .onToggled(this::onFileSelectionToggled);
 
-        var rightClick = new GestureClick();
-        rightClick.setButton(3);
-        rightClick.onPressed((nPress, x, y) -> showContextMenu(x, y));
-        downloadsTreeview.addController(rightClick);
+        this.downloadContextClick = new GestureClick();
+        downloadContextClick.setButton(3);
+        // TreeView installs its own click gestures. Capture the secondary
+        // press before a child renderer can consume it, then retarget the
+        // selection to the row beneath the pointer.
+        downloadContextClick.setPropagationPhase(PropagationPhase.CAPTURE);
+        downloadContextClick.onPressed((nPress, x, y) -> showContextMenu(x, y));
+        downloadsTreeview.addController(downloadContextClick);
         var contextKey = new EventControllerKey();
         contextKey.onKeyPressed((keyval, keycode, state) -> {
             boolean keyboardMenu = keyval == org.gnome.gdk.Gdk.KEY_Menu
@@ -217,6 +233,7 @@ public class MainWindow {
         Widgets.require(builder, "move_bottom_button", Button.class)
                 .onClicked(() -> { downloadManager.moveDownloadToBottom(selectedDownload); refresh(); });
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
+        folderOpenButton.onClicked(() -> openSelected("folder"));
         this.searchEntry = Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         searchEntry.onSearchChanged(this::onSearchChanged);
         // tor_switch: wired below
@@ -234,6 +251,7 @@ public class MainWindow {
         AccessibilitySupport.label(torSwitch, "Global Tor routing");
         AccessibilitySupport.label(menuBar, "Application menu");
         AccessibilitySupport.label(infoProgressBar, "Selected download progress");
+        AccessibilitySupport.label(folderOpenButton, "Open selected download folder");
         Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
         Widgets.require(builder, "category_label", Label.class).setMnemonicWidget(categoryTreeview);
 
@@ -523,16 +541,33 @@ public class MainWindow {
     private PopupMenu contextMenu;
 
     private void showContextMenu(double x, double y) {
-        Out<TreePath> path = new Out<>();
         Out<org.gnome.gtk.TreeViewColumn> column = new Out<>();
-        if (!downloadsTreeview.getPathAtPos((int) x, (int) y,
-                path, column, new Out<>(), new Out<>()) || path.get() == null) {
+        TreePath path = pathAtWidgetPosition(downloadsTreeview, (int) x, (int) y, column);
+        if (path == null) {
             return;
         }
-        downloadsTreeview.setCursor(path.get(), column.get(), false);
+        selectContextTarget(downloadsTreeview, path, column.get());
         onDownloadSelectionChanged();
         if (selectedDownload == null) return;
         showContextMenuAt((int) x, (int) y);
+    }
+
+    /**
+     * Resolves a gesture position to a row. GestureClick reports widget
+     * coordinates, while TreeView row lookup expects bin-window coordinates;
+     * the difference is the header offset and is most visible on row zero.
+     */
+    static TreePath pathAtWidgetPosition(TreeView tree, int widgetX, int widgetY,
+            Out<org.gnome.gtk.TreeViewColumn> column) {
+        Out<Integer> binX = new Out<>();
+        Out<Integer> binY = new Out<>();
+        tree.convertWidgetToBinWindowCoords(widgetX, widgetY, binX, binY);
+        Out<TreePath> path = new Out<>();
+        if (!tree.getPathAtPos(binX.get(), binY.get(), path, column,
+                new Out<>(), new Out<>())) {
+            return null;
+        }
+        return path.get();
     }
 
     private void showContextMenuForSelection() {
@@ -549,6 +584,20 @@ public class MainWindow {
         }
         showContextMenuAt(area.readX() + Math.max(1, area.readWidth() / 2),
                 area.readY() + Math.max(1, area.readHeight() / 2));
+    }
+
+    /**
+     * Makes an unselected row the sole context target while preserving an
+     * already-selected multi-row group when the click lands inside it.
+     */
+    static void selectContextTarget(TreeView tree, TreePath path,
+            org.gnome.gtk.TreeViewColumn column) {
+        TreeSelection selection = tree.getSelection();
+        if (!selection.pathIsSelected(path)) {
+            selection.unselectAll();
+            tree.setCursor(path, column, false);
+        }
+        tree.grabFocus();
     }
 
     private void showContextMenuAt(int x, int y) {
@@ -699,11 +748,9 @@ public class MainWindow {
         org.gnome.gio.Menu view = new org.gnome.gio.Menu();
         view.append("Left Panel", "win.left-panel");
         view.append("Info Panel", "win.info-panel");
-        String[] columnLabels = {"#", "Name", "Completed", "Size", "Progress", "Elapsed",
-                "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Type"};
         org.gnome.gio.Menu columns = new org.gnome.gio.Menu();
-        for (int i = 0; i < columnLabels.length; i++) {
-            columns.append(columnLabels[i], "win.col-" + i);
+        for (int i = 0; i < DOWNLOAD_COLUMN_LABELS.size(); i++) {
+            columns.append(DOWNLOAD_COLUMN_LABELS.get(i), "win.col-" + i);
         }
         view.appendSubmenu("Columns", columns);
         menu.appendSubmenu("_View", view);
@@ -746,8 +793,8 @@ public class MainWindow {
                 .thenRun(() -> UiThread.marshal(this::refresh)));
         addAction("import-sequence", () -> new ImportSequenceDialog(window, downloadManager,
                 () -> UiThread.marshal(this::refresh)).present());
-        addAction("import-file", () -> new ImportListDialog(window, downloadManager,
-                () -> UiThread.marshal(this::refresh)).present());
+        addAction("import-file", () -> ImportListDialog.chooseAndPresent(window, downloadManager,
+                () -> UiThread.marshal(this::refresh)));
         addAction("import-html", this::onImportHtml);
         addAction("import-remote-html", this::onImportRemoteHtml);
         addAction("export-file", this::onExportList);
@@ -1475,6 +1522,14 @@ public class MainWindow {
         return downloadsTreeview.getSelection().getMode();
     }
 
+    PropagationPhase downloadContextClickPhase() {
+        return downloadContextClick.getPropagationPhase();
+    }
+
+    static List<String> downloadColumnLabels() {
+        return DOWNLOAD_COLUMN_LABELS;
+    }
+
     int mainMenuTopLevelCount() {
         org.gnome.gio.MenuModel model = menuBar.getMenuModel();
         return model == null ? 0 : model.getNItems();
@@ -1605,7 +1660,7 @@ public class MainWindow {
         boolean newValue = !ListStoreCells.getBoolean(filesStore, iter, 0);
         ListStoreCells.setBoolean(filesStore, iter, 0, newValue);
 
-        // Collect all selected indexes (row order == getDownloadFiles order)
+        // Collect stable aria2 indexes; the visible row order may be sorted.
         java.util.List<Integer> selectedIndexes = new java.util.ArrayList<>();
         TreeIter walk = new TreeIter();
         if (filesStore.getIterFirst(walk)) {
@@ -1650,22 +1705,31 @@ public class MainWindow {
     private void updateInfoPanel() {
         if (selectedDownload == null) {
             infoProgressBar.setFraction(0);
+            infoProgressBar.setText(ProgressPresentation.percentage(0));
             totalSizeValue.setLabel("—");
             addedOnValue.setLabel("—");
             infoHashValue.setLabel("—");
             folderValue.setLabel("—");
+            folderOpenButton.setSensitive(false);
+            engineIcon.clear();
+            engineValue.setLabel("—");
             etaValue.setLabel("—");
             downloadedValue.setLabel("—");
-        connectionsValue.setLabel("—");
-        seedsPeersValue.setLabel("—");
-        return;
+            connectionsValue.setLabel("—");
+            seedsPeersValue.setLabel("—");
+            detailTabsPresenter.load();
+            return;
         }
-        infoProgressBar.setFraction(selectedDownload.getProgress() / 100.0);
+        infoProgressBar.setFraction(ProgressPresentation.fraction(selectedDownload.getProgress()));
+        infoProgressBar.setText(ProgressPresentation.percentage(selectedDownload.getProgress()));
         totalSizeValue.setLabel(DownloadFormats.size(selectedDownload.getSize()));
         addedOnValue.setLabel(selectedDownload.getCreatedAt() != null
                 ? DownloadFormats.DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
         infoHashValue.setLabel(selectedDownload.getInfoHash() != null ? selectedDownload.getInfoHash() : "—");
         folderValue.setLabel(selectedDownload.getDestination() != null ? selectedDownload.getDestination().toString() : "—");
+        folderOpenButton.setSensitive(selectedDownload.getDestination() != null);
+        engineIcon.setFromIconName(DownloadEnginePresentation.iconName(selectedDownload.getType()));
+        engineValue.setLabel(DownloadEnginePresentation.displayName(selectedDownload.getType()));
         etaValue.setLabel(DownloadFormats.eta(selectedDownload));
         downloadedValue.setLabel(DownloadFormats.size(selectedDownload.getDownloaded()));
         connectionsValue.setLabel(String.valueOf(selectedDownload.getConnectionCount()));

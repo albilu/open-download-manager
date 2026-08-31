@@ -8,30 +8,32 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.regex.Pattern;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettings;
-import org.manager.download.ExternalToolSettings;
-import org.manager.tools.ExternalProcessRegistry;
+import org.subliminal.SubliminalClient;
+import org.subliminal.SubliminalSettings;
+import org.ytdlp.YtDlpClient;
 import org.ytdlp.YtDlpSettings;
 
 /**
  * Downloads preferred-language subtitles after a transfer completes.
- * yt-dlp performs subtitle-only retrieval for media-platform downloads;
- * Subliminal handles ordinary downloaded video files. Existing
- * language-tagged subtitle files are excluded before either tool runs, and
- * both native commands retain their own no-overwrite behavior as a second
- * guard.
+ * Tool-specific command construction and process ownership live in their
+ * respective clients; this action only chooses the engine, detects existing
+ * subtitles, and adapts the completed download into client settings.
  */
 public final class SubtitleDownloadAction implements AfterCompletionAction {
 
     private static final Logger LOGGER = Logger.getLogger(SubtitleDownloadAction.class.getName());
-    private static final Pattern LANGUAGE_TAG = Pattern.compile(
-            "(?i)[a-z]{2,3}(?:-[a-z0-9]{2,8})*");
+
     // Keep this aligned with the video extensions recognized by Subliminal's
     // scanner so valid generic videos are not silently treated as no-ops.
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(
@@ -52,54 +54,43 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
     private static final Set<String> SUBTITLE_EXTENSIONS = Set.of(
             "srt", "vtt", "ass", "ssa", "lrc", "ttml", "dfxp", "smi");
 
-    private final List<String> languages;
-    private final String subliminalPath;
-    private final String ytDlpPath;
-    private final Duration timeout;
-    private final CommandExecutor commandExecutor;
+    private final SubliminalSettings settings;
+    private final SubliminalClient subliminalClient;
+    private final YtDlpClient ytDlpClient;
+    private final Set<String> activeYtDlpOperations = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
+    /** Creates an action using the configured tool-manager paths. */
+    public SubtitleDownloadAction(SubliminalSettings settings) {
+        this(settings, new SubliminalClient(), new YtDlpClient());
+    }
+
+    /** Dependency-injection seam for clients and focused tests. */
+    public SubtitleDownloadAction(SubliminalSettings settings,
+            SubliminalClient subliminalClient, YtDlpClient ytDlpClient) {
+        this.settings = java.util.Objects.requireNonNull(settings, "settings").copy();
+        this.subliminalClient = java.util.Objects.requireNonNull(
+                subliminalClient, "subliminalClient");
+        this.ytDlpClient = java.util.Objects.requireNonNull(ytDlpClient, "ytDlpClient");
+    }
+
     /**
-     * Creates a subtitle action backed by real external processes.
+     * Compatibility constructor retained for callers that still provide tool
+     * paths directly. New code should construct tool settings and clients.
      */
     public SubtitleDownloadAction(List<String> languages, String subliminalPath,
             String ytDlpPath, Duration timeout) {
-        this(languages, subliminalPath, ytDlpPath, timeout,
-                new ProcessCommandExecutor());
+        this(new SubliminalSettings().setLanguages(languages).setTimeout(timeout),
+                new SubliminalClient(subliminalPath), new YtDlpClient(ytDlpPath));
     }
 
-    SubtitleDownloadAction(List<String> languages, String subliminalPath,
-            String ytDlpPath, Duration timeout, CommandExecutor commandExecutor) {
-        this.languages = normalizeLanguages(languages);
-        this.subliminalPath = executableOrDefault(subliminalPath, "subliminal");
-        this.ytDlpPath = executableOrDefault(ytDlpPath, "yt-dlp");
-        this.timeout = timeout == null || timeout.isZero() || timeout.isNegative()
-                ? Duration.ofMinutes(5) : timeout;
-        this.commandExecutor = java.util.Objects.requireNonNull(commandExecutor,
-                "commandExecutor");
-    }
-
-    /** Parses comma-separated IETF language tags, defaulting to English. */
+    /** Compatibility seam used by the settings UI. */
     public static List<String> parseLanguages(String value) {
-        if (value == null || value.isBlank()) {
-            return List.of("en");
-        }
-        List<String> parsed = new ArrayList<>();
-        for (String token : value.split(",")) {
-            String trimmed = token.strip();
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-            if (!LANGUAGE_TAG.matcher(trimmed).matches()) {
-                throw new IllegalArgumentException("Invalid subtitle language tag: " + trimmed);
-            }
-            parsed.add(normalizeLanguageTag(trimmed));
-        }
-        return normalizeLanguages(parsed);
+        return SubliminalSettings.parseLanguages(value);
     }
 
     public List<String> getLanguages() {
-        return languages;
+        return settings.getLanguages();
     }
 
     @Override
@@ -126,18 +117,9 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
             if (missing.isEmpty()) {
                 continue;
             }
-            List<String> command = new ArrayList<>();
-            command.add(subliminalPath);
-            command.add("download");
-            for (String language : missing) {
-                command.add("-l");
-                command.add(language);
-            }
-            // Subliminal intentionally receives no --force flag: its native
-            // scan skips external/embedded subtitles in the requested language.
-            command.add(video.toString());
-            success &= commandExecutor.execute(
-                    download.getId() + ":subliminal:" + index, command, timeout);
+            SubliminalSettings operationSettings = settings.copy().setLanguages(missing);
+            success &= subliminalClient.download(video, operationSettings,
+                    download.getId() + ":subliminal:" + index);
         }
         return !cancelled.get() && success;
     }
@@ -159,72 +141,74 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
             return true;
         }
 
-        List<String> command = new ArrayList<>();
-        command.add(ytDlpPath);
-        command.add("--skip-download");
-        command.add("--write-subs");
-        command.add("--write-auto-subs");
-        command.add("--sub-langs");
-        command.add(String.join(",", missing));
-        command.add("--sub-format");
-        command.add("srt/best");
-        command.add("--no-overwrites");
-
         Path subtitleDirectory = download.getDestination() != null
                 ? download.getDestination() : outputs.getFirst().getParent();
-        if (subtitleDirectory != null) {
-            command.add("--paths");
-            command.add("subtitle:" + subtitleDirectory);
+        if (subtitleDirectory == null) {
+            return false;
         }
-        if (outputs.size() == 1) {
-            command.add("--output");
-            command.add("subtitle:" + stem(outputs.getFirst()) + ".%(ext)s");
-        } else if (download.getSettings() instanceof YtDlpSettings settings
-                && settings.getOutputTemplate() != null) {
-            command.add("--output");
-            command.add("subtitle:" + settings.getOutputTemplate());
-        }
-        appendYtDlpNetworkOptions(command, download.getSettings());
-        command.add(download.getUri().toString());
 
-        return !cancelled.get() && commandExecutor.execute(
-                download.getId() + ":yt-dlp-subtitles", command, timeout);
+        YtDlpSettings ytSettings = subtitleSettings(download.getSettings());
+        ytSettings.setWriteSubtitles(true)
+                .setWriteAutoSubs(true)
+                .setEmbedSubs(false)
+                .setSubtitleLanguages(List.copyOf(missing));
+        if (outputs.size() == 1) {
+            ytSettings.setOutputTemplate(stem(outputs.getFirst()) + ".%(ext)s");
+        }
+
+        String operationId = download.getId() + ":yt-dlp-subtitles";
+        activeYtDlpOperations.add(operationId);
+        try {
+            CompletableFuture<Void> future = ytDlpClient.downloadSubtitles(
+                    download.getUri().toString(), ytSettings, subtitleDirectory, operationId);
+            // cancel() may have won the tiny gap before the client installed
+            // its launch reservation; close that race after reservation.
+            if (cancelled.get()) {
+                ytDlpClient.cancelDownload(operationId);
+                future.cancel(true);
+                return false;
+            }
+            future.get(settings.getTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            return !cancelled.get();
+        } catch (TimeoutException e) {
+            ytDlpClient.cancelDownload(operationId);
+            LOGGER.warning("yt-dlp subtitle download timed out for " + download.getUri());
+            return false;
+        } catch (CancellationException e) {
+            return false;
+        } catch (ExecutionException e) {
+            LOGGER.log(Level.WARNING, "yt-dlp subtitle download failed", e.getCause());
+            return false;
+        } catch (InterruptedException e) {
+            ytDlpClient.cancelDownload(operationId);
+            Thread.currentThread().interrupt();
+            return false;
+        } finally {
+            activeYtDlpOperations.remove(operationId);
+        }
     }
 
-    private static void appendYtDlpNetworkOptions(List<String> command,
-            DownloadSettings settings) {
-        if (settings == null) {
-            return;
+    private static YtDlpSettings subtitleSettings(DownloadSettings source) {
+        if (source instanceof YtDlpSettings ytDlpSettings) {
+            return (YtDlpSettings) ytDlpSettings.copy();
         }
-        if (settings.isUseProxy() && settings.getProxyAddress() != null
-                && !settings.getProxyAddress().isBlank()) {
-            command.add("--proxy");
-            command.add(settings.getProxyAddress());
+        YtDlpSettings result = new YtDlpSettings();
+        if (source != null) {
+            result.setConnections(source.getConnections());
+            result.setUseProxy(source.isUseProxy());
+            result.setProxyAddress(source.getProxyAddress());
+            result.setReferer(source.getReferer());
+            result.setUserAgent(source.getUserAgent());
+            result.setCookieHeader(source.getCookieHeader());
+            result.setMaxRetries(source.getMaxRetries());
+            result.setRetryDelaySeconds(source.getRetryDelaySeconds());
         }
-        ExternalToolSettings external = settings;
-        if (external.getReferer() != null && !external.getReferer().isBlank()) {
-            command.add("--referer");
-            command.add(external.getReferer());
-        }
-        if (external.getUserAgent() != null && !external.getUserAgent().isBlank()) {
-            command.add("--user-agent");
-            command.add(external.getUserAgent());
-        }
-        if (external.getCookieHeader() != null && !external.getCookieHeader().isBlank()) {
-            command.add("--add-header");
-            command.add(external.getCookieHeader());
-        }
-        if (settings instanceof YtDlpSettings ytDlpSettings
-                && ytDlpSettings.getCookieFile() != null
-                && !ytDlpSettings.getCookieFile().isBlank()) {
-            command.add("--cookies");
-            command.add(ytDlpSettings.getCookieFile());
-        }
+        return result;
     }
 
     private List<String> missingLanguages(Path mediaFile) {
         List<String> missing = new ArrayList<>();
-        for (String language : languages) {
+        for (String language : settings.getLanguages()) {
             if (!hasSubtitle(mediaFile, language)) {
                 missing.add(language);
             }
@@ -284,45 +268,6 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
         return dot > 0 ? name.substring(0, dot) : name;
     }
 
-    private static List<String> normalizeLanguages(List<String> values) {
-        LinkedHashSet<String> normalized = new LinkedHashSet<>();
-        if (values != null) {
-            for (String value : values) {
-                if (value == null || value.isBlank()) {
-                    continue;
-                }
-                String tag = value.strip();
-                if (!LANGUAGE_TAG.matcher(tag).matches()) {
-                    throw new IllegalArgumentException("Invalid subtitle language tag: " + tag);
-                }
-                normalized.add(normalizeLanguageTag(tag));
-            }
-        }
-        return normalized.isEmpty() ? List.of("en") : List.copyOf(normalized);
-    }
-
-    private static String normalizeLanguageTag(String value) {
-        String[] parts = value.split("-");
-        StringBuilder normalized = new StringBuilder(parts[0].toLowerCase(Locale.ROOT));
-        for (int index = 1; index < parts.length; index++) {
-            String part = parts[index];
-            normalized.append('-');
-            if (part.length() == 2 || (part.length() == 3 && part.chars().allMatch(Character::isDigit))) {
-                normalized.append(part.toUpperCase(Locale.ROOT));
-            } else if (part.length() == 4) {
-                normalized.append(Character.toUpperCase(part.charAt(0)))
-                        .append(part.substring(1).toLowerCase(Locale.ROOT));
-            } else {
-                normalized.append(part.toLowerCase(Locale.ROOT));
-            }
-        }
-        return normalized.toString();
-    }
-
-    private static String executableOrDefault(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
-
     @Override
     public ActionType getType() {
         return ActionType.DOWNLOAD_SUBTITLES;
@@ -330,7 +275,7 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
 
     @Override
     public String getDescription() {
-        return "Download subtitles (" + String.join(", ", languages) + ")";
+        return "Download subtitles (" + String.join(", ", settings.getLanguages()) + ")";
     }
 
     @Override
@@ -341,63 +286,10 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
     @Override
     public boolean cancel() {
         cancelled.set(true);
-        commandExecutor.cancelAll();
+        subliminalClient.shutdown();
+        for (String operationId : List.copyOf(activeYtDlpOperations)) {
+            ytDlpClient.cancelDownload(operationId);
+        }
         return true;
-    }
-
-    interface CommandExecutor {
-        boolean execute(String operationId, List<String> command, Duration timeout);
-
-        void cancelAll();
-    }
-
-    private static final class ProcessCommandExecutor implements CommandExecutor {
-        private final ExternalProcessRegistry processes =
-                new ExternalProcessRegistry("subtitle-action");
-
-        @Override
-        public boolean execute(String operationId, List<String> command, Duration timeout) {
-            ExternalProcessRegistry.LaunchReservation launch = processes.reserve(operationId);
-            ExternalProcessRegistry.Registration registration = null;
-            try {
-                ProcessBuilder builder = new ProcessBuilder(command)
-                        .redirectErrorStream(true)
-                        .redirectOutput(ProcessBuilder.Redirect.DISCARD);
-                registration = launch.start(builder);
-                Process process = registration.process();
-                boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-                if (!finished) {
-                    LOGGER.warning("Subtitle command timed out: " + command.getFirst());
-                    processes.terminate(operationId, 5);
-                    return false;
-                }
-                if (process.exitValue() != 0) {
-                    LOGGER.warning("Subtitle command failed with exit code "
-                            + process.exitValue() + ": " + command.getFirst());
-                    return false;
-                }
-                return true;
-            } catch (java.util.concurrent.CancellationException e) {
-                return false;
-            } catch (java.io.IOException e) {
-                LOGGER.log(Level.WARNING, "Could not start subtitle engine " + command.getFirst(), e);
-                return false;
-            } catch (InterruptedException e) {
-                processes.terminate(operationId, 5);
-                Thread.currentThread().interrupt();
-                return false;
-            } finally {
-                if (registration != null) {
-                    registration.unregister();
-                } else {
-                    launch.unregister();
-                }
-            }
-        }
-
-        @Override
-        public void cancelAll() {
-            processes.terminateAll(5);
-        }
     }
 }

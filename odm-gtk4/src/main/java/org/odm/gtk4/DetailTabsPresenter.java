@@ -29,6 +29,8 @@ import org.manager.download.DownloadManager;
 final class DetailTabsPresenter {
 
     private static final Logger LOGGER = Logger.getLogger(DetailTabsPresenter.class.getName());
+    private static final int FILE_SIZE_SORT_COLUMN = 7;
+    private static final int FILE_PROGRESS_SORT_COLUMN = 8;
 
     /** Immutable snapshot fetched off-thread for the trackers/peers/files tabs. */
     private record DetailTabData(List<List<String>> trackers, List<Map<String, Object>> peers,
@@ -172,14 +174,19 @@ final class DetailTabsPresenter {
                     String.valueOf(file.getOrDefault("selected", "true")));
             ListStoreCells.setBoolean(filesStore, iter, 0, selected);
             ListStoreCells.setString(filesStore, iter, 1, String.valueOf(file.getOrDefault("path", "—")));
-            ListStoreCells.setString(filesStore, iter, 2,
-                    DownloadFormats.size(parseLong(file.get("length"), 0)));
-            ListStoreCells.setInt(filesStore, iter, 3, (int) Math.round(
-                    progressPercent(parseLong(file.get("completedLength"), 0),
-                            parseLong(file.get("length"), 1))));
+            long length = parseLong(file.get("length"), 0);
+            long completedLength = parseLong(file.get("completedLength"), 0);
+            ListStoreCells.setString(filesStore, iter, 2, DownloadFormats.size(length));
+            double progress = progressPercent(completedLength, length);
+            ListStoreCells.setInt(filesStore, iter, 3,
+                    ProgressPresentation.wholePercentage(progress));
             ListStoreCells.setString(filesStore, iter, 4, "—");
             ListStoreCells.setInt(filesStore, iter, 5,
                     (int) parseLong(file.get("index"), filesStore.iterNChildren(null)));
+            ListStoreCells.setString(filesStore, iter, 6,
+                    ProgressPresentation.percentage(progress));
+            ListStoreCells.setLong(filesStore, iter, FILE_SIZE_SORT_COLUMN, length);
+            ListStoreCells.setDouble(filesStore, iter, FILE_PROGRESS_SORT_COLUMN, progress);
         }
     }
 

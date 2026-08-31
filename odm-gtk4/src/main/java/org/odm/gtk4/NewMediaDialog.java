@@ -50,6 +50,7 @@ public class NewMediaDialog {
     private final Entry subtitleLangEntry;
     private final PathChooserButton cookieFileChooser;
     private final PathChooserButton folderChooser;
+    private final Label diskSpaceLabel;
     private final Button startButton;
 
     /** Formats shown in the dropdown, parallel to the StringList model. */
@@ -78,6 +79,7 @@ public class NewMediaDialog {
         this.subtitleLangEntry = Widgets.require(builder, "subtitle_lang_entry", Entry.class);
         Button cookieFileButton = Widgets.require(builder, "cookie_file_chooser", Button.class);
         MenuButton folderButton = Widgets.require(builder, "media_folder_chooser", MenuButton.class);
+        this.diskSpaceLabel = Widgets.require(builder, "media_disk_space_label", Label.class);
         this.startButton = Widgets.require(builder, "media_start_button", Button.class);
 
         AccessibilitySupport.label(urlEntry, "Media URL");
@@ -97,7 +99,11 @@ public class NewMediaDialog {
                 "Select cookies file", null, path -> cookieFile = path);
         this.folderChooser = PathChooserButton.forFolder(folderButton, dialog,
                 "Select destination folder", destinationFolder,
-                path -> destinationFolder = path);
+                path -> {
+                    destinationFolder = path;
+                    updateDiskSpace(path);
+                });
+        updateDiskSpace(destinationFolder);
 
         // Enable Download once a URL is present; info fetch is optional
         urlEntry.onChanged(() -> startButton.setSensitive(!urlEntry.getText().isBlank()));
@@ -301,5 +307,15 @@ public class NewMediaDialog {
     private String currentDefaultDirectory() {
         Path dir = downloadManager.getGlobalSettings().getDefaultDownloadDirectory();
         return dir != null ? dir.toString() : System.getProperty("user.home") + "/Downloads";
+    }
+
+    private void updateDiskSpace(Path directory) {
+        try {
+            long free = directory.toFile().getUsableSpace();
+            diskSpaceLabel.setLabel(String.format(java.util.Locale.ROOT,
+                    "%.2f GB free", free / (1024.0 * 1024 * 1024)));
+        } catch (Exception e) {
+            diskSpaceLabel.setLabel("");
+        }
     }
 }

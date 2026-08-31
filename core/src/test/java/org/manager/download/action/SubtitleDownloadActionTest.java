@@ -11,9 +11,14 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.download.Download;
+import org.subliminal.SubliminalClient;
+import org.subliminal.SubliminalSettings;
+import org.ytdlp.YtDlpClient;
+import org.ytdlp.YtDlpSettings;
 
 class SubtitleDownloadActionTest {
 
@@ -21,7 +26,7 @@ class SubtitleDownloadActionTest {
     Path tempDir;
 
     @Test
-    void parsesDeduplicatedIetfLanguagePreferencesWithEnglishDefault() {
+    void languageParserRemainsACompatibilitySeamForTheSettingsUi() {
         assertEquals(List.of("fr", "it", "pt-BR"),
                 SubtitleDownloadAction.parseLanguages(" fr, it, FR, pt-br "));
         assertEquals(List.of("en"), SubtitleDownloadAction.parseLanguages("  "));
@@ -30,19 +35,19 @@ class SubtitleDownloadActionTest {
     }
 
     @Test
-    void genericVideoUsesSubliminalOnlyForLanguagesNotAlreadyPresent() throws Exception {
+    void genericVideoDelegatesOnlyMissingLanguagesToSubliminalClient() throws Exception {
         Path video = Files.writeString(tempDir.resolve("movie.mkv"), "video");
         Files.writeString(tempDir.resolve("movie.fr.srt"), "French");
         Download download = completedDownload(
                 URI.create("https://example.com/movie.mkv"), video, Download.Type.ARIA2);
-        RecordingExecutor executor = new RecordingExecutor(true);
-        SubtitleDownloadAction action = action(List.of("fr", "it"), executor);
+        RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
+        RecordingYtDlpClient ytDlp = new RecordingYtDlpClient(true);
 
-        assertTrue(action.execute(download));
+        assertTrue(action(List.of("fr", "it"), subliminal, ytDlp).execute(download));
 
-        assertEquals(List.of(List.of(
-                "/custom/subliminal", "download", "-l", "it", video.toString())),
-                executor.commands);
+        assertEquals(List.of(video), subliminal.mediaFiles);
+        assertEquals(List.of(List.of("it")), subliminal.languageCalls);
+        assertTrue(ytDlp.settingsCalls.isEmpty());
     }
 
     @Test
@@ -52,33 +57,41 @@ class SubtitleDownloadActionTest {
         Files.writeString(tempDir.resolve("movie.it.vtt"), "Italian");
         Download download = completedDownload(
                 URI.create("https://example.com/movie.mp4"), video, Download.Type.ARIA2);
-        RecordingExecutor executor = new RecordingExecutor(true);
+        RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
 
-        assertTrue(action(List.of("fr", "it"), executor).execute(download));
-        assertTrue(executor.commands.isEmpty());
+        assertTrue(action(List.of("fr", "it"), subliminal,
+                new RecordingYtDlpClient(true)).execute(download));
+        assertTrue(subliminal.mediaFiles.isEmpty());
     }
 
     @Test
-    void mediaPlatformDownloadUsesYtDlpSubtitleOnlyAndNoOverwriteMode() throws Exception {
+    void mediaPlatformDownloadDelegatesSubtitleOnlySettingsToYtDlpClient() throws Exception {
         Path video = Files.writeString(tempDir.resolve("clip.webm"), "video");
         Files.writeString(tempDir.resolve("clip.fr.vtt"), "French");
         Download download = completedDownload(
                 URI.create("https://www.youtube.com/watch?v=abc123"),
                 video, Download.Type.YOUTUBE);
-        RecordingExecutor executor = new RecordingExecutor(true);
+        YtDlpSettings original = new YtDlpSettings();
+        original.setUseProxy(true);
+        original.setProxyAddress("socks5://127.0.0.1:1080");
+        original.setCookieFile("/tmp/cookies.txt");
+        download.setSettings(original);
+        RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
+        RecordingYtDlpClient ytDlp = new RecordingYtDlpClient(true);
 
-        assertTrue(action(List.of("fr", "it"), executor).execute(download));
+        assertTrue(action(List.of("fr", "it"), subliminal, ytDlp).execute(download));
 
-        assertEquals(1, executor.commands.size());
-        List<String> command = executor.commands.getFirst();
-        assertEquals("/custom/yt-dlp", command.getFirst());
-        assertTrue(command.contains("--skip-download"));
-        assertTrue(command.contains("--write-subs"));
-        assertTrue(command.contains("--write-auto-subs"));
-        assertTrue(command.contains("--no-overwrites"));
-        assertEquals("it", command.get(command.indexOf("--sub-langs") + 1));
-        assertEquals(download.getUri().toString(), command.getLast());
-        assertFalse(command.contains("/custom/subliminal"));
+        assertTrue(subliminal.mediaFiles.isEmpty());
+        assertEquals(List.of(download.getUri().toString()), ytDlp.urls);
+        assertEquals(List.of(tempDir), ytDlp.outputDirectories);
+        YtDlpSettings settings = ytDlp.settingsCalls.getFirst();
+        assertTrue(settings.isWriteSubtitles());
+        assertTrue(settings.isWriteAutoSubs());
+        assertFalse(settings.isEmbedSubs());
+        assertEquals(List.of("it"), settings.getSubtitleLanguages());
+        assertEquals("clip.%(ext)s", settings.getOutputTemplate());
+        assertEquals("socks5://127.0.0.1:1080", settings.getProxyAddress());
+        assertEquals("/tmp/cookies.txt", settings.getCookieFile());
     }
 
     @Test
@@ -86,10 +99,11 @@ class SubtitleDownloadActionTest {
         Path archive = Files.writeString(tempDir.resolve("archive.zip"), "archive");
         Download download = completedDownload(
                 URI.create("https://example.com/archive.zip"), archive, Download.Type.ARIA2);
-        RecordingExecutor executor = new RecordingExecutor(true);
+        RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
 
-        assertTrue(action(List.of("fr"), executor).execute(download));
-        assertTrue(executor.commands.isEmpty());
+        assertTrue(action(List.of("fr"), subliminal,
+                new RecordingYtDlpClient(true)).execute(download));
+        assertTrue(subliminal.mediaFiles.isEmpty());
     }
 
     @Test
@@ -97,12 +111,12 @@ class SubtitleDownloadActionTest {
         Path video = Files.writeString(tempDir.resolve("movie.vob"), "video");
         Download download = completedDownload(
                 URI.create("https://example.com/movie.vob"), video, Download.Type.ARIA2);
-        RecordingExecutor executor = new RecordingExecutor(true);
+        RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
 
-        assertTrue(action(List.of("fr"), executor).execute(download));
+        assertTrue(action(List.of("fr"), subliminal,
+                new RecordingYtDlpClient(true)).execute(download));
 
-        assertEquals(1, executor.commands.size());
-        assertEquals(video.toString(), executor.commands.getFirst().getLast());
+        assertEquals(List.of(video), subliminal.mediaFiles);
     }
 
     @Test
@@ -111,13 +125,16 @@ class SubtitleDownloadActionTest {
         Download download = completedDownload(
                 URI.create("https://example.com/movie.mkv"), video, Download.Type.ARIA2);
 
-        assertFalse(action(List.of("fr"), new RecordingExecutor(false)).execute(download));
+        assertFalse(action(List.of("fr"), new RecordingSubliminalClient(false),
+                new RecordingYtDlpClient(true)).execute(download));
     }
 
     private SubtitleDownloadAction action(List<String> languages,
-            SubtitleDownloadAction.CommandExecutor executor) {
-        return new SubtitleDownloadAction(languages, "/custom/subliminal", "/custom/yt-dlp",
-                Duration.ofSeconds(30), executor);
+            SubliminalClient subliminal, YtDlpClient ytDlp) {
+        SubliminalSettings settings = new SubliminalSettings()
+                .setLanguages(languages)
+                .setTimeout(Duration.ofSeconds(30));
+        return new SubtitleDownloadAction(settings, subliminal, ytDlp);
     }
 
     private static Download completedDownload(URI uri, Path output, Download.Type type) {
@@ -130,23 +147,43 @@ class SubtitleDownloadActionTest {
         return download;
     }
 
-    private static final class RecordingExecutor
-            implements SubtitleDownloadAction.CommandExecutor {
-        private final List<List<String>> commands = new ArrayList<>();
+    private static final class RecordingSubliminalClient extends SubliminalClient {
+        private final List<Path> mediaFiles = new ArrayList<>();
+        private final List<List<String>> languageCalls = new ArrayList<>();
         private final boolean result;
 
-        private RecordingExecutor(boolean result) {
+        private RecordingSubliminalClient(boolean result) {
+            super("/custom/subliminal");
             this.result = result;
         }
 
         @Override
-        public boolean execute(String operationId, List<String> command, Duration timeout) {
-            commands.add(List.copyOf(command));
+        public boolean download(Path mediaFile, SubliminalSettings settings, String operationId) {
+            mediaFiles.add(mediaFile);
+            languageCalls.add(settings.getLanguages());
             return result;
+        }
+    }
+
+    private static final class RecordingYtDlpClient extends YtDlpClient {
+        private final List<String> urls = new ArrayList<>();
+        private final List<YtDlpSettings> settingsCalls = new ArrayList<>();
+        private final List<Path> outputDirectories = new ArrayList<>();
+        private final boolean result;
+
+        private RecordingYtDlpClient(boolean result) {
+            super("/custom/yt-dlp");
+            this.result = result;
         }
 
         @Override
-        public void cancelAll() {
+        public CompletableFuture<Void> downloadSubtitles(String url, YtDlpSettings settings,
+                Path outputDirectory, String processId) {
+            urls.add(url);
+            settingsCalls.add(settings);
+            outputDirectories.add(outputDirectory);
+            return result ? CompletableFuture.completedFuture(null)
+                    : CompletableFuture.failedFuture(new IllegalStateException("failed"));
         }
     }
 }

@@ -7,9 +7,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.concurrent.CompletableFuture;
 import org.gnome.gio.File;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CellRendererToggle;
@@ -57,7 +59,8 @@ public class ImportListDialog {
 
     private Path destinationFolder;
 
-    public ImportListDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone) {
+    private ImportListDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone,
+            List<String> initialUrls) {
         this.downloadManager = downloadManager;
         this.onImportDone = onImportDone;
 
@@ -134,39 +137,73 @@ public class ImportListDialog {
 
         Widgets.require(builder, "cancel_button", Button.class).onClicked(dialog::close);
         Widgets.require(builder, "validate_button", Button.class).onClicked(this::onImport);
-
-        // Load-from-file is the entry action: trigger it on open
-        onFromFile();
+        loadUrls(initialUrls);
     }
 
     public void present() {
         dialog.present();
     }
 
-    private void onFromFile() {
+    /**
+     * Opens the file selector first. The heavier import window is constructed
+     * only after a real file was selected and its contents passed validation.
+     */
+    public static void chooseAndPresent(Window parent, DownloadManager downloadManager,
+            Runnable onImportDone) {
         FileDialog fileDialog = new FileDialog();
         fileDialog.setTitle("Select URL list file");
-        fileDialog.open(dialog, null, result -> {
+        fileDialog.open(parent, null, result -> {
             try {
                 File file = fileDialog.openFinish(result);
                 if (file != null && file.getPath() != null) {
                     Path path = Path.of(file.getPath().toString());
-                    CompletableFuture.supplyAsync(() -> readImportLines(path))
-                            .whenComplete((lines, error) -> UiThread.marshal(() -> {
-                                if (error == null) {
-                                    loadUrls(lines);
-                                } else {
-                                    LOGGER.log(Level.WARNING, "URL list import was rejected", error);
-                                    AccessibilitySupport.status(diskSpaceLabel,
-                                            "List is too large or unreadable",
-                                            org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                                }
-                            }));
+                    loadSelectionThenPresent(path, java.util.concurrent.ForkJoinPool.commonPool(),
+                            lines -> UiThread.marshal(() ->
+                                    new ImportListDialog(parent, downloadManager,
+                                            onImportDone, lines).present()),
+                            error -> UiThread.marshal(() -> showLoadError(parent, error)));
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.FINE, "List file selection cancelled or failed", e);
             }
         });
+    }
+
+    /**
+     * Testable ordering seam for the chooser-first workflow. A null selection
+     * is a cancellation and schedules neither loading nor presentation.
+     */
+    static void loadSelectionThenPresent(Path selectedPath, Executor executor,
+            Consumer<List<String>> presenter, Consumer<Throwable> onFailure) {
+        if (selectedPath == null) {
+            return;
+        }
+        CompletableFuture.supplyAsync(() -> readImportLines(selectedPath), executor)
+                .whenComplete((lines, error) -> {
+                    if (error == null) {
+                        presenter.accept(lines);
+                    } else {
+                        onFailure.accept(rootCause(error));
+                    }
+                });
+    }
+
+    private static void showLoadError(Window parent, Throwable error) {
+        LOGGER.log(Level.WARNING, "URL list import was rejected", error);
+        org.gnome.gtk.AlertDialog alert = new org.gnome.gtk.AlertDialog();
+        alert.setMessage("Could not import URL list");
+        alert.setDetail(error.getMessage() != null
+                ? error.getMessage() : "The selected file is unreadable or too large.");
+        alert.setModal(true);
+        alert.show(parent);
+    }
+
+    private static Throwable rootCause(Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause;
     }
 
     static List<String> readImportLines(Path path) {

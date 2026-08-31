@@ -83,6 +83,59 @@ class YtDlpClientTest {
     }
 
     @Test
+    @DisplayName("Subtitle-only command uses yt-dlp settings and preserves network options")
+    void subtitleOnlyCommandUsesClientSettings() {
+        YtDlpSettings settings = new YtDlpSettings()
+                .setWriteSubtitles(true)
+                .setWriteAutoSubs(true)
+                .setSubtitleLanguages(List.of("fr", "it"))
+                .setOutputTemplate("clip.%(ext)s");
+        settings.setUseProxy(true);
+        settings.setProxyAddress("socks5://127.0.0.1:1080");
+        settings
+                .setReferer("https://example.com/page")
+                .setUserAgent("ODM-Test");
+
+        List<String> command = client.buildSubtitleCommand(TEST_URL, settings, tempOutputDir);
+
+        assertEquals(TEST_YTDLP_PATH, command.getFirst());
+        assertTrue(command.contains("--skip-download"));
+        assertTrue(command.contains("--write-subs"));
+        assertTrue(command.contains("--write-auto-subs"));
+        assertTrue(command.contains("--no-overwrites"));
+        assertEquals("fr,it", command.get(command.indexOf("--sub-langs") + 1));
+        assertEquals("subtitle:" + tempOutputDir.toAbsolutePath().normalize(),
+                command.get(command.indexOf("--paths") + 1));
+        assertEquals("subtitle:clip.%(ext)s",
+                command.get(command.indexOf("--output") + 1));
+        assertEquals("socks5://127.0.0.1:1080",
+                command.get(command.indexOf("--proxy") + 1));
+        assertEquals("https://example.com/page",
+                command.get(command.indexOf("--referer") + 1));
+        assertEquals("ODM-Test", command.get(command.indexOf("--user-agent") + 1));
+        assertEquals(TEST_URL, command.getLast());
+    }
+
+    @Test
+    @DisplayName("Subtitle-only execution uses the shared process registry lifecycle")
+    void subtitleOnlyExecutionUsesProcessRegistry() throws Exception {
+        YtDlpClient successfulClient = new YtDlpClient("/bin/true");
+        try {
+            YtDlpSettings settings = new YtDlpSettings()
+                    .setWriteSubtitles(true)
+                    .setSubtitleLanguages(List.of("fr"));
+
+            successfulClient.downloadSubtitles(TEST_URL, settings, tempOutputDir,
+                    "subtitle-test").get(10, TimeUnit.SECONDS);
+
+            assertEquals(0, successfulClient.getActiveProcessCount());
+            assertFalse(successfulClient.cancelDownload("subtitle-test"));
+        } finally {
+            successfulClient.shutdown();
+        }
+    }
+
+    @Test
     @DisplayName("Should handle null path gracefully")
     void testNullPathConstructor() {
         assertDoesNotThrow(() -> {

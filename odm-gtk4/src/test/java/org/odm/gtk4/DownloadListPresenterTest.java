@@ -136,4 +136,26 @@ class DownloadListPresenterTest {
 
         assertEquals(List.of(history, first, active, later), ordered);
     }
+
+    @Test
+    void statusIconsDistinguishEveryDownloadLifecycleState() {
+        assertEquals("document-new-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.CREATED));
+        assertEquals("media-playback-start-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.STARTING));
+        assertEquals("go-down-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.DOWNLOADING));
+        assertEquals("view-list-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.QUEUED));
+        assertEquals("media-playback-pause-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.PAUSED));
+        assertEquals("dialog-error-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.ERROR));
+        assertEquals("emblem-ok-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.COMPLETED));
+        assertEquals("network-transmit-receive-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.CONNECTING));
+        assertEquals("process-stop-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.CANCELED));
+    }
 }

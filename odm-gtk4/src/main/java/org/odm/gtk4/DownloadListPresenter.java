@@ -1,13 +1,18 @@
 package org.odm.gtk4;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.TreeIter;
+import org.gnome.gtk.TreePath;
+import org.gnome.gtk.TreeRowReference;
 import org.gnome.gtk.TreeView;
+import org.javagi.interop.MemoryCleaner;
 import org.manager.download.Download;
 
 /**
@@ -24,7 +29,8 @@ final class DownloadListPresenter {
     static final String[] STATUS_FILTERS = {"All Status", "Active", "Queuing", "Finished", "Deleted"};
     static final String[] CATEGORIES = {"All", "Videos", "Audios", "Photos", "Programs", "Others"};
 
-    // download_store columns (0-11 gchararray, 12 gint — matches the original glade)
+    // Visible download_store columns. Number is gint; 1-11 are strings,
+    // progress is gint, and 13-14 are strings.
     private static final int COL_NUMBER = 0;
     private static final int COL_NAME = 1;
     private static final int COL_COMPLETE = 2;
@@ -38,6 +44,22 @@ final class DownloadListPresenter {
     private static final int COL_END = 10;
     private static final int COL_TOR_ICON = 11;
     private static final int COL_PROGRESS = 12; // gint
+    private static final int COL_STATUS_ICON = 13;
+    private static final int COL_PROGRESS_TEXT = 14;
+    // Hidden identity and typed sort keys. Formatted display strings must not
+    // drive ordering ("10 GB" sorts before "2 MB" lexically).
+    private static final int COL_DOWNLOAD_ID = 15;
+    private static final int COL_STATUS_SORT = 16;
+    private static final int COL_COMPLETE_SORT = 17;
+    private static final int COL_SIZE_SORT = 18;
+    private static final int COL_PROGRESS_SORT = 19;
+    private static final int COL_ELAPSED_SORT = 20;
+    private static final int COL_LEFT_SORT = 21;
+    private static final int COL_SPEED_SORT = 22;
+    private static final int COL_UP_SPEED_SORT = 23;
+    private static final int COL_START_SORT = 24;
+    private static final int COL_END_SORT = 25;
+    private static final int COL_TYPE_SORT = 26;
 
     // status_store / category_store columns
     private static final int SC_ICON = 0;
@@ -62,6 +84,10 @@ final class DownloadListPresenter {
     private final Runnable fullRefresh;
 
     private List<Download> rowSnapshot = new ArrayList<>();
+    /** Current objects by stable model identity, independent of sort order. */
+    private Map<String, Download> rowsById = Map.of();
+    /** Tracks a logical row while GTK reorders the sorted ListStore. */
+    private final Map<String, TreeRowReference> rowReferences = new HashMap<>();
     /** Last filter-store counts; filter stores rebuild only when these change. */
     private int[] lastStatusCounts = new int[0];
     private int[] lastCategoryCounts = new int[0];
@@ -131,7 +157,22 @@ final class DownloadListPresenter {
 
     /** Download backing the visible row index, or null past the end. */
     Download rowAt(int index) {
-        return index >= 0 && index < rowSnapshot.size() ? rowSnapshot.get(index) : null;
+        if (index < 0) {
+            return null;
+        }
+        // Use the vector constructor: java-gi's varargs binding requires a
+        // native -1 sentinel and calling it with no varargs can walk garbage.
+        TreePath path = TreePath.fromIndicesv(new int[]{index});
+        try {
+            TreeIter iter = new TreeIter();
+            if (!downloadsStore.getIter(iter, path)) {
+                return null;
+            }
+            return rowsById.get(ListStoreCells.getString(
+                    downloadsStore, iter, COL_DOWNLOAD_ID));
+        } finally {
+            MemoryCleaner.free(path.handle());
+        }
     }
 
     /** Selected downloads in visible tree order, ignoring invalid/duplicate rows. */
@@ -149,7 +190,18 @@ final class DownloadListPresenter {
     }
 
     List<Download> rowsAt(List<Integer> indexes) {
-        return rowsAt(rowSnapshot, indexes);
+        if (indexes == null || indexes.isEmpty()) {
+            return List.of();
+        }
+        return indexes.stream()
+                .filter(Objects::nonNull)
+                .filter(index -> index >= 0)
+                .distinct()
+                .sorted()
+                .map(this::rowAt)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
     }
 
     /** Schedules one coalesced refresh on the GTK main loop. Any thread. */
@@ -208,6 +260,11 @@ final class DownloadListPresenter {
             }
         }
         display = orderQueuedRows(display);
+        Map<String, Download> currentRowsById = new HashMap<>();
+        for (Download download : display) {
+            currentRowsById.put(download.getId(), download);
+        }
+        rowsById = Map.copyOf(currentRowsById);
 
         int[] counts = repositoryStatusCounts == null
                 ? computeCounts(downloads)
@@ -231,33 +288,47 @@ final class DownloadListPresenter {
         // full rebuild only when the structure changed
         boolean structureChanged = !rowStructureMatches(rowSnapshot, display);
         if (!structureChanged) {
-            TreeIter iter = new TreeIter();
-            if (downloadsStore.getIterFirst(iter)) {
-                int row = 0;
-                do {
-                    if (row < display.size()) {
-                        updateRowCells(downloadsStore, iter, row, display.get(row));
+            for (int row = 0; row < display.size(); row++) {
+                Download download = display.get(row);
+                TreeRowReference reference = rowReferences.get(download.getId());
+                TreePath path = reference == null ? null : reference.getPath();
+                if (path == null) {
+                    structureChanged = true;
+                    break;
+                }
+                try {
+                    TreeIter iter = new TreeIter();
+                    if (!downloadsStore.getIter(iter, path)) {
+                        structureChanged = true;
+                        break;
                     }
-                    row++;
-                } while (downloadsStore.iterNext(iter));
+                    updateRowCells(downloadsStore, iter, row, download);
+                } finally {
+                    MemoryCleaner.free(path.handle());
+                }
             }
-        } else {
+        }
+        if (structureChanged) {
+            freeRowReferences();
             downloadsStore.clear();
-            rowSnapshot = new ArrayList<>(display.size());
             TreeIter iter = new TreeIter();
             for (int row = 0; row < display.size(); row++) {
                 Download download = display.get(row);
                 downloadsStore.append(iter);
-                rowSnapshot.add(download);
                 updateRowCells(downloadsStore, iter, row, download);
             }
+            rebuildRowReferences();
         }
+        rowSnapshot = new ArrayList<>(display);
 
         globalProgressStore.clear();
         TreeIter progressIter = new TreeIter();
         globalProgressStore.append(progressIter);
+        double globalProgress = totalBytes > 0 ? doneBytes * 100.0 / totalBytes : 0;
         ListStoreCells.setInt(globalProgressStore, progressIter, 0,
-                totalBytes > 0 ? (int) (doneBytes * 100 / totalBytes) : 0);
+                ProgressPresentation.wholePercentage(globalProgress));
+        ListStoreCells.setString(globalProgressStore, progressIter, 1,
+                ProgressPresentation.percentage(globalProgress));
 
         return new RefreshSummary(totalCount, (long) totalDownSpeed, (long) totalUpSpeed,
                 totalSeeders, anyActive, totalBytes, doneBytes, structureChanged);
@@ -398,13 +469,36 @@ final class DownloadListPresenter {
         };
     }
 
+    /** Theme icon used by the dedicated lifecycle-status column. */
+    static String statusIconName(Download.Status status) {
+        if (status == null) {
+            return "dialog-question-symbolic";
+        }
+        return switch (status) {
+            case CREATED -> "document-new-symbolic";
+            case STARTING -> "media-playback-start-symbolic";
+            case DOWNLOADING -> "go-down-symbolic";
+            case QUEUED -> "view-list-symbolic";
+            case PAUSED -> "media-playback-pause-symbolic";
+            case ERROR -> "dialog-error-symbolic";
+            case COMPLETED -> "emblem-ok-symbolic";
+            case CONNECTING -> "network-transmit-receive-symbolic";
+            case CANCELED -> "process-stop-symbolic";
+        };
+    }
+
     /** Writes all cells of one download row (shared by update and rebuild paths). */
     private void updateRowCells(ListStore store, TreeIter iter, int row, Download download) {
-        ListStoreCells.setString(store, iter, COL_NUMBER, String.valueOf(row + 1));
+        ListStoreCells.setInt(store, iter, COL_NUMBER, row + 1);
         ListStoreCells.setString(store, iter, COL_NAME, download.getName());
         ListStoreCells.setString(store, iter, COL_COMPLETE, DownloadFormats.size(download.getDownloaded()));
         ListStoreCells.setString(store, iter, COL_SIZE, DownloadFormats.size(download.getSize()));
-        ListStoreCells.setInt(store, iter, COL_PROGRESS, (int) download.getProgress());
+        ListStoreCells.setInt(store, iter, COL_PROGRESS,
+                ProgressPresentation.wholePercentage(download.getProgress()));
+        ListStoreCells.setString(store, iter, COL_PROGRESS_TEXT,
+                ProgressPresentation.percentage(download.getProgress()));
+        ListStoreCells.setString(store, iter, COL_STATUS_ICON,
+                statusIconName(download.getStatus()));
         ListStoreCells.setString(store, iter, COL_ELAPSED, DownloadFormats.elapsed(download));
         ListStoreCells.setString(store, iter, COL_LEFT,
                 DownloadFormats.size(Math.max(0, download.getSize() - download.getDownloaded())));
@@ -426,7 +520,57 @@ final class DownloadListPresenter {
                 download.getCompletedAt() != null
                         ? DownloadFormats.DATE_FORMAT.format(download.getCompletedAt())
                         : "—");
-        ListStoreCells.setString(store, iter, COL_TOR_ICON, engineIconName(download));
+        ListStoreCells.setString(store, iter, COL_TOR_ICON,
+                DownloadEnginePresentation.iconName(download.getType()));
+
+        ListStoreCells.setString(store, iter, COL_DOWNLOAD_ID, download.getId());
+        ListStoreCells.setInt(store, iter, COL_STATUS_SORT,
+                download.getStatus() == null ? -1 : download.getStatus().ordinal());
+        ListStoreCells.setLong(store, iter, COL_COMPLETE_SORT, download.getDownloaded());
+        ListStoreCells.setLong(store, iter, COL_SIZE_SORT, download.getSize());
+        ListStoreCells.setDouble(store, iter, COL_PROGRESS_SORT, download.getProgress());
+        ListStoreCells.setLong(store, iter, COL_ELAPSED_SORT, elapsedSeconds(download));
+        ListStoreCells.setLong(store, iter, COL_LEFT_SORT,
+                Math.max(0, download.getSize() - download.getDownloaded()));
+        ListStoreCells.setDouble(store, iter, COL_SPEED_SORT, download.getSpeed());
+        ListStoreCells.setDouble(store, iter, COL_UP_SPEED_SORT, download.getUploadSpeed());
+        ListStoreCells.setLong(store, iter, COL_START_SORT,
+                download.getStartedAt() == null ? 0 : download.getStartedAt().toEpochMilli());
+        ListStoreCells.setLong(store, iter, COL_END_SORT,
+                download.getCompletedAt() == null ? 0 : download.getCompletedAt().toEpochMilli());
+        ListStoreCells.setInt(store, iter, COL_TYPE_SORT,
+                download.getType() == null ? -1 : download.getType().ordinal());
+    }
+
+    private static long elapsedSeconds(Download download) {
+        if (download.getCreatedAt() == null) {
+            return 0;
+        }
+        return Math.max(0, java.time.Duration.between(
+                download.getCreatedAt(), java.time.Instant.now()).toSeconds());
+    }
+
+    private void freeRowReferences() {
+        for (TreeRowReference reference : rowReferences.values()) {
+            MemoryCleaner.free(reference.handle());
+        }
+        rowReferences.clear();
+    }
+
+    private void rebuildRowReferences() {
+        TreeIter iter = new TreeIter();
+        if (!downloadsStore.getIterFirst(iter)) {
+            return;
+        }
+        do {
+            String id = ListStoreCells.getString(downloadsStore, iter, COL_DOWNLOAD_ID);
+            TreePath path = downloadsStore.getPath(iter);
+            try {
+                rowReferences.put(id, new TreeRowReference(downloadsStore, path));
+            } finally {
+                MemoryCleaner.free(path.handle());
+            }
+        } while (downloadsStore.iterNext(iter));
     }
 
     private void rebuildFilterStore(ListStore store, String[] labels, int[] counts, int total,
@@ -478,15 +622,4 @@ final class DownloadListPresenter {
         };
     }
 
-    private static String engineIconName(Download download) {
-        return switch (download.getType()) {
-            case ARIA2 -> "network-server-symbolic";
-            case CURL -> "network-wired-symbolic";
-            case YOUTUBE -> "video-x-generic-symbolic";
-            case WEBSITE_SCRAPING -> "edit-find-symbolic";
-            case PROXYCHAINS -> "network-proxy-symbolic";
-            case TOR -> "network-wireless-symbolic";
-            default -> "text-x-generic-symbolic";
-        };
-    }
 }

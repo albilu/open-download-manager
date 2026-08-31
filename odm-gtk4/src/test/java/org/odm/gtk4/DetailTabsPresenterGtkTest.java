@@ -3,6 +3,7 @@ package org.odm.gtk4;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -12,7 +13,9 @@ import org.gnome.glib.MainLoop;
 import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.ListStore;
+import org.gnome.gtk.SortType;
 import org.gnome.gtk.TreeIter;
+import org.gnome.gtk.TreeSortable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -166,6 +169,40 @@ class DetailTabsPresenterGtkTest {
 
     @Test
     @Timeout(60)
+    @DisplayName("file size and progress sorting use raw numeric values")
+    void fileRowsUseTypedSortKeys() throws Exception {
+        Download download = download("files");
+        Mockito.when(manager.getDownloadTrackers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadPeers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadFiles(download)).thenReturn(List.of(
+                file("ten-kib.bin", 10 * 1024L, 1024L, 1),
+                file("nine-kib.bin", 9 * 1024L, 9000L, 2)));
+
+        onLoop(() -> {
+            selection.set(download);
+            presenter.load();
+        });
+        awaitTrue(() -> {
+            try {
+                return onLoop(() -> filesStore.iterNChildren(null)) == 2;
+            } catch (Exception e) {
+                return false;
+            }
+        }, "file rows must be populated");
+
+        assertEquals("nine-kib.bin", onLoop(() -> {
+            ((TreeSortable) filesStore).setSortColumnId(7, SortType.ASCENDING);
+            return firstValue(filesStore, 1);
+        }), "9 KiB must sort before 10 KiB by raw byte length");
+
+        assertEquals("nine-kib.bin", onLoop(() -> {
+            ((TreeSortable) filesStore).setSortColumnId(8, SortType.DESCENDING);
+            return firstValue(filesStore, 1);
+        }), "97.66% must sort above 10.00% by precise progress");
+    }
+
+    @Test
+    @Timeout(60)
     @DisplayName("shutdown stops the fetch executor; later loads fetch nothing")
     void shutdownStopsExecutorAndFurtherFetches() throws Exception {
         Download a = download("a");
@@ -208,6 +245,15 @@ class DetailTabsPresenterGtkTest {
         } catch (Exception e) {
             throw new AssertionError(e);
         }
+    }
+
+    private static Map<String, Object> file(String path, long length, long completed, int index) {
+        return Map.of(
+                "path", path,
+                "length", Long.toString(length),
+                "completedLength", Long.toString(completed),
+                "index", Integer.toString(index),
+                "selected", "true");
     }
 
     private static DownloadManager stubManager() {
@@ -272,6 +318,11 @@ class DetailTabsPresenterGtkTest {
             } while (store.iterNext(iter));
         }
         return values;
+    }
+
+    private static String firstValue(ListStore store, int column) {
+        TreeIter iter = new TreeIter();
+        return store.getIterFirst(iter) ? ListStoreCells.getString(store, iter, column) : null;
     }
 
     private void awaitStoreEquals(List<String> expected, String message) throws Exception {

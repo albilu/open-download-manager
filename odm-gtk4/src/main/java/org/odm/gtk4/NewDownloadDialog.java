@@ -17,8 +17,6 @@ import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.Window;
-import org.gnome.gobject.Value;
-import org.javagi.gobject.types.Types;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 
@@ -32,6 +30,12 @@ import org.manager.download.DownloadManager;
 public class NewDownloadDialog {
 
     private static final Logger LOGGER = Logger.getLogger(NewDownloadDialog.class.getName());
+    private static final int FILE_SELECTED_COLUMN = 0;
+    private static final int FILE_NAME_COLUMN = 1;
+    private static final int FILE_SIZE_TEXT_COLUMN = 2;
+    private static final int FILE_PRIORITY_TEXT_COLUMN = 3;
+    private static final int FILE_SIZE_SORT_COLUMN = 4;
+    private static final int FILE_PRIORITY_SORT_COLUMN = 5;
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -350,24 +354,34 @@ public class NewDownloadDialog {
 
     /** Adds a row to the Files tab liststore (selected, name, size, priority). */
     private void appendFileInfo(boolean selected, String name, long size, String priority) {
+        appendFileInfo(filesListstore, selected, name, size, priority);
+    }
+
+    static void appendFileInfo(ListStore store, boolean selected, String name, long size,
+            String priority) {
         TreeIter iter = new TreeIter();
-        filesListstore.append(iter);
-        Value v = new Value().init(Types.BOOLEAN);
-        v.setBoolean(selected);
-        filesListstore.setValue(iter, 0, v);
-        v.unset();
-        Value s = new Value().init(Types.STRING);
-        s.setString(name);
-        filesListstore.setValue(iter, 1, s);
-        s.unset();
-        Value z = new Value().init(Types.STRING);
-        z.setString(size > 0 ? size / 1024 + " KB" : "—");
-        filesListstore.setValue(iter, 2, z);
-        z.unset();
-        Value p = new Value().init(Types.STRING);
-        p.setString(priority);
-        filesListstore.setValue(iter, 3, p);
-        p.unset();
+        store.append(iter);
+        long normalizedSize = Math.max(0, size);
+        ListStoreCells.setBoolean(store, iter, FILE_SELECTED_COLUMN, selected);
+        ListStoreCells.setString(store, iter, FILE_NAME_COLUMN, name);
+        ListStoreCells.setString(store, iter, FILE_SIZE_TEXT_COLUMN,
+                normalizedSize > 0 ? normalizedSize / 1024 + " KB" : "—");
+        ListStoreCells.setString(store, iter, FILE_PRIORITY_TEXT_COLUMN, priority);
+        ListStoreCells.setLong(store, iter, FILE_SIZE_SORT_COLUMN, normalizedSize);
+        ListStoreCells.setInt(store, iter, FILE_PRIORITY_SORT_COLUMN,
+                prioritySortKey(priority));
+    }
+
+    static int prioritySortKey(String priority) {
+        if (priority == null) {
+            return 0;
+        }
+        return switch (priority.toLowerCase(java.util.Locale.ROOT)) {
+            case "low" -> 1;
+            case "normal" -> 2;
+            case "high" -> 3;
+            default -> 0;
+        };
     }
 
     private void updateDiskSpace(String dir) {

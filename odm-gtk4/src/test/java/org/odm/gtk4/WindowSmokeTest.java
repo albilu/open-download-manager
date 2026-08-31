@@ -1,21 +1,30 @@
 package org.odm.gtk4;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.net.URI;
+import java.util.List;
+import java.util.function.BooleanSupplier;
+import org.gnome.gdk.Rectangle;
+import org.gnome.glib.MainContext;
 import org.gnome.gtk.Align;
 import org.gnome.gtk.ApplicationWindow;
 import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.CellRendererProgress;
 import org.gnome.gtk.CellRendererText;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.Entry;
+import org.gnome.gtk.Frame;
 import org.gnome.gtk.Grid;
 import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
+import org.gnome.gtk.Image;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
@@ -23,15 +32,20 @@ import org.gnome.gtk.Notebook;
 import org.gnome.gtk.Orientation;
 import org.gnome.gtk.Paned;
 import org.gnome.gtk.PositionType;
+import org.gnome.gtk.PropagationPhase;
 import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.Spinner;
+import org.gnome.gtk.SortType;
 import org.gnome.gtk.TextView;
 import org.gnome.gtk.TreeView;
 import org.gnome.gtk.TreeViewColumn;
 import org.gnome.gtk.TreeViewColumnSizing;
+import org.gnome.gtk.TreeIter;
+import org.gnome.gtk.TreePath;
+import org.gnome.gtk.TreeSortable;
 import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
 import org.javagi.base.Out;
@@ -68,21 +82,47 @@ class WindowSmokeTest {
         ScrolledWindow categoryScrolled = Widgets.require(builder,
                 "category_scrolled_window", ScrolledWindow.class);
         assertFalse(statusScrolled.getVexpand());
-        assertFalse(categoryScrolled.getVexpand());
-        Out<Integer> statusHeight = new Out<>();
-        Out<Integer> categoryHeight = new Out<>();
-        statusScrolled.getSizeRequest(new Out<>(), statusHeight);
-        categoryScrolled.getSizeRequest(new Out<>(), categoryHeight);
-        assertTrue(statusHeight.get() >= 120,
-                "the fixed Status list must still show all standard states");
-        assertTrue(categoryHeight.get() >= 150,
-                "the fixed Categories list must still show all standard categories");
-        Widgets.require(builder, "status_treeview", TreeView.class);
-        Widgets.require(builder, "status_column", org.gnome.gtk.TreeViewColumn.class);
-        Widgets.require(builder, "count_column", org.gnome.gtk.TreeViewColumn.class);
-        Widgets.require(builder, "category_treeview", TreeView.class);
-        Widgets.require(builder, "category_column", org.gnome.gtk.TreeViewColumn.class);
-        Widgets.require(builder, "category_count_column", org.gnome.gtk.TreeViewColumn.class);
+        assertTrue(categoryScrolled.getVexpand());
+        assertTrue(statusScrolled.getPropagateNaturalHeight());
+        assertTrue(categoryScrolled.getPropagateNaturalHeight());
+        TreeView statusTree = Widgets.require(builder, "status_treeview", TreeView.class);
+        TreeViewColumn statusColumn = Widgets.require(builder,
+                "status_column", TreeViewColumn.class);
+        TreeViewColumn countColumn = Widgets.require(builder,
+                "count_column", TreeViewColumn.class);
+        TreeView categoryTree = Widgets.require(builder, "category_treeview", TreeView.class);
+        TreeViewColumn categoryColumn = Widgets.require(builder,
+                "category_column", TreeViewColumn.class);
+        TreeViewColumn categoryCountColumn = Widgets.require(builder,
+                "category_count_column", TreeViewColumn.class);
+        assertTrue(statusColumn.getExpand());
+        assertTrue(categoryColumn.getExpand());
+
+        ListStore statusStore = Widgets.require(builder, "status_store", ListStore.class);
+        TreeIter statusRow = new TreeIter();
+        statusStore.append(statusRow);
+        ListStoreCells.setString(statusStore, statusRow, 0, "view-list-symbolic");
+        ListStoreCells.setInt(statusStore, statusRow, 1, 7);
+        ListStoreCells.setString(statusStore, statusRow, 2, "All Status");
+        statusColumn.cellSetCellData(statusStore, statusRow, false, false);
+        countColumn.cellSetCellData(statusStore, statusRow, false, false);
+        assertEquals("All Status", Widgets.require(builder,
+                "status_label_renderer", CellRendererText.class).getProperty("text"));
+        assertEquals("7", Widgets.require(builder,
+                "status_count_renderer", CellRendererText.class).getProperty("text"));
+
+        ListStore categoryStore = Widgets.require(builder, "category_store", ListStore.class);
+        TreeIter categoryRow = new TreeIter();
+        categoryStore.append(categoryRow);
+        ListStoreCells.setString(categoryStore, categoryRow, 0, "video-x-generic-symbolic");
+        ListStoreCells.setInt(categoryStore, categoryRow, 1, 3);
+        ListStoreCells.setString(categoryStore, categoryRow, 2, "Videos");
+        categoryColumn.cellSetCellData(categoryStore, categoryRow, false, false);
+        categoryCountColumn.cellSetCellData(categoryStore, categoryRow, false, false);
+        assertEquals("Videos", Widgets.require(builder,
+                "category_label_renderer", CellRendererText.class).getProperty("text"));
+        assertEquals("3", Widgets.require(builder,
+                "category_count_renderer", CellRendererText.class).getProperty("text"));
         PopoverMenuBar menuBar = Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
         assertFalse(menuBar.getVexpand());
         Box toolbar = Widgets.require(builder, "download_toolbar", Box.class);
@@ -111,13 +151,33 @@ class WindowSmokeTest {
                 "download_scrolled_window", ScrolledWindow.class);
         assertTrue(downloadList.getVexpand());
         assertTrue(downloadScrolled.getVexpand());
-        Widgets.require(builder, "download_treeview", TreeView.class);
-        for (String id : new String[]{"number_column", "name_column", "complete_column", "size_column",
+        TreeView downloadTree = Widgets.require(builder, "download_treeview", TreeView.class);
+        String[] downloadColumnIds = {"number_column", "status_icon_column", "name_column",
+                "complete_column", "size_column",
                 "percent_progress_column", "elapsed_column", "left_column", "speed_column", "up_speed_column",
-                "retry_column", "start_date_column", "end_date_column", "tor_icon_column"}) {
+                "retry_column", "start_date_column", "end_date_column", "tor_icon_column"};
+        int[] sortColumnIds = {0, 16, 1, 17, 18, 19, 20, 21, 22, 23, 8, 24, 25, 26};
+        for (int index = 0; index < downloadColumnIds.length; index++) {
+            String id = downloadColumnIds[index];
             Widgets.require(builder, id, org.gnome.gtk.TreeViewColumn.class);
+            assertEquals(sortColumnIds[index], Widgets.require(builder,
+                    id, TreeViewColumn.class).getSortColumnId(),
+                    id + " must expose a typed sort key");
         }
+        assertEquals(27, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
+        TreeViewColumn statusIconColumn = Widgets.require(builder,
+                "status_icon_column", TreeViewColumn.class);
         TreeViewColumn nameColumn = Widgets.require(builder, "name_column", TreeViewColumn.class);
+        assertTrue(statusIconColumn.getTitle() == null || statusIconColumn.getTitle().isEmpty(),
+                "the icon-only status column must not show a header label");
+        assertEquals(TreeViewColumnSizing.FIXED, statusIconColumn.getSizing());
+        assertEquals(32, statusIconColumn.getFixedWidth(),
+                "the status column should remain close to the icon's natural width");
+        assertTrue(treeColumnIndex(downloadTree, statusIconColumn)
+                        < treeColumnIndex(downloadTree, nameColumn),
+                "the lifecycle icon must appear before the download name");
+        Widgets.require(builder, "status_icon_renderer", org.gnome.gtk.CellRendererPixbuf.class);
+        Widgets.require(builder, "download_progress_renderer", CellRendererProgress.class);
         assertTrue(nameColumn.getMinWidth() >= 200);
         assertTrue(nameColumn.getMaxWidth() >= 360 && nameColumn.getMaxWidth() <= 480,
                 "the name column must stay readable without consuming the entire table");
@@ -138,6 +198,8 @@ class WindowSmokeTest {
         assertTrue(infoNotebook.getVexpand());
         assertEquals(PositionType.BOTTOM, infoNotebook.getTabPos());
         assertTrue(infoProgress.getHexpand());
+        assertTrue(infoProgress.getShowText(),
+                "selected-download progress must expose its precise percentage");
         Box generalColumns = Widgets.require(builder, "general_columns", Box.class);
         assertEquals(Orientation.HORIZONTAL, generalColumns.getOrientation());
         assertTrue(generalColumns.getHomogeneous());
@@ -145,13 +207,34 @@ class WindowSmokeTest {
                 generalColumns.getFirstChild());
         assertSame(Widgets.require(builder, "transfer_frame", org.gnome.gtk.Frame.class),
                 generalColumns.getLastChild());
+        assertBoldFrameTitles(builder, "information_frame", "transfer_frame");
         for (String id : new String[]{"total_size_value", "added_on_value", "info_hash_v1_value",
-                "folder_value", "eta_value", "downloaded_value", "connections_value", "seeds_peers_value"}) {
+                "folder_value", "engine_value", "eta_value", "downloaded_value",
+                "connections_value", "seeds_peers_value"}) {
             Widgets.require(builder, id, Label.class);
         }
+        Button folderButton = Widgets.require(builder, "folder_open_button", Button.class);
+        Box folderContent = Widgets.require(builder, "folder_open_content", Box.class);
+        Label folderValue = Widgets.require(builder, "folder_value", Label.class);
+        assertSame(folderContent, folderValue.getParent());
+        assertSame(folderButton, folderContent.getParent());
+        assertFalse(folderButton.getSensitive(),
+                "the folder action must remain disabled until a destination is selected");
+        Widgets.require(builder, "engine_icon", Image.class);
         Widgets.require(builder, "trackers_view", TreeView.class);
         Widgets.require(builder, "peers_view", TreeView.class);
         Widgets.require(builder, "files_view", TreeView.class);
+        ListStore detailFilesStore = Widgets.require(builder, "files_store", ListStore.class);
+        assertEquals(9, detailFilesStore.getNColumns(),
+                "detail files need raw size and progress sort keys");
+        String[] detailFileColumnIds = {"files_selected_column", "files_name_column",
+                "files_size_column", "files_progress_column", "files_priority_column"};
+        int[] detailFileSortIds = {0, 1, 7, 8, 4};
+        for (int index = 0; index < detailFileColumnIds.length; index++) {
+            assertEquals(detailFileSortIds[index], Widgets.require(builder,
+                    detailFileColumnIds[index], TreeViewColumn.class).getSortColumnId(),
+                    detailFileColumnIds[index] + " must be sortable");
+        }
         // status bar
         Widgets.require(builder, "statusbar", org.gnome.gtk.Box.class);
         for (String id : new String[]{"info_label", "up_speed_label", "down_speed_label",
@@ -168,6 +251,7 @@ class WindowSmokeTest {
                 Widgets.require(builder, "download_speed_box", Box.class),
                 Widgets.require(builder, "global_progress_tree", TreeView.class));
         TreeView globalProgress = Widgets.require(builder, "global_progress_tree", TreeView.class);
+        Widgets.require(builder, "global_progress_renderer", CellRendererProgress.class);
         Out<Integer> progressWidth = new Out<>();
         globalProgress.getSizeRequest(progressWidth, new Out<>());
         assertTrue(progressWidth.get() >= 180,
@@ -217,14 +301,39 @@ class WindowSmokeTest {
         }
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
-        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        org.gnome.gtk.Switch settingsTor = Widgets.require(builder,
+                "tor_switch", org.gnome.gtk.Switch.class);
+        assertSame(Widgets.require(builder, "tor_settings_grid", Grid.class),
+                settingsTor.getParent(),
+                "the Settings Tor switch must be a direct grid child");
         Widgets.require(builder, "available_space_label", Label.class);
         Widgets.require(builder, "settings_status_label", Label.class);
         assertDiskLabelBelowChooser(builder, "default_download_folder_chooser",
                 "available_space_label");
-        Grid networkGrid = Widgets.require(builder, "settings_grid", Grid.class);
-        assertEquals(3, gridColumn(networkGrid,
-                Widgets.require(builder, "retry_limit_spin", SpinButton.class)));
+        Grid generalLayout = Widgets.require(builder, "general_layout_grid", Grid.class);
+        assertFlatFieldGrid(generalLayout);
+        assertEquals(1, gridColumn(generalLayout,
+                Widgets.require(builder, "max_concurrent_downloads_spin", SpinButton.class)));
+        assertTrue(Widgets.require(builder, "clipboard_silent_check", CheckButton.class)
+                .getMarginStart() >= 18,
+                "clipboard silent mode must read as a child of clipboard monitoring");
+        assertTrue(Widgets.require(builder, "folder_recursive_check", CheckButton.class)
+                .getMarginStart() >= 18,
+                "recursive monitoring must read as a child of folder monitoring");
+        assertDownloadOptionsLayout(builder);
+        for (String id : new String[]{"aria2_layout_grid", "ytdlp_layout_grid",
+                "httrack_layout_grid", "advanced_layout_grid"}) {
+            assertFlatFieldGrid(Widgets.require(builder, id, Grid.class));
+        }
+        assertEquals(1, gridColumn(Widgets.require(builder, "aria2_layout_grid", Grid.class),
+                Widgets.require(builder, "min_split_size_spin1", SpinButton.class)));
+        assertEquals(1, gridColumn(Widgets.require(builder, "ytdlp_layout_grid", Grid.class),
+                Widgets.require(builder, "video_format_entry", Entry.class)));
+        assertEquals(1, gridColumn(Widgets.require(builder, "httrack_layout_grid", Grid.class),
+                Widgets.require(builder, "depth_spin", SpinButton.class)));
+        assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
+                "download_options_heading", "proxy_settings_heading", "tor_settings_heading",
+                "scheduling_heading", "advanced_tools_heading");
         Widgets.require(builder, "scheduler_selection_label", Label.class);
         Box legend = Widgets.require(builder, "scheduler_legend_box", Box.class);
         assertEquals(Orientation.VERTICAL, legend.getOrientation());
@@ -245,7 +354,17 @@ class WindowSmokeTest {
         Widgets.require(builder, "disk_space_label", Label.class);
         Widgets.require(builder, "filename_entry", Entry.class);
         Widgets.require(builder, "files_treeview", TreeView.class);
-        Widgets.require(builder, "files_liststore", ListStore.class);
+        ListStore filesStore = Widgets.require(builder, "files_liststore", ListStore.class);
+        assertEquals(6, filesStore.getNColumns(),
+                "new-download files need raw size and priority sort keys");
+        String[] fileColumnIds = {"new_files_selected_column", "new_files_name_column",
+                "new_files_size_column", "new_files_priority_column"};
+        int[] fileSortIds = {0, 1, 4, 5};
+        for (int index = 0; index < fileColumnIds.length; index++) {
+            assertEquals(fileSortIds[index], Widgets.require(builder,
+                    fileColumnIds[index], TreeViewColumn.class).getSortColumnId(),
+                    fileColumnIds[index] + " must be sortable");
+        }
         Widgets.require(builder, "max_connections_spin", SpinButton.class);
         Widgets.require(builder, "retry_limit_spin", SpinButton.class);
         Widgets.require(builder, "max_download_speed_spin", SpinButton.class);
@@ -266,6 +385,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "new_download_cancel_button", Button.class);
         Widgets.require(builder, "new_download_start_button", Button.class);
         assertDiskLabelBelowChooser(builder, "save_folder_chooser", "disk_space_label");
+        assertDownloadOptionsLayout(builder);
     }
 
     @Test
@@ -284,8 +404,19 @@ class WindowSmokeTest {
         Widgets.require(builder, "subtitle_lang_entry", Entry.class);
         Widgets.require(builder, "cookie_file_chooser", Button.class);
         Widgets.require(builder, "media_folder_chooser", MenuButton.class);
+        Widgets.require(builder, "media_disk_space_label", Label.class);
         Widgets.require(builder, "media_cancel_button", Button.class);
         Widgets.require(builder, "media_start_button", Button.class);
+        Grid fields = Widgets.require(builder, "media_fields_grid", Grid.class);
+        assertFieldGrid(fields);
+        assertEquals(1, gridColumn(fields,
+                Widgets.require(builder, "media_url_entry", Entry.class).getParent()));
+        assertEquals(1, gridColumn(fields,
+                Widgets.require(builder, "format_drop", org.gnome.gtk.DropDown.class)));
+        assertEquals(1, gridColumn(fields,
+                Widgets.require(builder, "subtitle_lang_entry", Entry.class)));
+        assertDiskLabelBelowChooser(builder, "media_folder_chooser",
+                "media_disk_space_label");
     }
 
     @Test
@@ -303,15 +434,16 @@ class WindowSmokeTest {
             Widgets.require(builder, id, Entry.class);
         }
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
-        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        org.gnome.gtk.Switch propertyTor = Widgets.require(builder,
+                "tor_switch", org.gnome.gtk.Switch.class);
+        assertSame(Widgets.require(builder, "tor_settings_grid", Grid.class),
+                propertyTor.getParent());
         Widgets.require(builder, "start_automatically_check", CheckButton.class);
         Widgets.require(builder, "move_torrent_check", CheckButton.class);
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "apply_button", Button.class);
         Widgets.require(builder, "ok_button", Button.class);
-        Grid propertyGrid = Widgets.require(builder, "settings_grid", Grid.class);
-        assertEquals(3, gridColumn(propertyGrid,
-                Widgets.require(builder, "retry_limit_spin", SpinButton.class)));
+        assertDownloadOptionsLayout(builder);
     }
 
     @Test
@@ -345,6 +477,9 @@ class WindowSmokeTest {
         Widgets.require(builder, "url_treeview", TreeView.class);
         Widgets.require(builder, "url_liststore", ListStore.class);
         Widgets.require(builder, "mark_renderer", org.gnome.gtk.CellRendererToggle.class);
+        assertEquals(2, Widgets.require(builder, "extension_column",
+                TreeViewColumn.class).getSortColumnId(),
+                "the imported URL extension must be sortable");
         Widgets.require(builder, "folder_destination", MenuButton.class);
         Widgets.require(builder, "disk_space_label", Label.class);
         Widgets.require(builder, "import_spinnet", Spinner.class);
@@ -357,6 +492,7 @@ class WindowSmokeTest {
             Widgets.require(builder, id, SpinButton.class);
         }
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        assertDownloadOptionsLayout(builder);
     }
 
     @Test
@@ -380,6 +516,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "validate_button", Button.class);
         assertDiskLabelBelowChooser(builder, "destination_folder", "disk_space_label");
+        assertDownloadOptionsLayout(builder);
     }
 
     @Test
@@ -402,7 +539,148 @@ class WindowSmokeTest {
         // Constructing is the test: every Widgets.require in the constructor
         // must resolve. (Null app: the window is a standalone toplevel here.)
         assertEquals(org.gnome.gtk.SelectionMode.MULTIPLE, window.downloadSelectionMode());
+        assertEquals(PropagationPhase.CAPTURE, window.downloadContextClickPhase(),
+                "right-click handling must run before TreeView child gestures consume it");
+        assertEquals(List.of("#", "Status", "Name", "Completed", "Size", "Progress",
+                "Elapsed", "Left", "Down Speed", "Up Speed", "Retry", "Start Date",
+                "End Date", "Type"), MainWindow.downloadColumnLabels());
         assertEquals(5, window.mainMenuTopLevelCount());
+    }
+
+    @Test
+    @DisplayName("the first download row resolves from right-click widget coordinates")
+    void firstDownloadRowContextHitTesting() throws Exception {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ApplicationWindow window = Widgets.require(builder, "main_window", ApplicationWindow.class);
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        ListStore store = Widgets.require(builder, "download_store", ListStore.class);
+        store.append(new TreeIter());
+
+        window.present();
+        try {
+            awaitGtk(() -> tree.getWidth() > 0 && tree.getHeight() > 0,
+                    "GTK did not allocate the download tree");
+            TreePath first = TreePath.fromString("0");
+            TreeViewColumn name = Widgets.require(builder, "name_column", TreeViewColumn.class);
+            Rectangle cell = new Rectangle();
+            tree.getCellArea(first, name, cell);
+            Out<Integer> widgetX = new Out<>();
+            Out<Integer> widgetY = new Out<>();
+            tree.convertBinWindowToWidgetCoords(
+                    cell.readX() + Math.max(1, cell.readWidth() / 2),
+                    cell.readY() + Math.max(1, cell.readHeight() / 2), widgetX, widgetY);
+
+            TreePath resolved = MainWindow.pathAtWidgetPosition(
+                    tree, widgetX.get(), widgetY.get(), new Out<>());
+
+            assertNotNull(resolved, "row zero must not be lost behind the header offset");
+            assertArrayEquals(new int[]{0}, resolved.getIndices());
+        } finally {
+            window.close();
+            drainGtkEvents();
+        }
+    }
+
+    @Test
+    @DisplayName("sorting by raw size keeps visible rows mapped to their Downloads")
+    void typedDownloadSortingPreservesRowIdentity() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ListStore statusStore = Widgets.require(builder, "status_store", ListStore.class);
+        ListStore categoryStore = Widgets.require(builder, "category_store", ListStore.class);
+        ListStore downloadStore = Widgets.require(builder, "download_store", ListStore.class);
+        ListStore globalProgressStore = Widgets.require(builder,
+                "global_progress_store", ListStore.class);
+        DownloadListPresenter presenter = new DownloadListPresenter(statusStore, categoryStore,
+                downloadStore, globalProgressStore,
+                Widgets.require(builder, "status_treeview", TreeView.class),
+                Widgets.require(builder, "category_treeview", TreeView.class), () -> { });
+        org.manager.download.Download small = new org.manager.download.Download(
+                URI.create("https://example.com/small.bin"));
+        small.setName("small.bin");
+        small.setSize(100);
+        small.setStatus(org.manager.download.Download.Status.QUEUED);
+        org.manager.download.Download large = new org.manager.download.Download(
+                URI.create("https://example.com/large.bin"));
+        large.setName("large.bin");
+        large.setSize(200);
+        large.setStatus(org.manager.download.Download.Status.QUEUED);
+
+        presenter.refresh(List.of(small, large));
+        ((TreeSortable) downloadStore).setSortColumnId(18, SortType.DESCENDING);
+        assertSame(large, presenter.rowAt(0));
+
+        small.setSize(300);
+        presenter.refresh(List.of(small, large));
+        assertSame(small, presenter.rowAt(0),
+                "an in-place update may reorder the GTK model without corrupting identity");
+    }
+
+    @Test
+    @DisplayName("import extensions and New Download files use their declared sort keys")
+    void auxiliaryFileTablesSortByRawValues() {
+        GtkBuilder importBuilder = UiLoader.load("/ui/import-list.ui");
+        ListStore importStore = Widgets.require(importBuilder, "url_liststore", ListStore.class);
+        TreeIter zip = new TreeIter();
+        importStore.append(zip);
+        ListStoreCells.setBoolean(importStore, zip, 0, true);
+        ListStoreCells.setString(importStore, zip, 1, "https://example.com/archive.zip");
+        ListStoreCells.setString(importStore, zip, 2, "zip");
+        TreeIter mp4 = new TreeIter();
+        importStore.append(mp4);
+        ListStoreCells.setBoolean(importStore, mp4, 0, true);
+        ListStoreCells.setString(importStore, mp4, 1, "https://example.com/video.mp4");
+        ListStoreCells.setString(importStore, mp4, 2, "mp4");
+
+        ((TreeSortable) importStore).setSortColumnId(2, SortType.ASCENDING);
+        TreeIter first = new TreeIter();
+        assertTrue(importStore.getIterFirst(first));
+        assertEquals("mp4", ListStoreCells.getString(importStore, first, 2));
+
+        GtkBuilder downloadBuilder = UiLoader.load("/ui/new-download.ui");
+        ListStore filesStore = Widgets.require(downloadBuilder, "files_liststore", ListStore.class);
+        NewDownloadDialog.appendFileInfo(filesStore, true,
+                "ten-kib.bin", 10 * 1024L, "Normal");
+        NewDownloadDialog.appendFileInfo(filesStore, true,
+                "nine-kib.bin", 9 * 1024L, "High");
+
+        ((TreeSortable) filesStore).setSortColumnId(4, SortType.ASCENDING);
+        assertTrue(filesStore.getIterFirst(first));
+        assertEquals("nine-kib.bin", ListStoreCells.getString(filesStore, first, 1),
+                "numeric size sorting must not use the rendered size text");
+
+        ((TreeSortable) filesStore).setSortColumnId(5, SortType.DESCENDING);
+        assertTrue(filesStore.getIterFirst(first));
+        assertEquals("nine-kib.bin", ListStoreCells.getString(filesStore, first, 1),
+                "High priority must sort above Normal priority");
+    }
+
+    @Test
+    @DisplayName("right-click targets the clicked row without discarding an existing group")
+    void rightClickSelectionTargeting() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        ListStore store = Widgets.require(builder, "download_store", ListStore.class);
+        for (int row = 0; row < 3; row++) {
+            store.append(new TreeIter());
+        }
+        tree.getSelection().setMode(org.gnome.gtk.SelectionMode.MULTIPLE);
+        TreePath first = TreePath.fromString("0");
+        TreePath second = TreePath.fromString("1");
+        TreePath third = TreePath.fromString("2");
+        tree.getSelection().selectPath(first);
+        tree.getSelection().selectPath(second);
+
+        MainWindow.selectContextTarget(tree, second,
+                Widgets.require(builder, "name_column", TreeViewColumn.class));
+        assertEquals(2, tree.getSelection().countSelectedRows(),
+                "right-clicking inside the selected group must preserve it");
+
+        MainWindow.selectContextTarget(tree, third,
+                Widgets.require(builder, "name_column", TreeViewColumn.class));
+        assertEquals(1, tree.getSelection().countSelectedRows());
+        assertFalse(tree.getSelection().pathIsSelected(first));
+        assertTrue(tree.getSelection().pathIsSelected(third),
+                "an unselected clicked row must become the context target");
     }
 
     private static Object defaultValue(Class<?> type) {
@@ -439,10 +717,99 @@ class WindowSmokeTest {
         return -1;
     }
 
+    private static int treeColumnIndex(TreeView tree, TreeViewColumn expected) {
+        int index = 0;
+        for (TreeViewColumn column : tree.getColumns()) {
+            if (column == expected) {
+                return index;
+            }
+            index++;
+        }
+        return -1;
+    }
+
     private static int gridColumn(Grid grid, Widget child) {
         Out<Integer> column = new Out<>();
         grid.queryChild(child, column, new Out<>(), new Out<>(), new Out<>());
         return column.get();
+    }
+
+    private static void drainGtkEvents() {
+        MainContext context = MainContext.default_();
+        while (context.pending()) {
+            context.iteration(false);
+        }
+    }
+
+    private static void awaitGtk(BooleanSupplier condition, String failureMessage)
+            throws InterruptedException {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            drainGtkEvents();
+            if (condition.getAsBoolean()) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError(failureMessage);
+    }
+
+    private static void assertFieldGrid(Grid grid) {
+        assertTrue(grid.getHexpand(), "field grids must consume the available page width");
+        assertTrue(grid.getRowSpacing() >= 8,
+                "field rows need consistent vertical separation");
+        assertTrue(grid.getColumnSpacing() >= 12,
+                "labels and controls need consistent horizontal separation");
+    }
+
+    private static void assertFlatFieldGrid(Grid grid) {
+        assertFieldGrid(grid);
+        assertFalse(grid.getParent() instanceof Frame,
+                "reference layouts use flat forms without framed section borders");
+    }
+
+    private static void assertDownloadOptionsLayout(GtkBuilder builder) {
+        for (String id : new String[]{"settings_grid", "http_connection_grid",
+                "proxy_settings_grid"}) {
+            assertFlatFieldGrid(Widgets.require(builder, id, Grid.class));
+        }
+        Grid columns = Widgets.require(builder, "options_columns_grid", Grid.class);
+        Box left = Widgets.require(builder, "options_left_column", Box.class);
+        Box right = Widgets.require(builder, "options_right_column", Box.class);
+        assertTrue(columns.getHexpand());
+        assertTrue(columns.getColumnSpacing() >= 16);
+        assertEquals(Orientation.VERTICAL, left.getOrientation());
+        assertEquals(Orientation.VERTICAL, right.getOrientation());
+        assertEquals(0, gridColumn(columns, left));
+        assertEquals(1, gridColumn(columns, right));
+        assertEquals(1, gridColumn(Widgets.require(builder, "settings_grid", Grid.class),
+                Widgets.require(builder, "retry_limit_spin", SpinButton.class)));
+        assertEquals(1, gridColumn(Widgets.require(builder, "proxy_settings_grid", Grid.class),
+                Widgets.require(builder, "proxy_host_entry", Entry.class)));
+        assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
+                "download_options_heading", "proxy_settings_heading", "tor_settings_heading");
+    }
+
+    private static void assertBoldLabels(GtkBuilder builder, String... labelIds) {
+        for (String labelId : labelIds) {
+            Label title = Widgets.require(builder, labelId, Label.class);
+            assertTrue(title.getUseMarkup(), labelId + " must enable markup");
+            assertTrue(title.getLabel().startsWith("<b>")
+                            && title.getLabel().endsWith("</b>"),
+                    labelId + " must be bold");
+        }
+    }
+
+    private static void assertBoldFrameTitles(GtkBuilder builder, String... frameIds) {
+        for (String frameId : frameIds) {
+            Frame frame = Widgets.require(builder, frameId, Frame.class);
+            assertTrue(frame.getLabelWidget() instanceof Label,
+                    frameId + " must use an explicit label widget");
+            Label title = (Label) frame.getLabelWidget();
+            assertTrue(title.getUseMarkup(), frameId + " title must enable markup");
+            assertTrue(title.getLabel().startsWith("<b>")
+                            && title.getLabel().endsWith("</b>"),
+                    frameId + " title must be bold");
+        }
     }
 
     private static void assertDiskLabelBelowChooser(GtkBuilder builder, String chooserId,
