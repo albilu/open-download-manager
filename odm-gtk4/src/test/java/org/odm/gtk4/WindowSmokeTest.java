@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,6 +10,7 @@ import org.gnome.gtk.Align;
 import org.gnome.gtk.ApplicationWindow;
 import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.CellRendererText;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.Grid;
@@ -17,13 +19,19 @@ import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
+import org.gnome.gtk.Notebook;
 import org.gnome.gtk.Orientation;
+import org.gnome.gtk.Paned;
+import org.gnome.gtk.PositionType;
 import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.PopoverMenuBar;
+import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TextView;
 import org.gnome.gtk.TreeView;
+import org.gnome.gtk.TreeViewColumn;
+import org.gnome.gtk.TreeViewColumnSizing;
 import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
 import org.javagi.base.Out;
@@ -55,15 +63,31 @@ class WindowSmokeTest {
             Widgets.require(builder, id, ListStore.class);
         }
         // side panel treeviews + columns
+        ScrolledWindow statusScrolled = Widgets.require(builder,
+                "status_scrolled_window", ScrolledWindow.class);
+        ScrolledWindow categoryScrolled = Widgets.require(builder,
+                "category_scrolled_window", ScrolledWindow.class);
+        assertFalse(statusScrolled.getVexpand());
+        assertFalse(categoryScrolled.getVexpand());
+        Out<Integer> statusHeight = new Out<>();
+        Out<Integer> categoryHeight = new Out<>();
+        statusScrolled.getSizeRequest(new Out<>(), statusHeight);
+        categoryScrolled.getSizeRequest(new Out<>(), categoryHeight);
+        assertTrue(statusHeight.get() >= 120,
+                "the fixed Status list must still show all standard states");
+        assertTrue(categoryHeight.get() >= 150,
+                "the fixed Categories list must still show all standard categories");
         Widgets.require(builder, "status_treeview", TreeView.class);
         Widgets.require(builder, "status_column", org.gnome.gtk.TreeViewColumn.class);
         Widgets.require(builder, "count_column", org.gnome.gtk.TreeViewColumn.class);
         Widgets.require(builder, "category_treeview", TreeView.class);
         Widgets.require(builder, "category_column", org.gnome.gtk.TreeViewColumn.class);
         Widgets.require(builder, "category_count_column", org.gnome.gtk.TreeViewColumn.class);
-        Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
+        PopoverMenuBar menuBar = Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
+        assertFalse(menuBar.getVexpand());
         Box toolbar = Widgets.require(builder, "download_toolbar", Box.class);
         assertTrue(toolbar.hasCssClass("toolbar"));
+        assertFalse(toolbar.getVexpand());
         // toolbar buttons
         for (String id : new String[]{"new_download_button", "pause_button", "resume_button",
                 "delete_button", "move_up_button", "move_top_button", "move_down_button", "move_bottom_button",
@@ -78,15 +102,42 @@ class WindowSmokeTest {
         assertSame(searchToolItem, toolbar.getLastChild(),
                 "the search control must be the toolbar's trailing item");
         // download treeview + columns
+        Paned contentPaned = Widgets.require(builder, "content_paned", Paned.class);
+        assertTrue(contentPaned.getVexpand());
+        assertTrue(contentPaned.getResizeStartChild());
+        assertTrue(contentPaned.getResizeEndChild());
+        Box downloadList = Widgets.require(builder, "download_list_container", Box.class);
+        ScrolledWindow downloadScrolled = Widgets.require(builder,
+                "download_scrolled_window", ScrolledWindow.class);
+        assertTrue(downloadList.getVexpand());
+        assertTrue(downloadScrolled.getVexpand());
         Widgets.require(builder, "download_treeview", TreeView.class);
         for (String id : new String[]{"number_column", "name_column", "complete_column", "size_column",
                 "percent_progress_column", "elapsed_column", "left_column", "speed_column", "up_speed_column",
                 "retry_column", "start_date_column", "end_date_column", "tor_icon_column"}) {
             Widgets.require(builder, id, org.gnome.gtk.TreeViewColumn.class);
         }
+        TreeViewColumn nameColumn = Widgets.require(builder, "name_column", TreeViewColumn.class);
+        assertTrue(nameColumn.getMinWidth() >= 200);
+        assertTrue(nameColumn.getMaxWidth() >= 360 && nameColumn.getMaxWidth() <= 480,
+                "the name column must stay readable without consuming the entire table");
+        CellRendererText nameRenderer = Widgets.require(builder,
+                "name_renderer", CellRendererText.class);
+        assertEquals(org.gnome.pango.EllipsizeMode.END,
+                nameRenderer.getProperty("ellipsize"));
+        TreeViewColumn progressColumn = Widgets.require(builder,
+                "percent_progress_column", TreeViewColumn.class);
+        assertEquals(TreeViewColumnSizing.FIXED, progressColumn.getSizing());
+        assertTrue(progressColumn.getFixedWidth() >= 110,
+                "the progress renderer needs enough room for its percentage");
         // info panel
-        Widgets.require(builder, "info_notebook", org.gnome.gtk.Notebook.class);
-        Widgets.require(builder, "info_progress_bar", ProgressBar.class);
+        Box infoPanel = Widgets.require(builder, "info_panel_box", Box.class);
+        Notebook infoNotebook = Widgets.require(builder, "info_notebook", Notebook.class);
+        ProgressBar infoProgress = Widgets.require(builder, "info_progress_bar", ProgressBar.class);
+        assertTrue(infoPanel.getVexpand());
+        assertTrue(infoNotebook.getVexpand());
+        assertEquals(PositionType.BOTTOM, infoNotebook.getTabPos());
+        assertTrue(infoProgress.getHexpand());
         Box generalColumns = Widgets.require(builder, "general_columns", Box.class);
         assertEquals(Orientation.HORIZONTAL, generalColumns.getOrientation());
         assertTrue(generalColumns.getHomogeneous());
@@ -108,6 +159,7 @@ class WindowSmokeTest {
             Widgets.require(builder, id, Label.class);
         }
         Widgets.require(builder, "activity_spinner", Spinner.class);
+        assertFalse(Widgets.require(builder, "statusbar_box", Box.class).getVexpand());
         Box rightStatus = Widgets.require(builder, "statusbar_right_box", Box.class);
         assertChildrenOrdered(rightStatus,
                 Widgets.require(builder, "activity_spinner", Spinner.class),
