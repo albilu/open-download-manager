@@ -5,7 +5,7 @@ Priority: optional
 Architecture: amd64
 Maintainer: ODM Development Team <dev@odm-project.org>
 Depends: libgtk-4-1 (>= 4.10), aria2 (>= 1.34.0), curl (>= 7.80.0), yt-dlp (>= 2024.01.01), httrack (>= 3.49.0)
-Recommends: proxychains4, tor, ffmpeg
+Recommends: proxychains4, tor, ffmpeg, subliminal
 Description: Full-featured download manager for Linux
  Open Download Manager (ODM) is a comprehensive download manager
  designed specifically for Linux systems. It provides advanced download
@@ -16,6 +16,7 @@ Description: Full-featured download manager for Linux
   * Multi-connection HTTP/HTTPS/FTP downloads via aria2
   * BitTorrent and magnet link support
   * Video downloads from YouTube and other platforms via yt-dlp
+  * Completion-time subtitle downloads via yt-dlp and Subliminal
   * Website mirroring capabilities via HTTrack
   * Proxy rotation, proxychains and Tor support
   * Clipboard monitoring for automatic download detection

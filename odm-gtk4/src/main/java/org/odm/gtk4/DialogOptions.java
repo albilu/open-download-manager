@@ -129,31 +129,50 @@ final class DialogOptions {
     static void applyCommon(ExternalToolSettings settings, int connections,
             int downloadLimitKb, int uploadLimitKb, int maxRetries, int retryDelaySeconds,
             String referer, String userAgent, String cookie) {
+        applyCommon(settings, java.util.EnumSet.allOf(
+                ExternalToolSettings.Capability.class), connections,
+                downloadLimitKb, uploadLimitKb, maxRetries, retryDelaySeconds,
+                referer, userAgent, cookie);
+    }
+
+    static void applyCommon(ExternalToolSettings settings,
+            java.util.Set<ExternalToolSettings.Capability> enabledCapabilities,
+            int connections, int downloadLimitKb, int uploadLimitKb,
+            int maxRetries, int retryDelaySeconds, String referer,
+            String userAgent, String cookie) {
         if (settings == null) {
             return;
         }
-        if (settings.supports(ExternalToolSettings.Capability.CONNECTIONS)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.CONNECTIONS)
+                && settings.supports(ExternalToolSettings.Capability.CONNECTIONS)) {
             settings.setMaxConnections(connections);
         }
-        if (settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)
+                && settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
             settings.setDownloadLimitKB(Math.max(0, downloadLimitKb));
         }
-        if (settings.supports(ExternalToolSettings.Capability.UPLOAD_LIMIT)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.UPLOAD_LIMIT)
+                && settings.supports(ExternalToolSettings.Capability.UPLOAD_LIMIT)) {
             settings.setUploadLimitKB(uploadLimitKb);
         }
-        if (settings.supports(ExternalToolSettings.Capability.MAX_RETRIES)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.MAX_RETRIES)
+                && settings.supports(ExternalToolSettings.Capability.MAX_RETRIES)) {
             settings.setMaxRetries(maxRetries);
         }
-        if (settings.supports(ExternalToolSettings.Capability.RETRY_DELAY)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.RETRY_DELAY)
+                && settings.supports(ExternalToolSettings.Capability.RETRY_DELAY)) {
             settings.setRetryDelaySeconds(retryDelaySeconds);
         }
-        if (settings.supports(ExternalToolSettings.Capability.REFERER)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.REFERER)
+                && settings.supports(ExternalToolSettings.Capability.REFERER)) {
             settings.setReferer(referer == null || referer.isBlank() ? null : referer.trim());
         }
-        if (settings.supports(ExternalToolSettings.Capability.USER_AGENT)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.USER_AGENT)
+                && settings.supports(ExternalToolSettings.Capability.USER_AGENT)) {
             settings.setUserAgent(userAgent == null || userAgent.isBlank() ? null : userAgent.trim());
         }
-        if (settings.supports(ExternalToolSettings.Capability.COOKIE)) {
+        if (enabledCapabilities.contains(ExternalToolSettings.Capability.COOKIE)
+                && settings.supports(ExternalToolSettings.Capability.COOKIE)) {
             settings.setCookieHeader(cookie == null || cookie.isBlank()
                     ? null : "Cookie: " + cookie.trim());
         }

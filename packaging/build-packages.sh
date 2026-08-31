@@ -29,7 +29,10 @@ log() { echo "[odm-package] $*"; }
 JDK_MODULES="java.base,java.desktop,java.sql,java.logging,java.net.http,jdk.httpserver,jdk.crypto.ec,java.naming,java.management"
 
 log "Building shaded jar..."
-mvn -q -pl odm-gtk4 -am package -DskipTests
+# Packaging deliberately skips tests, so it must also skip JaCoCo's test
+# coverage gate. Otherwise stale jacoco.exec data from an earlier test run can
+# make a release build fail even though no tests execute here.
+mvn -q -pl odm-gtk4 -am package -DskipTests -Djacoco.skip=true
 
 log "Assembling application tree under $STAGE..."
 rm -rf "$STAGE"
@@ -144,6 +147,7 @@ depend = httrack>=3.49.0
 optdepend = proxychains-ng: SOCKS proxy chains
 optdepend = tor: anonymous downloads
 optdepend = ffmpeg: video processing
+optdepend = python-subliminal: generic subtitle downloads
 packager = ODM Development Team <dev@odm-project.org>
 size = $((size * 1024))
 builddate = ${builddate}

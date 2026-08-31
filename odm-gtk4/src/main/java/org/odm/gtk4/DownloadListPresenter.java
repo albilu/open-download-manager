@@ -131,7 +131,25 @@ final class DownloadListPresenter {
 
     /** Download backing the visible row index, or null past the end. */
     Download rowAt(int index) {
-        return index < rowSnapshot.size() ? rowSnapshot.get(index) : null;
+        return index >= 0 && index < rowSnapshot.size() ? rowSnapshot.get(index) : null;
+    }
+
+    /** Selected downloads in visible tree order, ignoring invalid/duplicate rows. */
+    static List<Download> rowsAt(List<Download> snapshot, List<Integer> indexes) {
+        if (snapshot == null || indexes == null || indexes.isEmpty()) {
+            return List.of();
+        }
+        return indexes.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(index -> index >= 0 && index < snapshot.size())
+                .distinct()
+                .sorted()
+                .map(snapshot::get)
+                .toList();
+    }
+
+    List<Download> rowsAt(List<Integer> indexes) {
+        return rowsAt(rowSnapshot, indexes);
     }
 
     /** Schedules one coalesced refresh on the GTK main loop. Any thread. */

@@ -17,6 +17,7 @@ optdepends=(
     'proxychains-ng: SOCKS proxy chains'
     'tor: anonymous downloads'
     'ffmpeg: video processing'
+    'python-subliminal: generic subtitle downloads'
 )
 source=("opt-open-download-manager.tar")
 noextract=()

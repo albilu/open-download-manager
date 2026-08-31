@@ -43,12 +43,14 @@ class GlobalSettingsToolPathPersistenceTest {
         settings.setAria2Path("/opt/custom/aria2c");
         settings.setCurlPath("/opt/custom/curl");
         settings.setTorPath("/opt/custom/tor");
+        settings.setSubliminalPath("/opt/custom/subliminal");
         settings.save(file);
 
         Map<String, String> saved = readJson(file);
         assertEquals("/opt/custom/aria2c", saved.get("aria2Path"));
         assertEquals("/opt/custom/curl", saved.get("curlPath"));
         assertEquals("/opt/custom/tor", saved.get("torPath"));
+        assertEquals("/opt/custom/subliminal", saved.get("subliminalPath"));
         assertFalse(saved.containsKey("ytDlpPath"),
                 "a default path must not be persisted (no config churn)");
 
@@ -57,6 +59,7 @@ class GlobalSettingsToolPathPersistenceTest {
         assertEquals("/opt/custom/aria2c", reloaded.getAria2Path());
         assertEquals("/opt/custom/curl", reloaded.getCurlPath());
         assertEquals("/opt/custom/tor", reloaded.getTorPath());
+        assertEquals("/opt/custom/subliminal", reloaded.getSubliminalPath());
         assertEquals("yt-dlp", reloaded.getYtDlpPath(),
                 "a key absent from the file must leave the default intact");
     }
@@ -92,6 +95,7 @@ class GlobalSettingsToolPathPersistenceTest {
         assertEquals("curl", settings.getCurlPath());
         assertEquals("proxychains", settings.getProxychainsPath());
         assertEquals("tor", settings.getTorPath());
+        assertEquals("subliminal", settings.getSubliminalPath());
         assertEquals(4, settings.getMaxConcurrentDownloads());
     }
 }

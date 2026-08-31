@@ -28,7 +28,8 @@ public interface AfterCompletionAction {
         SHUTDOWN_COMPUTER,//implemeted
         EXECUTE_COMMAND,
         ANTIVIRUS_CHECK,//implemeted
-        CHECKSUM_VALIDATION
+        CHECKSUM_VALIDATION,
+        DOWNLOAD_SUBTITLES
     }
 
     /**

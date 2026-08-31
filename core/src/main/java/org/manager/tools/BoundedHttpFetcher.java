@@ -14,11 +14,30 @@ import java.util.Locale;
 /** Small, bounded HTTP(S) fetches that honor the configured proxy. */
 public final class BoundedHttpFetcher {
 
+    /** Bounded response body plus metadata needed by redirect-aware callers. */
+    public record FetchResult(byte[] body, URI finalUri, String contentType) {
+        public FetchResult {
+            body = body.clone();
+        }
+
+        @Override
+        public byte[] body() {
+            return body.clone();
+        }
+    }
+
     private BoundedHttpFetcher() {
     }
 
     public static byte[] fetch(URI uri, long maximumBytes, Duration connectTimeout,
             Duration readTimeout, String proxyAddress) throws IOException {
+        return fetchResult(uri, maximumBytes, connectTimeout, readTimeout,
+                proxyAddress).body();
+    }
+
+    public static FetchResult fetchResult(URI uri, long maximumBytes,
+            Duration connectTimeout, Duration readTimeout, String proxyAddress)
+            throws IOException {
         if (uri == null || maximumBytes < 1) {
             throw new IllegalArgumentException("URI and a positive byte limit are required");
         }
@@ -38,6 +57,7 @@ public final class BoundedHttpFetcher {
         HttpURLConnection http = (HttpURLConnection) connection;
         http.setInstanceFollowRedirects(true);
         http.setRequestMethod("GET");
+        http.setRequestProperty("User-Agent", "Open Download Manager");
         try {
             int status = http.getResponseCode();
             if (status < 200 || status >= 300) {
@@ -58,7 +78,14 @@ public final class BoundedHttpFetcher {
                     }
                     output.write(buffer, 0, count);
                 }
-                return output.toByteArray();
+                URI finalUri;
+                try {
+                    finalUri = http.getURL().toURI();
+                } catch (java.net.URISyntaxException invalidRedirect) {
+                    throw new IOException("HTTP redirect produced an invalid URI", invalidRedirect);
+                }
+                return new FetchResult(output.toByteArray(), finalUri,
+                        http.getContentType());
             }
         } finally {
             http.disconnect();

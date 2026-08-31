@@ -14,6 +14,7 @@ import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.ProgressBar;
+import org.gnome.gtk.SelectionMode;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreeModel;
@@ -89,6 +90,7 @@ public class MainWindow {
     /** Optional app-provided exit sequence (graceful shutdown UI). */
     private Runnable finalCloseDelegate;
     private Download selectedDownload;
+    private List<Download> selectedDownloads = List.of();
     /** Guard so menu actions register on the window only once. */
     private boolean menuActionsRegistered;
     private volatile boolean trayAvailable;
@@ -178,6 +180,7 @@ public class MainWindow {
 
         statusTreeview.getSelection().onChanged(this::onStatusSelectionChanged);
         categoryTreeview.getSelection().onChanged(this::onCategorySelectionChanged);
+        downloadsTreeview.getSelection().setMode(SelectionMode.MULTIPLE);
         downloadsTreeview.getSelection().onChanged(this::onDownloadSelectionChanged);
         downloadsTreeview.onRowActivated((path, column) -> onPropertiesClicked());
 
@@ -428,7 +431,13 @@ public class MainWindow {
     }
 
     private void onSettingsClicked() {
-        new SettingsDialog(window, downloadManager, scheduleManager, this::applyTorPreference).present();
+        new SettingsDialog(window, downloadManager, scheduleManager, active -> {
+            applyTorPreference(active);
+            // Rebuild settings-backed actions (subtitles, antivirus, custom)
+            // so changes apply without requiring a restart or re-selection.
+            setCompletionAction(CompletionActionPolicy.forChoice(
+                    completionActionKey(), downloadManager.getGlobalSettings()));
+        }).present();
     }
 
     /** Applies a Tor preference changed in Settings while preserving any explicit proxy selected there. */
@@ -504,8 +513,8 @@ public class MainWindow {
 
     private void onPropertiesClicked() {
         onDownloadSelectionChanged();
-        if (selectedDownload != null) {
-            new PropertyDialog(window, downloadManager, selectedDownload).present();
+        if (!selectedDownloads.isEmpty()) {
+            new PropertyDialog(window, downloadManager, selectedDownloads).present();
         }
     }
 
@@ -653,6 +662,7 @@ public class MainWindow {
         batch.append("Import URL Sequence", "win.import-sequence");
         batch.append("Import from Text File", "win.import-file");
         batch.append("Import from HTML File", "win.import-html");
+        batch.append("Import Links from Remote", "win.import-remote-html");
         batch.append("Export Download List", "win.export-file");
         file.appendSubmenu("Batch Process", batch);
         file.append("Offline Mode", "win.offline");
@@ -667,6 +677,7 @@ public class MainWindow {
         completion.append("None", "win.completion::none");
         completion.append("Notify (sound)", "win.completion::notify");
         completion.append("Antivirus Scan", "win.completion::antivirus");
+        completion.append("Download Subtitles", "win.completion::subtitles");
         completion.append("Suspend", "win.completion::suspend");
         completion.append("Shutdown", "win.completion::shutdown");
         completion.append("Custom…", "win.completion::custom");
@@ -737,6 +748,7 @@ public class MainWindow {
         addAction("import-file", () -> new ImportListDialog(window, downloadManager,
                 () -> UiThread.marshal(this::refresh)).present());
         addAction("import-html", this::onImportHtml);
+        addAction("import-remote-html", this::onImportRemoteHtml);
         addAction("export-file", this::onExportList);
         addStatefulAction("offline",
                 downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false),
@@ -989,6 +1001,94 @@ public class MainWindow {
                 LOGGER.log(java.util.logging.Level.FINE, "HTML import cancelled or failed", e);
             }
         });
+    }
+
+    /** Fetches a remote HTML page and imports the links found in it. */
+    private void onImportRemoteHtml() {
+        org.gnome.gtk.Window prompt = new org.gnome.gtk.Window();
+        prompt.setTitle("Import Links from Remote");
+        prompt.setModal(true);
+        prompt.setTransientFor(window);
+        prompt.setDefaultSize(560, -1);
+
+        org.gnome.gtk.Box box = new org.gnome.gtk.Box(
+                org.gnome.gtk.Orientation.VERTICAL, 10);
+        box.setMarginTop(16);
+        box.setMarginBottom(16);
+        box.setMarginStart(16);
+        box.setMarginEnd(16);
+
+        org.gnome.gtk.Label help = new org.gnome.gtk.Label(
+                "Enter an HTTP(S) page. Up to 1,000 links are imported; "
+                + "relative links use the page's final address after redirects.");
+        help.setWrap(true);
+        org.gnome.gtk.Entry sourceEntry = new org.gnome.gtk.Entry();
+        sourceEntry.setPlaceholderText("https://example.com/downloads.html");
+        AccessibilitySupport.label(sourceEntry, "Remote HTML page URL");
+        org.gnome.gtk.Label status = new org.gnome.gtk.Label("");
+
+        org.gnome.gtk.Button cancel = org.gnome.gtk.Button.withLabel("Cancel");
+        org.gnome.gtk.Button importButton = org.gnome.gtk.Button.withLabel("Import Links");
+        importButton.addCssClass("suggested-action");
+        Runnable startImport = () -> {
+            org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
+            if (settings.getBooleanProperty("ui.offline", false)) {
+                AccessibilitySupport.status(status,
+                        "Remote import is unavailable while Offline Mode is enabled",
+                        org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                return;
+            }
+            final java.net.URI source;
+            try {
+                source = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
+                        sourceEntry.getText().strip());
+                if (!("http".equalsIgnoreCase(source.getScheme())
+                        || "https".equalsIgnoreCase(source.getScheme()))) {
+                    throw new IllegalArgumentException("Only HTTP(S) pages are supported");
+                }
+            } catch (Exception invalid) {
+                AccessibilitySupport.status(status, "Enter a valid HTTP(S) page URL",
+                        org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                return;
+            }
+            String proxy = settings.isGlobalProxyEnabled()
+                    ? settings.getGlobalProxyAddress() : null;
+            importButton.setSensitive(false);
+            sourceEntry.setSensitive(false);
+            AccessibilitySupport.status(status, "Fetching page and importing links…");
+            CompletableFuture.supplyAsync(() -> HtmlImportExport.importRemoteHtml(
+                    source, downloadManager, proxy), backgroundExecutor)
+                    .whenComplete((count, error) -> UiThread.marshal(() -> {
+                        if (error != null || count == null || count < 0) {
+                            importButton.setSensitive(true);
+                            sourceEntry.setSensitive(true);
+                            AccessibilitySupport.status(status,
+                                    "Could not import this remote HTML page",
+                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                            return;
+                        }
+                        AccessibilitySupport.status(infoLabel,
+                                "Imported " + count + " link(s) from remote HTML");
+                        refresh();
+                        prompt.close();
+                    }));
+        };
+        cancel.onClicked(prompt::close);
+        importButton.onClicked(startImport::run);
+        sourceEntry.onActivate(startImport::run);
+
+        box.append(help);
+        box.append(sourceEntry);
+        box.append(status);
+        org.gnome.gtk.Box buttons = new org.gnome.gtk.Box(
+                org.gnome.gtk.Orientation.HORIZONTAL, 8);
+        buttons.setHalign(org.gnome.gtk.Align.END);
+        buttons.append(cancel);
+        buttons.append(importButton);
+        box.append(buttons);
+        prompt.setChild(box);
+        prompt.present();
+        sourceEntry.grabFocus();
     }
 
     /** Exports all download URLs to a text file. */
@@ -1356,10 +1456,22 @@ public class MainWindow {
     }
 
     private void onDownloadSelectionChanged() {
-        selectRow(downloadsTreeview.getSelection(), (path, index) -> {
-            selectedDownload = listPresenter.rowAt(index);
-            updateInfoPanel();
-        });
+        Out<TreeModel> model = new Out<>();
+        org.gnome.glib.List<TreePath> paths =
+                downloadsTreeview.getSelection().getSelectedRows(model);
+        List<Integer> indexes = paths == null ? List.of() : paths.stream()
+                .map(TreePath::getIndices)
+                .filter(indices -> indices != null && indices.length > 0)
+                .map(indices -> indices[0])
+                .toList();
+        selectedDownloads = listPresenter.rowsAt(indexes);
+        selectedDownload = selectedDownloads.isEmpty()
+                ? null : selectedDownloads.getFirst();
+        updateInfoPanel();
+    }
+
+    SelectionMode downloadSelectionMode() {
+        return downloadsTreeview.getSelection().getMode();
     }
 
     private void selectRow(TreeSelection selection, SelectionConsumer consumer) {
@@ -1454,6 +1566,7 @@ public class MainWindow {
             // cleared, so explicitly invalidate the pointer used by actions.
             downloadsTreeview.getSelection().unselectAll();
             selectedDownload = null;
+            selectedDownloads = List.of();
         }
         infoLabel.setLabel(summary.totalCount() + " download(s)");
         downSpeedLabel.setLabel(DownloadFormats.size(summary.downBytesPerSec()) + "/s");

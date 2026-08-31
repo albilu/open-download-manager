@@ -3,13 +3,18 @@ package org.odm.gtk4;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertLinesMatch;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -68,6 +73,64 @@ class HtmlImportExportTest {
     }
 
     @Test
+    void resolvesRelativeLinksAgainstTheRemoteDocumentWhenBaseIsAbsent() {
+        String html = "<a href='../files/archive.zip'>archive</a>";
+
+        assertEquals(List.of(URI.create("https://example.com/files/archive.zip")),
+                HtmlImportExport.extractHttpLinks(
+                        html, URI.create("https://example.com/pages/index.html")));
+    }
+
+    @Test
+    void remoteImportFollowsRedirectAndUsesTheFinalDocumentAsRelativeBase() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/start", exchange -> {
+            exchange.getResponseHeaders().add("Location", "/pages/index.html");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.createContext("/pages/index.html", exchange -> respond(exchange, 200,
+                "text/html; charset=UTF-8",
+                "<a href='../files/archive.zip'>archive</a>"));
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            URI source = URI.create("http://127.0.0.1:" + port + "/start");
+            URI expected = URI.create("http://127.0.0.1:" + port + "/files/archive.zip");
+            DownloadOperations operations = mock(DownloadOperations.class);
+            when(operations.createDownload(any(), isNull()))
+                    .thenAnswer(inv -> new Download(inv.getArgument(0)));
+
+            int queued = HtmlImportExport.importRemoteHtml(source, operations, null);
+
+            assertEquals(1, queued);
+            verify(operations).createDownload(eq(expected), isNull());
+            verify(operations).queueDownload(any(Download.class));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void remoteImportRejectsHttpErrorsAndNonHttpSchemes() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/missing", exchange -> respond(exchange, 404,
+                "text/html", "missing"));
+        server.start();
+        try {
+            DownloadOperations operations = mock(DownloadOperations.class);
+            URI missing = URI.create("http://127.0.0.1:"
+                    + server.getAddress().getPort() + "/missing");
+
+            assertEquals(-1, HtmlImportExport.importRemoteHtml(missing, operations, null));
+            assertEquals(-1, HtmlImportExport.importRemoteHtml(
+                    URI.create("file:///tmp/page.html"), operations, null));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void importHtmlFileQueuesEveryExtractedLink() throws Exception {
         Path file = tempDir.resolve("links.html");
         Files.writeString(file, """
@@ -112,5 +175,15 @@ class HtmlImportExportTest {
         HtmlImportExport.writeText(file, "line1\nline2\n");
 
         assertEquals("line1\nline2\n", Files.readString(file));
+    }
+
+    private static void respond(HttpExchange exchange, int status,
+            String contentType, String body) throws java.io.IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", contentType);
+        exchange.sendResponseHeaders(status, bytes.length);
+        try (var output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
     }
 }

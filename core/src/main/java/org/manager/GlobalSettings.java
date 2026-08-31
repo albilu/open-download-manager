@@ -499,6 +499,26 @@ public class GlobalSettings {
     }
 
     /**
+     * Gets the path to the Subliminal executable.
+     *
+     * @return The path to Subliminal
+     */
+    public String getSubliminalPath() {
+        return toolPaths.subliminalPath;
+    }
+
+    /**
+     * Sets the path to the Subliminal executable.
+     *
+     * @param subliminalPath The path to Subliminal
+     * @return This settings object for chaining
+     */
+    public GlobalSettings setSubliminalPath(String subliminalPath) {
+        toolPaths.setSubliminalPath(subliminalPath);
+        return this;
+    }
+
+    /**
      * Gets the path to httrack executable.
      *
      * @return The path to httrack executable
@@ -806,6 +826,8 @@ public class GlobalSettings {
                 toolPaths.aria2Path;
             case "ytDlpPath" ->
                 toolPaths.ytDlpPath;
+            case "subliminalPath" ->
+                toolPaths.subliminalPath;
             case "httrackPath" ->
                 toolPaths.httrackPath;
             case "curlPath" ->
@@ -839,6 +861,8 @@ public class GlobalSettings {
                 setAria2Path(value);
             case "ytDlpPath" ->
                 setYtDlpPath(value);
+            case "subliminalPath" ->
+                setSubliminalPath(value);
             case "httrackPath" ->
                 setHttrackPath(value);
             case "curlPath" ->
@@ -1245,6 +1269,7 @@ public class GlobalSettings {
     static final class ToolPathSettings {
         private static final String DEFAULT_ARIA2 = "aria2c";
         private static final String DEFAULT_YTDLP = "yt-dlp";
+        private static final String DEFAULT_SUBLIMINAL = "subliminal";
         private static final String DEFAULT_HTTRACK = "httrack";
         private static final String DEFAULT_CURL = "curl";
         private static final String DEFAULT_PROXYCHAINS = "proxychains";
@@ -1252,6 +1277,7 @@ public class GlobalSettings {
 
         private volatile String aria2Path = DEFAULT_ARIA2;
         private volatile String ytDlpPath = DEFAULT_YTDLP;
+        private volatile String subliminalPath = DEFAULT_SUBLIMINAL;
         private volatile String httrackPath = DEFAULT_HTTRACK;
         private volatile String curlPath = DEFAULT_CURL;
         private volatile String proxychainsPath = DEFAULT_PROXYCHAINS;
@@ -1263,6 +1289,10 @@ public class GlobalSettings {
 
         void setYtDlpPath(String value) {
             this.ytDlpPath = value;
+        }
+
+        void setSubliminalPath(String value) {
+            this.subliminalPath = value;
         }
 
         void setHttrackPath(String value) {
@@ -1285,6 +1315,7 @@ public class GlobalSettings {
             Map<String, String> paths = new HashMap<>();
             paths.put("aria2", aria2Path);
             paths.put("yt-dlp", ytDlpPath);
+            paths.put("subliminal", subliminalPath);
             paths.put("httrack", httrackPath);
             paths.put("curl", curlPath);
             paths.put("proxychains", proxychainsPath);
@@ -1295,6 +1326,7 @@ public class GlobalSettings {
         void syncTo(CustomProperties bag) {
             syncPath(bag, "aria2Path", aria2Path, DEFAULT_ARIA2);
             syncPath(bag, "ytDlpPath", ytDlpPath, DEFAULT_YTDLP);
+            syncPath(bag, "subliminalPath", subliminalPath, DEFAULT_SUBLIMINAL);
             syncPath(bag, "httrackPath", httrackPath, DEFAULT_HTTRACK);
             syncPath(bag, "curlPath", curlPath, DEFAULT_CURL);
             syncPath(bag, "proxychainsPath", proxychainsPath, DEFAULT_PROXYCHAINS);
@@ -1316,6 +1348,9 @@ public class GlobalSettings {
             if (bag.containsKey("ytDlpPath")) {
                 ytDlpPath = bag.get("ytDlpPath", null);
             }
+            if (bag.containsKey("subliminalPath")) {
+                subliminalPath = bag.get("subliminalPath", null);
+            }
             if (bag.containsKey("httrackPath")) {
                 httrackPath = bag.get("httrackPath", null);
             }
@@ -1333,6 +1368,7 @@ public class GlobalSettings {
         void copyFrom(ToolPathSettings other) {
             this.aria2Path = other.aria2Path;
             this.ytDlpPath = other.ytDlpPath;
+            this.subliminalPath = other.subliminalPath;
             this.httrackPath = other.httrackPath;
             this.curlPath = other.curlPath;
             this.proxychainsPath = other.proxychainsPath;

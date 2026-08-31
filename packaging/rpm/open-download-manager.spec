@@ -17,11 +17,13 @@ Requires:       httrack >= 3.49.0
 Recommends:     proxychains-ng
 Recommends:     tor
 Recommends:     ffmpeg
+Recommends:     python3-subliminal
 
 %description
 Open Download Manager (ODM) is a comprehensive download manager for Linux
 with multi-connection downloads, BitTorrent support, video downloads via
-yt-dlp, website mirroring via HTTrack, proxy rotation, proxychains and Tor
+yt-dlp, completion-time subtitle downloads via yt-dlp and Subliminal,
+website mirroring via HTTrack, proxy rotation, proxychains and Tor
 support, clipboard monitoring, and a native GTK4 interface. Ships a bundled
 Java 25 runtime.
 

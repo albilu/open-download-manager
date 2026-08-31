@@ -112,6 +112,17 @@ class DownloadListPresenterTest {
     }
 
     @Test
+    void rowsAtReturnsTheDistinctValidSelectionsInTreeOrder() {
+        Download a = download("a.zip", Download.Status.QUEUED);
+        Download b = download("b.zip", Download.Status.QUEUED);
+        Download c = download("c.zip", Download.Status.QUEUED);
+
+        assertEquals(List.of(a, b, c), DownloadListPresenter.rowsAt(
+                List.of(a, b, c), List.of(2, -1, 0, 2, 99, 1)));
+        assertEquals(List.of(), DownloadListPresenter.rowsAt(List.of(a), null));
+    }
+
+    @Test
     void queuedRowsFollowQueuePositionWithoutMovingHistoryRows() {
         Download history = download("finished.zip", Download.Status.COMPLETED);
         Download later = download("later.zip", Download.Status.QUEUED);

@@ -11,6 +11,7 @@ import org.manager.download.action.AntivirusCheckAction;
 import org.manager.download.action.ExecuteCommandAction;
 import org.manager.download.action.PlayNotificationAction;
 import org.manager.download.action.ShutdownComputerAction;
+import org.manager.download.action.SubtitleDownloadAction;
 
 /**
  * Plain unit tests for the completion-action radio-choice policy.
@@ -28,6 +29,7 @@ class CompletionActionPolicyTest {
     @Test
     void knownChoicesMapToTheirActions() {
         GlobalSettings settings = new GlobalSettings();
+        settings.setProperty("ytdlp.subtitleLanguages", "fr,it");
 
         assertInstanceOf(PlayNotificationAction.class,
                 CompletionActionPolicy.forChoice("notify", settings));
@@ -37,6 +39,9 @@ class CompletionActionPolicyTest {
                 CompletionActionPolicy.forChoice("shutdown", settings));
         assertInstanceOf(AntivirusCheckAction.class,
                 CompletionActionPolicy.forChoice("antivirus", settings));
+        SubtitleDownloadAction subtitles = assertInstanceOf(SubtitleDownloadAction.class,
+                CompletionActionPolicy.forChoice("subtitles", settings));
+        assertEquals(java.util.List.of("fr", "it"), subtitles.getLanguages());
     }
 
     @Test

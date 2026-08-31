@@ -1,5 +1,7 @@
 package org.odm.gtk4;
 
+import java.util.EnumSet;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.gnome.gtk.Button;
@@ -13,6 +15,7 @@ import org.gnome.gtk.Switch;
 import org.gnome.gtk.Window;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
+import org.manager.download.ExternalToolSettings;
 
 /**
  * Download Properties dialog — 1:1 GTK4 port of property.glade. Shows and
@@ -27,6 +30,7 @@ public class PropertyDialog {
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final Download download;
+    private final List<Download> downloads;
 
     private final SpinButton maxConnectionsSpin;
     private final SpinButton retryLimitSpin;
@@ -44,8 +48,17 @@ public class PropertyDialog {
     private final Switch torSwitch;
 
     public PropertyDialog(Window parent, DownloadManager downloadManager, Download download) {
+        this(parent, downloadManager, List.of(download));
+    }
+
+    public PropertyDialog(Window parent, DownloadManager downloadManager,
+            List<Download> downloads) {
+        if (downloads == null || downloads.isEmpty()) {
+            throw new IllegalArgumentException("At least one download is required");
+        }
         this.downloadManager = downloadManager;
-        this.download = download;
+        this.downloads = List.copyOf(downloads);
+        this.download = this.downloads.getFirst();
 
         GtkBuilder builder = UiLoader.load("/ui/property.ui");
         this.dialog = Widgets.require(builder, "property_dialog", Window.class);
@@ -78,7 +91,9 @@ public class PropertyDialog {
         AccessibilitySupport.label(torSwitch, "Route this download through Tor");
 
         dialog.setTransientFor(parent);
-        dialog.setTitle("Properties — " + download.getName());
+        dialog.setTitle(this.downloads.size() == 1
+                ? "Properties — " + download.getName()
+                : "Properties — " + this.downloads.size() + " downloads");
 
         StringList proxyTypes = new StringList(new String[0]);
         for (String type : DialogOptions.PROXY_TYPES) {
@@ -143,53 +158,53 @@ public class PropertyDialog {
     }
 
     private void onApply() {
-        org.manager.download.ExternalToolSettings settings = download.getSettings();
-        DialogOptions.applyCommon(settings,
+        PropertySettingsBatch.Values values = new PropertySettingsBatch.Values(
                 (int) maxConnectionsSpin.getValue(),
                 (int) maxDownloadSpeedSpin.getValue(),
                 (int) maxUploadSpeedSpin.getValue(),
                 (int) retryLimitSpin.getValue(),
                 (int) retryAfterSpin.getValue(),
-                referrerEntry.getText(), userAgentEntry.getText(), cookieEntry.getText());
-        DialogOptions.applyProxy(download, torSwitch.getActive(),
-                (int) proxyTypeCombo.getSelected(), proxyHostEntry.getText(),
-                (int) proxyPortSpin.getValue(), proxyUsernameEntry.getText(),
-                proxyPasswordEntry.getText());
-        downloadManager.changeSettings(download)
-                .thenRun(() -> LOGGER.info("Applied settings to download: " + download.getName()))
+                referrerEntry.getText(), userAgentEntry.getText(), cookieEntry.getText(),
+                torSwitch.getActive(), (int) proxyTypeCombo.getSelected(),
+                proxyHostEntry.getText(), (int) proxyPortSpin.getValue(),
+                proxyUsernameEntry.getText(), proxyPasswordEntry.getText());
+        PropertySettingsBatch.apply(downloads, downloadManager, values)
+                .thenRun(() -> LOGGER.info("Applied settings to "
+                        + downloads.size() + " download(s)"))
                 .exceptionally(e -> {
-                    LOGGER.log(Level.WARNING, "Failed to apply settings to " + download.getName(), e);
+                    LOGGER.log(Level.WARNING, "Failed to apply settings to selected downloads", e);
                     return null;
                 });
     }
 
     private void applyCapabilities() {
-        org.manager.download.ExternalToolSettings settings = download.getSettings();
-        configureCapability(maxConnectionsSpin, settings,
-                org.manager.download.ExternalToolSettings.Capability.CONNECTIONS, "connections");
-        configureCapability(maxDownloadSpeedSpin, settings,
-                org.manager.download.ExternalToolSettings.Capability.DOWNLOAD_LIMIT, "download limits");
-        configureCapability(maxUploadSpeedSpin, settings,
-                org.manager.download.ExternalToolSettings.Capability.UPLOAD_LIMIT, "upload limits");
-        configureCapability(retryLimitSpin, settings,
-                org.manager.download.ExternalToolSettings.Capability.MAX_RETRIES, "retry limits");
-        configureCapability(retryAfterSpin, settings,
-                org.manager.download.ExternalToolSettings.Capability.RETRY_DELAY, "retry delays");
-        configureCapability(referrerEntry, settings,
-                org.manager.download.ExternalToolSettings.Capability.REFERER, "HTTP referers");
-        configureCapability(userAgentEntry, settings,
-                org.manager.download.ExternalToolSettings.Capability.USER_AGENT, "user agents");
-        configureCapability(cookieEntry, settings,
-                org.manager.download.ExternalToolSettings.Capability.COOKIE, "cookie headers");
+        EnumSet<ExternalToolSettings.Capability> capabilities =
+                PropertySettingsBatch.commonCapabilities(downloads);
+        configureCapability(maxConnectionsSpin, capabilities,
+                ExternalToolSettings.Capability.CONNECTIONS, "connections");
+        configureCapability(maxDownloadSpeedSpin, capabilities,
+                ExternalToolSettings.Capability.DOWNLOAD_LIMIT, "download limits");
+        configureCapability(maxUploadSpeedSpin, capabilities,
+                ExternalToolSettings.Capability.UPLOAD_LIMIT, "upload limits");
+        configureCapability(retryLimitSpin, capabilities,
+                ExternalToolSettings.Capability.MAX_RETRIES, "retry limits");
+        configureCapability(retryAfterSpin, capabilities,
+                ExternalToolSettings.Capability.RETRY_DELAY, "retry delays");
+        configureCapability(referrerEntry, capabilities,
+                ExternalToolSettings.Capability.REFERER, "HTTP referers");
+        configureCapability(userAgentEntry, capabilities,
+                ExternalToolSettings.Capability.USER_AGENT, "user agents");
+        configureCapability(cookieEntry, capabilities,
+                ExternalToolSettings.Capability.COOKIE, "cookie headers");
     }
 
     private static void configureCapability(org.gnome.gtk.Widget widget,
-            org.manager.download.ExternalToolSettings settings,
-            org.manager.download.ExternalToolSettings.Capability capability,
+            EnumSet<ExternalToolSettings.Capability> capabilities,
+            ExternalToolSettings.Capability capability,
             String description) {
-        boolean supported = settings.supports(capability);
+        boolean supported = capabilities.contains(capability);
         widget.setSensitive(supported);
         widget.setTooltipText(supported ? null
-                : "This download engine does not support " + description);
+                : "Not every selected download engine supports " + description);
     }
 }

@@ -1,5 +1,7 @@
 package org.odm.gtk4;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
 import org.gnome.gtk.ApplicationWindow;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
@@ -96,6 +98,7 @@ class WindowSmokeTest {
         for (String id : new String[]{"default_download_folder_chooser", "monitored_folder_chooser",
                 "browse_aria2_button", "browse_ytdlp_button", "browse_httrack_button",
                 "browse_proxychains_button", "browse_tor_button", "browse_axel_button",
+                "browse_subliminal_button",
                 "settings_cancel_button", "settings_reset_button", "settings_apply_button", "settings_ok_button"}) {
             Widgets.require(builder, id, Button.class);
         }
@@ -118,7 +121,8 @@ class WindowSmokeTest {
                 "referer_entry", "cookie_entry", "user_agent_entry", "proxy_host_entry",
                 "proxy_username_entry", "proxy_password_entry", "video_format_entry",
                 "subtitle_language_entry", "include_entry", "exclude_entry",
-                "proxychains_path_entry", "tor_path_entry", "axel_path_entry"}) {
+                "proxychains_path_entry", "tor_path_entry", "axel_path_entry",
+                "subliminal_path_entry"}) {
             Widgets.require(builder, id, Entry.class);
         }
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
@@ -287,6 +291,7 @@ class WindowSmokeTest {
                 new org.manager.schedule.ScheduleManager(stub));
         // Constructing is the test: every Widgets.require in the constructor
         // must resolve. (Null app: the window is a standalone toplevel here.)
+        assertEquals(org.gnome.gtk.SelectionMode.MULTIPLE, window.downloadSelectionMode());
     }
 
     private static Object defaultValue(Class<?> type) {

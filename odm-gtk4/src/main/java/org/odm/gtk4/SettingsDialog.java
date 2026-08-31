@@ -74,6 +74,8 @@ public class SettingsDialog {
         AccessibilitySupport.label(spin("proxy_port_spin"), "Global proxy port");
         AccessibilitySupport.label(entry("proxy_username_entry"), "Global proxy username");
         AccessibilitySupport.label(entry("proxy_password_entry"), "Global proxy password");
+        AccessibilitySupport.label(entry("subtitle_language_entry"),
+                "Preferred subtitle languages, comma separated");
 
         dialog.setTransientFor(parent);
 
@@ -91,6 +93,8 @@ public class SettingsDialog {
         onPickFile("browse_proxychains_button", "Select proxychains binary", e -> setText("proxychains_path_entry", e));
         onPickFile("browse_tor_button", "Select tor binary", e -> setText("tor_path_entry", e));
         onPickFile("browse_axel_button", "Select axel binary", e -> setText("axel_path_entry", e));
+        onPickFile("browse_subliminal_button", "Select Subliminal binary",
+                e -> setText("subliminal_path_entry", e));
 
         mirrorCheckButtons("start_automatically_check", "start_automatically_check2");
         mirrorCheckButtons("move_torrent_check", "move_torrent_check2");
@@ -352,7 +356,8 @@ public class SettingsDialog {
         // Yt-dlp
         entry("ytdlp_path_entry").setText(s.getYtDlpPath() != null ? s.getYtDlpPath() : "");
         entry("video_format_entry").setText(s.getProperty("ytdlp.videoFormat", ""));
-        entry("subtitle_language_entry").setText(s.getProperty("ytdlp.subtitleLanguages", ""));
+        entry("subtitle_language_entry").setText(
+                s.getProperty("ytdlp.subtitleLanguages", "en"));
         check("write_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.writeThumbnail", false));
         check("write_subtitles_check").setActive(s.getBooleanProperty("ytdlp.writeSubtitles", false));
         check("embed_metadata_check").setActive(s.getBooleanProperty("ytdlp.embedMetadata", true));
@@ -373,13 +378,23 @@ public class SettingsDialog {
         entry("proxychains_path_entry").setText(s.getProxychainsPath() != null ? s.getProxychainsPath() : "");
         entry("tor_path_entry").setText(s.getTorPath() != null ? s.getTorPath() : "");
         entry("axel_path_entry").setText(s.getProperty("tools.axelPath", ""));
+        entry("subliminal_path_entry").setText(
+                s.getSubliminalPath() != null ? s.getSubliminalPath() : "");
     }
 
     private void onApply(boolean closeAfterSave) {
         if (!saveInProgress.compareAndSet(false, true)) {
             return;
         }
-        SettingsApplication application = collectSettings();
+        final SettingsApplication application;
+        try {
+            application = collectSettings();
+        } catch (IllegalArgumentException invalidSetting) {
+            saveInProgress.set(false);
+            AccessibilitySupport.status(statusLabel, invalidSetting.getMessage(),
+                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+            return;
+        }
         setSaveButtonsSensitive(false);
         AccessibilitySupport.status(statusLabel, "Saving settings…");
         java.util.concurrent.CompletableFuture
@@ -412,6 +427,9 @@ public class SettingsDialog {
     }
 
     private SettingsApplication collectSettings() {
+        String subtitleLanguages = String.join(",",
+                org.manager.download.action.SubtitleDownloadAction.parseLanguages(
+                        entry("subtitle_language_entry").getText()));
         GlobalSettings s = downloadManager.getGlobalSettings().copy();
         boolean previousStartAtLogin = s.getBooleanProperty("ui.startAtLogin", false);
         // tor proxy default
@@ -489,7 +507,7 @@ public class SettingsDialog {
         // Yt-dlp
         s.setYtDlpPath(entry("ytdlp_path_entry").getText().trim());
         s.setProperty("ytdlp.videoFormat", entry("video_format_entry").getText().trim());
-        s.setProperty("ytdlp.subtitleLanguages", entry("subtitle_language_entry").getText().trim());
+        s.setProperty("ytdlp.subtitleLanguages", subtitleLanguages);
         s.setProperty("ytdlp.writeThumbnail", String.valueOf(check("write_thumbnail_check").getActive()));
         s.setProperty("ytdlp.writeSubtitles", String.valueOf(check("write_subtitles_check").getActive()));
         s.setProperty("ytdlp.embedMetadata", String.valueOf(check("embed_metadata_check").getActive()));
@@ -523,6 +541,7 @@ public class SettingsDialog {
         s.setProxychainsPath(entry("proxychains_path_entry").getText().trim());
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());
+        s.setSubliminalPath(entry("subliminal_path_entry").getText().trim());
 
         return new SettingsApplication(s, previousStartAtLogin,
                 check("startup_check").getActive(), effectiveSchedulingEnabled,

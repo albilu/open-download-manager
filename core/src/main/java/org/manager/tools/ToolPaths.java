@@ -40,6 +40,11 @@ public final class ToolPaths {
         return resolve("yt-dlp", "yt-dlp");
     }
 
+    /** Subliminal executable path. */
+    public static String subliminal() {
+        return resolve("subliminal", "subliminal");
+    }
+
     /** httrack executable path. */
     public static String httrack() {
         return resolve("httrack", "httrack");

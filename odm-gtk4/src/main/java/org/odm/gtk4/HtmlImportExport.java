@@ -2,8 +2,11 @@ package org.odm.gtk4;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -12,6 +15,7 @@ import java.util.logging.Logger;
 
 import org.manager.download.Download;
 import org.manager.download.DownloadOperations;
+import org.manager.tools.BoundedHttpFetcher;
 
 /**
  * HTML import / export list logic: href extraction from arbitrary
@@ -40,8 +44,12 @@ final class HtmlImportExport {
      * against a valid http(s) base element. Invalid values are skipped.
      */
     static List<URI> extractHttpLinks(String html) {
+        return extractHttpLinks(html, null);
+    }
+
+    static List<URI> extractHttpLinks(String html, URI documentUri) {
         LinkedHashSet<URI> urls = new LinkedHashSet<>();
-        URI base = extractBaseUri(html);
+        URI base = extractBaseUri(html, documentUri);
         java.util.regex.Matcher m = HREF_PATTERN.matcher(html);
         while (m.find() && urls.size() < MAX_IMPORT_LINKS) {
             try {
@@ -70,19 +78,27 @@ final class HtmlImportExport {
         return new ArrayList<>(urls);
     }
 
-    private static URI extractBaseUri(String html) {
+    private static URI extractBaseUri(String html, URI documentUri) {
         java.util.regex.Matcher matcher = BASE_PATTERN.matcher(html);
         if (!matcher.find()) {
-            return null;
+            return isHttp(documentUri) ? documentUri : null;
         }
         try {
-            URI base = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
-                    decodeHtmlEntities(firstGroup(matcher)));
-            return "http".equalsIgnoreCase(base.getScheme())
-                    || "https".equalsIgnoreCase(base.getScheme()) ? base : null;
+            URI base = new URI(decodeHtmlEntities(firstGroup(matcher)));
+            if (!base.isAbsolute() && isHttp(documentUri)) {
+                base = documentUri.resolve(base);
+            }
+            return isHttp(base)
+                    ? org.manager.clipboard.UrlDetector.requireValidDownloadUri(base)
+                    : isHttp(documentUri) ? documentUri : null;
         } catch (Exception ignored) {
-            return null;
+            return isHttp(documentUri) ? documentUri : null;
         }
+    }
+
+    private static boolean isHttp(URI uri) {
+        return uri != null && ("http".equalsIgnoreCase(uri.getScheme())
+                || "https".equalsIgnoreCase(uri.getScheme()));
     }
 
     private static String firstGroup(java.util.regex.Matcher matcher) {
@@ -133,21 +149,77 @@ final class HtmlImportExport {
             if (bytes.length > MAX_HTML_BYTES) {
                 return -1;
             }
-            List<URI> urls = extractHttpLinks(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
-            int queued = 0;
-            for (URI uri : urls) {
-                try {
-                    operations.queueDownload(operations.createDownload(uri, null));
-                    queued++;
-                } catch (Exception ignored) {
-                    // skip
-                }
-            }
-            return queued;
+            List<URI> urls = extractHttpLinks(new String(bytes, StandardCharsets.UTF_8));
+            return queueLinks(urls, operations);
         } catch (Exception e) {
             LOGGER.log(Level.FINE, "HTML import failed", e);
             return -1;
         }
+    }
+
+    /**
+     * Fetches a remote HTML document and queues its links. Redirects are
+     * followed by the bounded HTTP client; the final document URI is the
+     * relative-link base when no valid base element is present.
+     */
+    static int importRemoteHtml(URI source, DownloadOperations operations,
+            String proxyAddress) {
+        if (!isHttp(source)) {
+            return -1;
+        }
+        try {
+            BoundedHttpFetcher.FetchResult response = BoundedHttpFetcher.fetchResult(
+                    source, MAX_HTML_BYTES, Duration.ofSeconds(10),
+                    Duration.ofSeconds(30), proxyAddress);
+            if (!isHtmlContentType(response.contentType())) {
+                return -1;
+            }
+            Charset charset = responseCharset(response.contentType());
+            String html = new String(response.body(), charset);
+            return queueLinks(extractHttpLinks(html, response.finalUri()), operations);
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Remote HTML import failed", e);
+            return -1;
+        }
+    }
+
+    private static int queueLinks(List<URI> urls, DownloadOperations operations) {
+        int queued = 0;
+        for (URI uri : urls) {
+            try {
+                operations.queueDownload(operations.createDownload(uri, null));
+                queued++;
+            } catch (Exception ignored) {
+                // A single rejected link must not abort the remainder.
+            }
+        }
+        return queued;
+    }
+
+    private static boolean isHtmlContentType(String contentType) {
+        if (contentType == null || contentType.isBlank()) {
+            return true;
+        }
+        String mediaType = contentType.split(";", 2)[0].strip().toLowerCase();
+        return mediaType.equals("text/html")
+                || mediaType.equals("application/xhtml+xml");
+    }
+
+    private static Charset responseCharset(String contentType) {
+        if (contentType != null) {
+            for (String parameter : contentType.split(";")) {
+                String value = parameter.strip();
+                if (value.regionMatches(true, 0, "charset=", 0, 8)) {
+                    try {
+                        return Charset.forName(value.substring(8).strip()
+                                .replace("\"", ""));
+                    } catch (Exception ignored) {
+                        return StandardCharsets.UTF_8;
+                    }
+                }
+            }
+        }
+        return StandardCharsets.UTF_8;
     }
 
     /** One download URL per line for the export list. */

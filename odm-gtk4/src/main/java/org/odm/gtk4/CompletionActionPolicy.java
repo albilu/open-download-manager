@@ -1,5 +1,6 @@
 package org.odm.gtk4;
 
+import java.time.Duration;
 import java.util.logging.Logger;
 
 import org.manager.GlobalSettings;
@@ -9,6 +10,7 @@ import org.manager.download.action.AntivirusCheckAction;
 import org.manager.download.action.ExecuteCommandAction;
 import org.manager.download.action.PlayNotificationAction;
 import org.manager.download.action.ShutdownComputerAction;
+import org.manager.download.action.SubtitleDownloadAction;
 
 /**
  * Maps the completion-action radio choice to the concrete
@@ -34,6 +36,7 @@ final class CompletionActionPolicy {
             case "notify" -> new PlayNotificationAction(
                     PlayNotificationAction.NotificationSound.SUCCESS);
             case "antivirus" -> buildAntivirusAction(settings);
+            case "subtitles" -> buildSubtitleAction(settings);
             case "suspend" -> new SuspendAction();
             case "shutdown" -> new ShutdownComputerAction(30);
             case "custom" -> customAction(settings);
@@ -67,6 +70,23 @@ final class CompletionActionPolicy {
                     settings.getProperty("antivirus.command", "clamscan --no-summary {file}"), timeout);
         }
         return new AntivirusCheckAction(type, timeout);
+    }
+
+    /** Subtitle action using the shared yt-dlp language preference. */
+    static SubtitleDownloadAction buildSubtitleAction(GlobalSettings settings) {
+        java.util.List<String> languages;
+        try {
+            languages = SubtitleDownloadAction.parseLanguages(
+                    settings.getProperty("ytdlp.subtitleLanguages", "en"));
+        } catch (IllegalArgumentException invalidLanguages) {
+            LOGGER.warning(invalidLanguages.getMessage() + "; using English");
+            languages = java.util.List.of("en");
+        }
+        int timeoutSeconds = Math.max(1,
+                settings.getIntProperty("subtitles.timeoutSeconds", 300));
+        return new SubtitleDownloadAction(languages,
+                settings.getSubliminalPath(), settings.getYtDlpPath(),
+                Duration.ofSeconds(timeoutSeconds));
     }
 
     /** Suspends the machine on download completion (systemctl suspend). */

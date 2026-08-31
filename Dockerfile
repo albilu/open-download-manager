@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     proxychains4 \
     tor \
     yt-dlp \
+    subliminal \
     # X11 for GUI testing
     xvfb \
     x11-utils \

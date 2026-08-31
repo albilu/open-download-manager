@@ -12,8 +12,8 @@ import org.curl.CurlToolManager;
 import org.httrack.HttrackToolManager;
 import org.manager.GlobalSettings;
 import org.manager.util.ExecutorServiceManager;
-
 import org.proxychains.ProxychainsToolManager;
+import org.subliminal.SubliminalToolManager;
 import org.tor.TorToolManager;
 import org.ytdlp.YtDlpToolManager;
 
@@ -71,6 +71,11 @@ public class ToolManagerFactory {
      */
     public YtDlpToolManager getYtDlpManager() {
         return (YtDlpToolManager) managers.get(YtDlpToolManager.TOOL_ID);
+    }
+
+    /** Gets the Subliminal subtitle tool manager. */
+    public SubliminalToolManager getSubliminalManager() {
+        return (SubliminalToolManager) managers.get(SubliminalToolManager.TOOL_ID);
     }
 
     /**
@@ -291,6 +296,7 @@ public class ToolManagerFactory {
         // Create tool managers
         managers.put(Aria2ToolManager.TOOL_ID, new Aria2ToolManager(settings, executor));
         managers.put(YtDlpToolManager.TOOL_ID, new YtDlpToolManager(settings, executor));
+        managers.put(SubliminalToolManager.TOOL_ID, new SubliminalToolManager(settings, executor));
         managers.put(CurlToolManager.TOOL_ID, new CurlToolManager(settings, executor));
         managers.put(HttrackToolManager.TOOL_ID, new HttrackToolManager(settings, executor));
         managers.put(ProxychainsToolManager.TOOL_ID, new ProxychainsToolManager(settings, executor));
