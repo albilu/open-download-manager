@@ -128,7 +128,12 @@ public class CurlUtils {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    if (line.contains(feature)) {
+                    // curl prints features in mixed case (e.g. "HTTP2",
+                    // "HTTPS-proxy") while callers pass lowercase names as
+                    // documented; match case-insensitively so the documented
+                    // example ("http2") cannot silently report unsupported
+                    if (line.toLowerCase(java.util.Locale.ROOT)
+                            .contains(feature.toLowerCase(java.util.Locale.ROOT))) {
                         return true;
                     }
                 }

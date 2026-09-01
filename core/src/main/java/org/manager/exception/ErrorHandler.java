@@ -38,7 +38,9 @@ public class ErrorHandler {
             this.maxAttempts = Math.max(1, maxAttempts);
             this.initialDelayMs = Math.max(0, initialDelayMs);
             this.backoffMultiplier = Math.max(1.0, backoffMultiplier);
-            this.maxDelayMs = Math.max(initialDelayMs, maxDelayMs);
+            // clamp against the already-clamped initial delay, not the raw
+            // parameter, or a negative initialDelayMs leaks into maxDelayMs
+            this.maxDelayMs = Math.max(this.initialDelayMs, maxDelayMs);
         }
 
         public static RetryConfig defaultConfig() {
