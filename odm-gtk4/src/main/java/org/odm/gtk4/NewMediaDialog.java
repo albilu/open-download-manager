@@ -4,8 +4,8 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
@@ -29,7 +29,7 @@ import org.ytdlp.YtDlpSettings;
  */
 public class NewMediaDialog {
 
-    private static final Logger LOGGER = Logger.getLogger(NewMediaDialog.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(NewMediaDialog.class);
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -219,11 +219,11 @@ public class NewMediaDialog {
                                     "Could not add to queue: " + rootMessage(error)
                                             + ". Press Download to retry.",
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                            LOGGER.log(Level.WARNING, "Queue rejected media download", error);
+                            LOGGER.warn("Queue rejected media download", error);
                         }
                     }));
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Media download rejected: " + e.getMessage(), e);
+            LOGGER.warn("Media download rejected: " + e.getMessage(), e);
             startButton.setSensitive(true);
             AccessibilitySupport.status(statusLabel, "Cannot start: " + e.getMessage(),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);

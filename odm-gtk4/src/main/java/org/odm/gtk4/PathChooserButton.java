@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gio.File;
 import org.gnome.glib.GLib;
 import org.gnome.gtk.Align;
@@ -40,7 +40,7 @@ import org.javagi.base.Out;
  */
 final class PathChooserButton {
 
-    private static final Logger LOGGER = Logger.getLogger(PathChooserButton.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(PathChooserButton.class);
 
     private enum SelectionKind {
         FILE("document-open-symbolic", "Select file…"),
@@ -238,7 +238,7 @@ final class PathChooserButton {
         try {
             places = new ArrayList<>(folderPlacesSupplier.get());
         } catch (RuntimeException e) {
-            LOGGER.log(Level.FINE, "Folder-place discovery failed", e);
+            LOGGER.debug("Folder-place discovery failed", e);
             places = new ArrayList<>();
         }
         if (path != null && places.stream().noneMatch(place -> samePath(path, place.path()))) {
@@ -298,7 +298,7 @@ final class PathChooserButton {
                 try {
                     accept(fileDialog.selectFolderFinish(result));
                 } catch (Exception e) {
-                    LOGGER.log(Level.FINE, title + " selection cancelled or failed", e);
+                    LOGGER.debug(title + " selection cancelled or failed", e);
                 }
             });
         } else {
@@ -306,7 +306,7 @@ final class PathChooserButton {
                 try {
                     accept(fileDialog.openFinish(result));
                 } catch (Exception e) {
-                    LOGGER.log(Level.FINE, title + " selection cancelled or failed", e);
+                    LOGGER.debug(title + " selection cancelled or failed", e);
                 }
             });
         }

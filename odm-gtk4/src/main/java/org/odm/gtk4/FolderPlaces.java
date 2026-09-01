@@ -8,8 +8,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gio.Mount;
 import org.gnome.gio.VolumeMonitor;
 import org.gnome.glib.GLib;
@@ -18,7 +18,7 @@ import org.gnome.glib.UserDirectory;
 /** Discovers the local places shown by a GTK3-style folder chooser. */
 final class FolderPlaces {
 
-    private static final Logger LOGGER = Logger.getLogger(FolderPlaces.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(FolderPlaces.class);
 
     record Place(String label, String iconName, Path path) {
 
@@ -85,7 +85,7 @@ final class FolderPlaces {
                 return Path.of(home.toString());
             }
         } catch (RuntimeException e) {
-            LOGGER.log(Level.FINE, "GLib home-directory lookup failed", e);
+            LOGGER.debug("GLib home-directory lookup failed", e);
         }
         String userHome = System.getProperty("user.home", "");
         return userHome.isBlank() ? null : Path.of(userHome);
@@ -99,7 +99,7 @@ final class FolderPlaces {
                 places.add(new Place(label, iconName, Path.of(specialDirectory.toString())));
             }
         } catch (RuntimeException e) {
-            LOGGER.log(Level.FINE, "Could not resolve the " + label + " directory", e);
+            LOGGER.debug("Could not resolve the " + label + " directory", e);
         }
     }
 
@@ -117,7 +117,7 @@ final class FolderPlaces {
         } catch (Throwable e) {
             // Volume monitoring can be unavailable in restricted containers or
             // sessions without a desktop bus; standard local places still work.
-            LOGGER.log(Level.FINE, "Mounted-volume discovery unavailable", e);
+            LOGGER.debug("Mounted-volume discovery unavailable", e);
         }
     }
 }

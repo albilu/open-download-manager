@@ -4,8 +4,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.DownloadManager;
 import org.manager.schedule.ScheduleManager;
 import org.tor.TorService;
@@ -40,7 +40,7 @@ import org.tor.TorService;
  */
 final class StartupGate {
 
-    private static final Logger LOGGER = Logger.getLogger(StartupGate.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(StartupGate.class);
 
     /** Core references handed from the init thread to the UI thread. */
     record CoreRefs(
@@ -125,7 +125,7 @@ final class StartupGate {
         CompletableFuture<MainWindow> current = startup.get();
         if (current == null) {
             if (shutdownRequested.get()) {
-                LOGGER.warning("activate after shutdown requested; ignoring");
+                LOGGER.warn("activate after shutdown requested; ignoring");
                 return;
             }
             CompletableFuture<MainWindow> mine = new CompletableFuture<>();
@@ -182,7 +182,7 @@ final class StartupGate {
             }
             UiThread.marshal(() -> {
                 if (shutdownRequested.get()) {
-                    LOGGER.warning("Startup completed after shutdown began; discarding the window");
+                    LOGGER.warn("Startup completed after shutdown began; discarding the window");
                     runCleanup(refs, new IllegalStateException("Shutdown began during startup"));
                     result.cancel(false); // waiting observers stand down
                     return;
@@ -203,13 +203,13 @@ final class StartupGate {
      */
     private void failStartup(CompletableFuture<MainWindow> result, StartShutdownDialog progress,
             CoreRefs refs, Throwable error) {
-        LOGGER.log(Level.SEVERE, "Startup failed", error);
+        LOGGER.error("Startup failed", error);
         runCleanup(refs, error);
         UiThread.marshal(() -> {
             try {
                 notice.notifyUser(progress, error);
             } catch (Throwable t) {
-                LOGGER.log(Level.WARNING, "Startup failure notice failed", t);
+                LOGGER.warn("Startup failure notice failed", t);
             }
         });
         startup.compareAndSet(result, null); // a later activation may retry
@@ -223,7 +223,7 @@ final class StartupGate {
             try {
                 cleanup.cleanup(refs, error);
             } catch (Throwable t) {
-                LOGGER.log(Level.WARNING, "Startup failure cleanup failed", t);
+                LOGGER.warn("Startup failure cleanup failed", t);
             }
         });
     }

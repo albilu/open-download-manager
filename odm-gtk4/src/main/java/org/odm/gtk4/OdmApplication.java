@@ -2,7 +2,8 @@ package org.odm.gtk4;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gio.ApplicationFlags;
 import org.gnome.gtk.Application;
 import org.manager.ApplicationContext;
@@ -25,7 +26,7 @@ import org.manager.download.DownloadManagerFactory;
  */
 public final class OdmApplication {
 
-    private static final Logger LOGGER = Logger.getLogger(OdmApplication.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(OdmApplication.class);
 
     private OdmApplication() {
     }
@@ -70,7 +71,7 @@ public final class OdmApplication {
                             org.manager.util.ExecutorServiceManager.getInstance().getIoExecutor())
                             .whenComplete((tray, error) -> {
                                 if (error != null || tray == null) {
-                                    LOGGER.warning("StatusNotifier tray initialization failed: "
+                                    LOGGER.warn("StatusNotifier tray initialization failed: "
                                             + (error != null ? error.getMessage() : "no tray"));
                                     return;
                                 }
@@ -103,7 +104,7 @@ public final class OdmApplication {
                         try {
                             org.gnome.glib.Source.remove(pendingQuit);
                         } catch (Throwable t) {
-                            LOGGER.warning("Failed to cancel the pending quit timer: " + t.getMessage());
+                            LOGGER.warn("Failed to cancel the pending quit timer: " + t.getMessage());
                         }
                         quitTimer[0] = 0;
                     }
@@ -130,7 +131,7 @@ public final class OdmApplication {
             try {
                 startup.activate(); // "activate" is delivered on the GTK thread
             } catch (Throwable t) {
-                LOGGER.log(java.util.logging.Level.SEVERE, "onActivate failed", t);
+                LOGGER.error("onActivate failed", t);
             }
         });
 
@@ -233,12 +234,12 @@ public final class OdmApplication {
         try {
             DownloadManagerFactory.shutdown();
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "DownloadManager cleanup failed", e);
+            LOGGER.warn("DownloadManager cleanup failed", e);
         }
         try {
             ApplicationContext.reset();
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "ApplicationContext cleanup failed", e);
+            LOGGER.warn("ApplicationContext cleanup failed", e);
         }
     }
 
@@ -258,14 +259,14 @@ public final class OdmApplication {
             try {
                 refs.scheduleManager().shutdown().get(10, TimeUnit.SECONDS);
             } catch (Exception e) {
-                LOGGER.warning("ScheduleManager shutdown failed: " + e.getMessage());
+                LOGGER.warn("ScheduleManager shutdown failed: " + e.getMessage());
             }
         }
         if (refs.torService() != null) {
             try {
                 refs.torService().shutdown();
             } catch (Exception e) {
-                LOGGER.warning("TorService shutdown failed: " + e.getMessage());
+                LOGGER.warn("TorService shutdown failed: " + e.getMessage());
             }
         }
     }
@@ -279,7 +280,7 @@ public final class OdmApplication {
         try {
             DownloadManagerFactory.shutdown();
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "Graceful core shutdown failed", e);
+            LOGGER.warn("Graceful core shutdown failed", e);
         }
     }
 

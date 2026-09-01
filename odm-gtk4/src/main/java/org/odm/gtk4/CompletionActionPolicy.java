@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
@@ -20,7 +21,7 @@ import org.subliminal.SubliminalSettings;
  */
 final class CompletionActionPolicy {
 
-    private static final Logger LOGGER = Logger.getLogger(CompletionActionPolicy.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(CompletionActionPolicy.class);
 
     private CompletionActionPolicy() {
     }
@@ -79,7 +80,7 @@ final class CompletionActionPolicy {
             subtitleSettings.setLanguages(SubliminalSettings.parseLanguages(
                     settings.getProperty("ytdlp.subtitleLanguages", "en")));
         } catch (IllegalArgumentException invalidLanguages) {
-            LOGGER.warning(invalidLanguages.getMessage() + "; using English");
+            LOGGER.warn(invalidLanguages.getMessage() + "; using English");
             subtitleSettings.setLanguages(java.util.List.of("en"));
         }
         int timeoutSeconds = Math.max(1,
@@ -101,7 +102,7 @@ final class CompletionActionPolicy {
                 new ProcessBuilder("systemctl", "suspend").inheritIO().start();
                 return true;
             } catch (Exception e) {
-                LOGGER.warning("Failed to suspend: " + e.getMessage());
+                LOGGER.warn("Failed to suspend: " + e.getMessage());
                 return false;
             }
         }

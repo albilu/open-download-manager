@@ -3,8 +3,8 @@ package org.odm.gtk4;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.EnumSet;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gio.DBusCallFlags;
 import org.gnome.gio.DBusConnection;
 import org.gnome.gio.DBusConnectionFlags;
@@ -26,7 +26,7 @@ import org.gnome.glib.Variant;
  */
 public class StatusNotifierTray {
 
-    private static final Logger LOGGER = Logger.getLogger(StatusNotifierTray.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(StatusNotifierTray.class);
 
     private static final String OBJECT_PATH = "/org/odm/odm";
     private static final String WATCHER_BUS_NAME = "org.kde.StatusNotifierWatcher";
@@ -103,7 +103,7 @@ public class StatusNotifierTray {
             registerWithWatcher(conn);
             LOGGER.info("StatusNotifierTray registered (id " + registrationId + ")");
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "StatusNotifier tray unavailable", e);
+            LOGGER.warn("StatusNotifier tray unavailable", e);
         }
         this.connection = conn;
         this.callbackArena = arena;
@@ -134,7 +134,7 @@ public class StatusNotifierTray {
                     null, EnumSet.noneOf(DBusCallFlags.class), -1, null);
             registeredWithWatcher = true;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING,
+            LOGGER.warn(
                     "StatusNotifierWatcher not reachable; tray icon will not appear", e);
         }
     }
@@ -152,7 +152,7 @@ public class StatusNotifierTray {
                 LOGGER.info("StatusNotifierTray unregistered"
                         + (registeredWithWatcher ? " (watcher notified at registration)" : ""));
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error unregistering tray object", e);
+                LOGGER.warn("Error unregistering tray object", e);
             }
             registrationId = -1;
         }
@@ -162,7 +162,7 @@ public class StatusNotifierTray {
             try {
                 connection.closeSync(null);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error closing tray DBus connection", e);
+                LOGGER.warn("Error closing tray DBus connection", e);
             }
         }
         if (callbackArena.scope().isAlive()) {

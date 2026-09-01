@@ -2,8 +2,8 @@ package org.odm.gtk4;
 
 import java.net.URI;
 import java.nio.file.Path;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
@@ -29,7 +29,7 @@ import org.manager.download.DownloadManager;
  */
 public class NewDownloadDialog {
 
-    private static final Logger LOGGER = Logger.getLogger(NewDownloadDialog.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(NewDownloadDialog.class);
     private static final int FILE_SELECTED_COLUMN = 0;
     private static final int FILE_NAME_COLUMN = 1;
     private static final int FILE_SIZE_TEXT_COLUMN = 2;
@@ -256,7 +256,7 @@ public class NewDownloadDialog {
                     }
                 }))
                 .exceptionally(e -> {
-                    LOGGER.log(Level.FINE, "Checksum probe failed", e);
+                    LOGGER.debug("Checksum probe failed", e);
                     return null;
                 });
     }
@@ -422,11 +422,11 @@ public class NewDownloadDialog {
                                     "Could not add to queue: " + rootMessage(error)
                                             + ". Press Start to retry.",
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                            LOGGER.log(Level.WARNING, "Queue rejected new download", error);
+                            LOGGER.warn("Queue rejected new download", error);
                         }
                     }));
         } catch (IllegalArgumentException e) {
-            LOGGER.warning("New download rejected: " + e.getMessage());
+            LOGGER.warn("New download rejected: " + e.getMessage());
             urlEntry.getStyleContext().addClass("error");
             AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + e.getMessage(),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);

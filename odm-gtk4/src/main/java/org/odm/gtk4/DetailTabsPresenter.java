@@ -8,8 +8,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.TreeIter;
@@ -28,7 +28,7 @@ import org.manager.download.DownloadManager;
  */
 final class DetailTabsPresenter {
 
-    private static final Logger LOGGER = Logger.getLogger(DetailTabsPresenter.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DetailTabsPresenter.class);
     private static final int FILE_SIZE_SORT_COLUMN = 7;
     private static final int FILE_PROGRESS_SORT_COLUMN = 8;
 
@@ -96,7 +96,7 @@ final class DetailTabsPresenter {
                 downloadManager.getDownloadFiles(target)), fetchExecutor)
                 .whenComplete((data, error) -> {
                     if (error != null) {
-                        LOGGER.log(Level.WARNING,
+                        LOGGER.warn(
                                 "Failed to load detail tabs for " + target.getName(), error);
                     }
                     UiThread.marshal(() -> settle(epoch, targetId, data, error));

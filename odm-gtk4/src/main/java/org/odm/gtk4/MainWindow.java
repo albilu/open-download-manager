@@ -2,8 +2,8 @@ package org.odm.gtk4;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Application;
 import org.gnome.gtk.ApplicationWindow;
 import org.gnome.gtk.Button;
@@ -38,7 +38,7 @@ import org.gnome.gtk.TreeView;
  */
 public class MainWindow {
 
-    private static final Logger LOGGER = Logger.getLogger(MainWindow.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(MainWindow.class);
     private static final int HISTORY_WINDOW_SIZE = 500;
     private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
             "#", "Status", "Name", "Completed", "Size", "Progress", "Elapsed",
@@ -289,7 +289,7 @@ public class MainWindow {
                                     "THREAT DETECTED in " + d.getName()
                                             + " — scan result: " + av.getScanResult(),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                            LOGGER.warning("Antivirus threat detected in " + d.getName()
+                            LOGGER.warn("Antivirus threat detected in " + d.getName()
                                     + ": " + av.getScanResult());
                         } else {
                             AccessibilitySupport.status(infoLabel,
@@ -302,7 +302,7 @@ public class MainWindow {
             @Override
             public void onActionError(Download d, org.manager.download.action.AfterCompletionAction a,
                     String errorMessage, org.manager.download.action.AfterCompletionAction.Severity severity) {
-                LOGGER.log(java.util.logging.Level.WARNING,
+                LOGGER.warn(
                         "Completion action failed for " + d.getName() + ": " + errorMessage);
             }
 
@@ -348,7 +348,7 @@ public class MainWindow {
             applyClipboardSilentToCore(downloadManager.getGlobalSettings()
                     .getBooleanProperty("ui.clipboardSilent", false));
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING,
+            LOGGER.warn(
                     "Clipboard service listener registration failed", e);
         }
 
@@ -419,7 +419,7 @@ public class MainWindow {
             try {
                 downloadManager.getClipboardService().removeServiceListener(windowClipboardListener);
             } catch (Exception e) {
-                LOGGER.log(java.util.logging.Level.WARNING,
+                LOGGER.warn(
                         "Failed to remove clipboard service listener", e);
             }
             windowClipboardListener = null;
@@ -444,7 +444,7 @@ public class MainWindow {
                     downloadManager.getClipboardService().getSettings();
             downloadManager.updateClipboardSettings(current.copy().setSilentMode(silent));
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING,
+            LOGGER.warn(
                     "Failed to apply clipboard silent mode", e);
         }
     }
@@ -667,7 +667,7 @@ public class MainWindow {
                     UiThread.marshal(this::refresh);
                 }
             } catch (Exception e) {
-                LOGGER.log(java.util.logging.Level.FINE, "Destination change cancelled or failed", e);
+                LOGGER.debug("Destination change cancelled or failed", e);
             }
         });
     }
@@ -1016,7 +1016,7 @@ public class MainWindow {
             }
             new ProcessBuilder("xdg-open", target.toString()).inheritIO().start();
         } catch (Exception e) {
-            LOGGER.warning("Failed to open " + what + ": " + e.getMessage());
+            LOGGER.warn("Failed to open " + what + ": " + e.getMessage());
         }
     }
 
@@ -1046,7 +1046,7 @@ public class MainWindow {
                     });
                 });
             } catch (Exception e) {
-                LOGGER.log(java.util.logging.Level.FINE, "HTML import cancelled or failed", e);
+                LOGGER.debug("HTML import cancelled or failed", e);
             }
         });
     }
@@ -1160,11 +1160,11 @@ public class MainWindow {
                         UiThread.marshal(() -> AccessibilitySupport.status(
                                 infoLabel, "Exported download list"));
                     } catch (Exception e) {
-                        LOGGER.log(java.util.logging.Level.FINE, "Export failed", e);
+                        LOGGER.debug("Export failed", e);
                     }
                 }, backgroundExecutor);
             } catch (Exception e) {
-                LOGGER.log(java.util.logging.Level.FINE, "Export cancelled or failed", e);
+                LOGGER.debug("Export cancelled or failed", e);
             }
         });
     }
@@ -1194,7 +1194,7 @@ public class MainWindow {
         downloadManager.getGlobalSettings().save();
         scheduleManager.start().whenComplete((ignored, error) -> {
             if (error != null) {
-                LOGGER.log(Level.WARNING, "Failed to start scheduler for preset " + preset, error);
+                LOGGER.warn("Failed to start scheduler for preset " + preset, error);
                 UiThread.marshal(() -> AccessibilitySupport.status(
                         infoLabel, "Could not start download scheduler"));
             } else {
@@ -1233,7 +1233,7 @@ public class MainWindow {
                     downloadManager.applyGlobalSettingsToActiveDownloads();
                     verifyTorCircuit(epoch);
                 } else {
-                    LOGGER.warning("Tor failed to start"
+                    LOGGER.warn("Tor failed to start"
                             + (error != null ? ": " + error.getMessage() : ""));
                     downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
                     // Keep the dead SOCKS endpoint enabled so a failed Tor
@@ -1304,7 +1304,7 @@ public class MainWindow {
             try {
                 checker.shutdown();
             } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Failed to stop Tor leak checker", e);
+                LOGGER.debug("Failed to stop Tor leak checker", e);
             }
         }
     }
@@ -1566,7 +1566,7 @@ public class MainWindow {
                 .whenComplete((snapshot, error) -> UiThread.marshal(() -> {
                     try {
                         if (error != null) {
-                            LOGGER.log(Level.WARNING, "Failed to refresh download list", error);
+                            LOGGER.warn("Failed to refresh download list", error);
                             return;
                         }
                         applyRefresh(snapshot);
@@ -1671,7 +1671,7 @@ public class MainWindow {
             } while (filesStore.iterNext(walk));
         }
         if (selectedIndexes.isEmpty()) {
-            LOGGER.warning("Refusing to deselect every file of " + download.getName());
+            LOGGER.warn("Refusing to deselect every file of " + download.getName());
             ListStoreCells.setBoolean(filesStore, iter, 0, true);
             return;
         }
@@ -1692,7 +1692,7 @@ public class MainWindow {
                 .thenCompose(v -> downloadManager.changeSettings(download))
                 .handle((v, e) -> {
                     if (e != null) {
-                        LOGGER.log(java.util.logging.Level.WARNING,
+                        LOGGER.warn(
                                 "Failed to apply file selection to " + download.getName(), e);
                     }
                     return null;

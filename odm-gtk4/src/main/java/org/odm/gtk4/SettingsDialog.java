@@ -1,8 +1,8 @@
 package org.odm.gtk4;
 
 import java.nio.file.Path;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gdk.Display;
 import org.gnome.gio.File;
 import org.gnome.gtk.Button;
@@ -36,7 +36,7 @@ import org.manager.download.DownloadManager;
  */
 public class SettingsDialog {
 
-    private static final Logger LOGGER = Logger.getLogger(SettingsDialog.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SettingsDialog.class);
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
 
     private static final String[] DAY_LABELS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
@@ -321,7 +321,7 @@ public class SettingsDialog {
                 LOGGER.info("Scheduling disabled; downloads unrestricted");
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to apply scheduler settings", e);
+            LOGGER.warn("Failed to apply scheduler settings", e);
         }
     }
 
@@ -369,7 +369,7 @@ public class SettingsDialog {
                         consumer.accept(file.getPath().toString());
                     }
                 } catch (Exception e) {
-                    LOGGER.log(Level.FINE, title + " selection cancelled or failed", e);
+                    LOGGER.debug(title + " selection cancelled or failed", e);
                 }
             });
         });
@@ -567,7 +567,7 @@ public class SettingsDialog {
                             .copy()
                             .setSilentMode(check("clipboard_silent_check").getActive()));
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Clipboard settings sync skipped", e);
+            LOGGER.debug("Clipboard settings sync skipped", e);
         }
         s.setProperty("ui.folderRecursive", String.valueOf(check("folder_recursive_check").getActive()));
         s.setProperty("ui.moveToTrash", String.valueOf(check("move_to_trash_check").getActive()));
@@ -676,7 +676,7 @@ public class SettingsDialog {
             // is still on disk when the external operation fails.
             s.setProperty("ui.startAtLogin",
                     String.valueOf(application.previousStartAtLogin()));
-            LOGGER.log(Level.WARNING, "Failed to update the login autostart entry", e);
+            LOGGER.warn("Failed to update the login autostart entry", e);
         }
         boolean settingsSaved = s.save();
         if (!settingsSaved && autostartApplied
@@ -687,7 +687,7 @@ public class SettingsDialog {
                 s.setProperty("ui.startAtLogin",
                         String.valueOf(application.previousStartAtLogin()));
             } catch (java.io.IOException rollbackFailure) {
-                LOGGER.log(Level.WARNING, "Failed to roll back the login autostart entry", rollbackFailure);
+                LOGGER.warn("Failed to roll back the login autostart entry", rollbackFailure);
             }
         }
         boolean saved = settingsSaved && autostartApplied;
@@ -709,7 +709,7 @@ public class SettingsDialog {
             AccessibilitySupport.status(statusLabel,
                     "Failed to save settings — check configuration permissions",
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-            LOGGER.severe("Failed to save settings to " + GlobalSettings.getConfigFilePath());
+            LOGGER.error("Failed to save settings to " + GlobalSettings.getConfigFilePath());
         }
     }
 }

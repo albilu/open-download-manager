@@ -10,8 +10,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gio.File;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CellRendererToggle;
@@ -42,7 +42,7 @@ import org.manager.download.DownloadManager;
  */
 public class ImportListDialog {
 
-    private static final Logger LOGGER = Logger.getLogger(ImportListDialog.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ImportListDialog.class);
     static final int MAX_IMPORT_URLS = 1_000;
     static final long MAX_IMPORT_FILE_BYTES = 8L * 1024 * 1024;
 
@@ -164,7 +164,7 @@ public class ImportListDialog {
                             error -> UiThread.marshal(() -> showLoadError(parent, error)));
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.FINE, "List file selection cancelled or failed", e);
+                LOGGER.debug("List file selection cancelled or failed", e);
             }
         });
     }
@@ -189,7 +189,7 @@ public class ImportListDialog {
     }
 
     private static void showLoadError(Window parent, Throwable error) {
-        LOGGER.log(Level.WARNING, "URL list import was rejected", error);
+        LOGGER.warn("URL list import was rejected", error);
         org.gnome.gtk.AlertDialog alert = new org.gnome.gtk.AlertDialog();
         alert.setMessage("Could not import URL list");
         alert.setDetail(error.getMessage() != null
@@ -304,7 +304,7 @@ public class ImportListDialog {
         CompletableFuture.supplyAsync(() -> queueUrls(urls, destination, options))
                 .whenComplete((queued, error) -> UiThread.marshal(() -> {
                     if (error != null) {
-                        LOGGER.log(Level.WARNING, "List import failed", error);
+                        LOGGER.warn("List import failed", error);
                     } else {
                         LOGGER.info("Imported " + queued + " downloads from list");
                         if (onImportDone != null) {
@@ -340,7 +340,7 @@ public class ImportListDialog {
                 }
                 queued++;
             } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Skipped an invalid URL-list entry", e);
+                LOGGER.debug("Skipped an invalid URL-list entry", e);
             }
         }
         return queued;

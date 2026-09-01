@@ -4,8 +4,8 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.concurrent.CompletableFuture;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
@@ -33,7 +33,7 @@ import org.manager.download.DownloadManager;
  */
 public class ImportSequenceDialog {
 
-    private static final Logger LOGGER = Logger.getLogger(ImportSequenceDialog.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ImportSequenceDialog.class);
     private static final String[] RANGE_MODES = {"Number", "Character"};
     static final int MAX_IMPORT_URLS = 1_000;
 
@@ -218,7 +218,7 @@ public class ImportSequenceDialog {
         CompletableFuture.supplyAsync(() -> queueUrls(urls, destination, options))
                 .whenComplete((queued, error) -> UiThread.marshal(() -> {
                     if (error != null) {
-                        LOGGER.log(Level.WARNING, "URL sequence import failed", error);
+                        LOGGER.warn("URL sequence import failed", error);
                     } else {
                         LOGGER.info("Imported " + queued + " downloads from URL sequence");
                         if (onImportDone != null) {
@@ -257,7 +257,7 @@ public class ImportSequenceDialog {
                 }
                 queued++;
             } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Skipped an invalid URL-sequence entry", e);
+                LOGGER.debug("Skipped an invalid URL-sequence entry", e);
             }
         }
         return queued;

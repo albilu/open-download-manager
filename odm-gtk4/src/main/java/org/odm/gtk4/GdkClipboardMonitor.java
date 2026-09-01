@@ -8,8 +8,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gdk.Clipboard;
 import org.gnome.gdk.Display;
 import org.gnome.glib.Source;
@@ -32,7 +32,7 @@ import org.manager.clipboard.UrlDetector;
  */
 public class GdkClipboardMonitor implements ClipboardMonitor {
 
-    private static final Logger LOGGER = Logger.getLogger(GdkClipboardMonitor.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(GdkClipboardMonitor.class);
 
     private final List<ClipboardListener> listeners = new CopyOnWriteArrayList<>();
     private final AtomicBoolean monitoring = new AtomicBoolean(false);
@@ -186,11 +186,11 @@ public class GdkClipboardMonitor implements ClipboardMonitor {
                     String text = clipboard.readTextFinish(result);
                     handleContent(text);
                 } catch (Throwable t) {
-                    LOGGER.log(Level.FINE, "Clipboard read failed: {0}", t.getMessage());
+                    LOGGER.debug("Clipboard read failed: {}", t.getMessage());
                 }
             });
         } catch (Throwable t) {
-            LOGGER.log(Level.FINE, "Clipboard read scheduling failed: {0}", t.getMessage());
+            LOGGER.debug("Clipboard read scheduling failed: {}", t.getMessage());
         }
     }
 
@@ -270,7 +270,7 @@ public class GdkClipboardMonitor implements ClipboardMonitor {
             try {
                 action.accept(listener);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying clipboard listener", e);
+                LOGGER.warn("Error notifying clipboard listener", e);
             }
         }
     }

@@ -10,8 +10,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.download.Download;
 import org.manager.download.DownloadOperations;
@@ -25,7 +25,7 @@ import org.manager.tools.BoundedHttpFetcher;
  */
 final class HtmlImportExport {
 
-    private static final Logger LOGGER = Logger.getLogger(HtmlImportExport.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(HtmlImportExport.class);
     static final long MAX_HTML_BYTES = 8L * 1024 * 1024;
     static final int MAX_IMPORT_LINKS = 1_000;
     private static final java.util.regex.Pattern HREF_PATTERN = java.util.regex.Pattern.compile(
@@ -152,7 +152,7 @@ final class HtmlImportExport {
             List<URI> urls = extractHttpLinks(new String(bytes, StandardCharsets.UTF_8));
             return queueLinks(urls, operations);
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "HTML import failed", e);
+            LOGGER.debug("HTML import failed", e);
             return -1;
         }
     }
@@ -178,7 +178,7 @@ final class HtmlImportExport {
             String html = new String(response.body(), charset);
             return queueLinks(extractHttpLinks(html, response.finalUri()), operations);
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Remote HTML import failed", e);
+            LOGGER.debug("Remote HTML import failed", e);
             return -1;
         }
     }

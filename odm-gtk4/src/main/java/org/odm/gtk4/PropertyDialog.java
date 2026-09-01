@@ -2,8 +2,8 @@ package org.odm.gtk4;
 
 import java.util.EnumSet;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
@@ -25,7 +25,7 @@ import org.manager.download.ExternalToolSettings;
  */
 public class PropertyDialog {
 
-    private static final Logger LOGGER = Logger.getLogger(PropertyDialog.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(PropertyDialog.class);
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -172,7 +172,7 @@ public class PropertyDialog {
                 .thenRun(() -> LOGGER.info("Applied settings to "
                         + downloads.size() + " download(s)"))
                 .exceptionally(e -> {
-                    LOGGER.log(Level.WARNING, "Failed to apply settings to selected downloads", e);
+                    LOGGER.warn("Failed to apply settings to selected downloads", e);
                     return null;
                 });
     }
