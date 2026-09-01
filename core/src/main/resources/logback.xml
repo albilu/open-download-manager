@@ -1,0 +1,26 @@
+<configuration>
+    <!-- ODM_LOG_DIR (system property) overrides the whole base path; tests
+         use it. Production resolves XDG_DATA_HOME with the standard
+         ~/.local/share fallback. -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>[%d{yyyy-MM-dd HH:mm:ss}] [%-7level] %logger: %msg%n</pattern>
+        </encoder>
+    </appender>
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${ODM_LOG_DIR:-${XDG_DATA_HOME:-${user.home}/.local/share}}/odm/logs/odm.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${ODM_LOG_DIR:-${XDG_DATA_HOME:-${user.home}/.local/share}}/odm/logs/odm.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>2MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>12MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>[%d{yyyy-MM-dd HH:mm:ss}] [%-7level] %logger: %msg%n</pattern>
+        </encoder>
+    </appender>
+    <root level="${odm.logging.level:-INFO}">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>
