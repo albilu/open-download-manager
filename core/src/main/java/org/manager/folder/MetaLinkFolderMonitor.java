@@ -3,8 +3,8 @@ package org.manager.folder;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 
@@ -15,7 +15,7 @@ import org.manager.download.DownloadManager;
  */
 public class MetaLinkFolderMonitor implements FolderMonitorListener {
 
-    private static final Logger LOGGER = Logger.getLogger(MetaLinkFolderMonitor.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(MetaLinkFolderMonitor.class);
 
     private final DownloadManager downloadManager;
     private final FolderMonitorService folderMonitorService;
@@ -133,7 +133,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
         // For Metalink files, we typically don't need to handle modifications
         // as they should be complete when first added
         if (isMetaLinkFile(filePath)) {
-            LOGGER.fine("Metalink file modified (ignoring): " + filePath);
+            LOGGER.debug("Metalink file modified (ignoring): " + filePath);
         }
     }
 
@@ -148,7 +148,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
     @Override
     public void onFileProcessingError(Path folderPath, Path filePath, Throwable error, FolderMonitorSettings settings) {
         if (isMetaLinkFile(filePath)) {
-            LOGGER.log(Level.WARNING, "Error processing Metalink file: " + filePath, error);
+            LOGGER.warn("Error processing Metalink file: " + filePath, error);
         }
     }
 
@@ -172,7 +172,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
     public void onMonitoringError(Path folderPath, Throwable error, FolderMonitorSettings settings) {
         if (settings.getFileExtensions().contains(".metalink")
                 || settings.getFileExtensions().contains(".meta4")) {
-            LOGGER.log(Level.SEVERE, "Metalink monitoring error for folder: " + folderPath, error);
+            LOGGER.error("Metalink monitoring error for folder: " + folderPath, error);
         }
     }
 
@@ -189,7 +189,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
 
             // Validate Metalink file
             if (!isValidMetaLinkFile(filePath)) {
-                LOGGER.warning("Invalid Metalink file detected: " + filePath);
+                LOGGER.warn("Invalid Metalink file detected: " + filePath);
                 return;
             }
 
@@ -207,7 +207,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
             LOGGER.info("Successfully added Metalink to download queue: " + filePath);
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error processing Metalink file: " + filePath, e);
+            LOGGER.error("Error processing Metalink file: " + filePath, e);
             throw new RuntimeException("Failed to process Metalink file: " + filePath + ": " + e.getMessage(), e);
         }
     }
@@ -253,7 +253,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
             return validateMetalinkXmlStructure(data, bytesRead);
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error validating Metalink file: " + filePath, e);
+            LOGGER.warn("Error validating Metalink file: " + filePath, e);
             return false;
         }
     }
@@ -300,7 +300,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
             return isValidMetalink;
 
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Error parsing Metalink XML structure", e);
+            LOGGER.debug("Error parsing Metalink XML structure", e);
             return false;
         }
     }

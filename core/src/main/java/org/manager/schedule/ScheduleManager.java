@@ -9,8 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 import org.manager.download.DownloadScheduler;
@@ -22,7 +22,7 @@ import org.manager.download.DownloadScheduler;
  */
 public class ScheduleManager {
 
-    private static final Logger LOGGER = Logger.getLogger(ScheduleManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ScheduleManager.class);
 
     private final DownloadManager downloadManager;
     private final DownloadScheduler scheduler;
@@ -124,7 +124,7 @@ public class ScheduleManager {
                     + startTime + "-" + endTime + " on " + Arrays.toString(days));
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to set simple schedule for download " + downloadId, e);
+            LOGGER.warn("Failed to set simple schedule for download " + downloadId, e);
             throw new IllegalArgumentException("Invalid schedule parameters", e);
         }
 
@@ -164,7 +164,7 @@ public class ScheduleManager {
             LOGGER.info("Set weekday/weekend schedule for download " + downloadId);
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to set weekday/weekend schedule for download " + downloadId, e);
+            LOGGER.warn("Failed to set weekday/weekend schedule for download " + downloadId, e);
             throw new IllegalArgumentException("Invalid schedule parameters", e);
         }
 
@@ -349,7 +349,7 @@ public class ScheduleManager {
                         scheduleInfo, shouldBeActive ? "Yes" : "No"));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error getting schedule status", e);
+            LOGGER.warn("Error getting schedule status", e);
         }
 
         return status;

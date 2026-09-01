@@ -11,8 +11,8 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Descriptor staging for watched torrent and Metalink files.
@@ -37,7 +37,7 @@ import java.util.logging.Logger;
  */
 public final class DescriptorStaging {
 
-    private static final Logger LOGGER = Logger.getLogger(DescriptorStaging.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DescriptorStaging.class);
 
     /** Name of the staging directory beneath the ODM data directory. */
     public static final String STAGING_DIR_NAME = "descriptor-staging";
@@ -102,7 +102,7 @@ public final class DescriptorStaging {
             if (raced != null) {
                 // A concurrent round won the CREATE_NEW race for the same
                 // deterministic name: its entry is the durable copy
-                LOGGER.fine("Concurrent staging round already produced " + staged);
+                LOGGER.debug("Concurrent staging round already produced " + staged);
                 return staged;
             }
             throw copyFailure;
@@ -172,7 +172,7 @@ public final class DescriptorStaging {
         try {
             Files.deleteIfExists(file);
         } catch (IOException cleanupFailure) {
-            LOGGER.log(Level.FINE, "Failed to remove partial staged file " + file, cleanupFailure);
+            LOGGER.debug("Failed to remove partial staged file " + file, cleanupFailure);
         }
     }
 
@@ -189,7 +189,7 @@ public final class DescriptorStaging {
         try {
             Files.writeString(dispatchMarker(staged), "dispatched");
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to mark staged descriptor as dispatched: "
+            LOGGER.warn("Failed to mark staged descriptor as dispatched: "
                     + staged + " (startup reconciliation may re-announce it)", e);
         }
     }
@@ -256,7 +256,7 @@ public final class DescriptorStaging {
             Files.deleteIfExists(dispatchMarker(file));
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to delete staged descriptor: " + file, e);
+            LOGGER.warn("Failed to delete staged descriptor: " + file, e);
             return false;
         }
     }

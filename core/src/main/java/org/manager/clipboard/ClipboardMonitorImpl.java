@@ -18,8 +18,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Implementation of ClipboardMonitor using Java's AWT Clipboard API. Monitors
@@ -30,7 +30,7 @@ import java.util.logging.Logger;
  */
 public class ClipboardMonitorImpl implements ClipboardMonitor {
 
-    private static final Logger LOGGER = Logger.getLogger(ClipboardMonitorImpl.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ClipboardMonitorImpl.class);
 
     /**
      * Resolved lazily: constructing the AWT toolkit drags in X11/Wayland
@@ -117,7 +117,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
 
                 LOGGER.info("Clipboard monitoring started successfully");
             } else {
-                LOGGER.warning("Clipboard monitoring is already active");
+                LOGGER.warn("Clipboard monitoring is already active");
             }
         });
     }
@@ -163,7 +163,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
 
                 LOGGER.info("Clipboard monitoring stopped successfully");
             } else {
-                LOGGER.warning("Clipboard monitoring is not currently active");
+                LOGGER.warn("Clipboard monitoring is not currently active");
             }
         });
     }
@@ -177,7 +177,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
     public void addClipboardListener(ClipboardListener listener) {
         if (listener != null) {
             listeners.add(listener);
-            LOGGER.fine("Added clipboard listener: " + listener.getClass().getSimpleName());
+            LOGGER.debug("Added clipboard listener: " + listener.getClass().getSimpleName());
         }
     }
 
@@ -185,7 +185,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
     public void removeClipboardListener(ClipboardListener listener) {
         if (listener != null) {
             listeners.remove(listener);
-            LOGGER.fine("Removed clipboard listener: " + listener.getClass().getSimpleName());
+            LOGGER.debug("Removed clipboard listener: " + listener.getClass().getSimpleName());
         }
     }
 
@@ -225,7 +225,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
                 return text != null ? text.trim() : null;
             }
         } catch (UnsupportedFlavorException | IOException | IllegalStateException e) {
-            LOGGER.log(Level.FINE, "Error reading clipboard content: " + e.getMessage(), e);
+            LOGGER.debug("Error reading clipboard content: " + e.getMessage(), e);
         }
         return null;
     }
@@ -270,7 +270,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
             // Update the last known content
             lastClipboardContent.set(currentContent != null ? currentContent : "");
 
-            LOGGER.fine("Clipboard content changed");
+            LOGGER.debug("Clipboard content changed");
 
             // Process the new content OFF the poll thread: URL extraction
             // over large payloads and listener work (download creation)
@@ -279,12 +279,12 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
                 try {
                     processClipboardContent(currentContent);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error processing clipboard content", e);
+                    LOGGER.warn("Error processing clipboard content", e);
                 }
             });
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error during clipboard check", e);
+            LOGGER.warn("Error during clipboard check", e);
             notifyListeners(listener -> listener.onClipboardError(e));
         }
     }
@@ -346,7 +346,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
             try {
                 action.perform(listener);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying clipboard listener", e);
+                LOGGER.warn("Error notifying clipboard listener", e);
             }
         }
     }
@@ -382,9 +382,9 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
         try {
             StringSelection selection = new StringSelection(text != null ? text : "");
             getSystemClipboard().setContents(selection, null);
-            LOGGER.fine("Clipboard content set programmatically");
+            LOGGER.debug("Clipboard content set programmatically");
         } catch (IllegalStateException e) {
-            LOGGER.log(Level.WARNING, "Error setting clipboard content", e);
+            LOGGER.warn("Error setting clipboard content", e);
         }
     }
 

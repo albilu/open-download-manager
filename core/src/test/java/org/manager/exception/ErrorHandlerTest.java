@@ -21,7 +21,8 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -322,7 +323,7 @@ class ErrorHandlerTest {
         assertDoesNotThrow(() -> ErrorHandler.logException(
                 new IOException("connection lost"), "ctx", null));
         assertDoesNotThrow(() -> ErrorHandler.logException(
-                new IOException("connection lost"), "ctx", Logger.getLogger(ErrorHandlerTest.class.getName())));
+                new IOException("connection lost"), "ctx", LoggerFactory.getLogger(ErrorHandlerTest.class)));
     }
 
     @Test

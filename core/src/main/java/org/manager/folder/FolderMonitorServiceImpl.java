@@ -33,8 +33,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.util.DescriptorStaging;
 
 /**
@@ -44,7 +44,7 @@ import org.manager.util.DescriptorStaging;
  */
 public class FolderMonitorServiceImpl implements FolderMonitorService {
 
-    private static final Logger LOGGER = Logger.getLogger(FolderMonitorServiceImpl.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(FolderMonitorServiceImpl.class);
 
     private final WatchService watchService;
     /** Exclusive root watched descriptors are staged into before dispatch. */
@@ -193,7 +193,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                         + " for " + effectiveSettings.getFileExtensions());
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to start monitoring folder: " + folderPath, e);
+                LOGGER.error("Failed to start monitoring folder: " + folderPath, e);
                 throw new RuntimeException("Failed to start monitoring folder: " + folderPath, e);
             }
         }, executorService);
@@ -427,7 +427,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             LOGGER.info("Completed scanning folder: " + folderPath + ", processed " + filesToProcess.size() + " files");
 
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Error scanning folder: " + folderPath, e);
+            LOGGER.error("Error scanning folder: " + folderPath, e);
             errorCount.incrementAndGet();
             updateStatistics();
         }
@@ -447,7 +447,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 try {
                     processFile(folderPath, file, settings);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error processing file: " + file, e);
+                    LOGGER.warn("Error processing file: " + file, e);
                     errorCount.incrementAndGet();
                     notifyListeners(listener -> listener.onFileProcessingError(folderPath, file, e, settings));
                 }
@@ -482,14 +482,14 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                     WatchEvent.Kind<?> kind = event.kind();
 
                     if (kind == StandardWatchEventKinds.OVERFLOW) {
-                        LOGGER.warning("Watch event overflow occurred for folder: " + folderPath
+                        LOGGER.warn("Watch event overflow occurred for folder: " + folderPath
                                 + "; rescanning to recover lost events");
                         // Events were dropped by the OS: a rescan is the only
                         // way to catch files that appeared during the overflow
                         try {
                             scanFolderInternal(folderPath, settings);
                         } catch (Exception scanError) {
-                            LOGGER.log(Level.WARNING, "Overflow rescan failed for " + folderPath, scanError);
+                            LOGGER.warn("Overflow rescan failed for " + folderPath, scanError);
                         }
                         continue;
                     }
@@ -504,7 +504,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
                 boolean valid = key.reset();
                 if (!valid) {
-                    LOGGER.warning("Watch key is no longer valid for folder: " + folderPath);
+                    LOGGER.warn("Watch key is no longer valid for folder: " + folderPath);
                     stopMonitoringInternal(folderPath);
                 }
 
@@ -512,7 +512,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error in monitoring loop", e);
+                LOGGER.error("Error in monitoring loop", e);
                 errorCount.incrementAndGet();
                 updateStatistics();
             }
@@ -561,7 +561,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
                     LOGGER.info("Registered new subdirectory for monitoring: " + filePath);
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to register subdirectory: " + filePath, e);
+                    LOGGER.warn("Failed to register subdirectory: " + filePath, e);
                 }
             } else if (Files.isRegularFile(filePath)) {
                 scheduleFileProcessing(folderPath, filePath, currentSettings);
@@ -638,7 +638,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 }
                 processFile(folderPath, filePath, currentSettings);
             } else {
-                LOGGER.fine("Skipping scheduled processing - monitoring stopped or file invalid: " + filePath);
+                LOGGER.debug("Skipping scheduled processing - monitoring stopped or file invalid: " + filePath);
             }
         }, settings.getDebounceDelay().toMillis(), TimeUnit.MILLISECONDS);
 
@@ -696,7 +696,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             return true;
 
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Error checking file: " + filePath, e);
+            LOGGER.warn("Error checking file: " + filePath, e);
             return false;
         }
     }
@@ -746,7 +746,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             LOGGER.info("Successfully processed file: " + filePath);
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error processing file: " + filePath, e);
+            LOGGER.error("Error processing file: " + filePath, e);
             reportFileError(folderPath, filePath, e, settings);
         }
     }
@@ -803,7 +803,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                     }
                     LOGGER.info("Moved file to: " + targetPath);
                 } else {
-                    LOGGER.warning("Move to directory specified but no target directory set for file: " + filePath);
+                    LOGGER.warn("Move to directory specified but no target directory set for file: " + filePath);
                 }
             }
             case KEEP -> {
@@ -838,7 +838,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
 
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Error validating file format: " + filePath, e);
+            LOGGER.warn("Error validating file format: " + filePath, e);
             return false;
         }
     }
@@ -902,7 +902,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             try {
                 action.execute(listener);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener", e);
+                LOGGER.warn("Error notifying listener", e);
             }
         }
     }
@@ -919,7 +919,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             try {
                 action.execute(listener);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener for file: " + filePath, e);
+                LOGGER.warn("Error notifying listener for file: " + filePath, e);
                 reportFileError(folderPath, filePath, e, settings);
             }
         }
@@ -942,7 +942,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             try {
                 announcePath = DescriptorStaging.stageFile(filePath, descriptorStagingRoot);
             } catch (Exception stagingFailure) {
-                LOGGER.log(Level.SEVERE,
+                LOGGER.error(
                         "Failed to stage descriptor; original kept in place: " + filePath, stagingFailure);
                 reportFileError(folderPath, filePath, stagingFailure, settings);
                 return false;
@@ -955,7 +955,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 listener.onFileAdded(folderPath, announcePath, settings);
             } catch (Exception e) {
                 dispatchedToAll = false;
-                LOGGER.log(Level.WARNING, "Error notifying listener for file: " + filePath, e);
+                LOGGER.warn("Error notifying listener for file: " + filePath, e);
                 // The error is identified by the source path; the staged
                 // copy (if any) remains durable for recovery
                 reportFileError(folderPath, filePath, e, settings);
@@ -1022,14 +1022,14 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                         Files.deleteIfExists(staged);
                         LOGGER.info("Removed staged duplicate; original still present: " + staged);
                     } catch (IOException e) {
-                        LOGGER.log(Level.WARNING, "Failed to remove staged duplicate: " + staged, e);
+                        LOGGER.warn("Failed to remove staged duplicate: " + staged, e);
                     }
                 } else {
                     reAnnounceStagedOrphan(folderPath, staged, settings);
                 }
             }
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Staged-descriptor reconciliation failed for "
+            LOGGER.warn("Staged-descriptor reconciliation failed for "
                     + folderPath, e);
         }
     }
@@ -1067,7 +1067,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 listener.onFileAdded(folderPath, staged, settings);
             } catch (Exception e) {
                 dispatchedToAll = false;
-                LOGGER.log(Level.WARNING, "Error re-announcing orphaned staged descriptor: "
+                LOGGER.warn("Error re-announcing orphaned staged descriptor: "
                         + staged, e);
                 reportFileError(folderPath, staged, e, settings);
             }
@@ -1104,7 +1104,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             try {
                 shutdownInternal();
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error during folder monitor service shutdown", e);
+                LOGGER.warn("Error during folder monitor service shutdown", e);
             }
         });
     }
@@ -1136,7 +1136,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             }
             LOGGER.info("Folder monitor service shut down successfully");
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Error closing watch service", e);
+            LOGGER.warn("Error closing watch service", e);
         }
     }
 
@@ -1150,7 +1150,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             processedFiles.clear();
             LOGGER.info("Stopped monitoring all folders");
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error stopping folder monitoring", e);
+            LOGGER.warn("Error stopping folder monitoring", e);
         }
     }
 
@@ -1162,7 +1162,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 if (!scheduledExecutorService.awaitTermination(3, TimeUnit.SECONDS)) {
                     scheduledExecutorService.shutdownNow();
                     if (!scheduledExecutorService.awaitTermination(2, TimeUnit.SECONDS)) {
-                        LOGGER.warning("Scheduled executor did not terminate cleanly");
+                        LOGGER.warn("Scheduled executor did not terminate cleanly");
                     }
                 }
             } catch (InterruptedException e) {
@@ -1177,7 +1177,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 if (!executorService.awaitTermination(3, TimeUnit.SECONDS)) {
                     executorService.shutdownNow();
                     if (!executorService.awaitTermination(2, TimeUnit.SECONDS)) {
-                        LOGGER.warning("Main executor did not terminate cleanly");
+                        LOGGER.warn("Main executor did not terminate cleanly");
                     }
                 }
             } catch (InterruptedException e) {
@@ -1242,7 +1242,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             // are only removed on file deletion or folder stop, so KEEP
             // actions or externally-moved files would grow them forever
             if (announcedFiles.size() > PROCESSED_FILES_MAX_SIZE) {
-                LOGGER.warning("Announced-file tracking exceeded " + PROCESSED_FILES_MAX_SIZE
+                LOGGER.warn("Announced-file tracking exceeded " + PROCESSED_FILES_MAX_SIZE
                         + " entries; clearing (worst case: a still-present file is re-announced once)");
                 announcedFiles.clear();
             }
@@ -1258,7 +1258,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             }
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error cleaning up processed files cache", e);
+            LOGGER.warn("Error cleaning up processed files cache", e);
         }
     }
 

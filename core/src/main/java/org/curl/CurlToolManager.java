@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import org.manager.tools.AbstractToolManager;
 
 /**
@@ -139,7 +138,7 @@ public class CurlToolManager extends AbstractToolManager {
                 features.put("resume", true); // Always supported with -C
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to detect curl features", e);
+            LOGGER.warn("Failed to detect curl features", e);
         }
 
         return features;
@@ -167,14 +166,14 @@ public class CurlToolManager extends AbstractToolManager {
             int exitCode = completed ? process.exitValue() : 0;
 
             if (exitCode == 0) {
-                LOGGER.fine("curl basic check passed");
+                LOGGER.debug("curl basic check passed");
                 return true;
             } else {
-                LOGGER.warning("curl basic check failed with exit code: " + exitCode);
+                LOGGER.warn("curl basic check failed with exit code: " + exitCode);
                 return false;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "curl basic check failed", e);
+            LOGGER.warn("curl basic check failed", e);
             return false;
         }
     }
@@ -270,7 +269,7 @@ public class CurlToolManager extends AbstractToolManager {
 
             return exitCode == 0;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "curl basic download test failed", e);
+            LOGGER.warn("curl basic download test failed", e);
             return false;
         }
     }

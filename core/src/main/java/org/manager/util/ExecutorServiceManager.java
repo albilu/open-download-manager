@@ -9,8 +9,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Centralized manager for ExecutorService instances.
@@ -20,7 +20,7 @@ import java.util.logging.Logger;
  */
 public class ExecutorServiceManager {
 
-    private static final Logger LOGGER = Logger.getLogger(ExecutorServiceManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ExecutorServiceManager.class);
     private static final long SHUTDOWN_TIMEOUT_SECONDS = 30;
 
     private static volatile ExecutorServiceManager instance;
@@ -255,7 +255,7 @@ public class ExecutorServiceManager {
                 LOGGER.info("ExecutorServiceManager shutdown completed");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                LOGGER.warning("Shutdown interrupted, forcing termination");
+                LOGGER.warn("Shutdown interrupted, forcing termination");
                 forceShutdown();
             }
         }
@@ -302,7 +302,7 @@ public class ExecutorServiceManager {
      * This method attempts to stop all actively executing tasks.
      */
     private void forceShutdown() {
-        LOGGER.warning("Forcing immediate shutdown of all executors");
+        LOGGER.warn("Forcing immediate shutdown of all executors");
 
         generalPurposeExecutor.shutdownNow();
         scheduledExecutor.shutdownNow();

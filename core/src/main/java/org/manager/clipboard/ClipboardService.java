@@ -6,8 +6,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
@@ -20,7 +20,7 @@ import org.manager.download.MediaUrlDetector;
  */
 public class ClipboardService implements ClipboardListener {
 
-    private static final Logger LOGGER = Logger.getLogger(ClipboardService.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ClipboardService.class);
 
     private final DownloadManager downloadManager;
     private final ClipboardMonitor clipboardMonitor;
@@ -183,7 +183,7 @@ public class ClipboardService implements ClipboardListener {
         final List<URI> filteredUrls = filterUrls(urls);
 
         if (filteredUrls.isEmpty()) {
-            LOGGER.fine("All detected URLs were filtered out");
+            LOGGER.debug("All detected URLs were filtered out");
             return;
         }
 
@@ -218,13 +218,13 @@ public class ClipboardService implements ClipboardListener {
     @Override
     public void onClipboardChanged(String clipboardContent) {
         if (settings.isLogClipboardActivity()) {
-            LOGGER.fine("Clipboard content changed (no URLs detected)");
+            LOGGER.debug("Clipboard content changed (no URLs detected)");
         }
     }
 
     @Override
     public void onClipboardError(Exception error) {
-        LOGGER.log(Level.WARNING, "Clipboard monitoring error", error);
+        LOGGER.warn("Clipboard monitoring error", error);
         notifyServiceListeners(listener -> listener.onClipboardError(error));
     }
 
@@ -337,11 +337,11 @@ public class ClipboardService implements ClipboardListener {
                 downloadManager.queueDownload(download);
             }
 
-            LOGGER.fine("Created clipboard download");
+            LOGGER.debug("Created clipboard download");
             return download;
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to create clipboard download", e);
+            LOGGER.warn("Failed to create clipboard download", e);
             return null;
         }
     }
@@ -356,7 +356,7 @@ public class ClipboardService implements ClipboardListener {
             try {
                 action.perform(listener);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying clipboard service listener", e);
+                LOGGER.warn("Error notifying clipboard service listener", e);
             }
         }
     }

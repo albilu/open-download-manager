@@ -7,8 +7,8 @@ import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.manager.clipboard.ClipboardSettings;
 
@@ -25,7 +25,7 @@ import org.manager.clipboard.ClipboardSettings;
  */
 public class GlobalSettings {
 
-    private static final Logger LOGGER = Logger.getLogger(GlobalSettings.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(GlobalSettings.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String CONFIG_DIR = "odm";
     private static final String SETTINGS_FILE = "settings.json";
@@ -772,7 +772,7 @@ public class GlobalSettings {
                     try {
                         yield Integer.parseInt(value);
                     } catch (NumberFormatException e) {
-                        LOGGER.warning("Invalid integer property value for " + propertyName + ": " + value);
+                        LOGGER.warn("Invalid integer property value for " + propertyName + ": " + value);
                     }
                 }
                 yield defaultValue;
@@ -919,15 +919,15 @@ public class GlobalSettings {
                 Files.move(temp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
             temp = null;
-            LOGGER.fine("Settings saved to " + file);
+            LOGGER.debug("Settings saved to " + file);
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to save settings to " + file, e);
+            LOGGER.warn("Failed to save settings to " + file, e);
             if (temp != null) {
                 try {
                     Files.deleteIfExists(temp);
                 } catch (IOException cleanupError) {
-                    LOGGER.log(Level.WARNING, "Failed to delete temporary settings file " + temp, cleanupError);
+                    LOGGER.warn("Failed to delete temporary settings file " + temp, cleanupError);
                 }
             }
             return false;
@@ -950,7 +950,7 @@ public class GlobalSettings {
      */
     void load(Path file) {
         if (!Files.exists(file)) {
-            LOGGER.fine("No settings file found at " + file + ", keeping defaults");
+            LOGGER.debug("No settings file found at " + file + ", keeping defaults");
             return;
         }
         try {
@@ -959,9 +959,9 @@ public class GlobalSettings {
                     });
             serialized.forEach(custom::set);
             applyLoadedValues();
-            LOGGER.fine("Settings loaded from " + file);
+            LOGGER.debug("Settings loaded from " + file);
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to load settings from " + file, e);
+            LOGGER.warn("Failed to load settings from " + file, e);
         }
     }
 
@@ -1066,7 +1066,7 @@ public class GlobalSettings {
                     // be clamped exactly like UI input
                     setMaxConcurrentDownloads(Integer.parseInt(bag.get("maxConcurrentDownloads", null)));
                 } catch (NumberFormatException e) {
-                    LOGGER.warning("Invalid maxConcurrentDownloads in settings file: "
+                    LOGGER.warn("Invalid maxConcurrentDownloads in settings file: "
                             + bag.get("maxConcurrentDownloads", null));
                 }
             }
@@ -1074,7 +1074,7 @@ public class GlobalSettings {
                 try {
                     globalSpeedLimit = Integer.parseInt(bag.get("globalSpeedLimit", null));
                 } catch (NumberFormatException e) {
-                    LOGGER.warning("Invalid globalSpeedLimit in settings file: "
+                    LOGGER.warn("Invalid globalSpeedLimit in settings file: "
                             + bag.get("globalSpeedLimit", null));
                 }
             }
@@ -1150,7 +1150,7 @@ public class GlobalSettings {
                 try {
                     setProxyRotationMaxRetries(Integer.parseInt(bag.get("proxyRotationMaxRetries", null)));
                 } catch (NumberFormatException e) {
-                    LOGGER.warning("Invalid proxyRotationMaxRetries in settings file: "
+                    LOGGER.warn("Invalid proxyRotationMaxRetries in settings file: "
                             + bag.get("proxyRotationMaxRetries", null));
                 }
             }
@@ -1238,7 +1238,7 @@ public class GlobalSettings {
                 try {
                     maxDownloadsInMemory = Integer.parseInt(bag.get("maxDownloadsInMemory", null));
                 } catch (NumberFormatException e) {
-                    LOGGER.warning("Invalid maxDownloadsInMemory in settings file: "
+                    LOGGER.warn("Invalid maxDownloadsInMemory in settings file: "
                             + bag.get("maxDownloadsInMemory", null));
                 }
             }
@@ -1246,7 +1246,7 @@ public class GlobalSettings {
                 try {
                     maxCompletedDownloadsToKeep = Integer.parseInt(bag.get("maxCompletedDownloadsToKeep", null));
                 } catch (NumberFormatException e) {
-                    LOGGER.warning("Invalid maxCompletedDownloadsToKeep in settings file: "
+                    LOGGER.warn("Invalid maxCompletedDownloadsToKeep in settings file: "
                             + bag.get("maxCompletedDownloadsToKeep", null));
                 }
             }
@@ -1254,7 +1254,7 @@ public class GlobalSettings {
                 try {
                     paginationDefaultSize = Integer.parseInt(bag.get("paginationDefaultSize", null));
                 } catch (NumberFormatException e) {
-                    LOGGER.warning("Invalid paginationDefaultSize in settings file: "
+                    LOGGER.warn("Invalid paginationDefaultSize in settings file: "
                             + bag.get("paginationDefaultSize", null));
                 }
             }

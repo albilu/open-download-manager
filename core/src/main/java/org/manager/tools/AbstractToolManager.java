@@ -16,8 +16,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Abstract base class providing common functionality for all tool managers.
@@ -25,7 +25,7 @@ import java.util.logging.Logger;
  */
 public abstract class AbstractToolManager implements ToolManager {
 
-    protected static final Logger LOGGER = Logger.getLogger(AbstractToolManager.class.getName());
+    protected static final Logger LOGGER = LoggerFactory.getLogger(AbstractToolManager.class);
 
     protected final GlobalSettings settings;
     protected final ExecutorService executor;
@@ -151,7 +151,7 @@ public abstract class AbstractToolManager implements ToolManager {
 
             InputStream binaryStream = getClass().getResourceAsStream(resourcePath);
             if (binaryStream == null) {
-                LOGGER.warning("Embedded binary not found in resources: " + resourcePath);
+                LOGGER.warn("Embedded binary not found in resources: " + resourcePath);
                 return false;
             }
 
@@ -167,7 +167,7 @@ public abstract class AbstractToolManager implements ToolManager {
             return true;
 
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to initialize embedded binary for " + getToolId(), e);
+            LOGGER.warn("Failed to initialize embedded binary for " + getToolId(), e);
             return false;
         }
     }
@@ -309,7 +309,7 @@ public abstract class AbstractToolManager implements ToolManager {
                 return parseVersion(output);
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to detect version for " + getToolId(), e);
+            LOGGER.warn("Failed to detect version for " + getToolId(), e);
         }
         return null;
     }

@@ -1,6 +1,7 @@
 package org.manager.clipboard;
 
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Factory class for creating clipboard monitoring components. Provides a
@@ -9,7 +10,7 @@ import java.util.logging.Logger;
  */
 public class ClipboardFactory {
 
-    private static final Logger LOGGER = Logger.getLogger(ClipboardFactory.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ClipboardFactory.class);
 
     /**
      * Private constructor to prevent instantiation.
@@ -64,7 +65,7 @@ public class ClipboardFactory {
             monitor.setMonitoringInterval(settings.getMonitoringIntervalMs());
         }
 
-        LOGGER.fine("Created ClipboardMonitor with settings: " + settings);
+        LOGGER.debug("Created ClipboardMonitor with settings: " + settings);
         return monitor;
     }
 
@@ -188,7 +189,7 @@ public class ClipboardFactory {
             java.awt.Toolkit.getDefaultToolkit().getSystemClipboard();
             return true;
         } catch (Exception e) {
-            LOGGER.warning("Clipboard monitoring not supported: " + e.getMessage());
+            LOGGER.warn("Clipboard monitoring not supported: " + e.getMessage());
             return false;
         }
     }

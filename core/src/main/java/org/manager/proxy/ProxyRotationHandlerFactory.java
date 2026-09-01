@@ -3,7 +3,8 @@ package org.manager.proxy;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettingsFactory;
@@ -16,7 +17,7 @@ import org.manager.download.handler.RetryableDownloadHandler;
  */
 public class ProxyRotationHandlerFactory {
 
-    private static final Logger LOGGER = Logger.getLogger(ProxyRotationHandlerFactory.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProxyRotationHandlerFactory.class);
 
     private final ConcurrentHashMap<Download.Type, DownloadHandler> baseHandlers;
     private final ProxyRotationManager proxyManager;
@@ -96,7 +97,7 @@ public class ProxyRotationHandlerFactory {
     public RetryableDownloadHandler createHandler(Download.Type type, ProxyRetrySettings customRetrySettings) {
         DownloadHandler baseHandler = baseHandlers.get(type);
         if (baseHandler == null) {
-            LOGGER.warning("No base handler available for type: " + type);
+            LOGGER.warn("No base handler available for type: " + type);
             return null;
         }
 
@@ -162,7 +163,7 @@ public class ProxyRotationHandlerFactory {
             try {
                 handler.shutdown().join();
             } catch (Exception e) {
-                LOGGER.warning("Error shutting down handler: " + e.getMessage());
+                LOGGER.warn("Error shutting down handler: " + e.getMessage());
             }
         });
 
@@ -176,7 +177,7 @@ public class ProxyRotationHandlerFactory {
     private RetryableDownloadHandler createNewHandler(Download.Type type) {
         DownloadHandler baseHandler = baseHandlers.get(type);
         if (baseHandler == null) {
-            LOGGER.warning("No base handler available for type: " + type);
+            LOGGER.warn("No base handler available for type: " + type);
             return null;
         }
 
@@ -228,7 +229,7 @@ public class ProxyRotationHandlerFactory {
             ProxyAwareDownloadSettings proxySettings = (ProxyAwareDownloadSettings) download.getSettings();
 
             // Log that we found proxy-aware settings
-            LOGGER.fine("Configuring handler with proxy-aware settings for download: " + download.getId());
+            LOGGER.debug("Configuring handler with proxy-aware settings for download: " + download.getId());
 
             // Future enhancement: Create a new handler with the download-specific settings
             // For now, we use the cached handler which uses global settings

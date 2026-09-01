@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import org.manager.GlobalSettings;
 import org.manager.tools.AbstractToolManager;
 
@@ -101,7 +100,7 @@ public final class SubliminalToolManager extends AbstractToolManager {
             if (process != null) {
                 process.destroyForcibly();
             }
-            LOGGER.log(Level.FINE, "Subliminal basic check failed", e);
+            LOGGER.debug("Subliminal basic check failed", e);
             return false;
         }
     }

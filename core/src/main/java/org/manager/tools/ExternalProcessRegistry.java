@@ -5,8 +5,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Shared registry and lifecycle for external tool processes. The four tool
@@ -28,7 +28,7 @@ import java.util.logging.Logger;
  */
 public final class ExternalProcessRegistry {
 
-    private static final Logger LOGGER = Logger.getLogger(ExternalProcessRegistry.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ExternalProcessRegistry.class);
 
     /**
      * A key is installed before its worker is submitted.  Keeping the pending
@@ -252,11 +252,11 @@ public final class ExternalProcessRegistry {
         try {
             destroyTree(process, descendants, false);
             if (!awaitTreeTerminated(process, descendants, graceSeconds)) {
-                LOGGER.warning(owner + ": process '" + key + "' ignored SIGTERM for " + graceSeconds
+                LOGGER.warn(owner + ": process '" + key + "' ignored SIGTERM for " + graceSeconds
                         + "s; killing tree");
                 destroyTree(process, descendants, true);
                 if (!awaitTreeTerminated(process, descendants, graceSeconds)) {
-                    LOGGER.severe(owner + ": process '" + key + "' (or a descendant) survived SIGKILL");
+                    LOGGER.error(owner + ": process '" + key + "' (or a descendant) survived SIGKILL");
                 }
             }
         } catch (InterruptedException e) {

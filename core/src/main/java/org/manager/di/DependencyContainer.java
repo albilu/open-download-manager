@@ -4,7 +4,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Simple dependency injection container for managing component dependencies.
@@ -13,7 +14,7 @@ import java.util.logging.Logger;
  */
 public class DependencyContainer {
 
-    private static final Logger LOGGER = Logger.getLogger(DependencyContainer.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DependencyContainer.class);
 
     private final Map<Class<?>, Object> singletons = new ConcurrentHashMap<>();
     private final Map<Class<?>, Supplier<?>> factories = new ConcurrentHashMap<>();
@@ -36,11 +37,11 @@ public class DependencyContainer {
         }
 
         if (singletons.containsKey(type)) {
-            LOGGER.warning("Overriding existing singleton registration for type: " + type.getName());
+            LOGGER.warn("Overriding existing singleton registration for type: " + type.getName());
         }
 
         singletons.put(type, instance);
-        LOGGER.fine("Registered singleton for type: " + type.getName());
+        LOGGER.debug("Registered singleton for type: " + type.getName());
     }
 
     /**
@@ -60,11 +61,11 @@ public class DependencyContainer {
         }
 
         if (factories.containsKey(type)) {
-            LOGGER.warning("Overriding existing factory registration for type: " + type.getName());
+            LOGGER.warn("Overriding existing factory registration for type: " + type.getName());
         }
 
         factories.put(type, factory);
-        LOGGER.fine("Registered factory for type: " + type.getName());
+        LOGGER.debug("Registered factory for type: " + type.getName());
     }
 
     /**
@@ -104,7 +105,7 @@ public class DependencyContainer {
                 T instance = factory.get();
                 if (instance != null) {
                     singletons.put(type, instance);
-                    LOGGER.fine("Created singleton instance for type: " + type.getName());
+                    LOGGER.debug("Created singleton instance for type: " + type.getName());
                 }
                 return instance;
             } finally {
@@ -113,7 +114,7 @@ public class DependencyContainer {
         };
 
         factories.put(type, singletonFactory);
-        LOGGER.fine("Registered singleton factory for type: " + type.getName());
+        LOGGER.debug("Registered singleton factory for type: " + type.getName());
     }
 
     /**
@@ -205,7 +206,7 @@ public class DependencyContainer {
         creationLocks.remove(type);
 
         if (removed != null || factory != null) {
-            LOGGER.fine("Unregistered type: " + type.getName());
+            LOGGER.debug("Unregistered type: " + type.getName());
         }
     }
 

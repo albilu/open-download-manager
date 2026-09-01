@@ -10,8 +10,8 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Configuration class for persisting and managing folder monitoring settings.
@@ -20,7 +20,7 @@ import java.util.logging.Logger;
  */
 public class FolderMonitorConfiguration {
 
-    private static final Logger LOGGER = Logger.getLogger(FolderMonitorConfiguration.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(FolderMonitorConfiguration.class);
     private static final String DEFAULT_CONFIG_FILE = "folder-monitor-config.json";
 
     private ObjectMapper objectMapper;
@@ -191,7 +191,7 @@ public class FolderMonitorConfiguration {
                 LOGGER.info("Saved folder monitor configuration to: " + configFilePath);
 
             } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Failed to save folder monitor configuration", e);
+                LOGGER.error("Failed to save folder monitor configuration", e);
                 throw new RuntimeException("Failed to save configuration", e);
             }
         });
@@ -233,7 +233,7 @@ public class FolderMonitorConfiguration {
                 return config;
 
             } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Failed to load folder monitor configuration", e);
+                LOGGER.error("Failed to load folder monitor configuration", e);
                 throw new RuntimeException("Failed to load configuration", e);
             }
         });

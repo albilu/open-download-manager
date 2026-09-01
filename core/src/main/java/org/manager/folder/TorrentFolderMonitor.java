@@ -3,8 +3,8 @@ package org.manager.folder;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 
@@ -15,7 +15,7 @@ import org.manager.download.DownloadManager;
  */
 public class TorrentFolderMonitor implements FolderMonitorListener {
 
-    private static final Logger LOGGER = Logger.getLogger(TorrentFolderMonitor.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(TorrentFolderMonitor.class);
 
     private final DownloadManager downloadManager;
     private final FolderMonitorService folderMonitorService;
@@ -129,7 +129,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
         // For torrent files, we typically don't need to handle modifications
         // as they should be complete when first added
         if (isTorrentFile(filePath)) {
-            LOGGER.fine("Torrent file modified (ignoring): " + filePath);
+            LOGGER.debug("Torrent file modified (ignoring): " + filePath);
         }
     }
 
@@ -144,7 +144,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
     @Override
     public void onFileProcessingError(Path folderPath, Path filePath, Throwable error, FolderMonitorSettings settings) {
         if (isTorrentFile(filePath)) {
-            LOGGER.log(Level.WARNING, "Error processing torrent file: " + filePath, error);
+            LOGGER.warn("Error processing torrent file: " + filePath, error);
         }
     }
 
@@ -165,7 +165,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
     @Override
     public void onMonitoringError(Path folderPath, Throwable error, FolderMonitorSettings settings) {
         if (settings.getFileExtensions().contains(".torrent")) {
-            LOGGER.log(Level.SEVERE, "Torrent monitoring error for folder: " + folderPath, error);
+            LOGGER.error("Torrent monitoring error for folder: " + folderPath, error);
         }
     }
 
@@ -182,7 +182,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
 
             // Validate torrent file
             if (!isValidTorrentFile(filePath)) {
-                LOGGER.warning("Invalid torrent file detected: " + filePath);
+                LOGGER.warn("Invalid torrent file detected: " + filePath);
                 return;
             }
 
@@ -199,7 +199,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
             LOGGER.info("Successfully added torrent to download queue: " + filePath);
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error processing torrent file: " + filePath, e);
+            LOGGER.error("Error processing torrent file: " + filePath, e);
             throw new RuntimeException("Failed to process torrent file: " + filePath + ": " + e.getMessage(), e);
         }
     }
@@ -250,7 +250,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
             return validateBencodeStructure(data, bytesRead);
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error validating torrent file: " + filePath, e);
+            LOGGER.warn("Error validating torrent file: " + filePath, e);
             return false;
         }
     }
@@ -290,7 +290,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
             return isValidTorrent;
 
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Error parsing bencode structure", e);
+            LOGGER.debug("Error parsing bencode structure", e);
             return false;
         }
     }

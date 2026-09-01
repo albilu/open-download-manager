@@ -9,7 +9,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,7 +21,7 @@ import java.util.regex.Pattern;
  */
 public class UrlDetector {
 
-    private static final Logger LOGGER = Logger.getLogger(UrlDetector.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(UrlDetector.class);
 
     // Comprehensive URL regex pattern that matches various protocols. The
     // path/query/fragment sections use a single flat character class (one
@@ -80,7 +81,7 @@ public class UrlDetector {
             normalizeAndValidate(urlString).ifPresent(uri -> {
                 if (seen.add(uri.toString())) {
                     urls.add(uri);
-                    LOGGER.fine("Detected a valid URL");
+                    LOGGER.debug("Detected a valid URL");
                 }
             });
         }

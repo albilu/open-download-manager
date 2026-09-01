@@ -6,7 +6,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.aria2.Aria2ToolManager;
 import org.curl.CurlToolManager;
 import org.httrack.HttrackToolManager;
@@ -23,7 +24,7 @@ import org.ytdlp.YtDlpToolManager;
  */
 public class ToolManagerFactory {
 
-    private static final Logger LOGGER = Logger.getLogger(ToolManagerFactory.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ToolManagerFactory.class);
 
     private final GlobalSettings settings;
     private final ExecutorService executor;
@@ -136,7 +137,7 @@ public class ToolManagerFactory {
                             Map.Entry<String, Boolean> result = check.get();
                             results.put(result.getKey(), result.getValue());
                         } catch (Exception e) {
-                            LOGGER.warning("Failed to check tool availability: " + e.getMessage());
+                            LOGGER.warn("Failed to check tool availability: " + e.getMessage());
                         }
                     }
                     future.complete(results);
@@ -204,7 +205,7 @@ public class ToolManagerFactory {
                     LOGGER.info("Initialized embedded binary for: " + entry.getKey());
                 }
             } catch (Exception e) {
-                LOGGER.warning("Failed to initialize embedded binary for "
+                LOGGER.warn("Failed to initialize embedded binary for "
                         + entry.getKey() + ": " + e.getMessage());
                 results.put(entry.getKey(), false);
             }
@@ -263,7 +264,7 @@ public class ToolManagerFactory {
             try {
                 manager.cleanup();
             } catch (Exception e) {
-                LOGGER.warning("Error invalidating tool manager caches: " + e.getMessage());
+                LOGGER.warn("Error invalidating tool manager caches: " + e.getMessage());
             }
         }
         LOGGER.info("Invalidated tool manager caches");
@@ -279,7 +280,7 @@ public class ToolManagerFactory {
             try {
                 manager.cleanup();
             } catch (Exception e) {
-                LOGGER.warning("Error cleaning up tool manager: " + e.getMessage());
+                LOGGER.warn("Error cleaning up tool manager: " + e.getMessage());
             }
         }
 

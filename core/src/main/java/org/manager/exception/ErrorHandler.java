@@ -12,8 +12,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Centralized error handling utility for standardized error management. This
@@ -22,7 +22,7 @@ import java.util.logging.Logger;
  */
 public class ErrorHandler {
 
-    private static final Logger LOGGER = Logger.getLogger(ErrorHandler.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ErrorHandler.class);
 
     /**
      * Configuration for retry behavior.
@@ -116,9 +116,9 @@ public class ErrorHandler {
                 lastException = e;
 
                 if (attempt == 1) {
-                    LOGGER.log(Level.WARNING, String.format("Operation %s failed on first attempt", operationName), e);
+                    LOGGER.warn(String.format("Operation %s failed on first attempt", operationName), e);
                 } else {
-                    LOGGER.log(Level.WARNING, String.format("Operation %s failed on attempt %d/%d",
+                    LOGGER.warn(String.format("Operation %s failed on attempt %d/%d",
                             operationName, attempt, retryConfig.getMaxAttempts()), e);
                 }
 
@@ -151,7 +151,7 @@ public class ErrorHandler {
         try {
             return primaryOperation.get();
         } catch (Exception primaryException) {
-            LOGGER.log(Level.WARNING, String.format("Primary operation failed for %s, trying fallback", operationName),
+            LOGGER.warn(String.format("Primary operation failed for %s, trying fallback", operationName),
                     primaryException);
 
             try {
@@ -159,7 +159,7 @@ public class ErrorHandler {
                 LOGGER.info(String.format("Fallback operation succeeded for %s", operationName));
                 return result;
             } catch (Exception fallbackException) {
-                LOGGER.log(Level.SEVERE,
+                LOGGER.error(
                         String.format("Both primary and fallback operations failed for %s", operationName),
                         fallbackException);
 
@@ -191,7 +191,7 @@ public class ErrorHandler {
         try {
             return operation.get();
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING,
+            LOGGER.warn(
                     String.format("Safe execution failed for %s, returning default value", operationName), e);
             return defaultValue;
         }
@@ -208,7 +208,7 @@ public class ErrorHandler {
         try {
             operation.run();
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, String.format("Safe execution failed for %s", operationName), e);
+            LOGGER.warn(String.format("Safe execution failed for %s", operationName), e);
         }
     }
 
@@ -228,12 +228,12 @@ public class ErrorHandler {
         try {
             return operation.get();
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, String.format("Operation %s failed, invoking error handler", operationName), e);
+            LOGGER.warn(String.format("Operation %s failed, invoking error handler", operationName), e);
 
             try {
                 return errorHandler.apply(e);
             } catch (Exception handlerException) {
-                LOGGER.log(Level.SEVERE, String.format("Error handler also failed for %s", operationName),
+                LOGGER.error(String.format("Error handler also failed for %s", operationName),
                         handlerException);
                 throw convertToDownloadManagerException(e, operationName);
             }
@@ -361,7 +361,7 @@ public class ErrorHandler {
                 cleanupOperation.run();
                 LOGGER.info(String.format("Cleanup completed successfully for %s", operationName));
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, String.format("Cleanup failed for %s", operationName), e);
+                LOGGER.warn(String.format("Cleanup failed for %s", operationName), e);
             }
         };
     }
@@ -377,11 +377,15 @@ public class ErrorHandler {
     public static void logException(Throwable exception, String operationContext, Logger logger) {
         DownloadManagerException dme = convertToDownloadManagerException(exception, operationContext);
 
-        Level logLevel = dme.isRecoverable() ? Level.WARNING : Level.SEVERE;
         String message = String.format("Operation failed: %s - %s", operationContext, dme.getDetailedMessage());
 
         // Honor the caller's logger; fall back to this class's logger
-        (logger != null ? logger : LOGGER).log(logLevel, message, exception);
+        Logger target = logger != null ? logger : LOGGER;
+        if (dme.isRecoverable()) {
+            target.warn(message, exception);
+        } else {
+            target.error(message, exception);
+        }
     }
 
     /**

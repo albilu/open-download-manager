@@ -2,8 +2,8 @@ package utils;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
@@ -15,14 +15,15 @@ import okio.Buffer;
  */
 public class TestUtils {
 
-    private static final Logger LOGGER = Logger.getLogger(TestUtils.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(TestUtils.class);
 
     private static MockWebServer mockWebServer;
     private static boolean isServerStarted = false;
 
     // Disable MockWebServer logging to reduce test noise
     static {
-        Logger.getLogger(MockWebServer.class.getName()).setLevel(Level.WARNING);
+        java.util.logging.Logger.getLogger(MockWebServer.class.getName())
+                .setLevel(java.util.logging.Level.WARNING);
     }
 
     /**

@@ -4,7 +4,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.DownloadManager;
 import org.manager.download.DownloadManagerFactory;
 import org.manager.tools.ToolManagerFactory;
@@ -20,7 +21,7 @@ import org.manager.tools.ToolManagerFactory;
  */
 public class ApplicationFactory {
 
-    private static final Logger LOGGER = Logger.getLogger(ApplicationFactory.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ApplicationFactory.class);
 
     // Singleton instance with double-checked locking
     private static volatile ApplicationFactory instance;
@@ -58,7 +59,7 @@ public class ApplicationFactory {
         // reset (the old cross-generation singleton needed
         // clearShutdownInitiated to paper over exactly that)
         this.startupCoordinator = new StartupCoordinator();
-        LOGGER.fine("ApplicationFactory instance created");
+        LOGGER.debug("ApplicationFactory instance created");
     }
 
     /**
@@ -287,7 +288,7 @@ public class ApplicationFactory {
         optionalLock.writeLock().lock();
         try {
             this.uiStateService = service;
-            LOGGER.fine("Registered UIStateService for lifecycle management");
+            LOGGER.debug("Registered UIStateService for lifecycle management");
         } finally {
             optionalLock.writeLock().unlock();
         }
@@ -303,7 +304,7 @@ public class ApplicationFactory {
         optionalLock.writeLock().lock();
         try {
             this.downloadUIService = service;
-            LOGGER.fine("Registered DownloadUIService for lifecycle management");
+            LOGGER.debug("Registered DownloadUIService for lifecycle management");
         } finally {
             optionalLock.writeLock().unlock();
         }
@@ -319,7 +320,7 @@ public class ApplicationFactory {
         optionalLock.writeLock().lock();
         try {
             this.clipboardService = service;
-            LOGGER.fine("Registered ClipboardService for lifecycle management");
+            LOGGER.debug("Registered ClipboardService for lifecycle management");
         } finally {
             optionalLock.writeLock().unlock();
         }
@@ -335,7 +336,7 @@ public class ApplicationFactory {
         optionalLock.writeLock().lock();
         try {
             this.folderMonitorService = service;
-            LOGGER.fine("Registered FolderMonitorService for lifecycle management");
+            LOGGER.debug("Registered FolderMonitorService for lifecycle management");
         } finally {
             optionalLock.writeLock().unlock();
         }
@@ -410,7 +411,7 @@ public class ApplicationFactory {
         setGlobalSettings(settings);
 
         // Pre-initialize core services for optimal startup performance
-        LOGGER.fine("Pre-initializing core services...");
+        LOGGER.debug("Pre-initializing core services...");
         getToolManagerFactory(); // This will trigger tool discovery once
 
         isInitialized = true;
@@ -427,7 +428,7 @@ public class ApplicationFactory {
      */
     public void initialize() {
         Path defaultDownloadDir = Paths.get(System.getProperty("user.home"), "Downloads");
-        LOGGER.fine("Using default initialization settings");
+        LOGGER.debug("Using default initialization settings");
         initialize(defaultDownloadDir, 3, 0);
     }
 
@@ -490,7 +491,7 @@ public class ApplicationFactory {
                     DownloadManagerFactory.shutdown();
                     LOGGER.info("DownloadManager shut down successfully");
                 } catch (Exception e) {
-                    LOGGER.warning("Error shutting down DownloadManager: " + e.getMessage());
+                    LOGGER.warn("Error shutting down DownloadManager: " + e.getMessage());
                 }
                 downloadManager = null;
             }
@@ -542,7 +543,7 @@ public class ApplicationFactory {
                 toolManagerFactory.cleanup();
                 LOGGER.info("ToolManagerFactory shut down successfully");
             } catch (Exception e) {
-                LOGGER.warning("Error shutting down ToolManagerFactory: " + e.getMessage());
+                LOGGER.warn("Error shutting down ToolManagerFactory: " + e.getMessage());
             }
             toolManagerFactory = null;
         }
@@ -565,21 +566,21 @@ public class ApplicationFactory {
             // Try shutdown() method first
             var shutdownMethod = service.getClass().getMethod("shutdown");
             shutdownMethod.invoke(service);
-            LOGGER.fine(serviceName + " shut down successfully");
+            LOGGER.debug(serviceName + " shut down successfully");
         } catch (NoSuchMethodException e) {
             // No shutdown method, try cleanup()
             try {
                 var cleanupMethod = service.getClass().getMethod("cleanup");
                 cleanupMethod.invoke(service);
-                LOGGER.fine(serviceName + " cleaned up successfully");
+                LOGGER.debug(serviceName + " cleaned up successfully");
             } catch (NoSuchMethodException ex) {
                 // No cleanup method either, that's OK
-                LOGGER.fine(serviceName + " has no shutdown/cleanup method");
+                LOGGER.debug(serviceName + " has no shutdown/cleanup method");
             } catch (Exception ex) {
-                LOGGER.warning("Error cleaning up " + serviceName + ": " + ex.getMessage());
+                LOGGER.warn("Error cleaning up " + serviceName + ": " + ex.getMessage());
             }
         } catch (Exception e) {
-            LOGGER.warning("Error shutting down " + serviceName + ": " + e.getMessage());
+            LOGGER.warn("Error shutting down " + serviceName + ": " + e.getMessage());
         }
     }
 

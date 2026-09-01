@@ -4,7 +4,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Pattern;
 
 /**
@@ -21,7 +22,7 @@ import java.util.regex.Pattern;
  */
 public final class ToolOptionFilter {
 
-    private static final Logger LOGGER = Logger.getLogger(ToolOptionFilter.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ToolOptionFilter.class);
 
     /** Tool whose option surface is being filtered. */
     public enum Tool {
@@ -116,12 +117,12 @@ public final class ToolOptionFilter {
             String key = entry.getKey();
             String value = entry.getValue();
             if (key == null || !KEY_SYNTAX.matcher(key).matches() || !allowed.contains(key)) {
-                LOGGER.warning("Dropped untrusted " + tool + " option key '" + key
+                LOGGER.warn("Dropped untrusted " + tool + " option key '" + key
                         + "' (not on the allowlist)");
                 continue;
             }
             if (value != null && !isSafeValue(value)) {
-                LOGGER.warning("Dropped " + tool + " option '" + key
+                LOGGER.warn("Dropped " + tool + " option '" + key
                         + "': value attempts flag smuggling or contains line breaks");
                 continue;
             }

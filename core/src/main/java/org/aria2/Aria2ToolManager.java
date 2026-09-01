@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import org.manager.tools.AbstractToolManager;
 
 /**
@@ -132,7 +131,7 @@ public class Aria2ToolManager extends AbstractToolManager {
                 features.put("preallocation", lowerOutput.contains("prealloc"));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to detect aria2 features", e);
+            LOGGER.warn("Failed to detect aria2 features", e);
         }
 
         return features;
@@ -160,14 +159,14 @@ public class Aria2ToolManager extends AbstractToolManager {
             int exitCode = completed ? process.exitValue() : -1;
 
             if (exitCode == 0) {
-                LOGGER.fine("aria2 basic check passed");
+                LOGGER.debug("aria2 basic check passed");
                 return true;
             } else {
-                LOGGER.warning("aria2 basic check failed with exit code: " + exitCode);
+                LOGGER.warn("aria2 basic check failed with exit code: " + exitCode);
                 return false;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "aria2 basic check failed", e);
+            LOGGER.warn("aria2 basic check failed", e);
             return false;
         }
     }

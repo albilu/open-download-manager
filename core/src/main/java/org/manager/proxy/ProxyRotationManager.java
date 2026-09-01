@@ -16,7 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 
 /**
@@ -26,7 +27,7 @@ import java.util.stream.Collectors;
  */
 public class ProxyRotationManager {
 
-    private static final Logger LOGGER = Logger.getLogger(ProxyRotationManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProxyRotationManager.class);
 
     private final List<Proxy> proxyPool;
     // Track proxies currently in use, refcounted by download id: several
@@ -111,7 +112,7 @@ public class ProxyRotationManager {
                             proxyPool.add(proxy);
                         }
                     } catch (Exception e) {
-                        LOGGER.warning(
+                        LOGGER.warn(
                                 "Failed to parse proxy on line " + lineNumber + ": " + line + " - " + e.getMessage());
                     }
                 }
@@ -141,7 +142,7 @@ public class ProxyRotationManager {
         try {
             if (!proxyPool.contains(proxy)) {
                 proxyPool.add(proxy);
-                LOGGER.fine("Added proxy to rotation pool");
+                LOGGER.debug("Added proxy to rotation pool");
                 return true;
             }
             return false;
@@ -166,7 +167,7 @@ public class ProxyRotationManager {
             boolean removed = proxyPool.remove(proxy);
             if (removed) {
                 usedProxies.remove(proxy.getAddress());
-                LOGGER.fine("Removed proxy from rotation pool");
+                LOGGER.debug("Removed proxy from rotation pool");
             }
             return removed;
         } finally {
@@ -188,12 +189,12 @@ public class ProxyRotationManager {
                     .collect(Collectors.toList());
 
             if (healthyProxies.isEmpty()) {
-                LOGGER.warning("No healthy proxies available, trying all proxies");
+                LOGGER.warn("No healthy proxies available, trying all proxies");
                 healthyProxies = new ArrayList<>(proxyPool);
             }
 
             if (healthyProxies.isEmpty()) {
-                LOGGER.severe("No proxies available in the pool");
+                LOGGER.error("No proxies available in the pool");
                 return null;
             }
 
@@ -235,7 +236,7 @@ public class ProxyRotationManager {
             }
 
             if (alternatives.isEmpty()) {
-                LOGGER.warning("No alternative proxies available");
+                LOGGER.warn("No alternative proxies available");
                 return null;
             }
 
@@ -256,7 +257,7 @@ public class ProxyRotationManager {
         if (proxy != null && downloadId != null) {
             usedProxies.computeIfAbsent(proxy.getAddress(), k -> ConcurrentHashMap.newKeySet())
                     .add(downloadId);
-            LOGGER.fine("Assigned a rotation proxy to download " + downloadId);
+            LOGGER.debug("Assigned a rotation proxy to download " + downloadId);
         }
     }
 
@@ -276,7 +277,7 @@ public class ProxyRotationManager {
                     usedProxies.remove(proxy.getAddress());
                 }
             }
-            LOGGER.fine("Released a rotation proxy from download " + downloadId);
+            LOGGER.debug("Released a rotation proxy from download " + downloadId);
         }
     }
 
@@ -289,7 +290,7 @@ public class ProxyRotationManager {
     public void recordSuccess(Proxy proxy, long responseTime) {
         if (proxy != null) {
             proxy.recordSuccess(responseTime);
-            LOGGER.fine(
+            LOGGER.debug(
                     "Recorded success for proxy " + proxy.getAddress() + " (response time: " + responseTime + "ms)");
         }
     }
@@ -306,7 +307,7 @@ public class ProxyRotationManager {
         }
 
         proxy.recordFailure(error);
-        LOGGER.warning("Recorded proxy failure (total failures: "
+        LOGGER.warn("Recorded proxy failure (total failures: "
                 + proxy.getFailureCount() + ")");
 
         // Mark the terminal tier first so any holder of this proxy instance
@@ -317,7 +318,7 @@ public class ProxyRotationManager {
             lock.writeLock().lock();
             try {
                 removeProxy(proxy);
-                LOGGER.warning("Removed proxy due to excessive failures");
+                LOGGER.warn("Removed proxy due to excessive failures");
             } finally {
                 lock.writeLock().unlock();
             }
@@ -392,7 +393,7 @@ public class ProxyRotationManager {
                 if (proxy.getLastTested() != null && proxy.getLastTested().isBefore(cutoff)) {
                     if (proxy.getStatus() == Proxy.Status.UNHEALTHY) {
                         proxy.reset();
-                        LOGGER.fine("Reset an unhealthy proxy for retry");
+                        LOGGER.debug("Reset an unhealthy proxy for retry");
                     }
                 }
             }

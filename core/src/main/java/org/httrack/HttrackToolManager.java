@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import org.manager.tools.AbstractToolManager;
 
 /**
@@ -132,7 +131,7 @@ public class HttrackToolManager extends AbstractToolManager {
                                      lowerOutput.contains("update"));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to detect httrack features", e);
+            LOGGER.warn("Failed to detect httrack features", e);
         }
 
         return features;
@@ -160,14 +159,14 @@ public class HttrackToolManager extends AbstractToolManager {
             int exitCode = completed ? process.exitValue() : -1;
 
             if (exitCode == 0) {
-                LOGGER.fine("httrack basic check passed");
+                LOGGER.debug("httrack basic check passed");
                 return true;
             } else {
-                LOGGER.warning("httrack basic check failed with exit code: " + exitCode);
+                LOGGER.warn("httrack basic check failed with exit code: " + exitCode);
                 return false;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "httrack basic check failed", e);
+            LOGGER.warn("httrack basic check failed", e);
             return false;
         }
     }
@@ -244,7 +243,7 @@ public class HttrackToolManager extends AbstractToolManager {
 
             return exitCode == 0;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "httrack basic function test failed", e);
+            LOGGER.warn("httrack basic function test failed", e);
             return false;
         }
     }

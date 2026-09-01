@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import org.manager.tools.AbstractToolManager;
 
 /**
@@ -132,7 +131,7 @@ public class ProxychainsToolManager extends AbstractToolManager {
                                           lowerOutput.contains("-f"));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to detect proxychains features", e);
+            LOGGER.warn("Failed to detect proxychains features", e);
         }
 
         return features;
@@ -161,14 +160,14 @@ public class ProxychainsToolManager extends AbstractToolManager {
 
             // proxychains help command typically returns 0 or 1
             if (exitCode == 0 || exitCode == 1) {
-                LOGGER.fine("proxychains basic check passed");
+                LOGGER.debug("proxychains basic check passed");
                 return true;
             } else {
-                LOGGER.warning("proxychains basic check failed with exit code: " + exitCode);
+                LOGGER.warn("proxychains basic check failed with exit code: " + exitCode);
                 return false;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "proxychains basic check failed", e);
+            LOGGER.warn("proxychains basic check failed", e);
             return false;
         }
     }
@@ -244,7 +243,7 @@ public class ProxychainsToolManager extends AbstractToolManager {
 
             return exitCode == 0;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "proxychains basic function test failed", e);
+            LOGGER.warn("proxychains basic function test failed", e);
             return false;
         }
     }

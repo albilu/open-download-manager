@@ -4,7 +4,8 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.DownloadManager;
 import org.manager.tools.ToolManagerFactory;
 
@@ -36,7 +37,7 @@ import org.manager.tools.ToolManagerFactory;
  */
 public final class ApplicationContext {
 
-    private static final Logger LOGGER = Logger.getLogger(ApplicationContext.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ApplicationContext.class);
 
     /**
      * Private constructor to prevent instantiation.
@@ -295,7 +296,7 @@ public final class ApplicationContext {
             }
             return false;
         } catch (Exception e) {
-            LOGGER.warning("Failed to check tool availability for " + toolId + ": " + e.getMessage());
+            LOGGER.warn("Failed to check tool availability for " + toolId + ": " + e.getMessage());
             return false;
         }
     }
@@ -314,7 +315,7 @@ public final class ApplicationContext {
             }
             return null;
         } catch (Exception e) {
-            LOGGER.warning("Failed to get tool path for " + toolId + ": " + e.getMessage());
+            LOGGER.warn("Failed to get tool path for " + toolId + ": " + e.getMessage());
             return null;
         }
     }
@@ -334,7 +335,7 @@ public final class ApplicationContext {
             }
             return null;
         } catch (Exception e) {
-            LOGGER.warning("Failed to get tool version for " + toolId + ": " + e.getMessage());
+            LOGGER.warn("Failed to get tool version for " + toolId + ": " + e.getMessage());
             return null;
         }
     }
@@ -352,7 +353,7 @@ public final class ApplicationContext {
             }
             return CompletableFuture.completedFuture(Map.<String, Boolean>of());
         } catch (Exception e) {
-            LOGGER.warning("Failed to check dependencies: " + e.getMessage());
+            LOGGER.warn("Failed to check dependencies: " + e.getMessage());
             return CompletableFuture.completedFuture(Map.<String, Boolean>of());
         }
     }
@@ -465,10 +466,10 @@ public final class ApplicationContext {
         boolean curlAvailable = isToolAvailable("curl");
 
         if (!aria2Available) {
-            LOGGER.warning("Critical dependency missing: aria2");
+            LOGGER.warn("Critical dependency missing: aria2");
         }
         if (!curlAvailable) {
-            LOGGER.warning("Critical dependency missing: curl");
+            LOGGER.warn("Critical dependency missing: curl");
         }
 
         return aria2Available || curlAvailable; // At least one must be available
@@ -489,7 +490,7 @@ public final class ApplicationContext {
                 return "ToolManagerFactory not available";
             }
         } catch (Exception e) {
-            LOGGER.warning("Failed to generate tool status report: " + e.getMessage());
+            LOGGER.warn("Failed to generate tool status report: " + e.getMessage());
             return "Error generating tool status report: " + e.getMessage();
         }
     }

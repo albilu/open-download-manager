@@ -4,7 +4,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Startup coordination utility to prevent duplicate component initialization
@@ -19,7 +20,7 @@ import java.util.logging.Logger;
  */
 public final class StartupCoordinator {
 
-    private static final Logger LOGGER = Logger.getLogger(StartupCoordinator.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(StartupCoordinator.class);
 
     // Singleton instance
 
@@ -62,7 +63,7 @@ public final class StartupCoordinator {
      * factory generations because a new factory starts a fresh coordinator.
      */
     StartupCoordinator() {
-        LOGGER.fine("StartupCoordinator instance created");
+        LOGGER.debug("StartupCoordinator instance created");
     }
 
     /**
@@ -109,7 +110,7 @@ public final class StartupCoordinator {
      */
     public boolean beginComponentInitialization(String componentId) {
         if (shutdownInitiated.get()) {
-            LOGGER.warning("Attempted to initialize " + componentId + " during shutdown");
+            LOGGER.warn("Attempted to initialize " + componentId + " during shutdown");
             return false;
         }
 
@@ -117,19 +118,19 @@ public final class StartupCoordinator {
         try {
             // Check if already initialized
             if (initializedComponents.contains(componentId)) {
-                LOGGER.fine("Component " + componentId + " already initialized, skipping");
+                LOGGER.debug("Component " + componentId + " already initialized, skipping");
                 return false;
             }
 
             // Check if currently initializing
             if (initializingComponents.contains(componentId)) {
-                LOGGER.fine("Component " + componentId + " is already being initialized, skipping");
+                LOGGER.debug("Component " + componentId + " is already being initialized, skipping");
                 return false;
             }
 
             // Mark as initializing
             initializingComponents.add(componentId);
-            LOGGER.fine("Beginning initialization of " + componentId);
+            LOGGER.debug("Beginning initialization of " + componentId);
             return true;
         } finally {
             coordinationLock.unlock();
@@ -146,7 +147,7 @@ public final class StartupCoordinator {
         try {
             initializingComponents.remove(componentId);
             initializedComponents.add(componentId);
-            LOGGER.fine("Component " + componentId + " initialization completed");
+            LOGGER.debug("Component " + componentId + " initialization completed");
 
             // Check if this completes startup
             checkStartupCompletion();
@@ -165,7 +166,7 @@ public final class StartupCoordinator {
         coordinationLock.lock();
         try {
             initializingComponents.remove(componentId);
-            LOGGER.warning("Component " + componentId + " initialization failed: " + error.getMessage());
+            LOGGER.warn("Component " + componentId + " initialization failed: " + error.getMessage());
         } finally {
             coordinationLock.unlock();
         }
@@ -185,7 +186,7 @@ public final class StartupCoordinator {
             initializingComponents.remove(componentId);
             initializedComponents.remove(componentId);
             startupComplete.set(false);
-            LOGGER.fine("Reset coordination state for component " + componentId);
+            LOGGER.debug("Reset coordination state for component " + componentId);
         } finally {
             coordinationLock.unlock();
         }
@@ -324,7 +325,7 @@ public final class StartupCoordinator {
             shutdownInitiated.set(false);
             startupStartTime = 0;
             startupEndTime = 0;
-            LOGGER.fine("StartupCoordinator reset completed");
+            LOGGER.debug("StartupCoordinator reset completed");
         } finally {
             coordinationLock.unlock();
         }

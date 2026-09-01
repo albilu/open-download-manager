@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 
 import org.manager.GlobalSettings;
 import org.manager.tools.AbstractToolManager;
@@ -155,7 +154,7 @@ public class TorToolManager extends AbstractToolManager {
                 features.put("data-directory", lowerOutput.contains("datadirectory"));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to detect tor features", e);
+            LOGGER.warn("Failed to detect tor features", e);
         }
 
         return features;
@@ -183,14 +182,14 @@ public class TorToolManager extends AbstractToolManager {
             int exitCode = completed ? process.exitValue() : -1;
 
             if (exitCode == 0) {
-                LOGGER.fine("tor basic check passed");
+                LOGGER.debug("tor basic check passed");
                 return true;
             } else {
-                LOGGER.warning("tor basic check failed with exit code: " + exitCode);
+                LOGGER.warn("tor basic check failed with exit code: " + exitCode);
                 return false;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "tor basic check failed", e);
+            LOGGER.warn("tor basic check failed", e);
             return false;
         }
     }
@@ -267,7 +266,7 @@ public class TorToolManager extends AbstractToolManager {
             socket.close();
             return true;
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Tor service test failed", e);
+            LOGGER.debug("Tor service test failed", e);
             return false;
         }
     }

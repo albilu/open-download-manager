@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
 import org.manager.tools.AbstractToolManager;
 
 /**
@@ -144,7 +143,7 @@ public class YtDlpToolManager extends AbstractToolManager {
                 features.put("generic", testExtractorSupport(toolPath, "generic"));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to detect yt-dlp features", e);
+            LOGGER.warn("Failed to detect yt-dlp features", e);
         }
 
         return features;
@@ -172,14 +171,14 @@ public class YtDlpToolManager extends AbstractToolManager {
             int exitCode = completed ? process.exitValue() : -1;
 
             if (exitCode == 0) {
-                LOGGER.fine("yt-dlp basic check passed");
+                LOGGER.debug("yt-dlp basic check passed");
                 return true;
             } else {
-                LOGGER.warning("yt-dlp basic check failed with exit code: " + exitCode);
+                LOGGER.warn("yt-dlp basic check failed with exit code: " + exitCode);
                 return false;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "yt-dlp basic check failed", e);
+            LOGGER.warn("yt-dlp basic check failed", e);
             return false;
         }
     }
@@ -202,7 +201,7 @@ public class YtDlpToolManager extends AbstractToolManager {
                 return output.toLowerCase().contains(extractorName.toLowerCase());
             }
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Failed to test extractor support: " + extractorName, e);
+            LOGGER.debug("Failed to test extractor support: " + extractorName, e);
         }
         return false;
     }
@@ -244,7 +243,7 @@ public class YtDlpToolManager extends AbstractToolManager {
                 return Arrays.asList(output.split("\n"));
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to get supported extractors", e);
+            LOGGER.warn("Failed to get supported extractors", e);
         }
 
         return Arrays.asList();
@@ -303,7 +302,7 @@ public class YtDlpToolManager extends AbstractToolManager {
 
             return exitCode == 0;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "yt-dlp basic function test failed", e);
+            LOGGER.warn("yt-dlp basic function test failed", e);
             return false;
         }
     }

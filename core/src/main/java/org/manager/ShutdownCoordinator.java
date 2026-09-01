@@ -11,8 +11,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Coordinates graceful shutdown of all components in the download manager. This
@@ -21,7 +21,7 @@ import java.util.logging.Logger;
  */
 public class ShutdownCoordinator {
 
-    private static final Logger LOGGER = Logger.getLogger(ShutdownCoordinator.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ShutdownCoordinator.class);
     private static final long DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 60;
 
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
@@ -184,7 +184,7 @@ public class ShutdownCoordinator {
      */
     public void registerShutdownHook(ShutdownHook hook) {
         if (isShuttingDown.get()) {
-            LOGGER.warning("Attempted to register shutdown hook '" + hook.getName() + "' during shutdown - ignored");
+            LOGGER.warn("Attempted to register shutdown hook '" + hook.getName() + "' during shutdown - ignored");
             return;
         }
 
@@ -192,7 +192,7 @@ public class ShutdownCoordinator {
             shutdownHooks.add(hook);
             // Sort by priority (highest first)
             shutdownHooks.sort((h1, h2) -> Integer.compare(h2.getPriority(), h1.getPriority()));
-            LOGGER.fine("Registered shutdown hook: " + hook.getName() + " (priority: " + hook.getPriority() + ")");
+            LOGGER.debug("Registered shutdown hook: " + hook.getName() + " (priority: " + hook.getPriority() + ")");
         }
     }
 
@@ -324,7 +324,7 @@ public class ShutdownCoordinator {
                     CompletableFuture.allOf(phaseResults.values().toArray(new CompletableFuture[0]))
                             .get(Math.max(1, shutdownTimeoutSeconds), TimeUnit.SECONDS);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Shutdown phase " + phaseName + " did not complete cleanly", e);
+                    LOGGER.warn("Shutdown phase " + phaseName + " did not complete cleanly", e);
                 }
 
                 phaseResults.forEach((hook, future) -> {
@@ -349,11 +349,11 @@ public class ShutdownCoordinator {
                                     cause = e;
                                 }
                             }
-                            LOGGER.log(Level.SEVERE,
+                            LOGGER.error(
                                     "Essential shutdown hook '" + hook.getName() + "' failed", cause);
                             essentialFailures.add(cause);
                         } else {
-                            LOGGER.warning("Best-effort (non-essential) shutdown hook '" + hook.getName()
+                            LOGGER.warn("Best-effort (non-essential) shutdown hook '" + hook.getName()
                                     + "' failed; shutdown continues");
                         }
                     }
@@ -377,7 +377,7 @@ public class ShutdownCoordinator {
             }
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Critical error during shutdown process", e);
+            LOGGER.error("Critical error during shutdown process", e);
             throw e instanceof RuntimeException runtime ? runtime : new RuntimeException(e);
         } finally {
             isShutdownComplete.set(true);
@@ -400,7 +400,7 @@ public class ShutdownCoordinator {
      */
     private CompletableFuture<Void> executeShutdownHook(ShutdownHook hook) {
         return CompletableFuture.runAsync(() -> {
-            LOGGER.fine("Executing shutdown hook: " + hook.getName());
+            LOGGER.debug("Executing shutdown hook: " + hook.getName());
             long startTime = System.currentTimeMillis();
 
             try {
@@ -409,27 +409,27 @@ public class ShutdownCoordinator {
                 hookTask.get(hook.getTimeoutSeconds(), TimeUnit.SECONDS);
 
                 long duration = System.currentTimeMillis() - startTime;
-                LOGGER.fine("Shutdown hook '" + hook.getName() + "' completed in " + duration + "ms");
+                LOGGER.debug("Shutdown hook '" + hook.getName() + "' completed in " + duration + "ms");
 
             } catch (TimeoutException e) {
                 long duration = System.currentTimeMillis() - startTime;
                 String message = "Shutdown hook '" + hook.getName() + "' timed out after " + duration + "ms";
 
                 if (hook.isEssential()) {
-                    LOGGER.severe(message + " (essential hook)");
+                    LOGGER.error(message + " (essential hook)");
                     throw new RuntimeException(message);
                 } else {
-                    LOGGER.warning(message + " (non-essential hook)");
+                    LOGGER.warn(message + " (non-essential hook)");
                 }
 
             } catch (Exception e) {
                 String message = "Shutdown hook '" + hook.getName() + "' failed: " + e.getMessage();
 
                 if (hook.isEssential()) {
-                    LOGGER.log(Level.SEVERE, message + " (essential hook)", e);
+                    LOGGER.error(message + " (essential hook)", e);
                     throw new RuntimeException(message, e);
                 } else {
-                    LOGGER.log(Level.WARNING, message + " (non-essential hook)", e);
+                    LOGGER.warn(message + " (non-essential hook)", e);
                 }
             }
         }, shutdownExecutor);
