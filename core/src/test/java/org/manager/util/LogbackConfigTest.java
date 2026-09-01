@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,6 +26,7 @@ import org.slf4j.LoggerFactory;
  * (system properties outrank environment variables in logback variable
  * substitution).
  */
+@Execution(ExecutionMode.SAME_THREAD)
 class LogbackConfigTest {
 
     @TempDir
@@ -31,7 +34,7 @@ class LogbackConfigTest {
 
     @Test
     void writesIntoOdmLogsDirectoryWithConfiguredPattern() throws Exception {
-        System.setProperty("ODM_LOG_DIR", tempDir.toString());
+        String originalOdmLogDir = setLogProperties(tempDir);
         try {
             configure("/logback.xml");
 
@@ -46,12 +49,13 @@ class LogbackConfigTest {
             assertTrue(content.contains("[INFO"), "level token missing from log file");
         } finally {
             restoreConsoleOnly();
+            restoreLogProperties(originalOdmLogDir);
         }
     }
 
     @Test
     void rotatesFilesOnceFileSizeCapIsExceeded() throws Exception {
-        System.setProperty("ODM_LOG_DIR", tempDir.toString());
+        String originalOdmLogDir = setLogProperties(tempDir);
         try {
             configure("/logback.xml");
 
@@ -65,13 +69,30 @@ class LogbackConfigTest {
             assertTrue(Files.exists(logDir.resolve("odm.log")), "active odm.log missing");
             try (var entries = Files.list(logDir)) {
                 List<Path> rolled = entries
-                        .filter(p -> p.getFileName().toString().startsWith("odm."))
+                        .filter(p -> p.getFileName().toString().matches("odm\\.\\d{4}-\\d{2}-\\d{2}\\.\\d+\\.log(\\.gz)?"))
                         .collect(Collectors.toList());
                 assertFalse(rolled.isEmpty(), "no rolled files produced above 2MB");
             }
         } finally {
             restoreConsoleOnly();
+            restoreLogProperties(originalOdmLogDir);
         }
+    }
+
+    private String setLogProperties(Path logBase) {
+        String originalOdmLogDir = System.getProperty("ODM_LOG_DIR");
+        System.setProperty("ODM_LOG_DIR", logBase.toString());
+        System.setProperty("odm.logging.level", "INFO");
+        return originalOdmLogDir;
+    }
+
+    private void restoreLogProperties(String originalOdmLogDir) {
+        if (originalOdmLogDir == null) {
+            System.clearProperty("ODM_LOG_DIR");
+        } else {
+            System.setProperty("ODM_LOG_DIR", originalOdmLogDir);
+        }
+        System.clearProperty("odm.logging.level");
     }
 
     private void configure(String resource) throws Exception {
