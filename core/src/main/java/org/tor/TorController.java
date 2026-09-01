@@ -18,8 +18,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  */
 public class TorController {
 
-    private static final Logger LOGGER = Logger.getLogger(TorController.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(TorController.class);
 
     // Control connection settings
     private final String controlHost;
@@ -142,7 +142,7 @@ public class TorController {
 
                     // Authenticate
                     if (!authenticate(reader, writer)) {
-                        LOGGER.severe("Failed to authenticate with Tor control interface");
+                        LOGGER.error("Failed to authenticate with Tor control interface");
                         socket.close();
                         return false;
                     }
@@ -157,7 +157,7 @@ public class TorController {
                     return true;
 
                 } catch (Exception e) {
-                    LOGGER.log(Level.SEVERE, "Failed to connect to Tor control interface", e);
+                    LOGGER.error("Failed to connect to Tor control interface", e);
                     return false;
                 }
             }
@@ -193,7 +193,7 @@ public class TorController {
                 }
 
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error during disconnect", e);
+                LOGGER.warn("Error during disconnect", e);
             } finally {
                 isConnected.set(false);
             }
@@ -224,12 +224,12 @@ public class TorController {
                     // a caller that needs the new IP polls for it
                     return true;
                 } else {
-                    LOGGER.warning("Failed to request new IP: " + response);
+                    LOGGER.warn("Failed to request new IP: " + response);
                     return false;
                 }
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error changing IP", e);
+                LOGGER.error("Error changing IP", e);
                 return false;
             }
         }, executorService);
@@ -249,14 +249,14 @@ public class TorController {
 
                 String response = sendCommand("GETINFO circuit-status");
                 if (response == null || !response.startsWith("250")) {
-                    LOGGER.warning("Failed to get circuit info: " + response);
+                    LOGGER.warn("Failed to get circuit info: " + response);
                     return Collections.emptyList();
                 }
 
                 return parseCircuitInfo(response);
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error getting circuit info", e);
+                LOGGER.error("Error getting circuit info", e);
                 return Collections.emptyList();
             }
         }, executorService);
@@ -283,12 +283,12 @@ public class TorController {
                     LOGGER.info("Circuit closed successfully: " + circuitId);
                     return true;
                 } else {
-                    LOGGER.warning("Failed to close circuit " + circuitId + ": " + response);
+                    LOGGER.warn("Failed to close circuit " + circuitId + ": " + response);
                     return false;
                 }
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error closing circuit", e);
+                LOGGER.error("Error closing circuit", e);
                 return false;
             }
         }, executorService);
@@ -309,7 +309,7 @@ public class TorController {
                 return ip;
 
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to get current IP", e);
+                LOGGER.warn("Failed to get current IP", e);
                 return null;
             }
         }, executorService);
@@ -341,12 +341,12 @@ public class TorController {
                     LOGGER.info("Configuration set successfully");
                     return true;
                 } else {
-                    LOGGER.warning("Failed to set configuration: " + response);
+                    LOGGER.warn("Failed to set configuration: " + response);
                     return false;
                 }
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error setting configuration", e);
+                LOGGER.error("Error setting configuration", e);
                 return false;
             }
         }, executorService);
@@ -380,7 +380,7 @@ public class TorController {
                 return null;
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error getting configuration", e);
+                LOGGER.error("Error getting configuration", e);
                 return null;
             }
         }, executorService);
@@ -421,11 +421,11 @@ public class TorController {
                     return changeIp().get(30, TimeUnit.SECONDS);
                 }
 
-                LOGGER.fine("Connection speed is acceptable");
+                LOGGER.debug("Connection speed is acceptable");
                 return true;
 
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error during auto IP change", e);
+                LOGGER.warn("Error during auto IP change", e);
                 // If we can't test, try changing IP anyway
                 try {
                     return changeIp().get(30, TimeUnit.SECONDS);
@@ -508,14 +508,14 @@ public class TorController {
                         cookieData = input.readNBytes(65);
                     }
                     if (cookieData.length != 32) {
-                        LOGGER.warning("Ignoring an invalid Tor authentication cookie");
+                        LOGGER.warn("Ignoring an invalid Tor authentication cookie");
                         continue;
                     }
                     String hexCookie = bytesToHex(cookieData);
                     LOGGER.info("Using Tor cookie authentication");
                     return hexCookie;
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Failed to read Tor authentication cookie", e);
+                    LOGGER.warn("Failed to read Tor authentication cookie", e);
                 }
             }
         }
@@ -569,7 +569,7 @@ public class TorController {
         try {
             return connect().get(connectionTimeoutMs, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to ensure connection", e);
+            LOGGER.warn("Failed to ensure connection", e);
             return false;
         }
     }
@@ -581,22 +581,22 @@ public class TorController {
                 BufferedReader reader = controlReader.get();
 
                 if (writer == null || reader == null) {
-                    LOGGER.warning("No active control connection");
+                    LOGGER.warn("No active control connection");
                     return null;
                 }
 
                 String commandName = command == null || command.isBlank()
                         ? "<empty>" : command.strip().split("\\s+", 2)[0];
-                LOGGER.fine("Sending Tor control command: " + commandName);
+                LOGGER.debug("Sending Tor control command: " + commandName);
                 writer.println(command);
 
                 String response = readResponse(reader);
-                LOGGER.fine("Received Tor control response");
+                LOGGER.debug("Received Tor control response");
 
                 return response;
 
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error sending Tor control command", e);
+                LOGGER.warn("Error sending Tor control command", e);
                 // Connection might be broken, mark as disconnected
                 isConnected.set(false);
                 return null;

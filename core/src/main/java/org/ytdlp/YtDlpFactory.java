@@ -5,7 +5,8 @@ import java.nio.file.Paths;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.ApplicationContext;
 import org.manager.GlobalSettings;
 import org.manager.tools.ToolManagerFactory;
@@ -16,7 +17,7 @@ import org.manager.tools.ToolManagerFactory;
  */
 public class YtDlpFactory {
 
-    private static final Logger LOGGER = Logger.getLogger(YtDlpFactory.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(YtDlpFactory.class);
 
     private static volatile YtDlpFactory instance;
     private static final Object instanceLock = new Object();
@@ -380,7 +381,7 @@ public class YtDlpFactory {
                 try {
                     client.shutdown();
                 } catch (Exception e) {
-                    LOGGER.warning("Error shutting down YtDlpClient for task " + taskId
+                    LOGGER.warn("Error shutting down YtDlpClient for task " + taskId
                             + ": " + e.getMessage());
                 }
             });
@@ -478,7 +479,7 @@ public class YtDlpFactory {
                 testClient.shutdown();
             }
         } catch (Exception e) {
-            LOGGER.warning("Failed to check yt-dlp availability: " + e.getMessage());
+            LOGGER.warn("Failed to check yt-dlp availability: " + e.getMessage());
             // Cache the failure result to avoid repeated attempts
             cachedAvailabilityInfo = new AvailabilityInfo(false, false, null);
             lastAvailabilityCheck = currentTime;
@@ -512,7 +513,7 @@ public class YtDlpFactory {
             try {
                 task.cancel();
             } catch (Exception e) {
-                LOGGER.warning("Error cancelling task " + task.getTaskId() + ": " + e.getMessage());
+                LOGGER.warn("Error cancelling task " + task.getTaskId() + ": " + e.getMessage());
             }
         });
 
@@ -538,7 +539,7 @@ public class YtDlpFactory {
             try {
                 client.shutdown();
             } catch (Exception e) {
-                LOGGER.warning("Error shutting down YtDlpClient: " + e.getMessage());
+                LOGGER.warn("Error shutting down YtDlpClient: " + e.getMessage());
             }
         });
         clients.clear();

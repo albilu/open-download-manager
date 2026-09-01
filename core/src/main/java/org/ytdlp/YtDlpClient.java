@@ -21,8 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.manager.ApplicationContext;
@@ -34,7 +34,7 @@ import org.manager.tools.ToolManagerFactory;
  */
 public class YtDlpClient {
 
-    private static final Logger LOGGER = Logger.getLogger(YtDlpClient.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(YtDlpClient.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int MAX_METADATA_OUTPUT_BYTES = 4 * 1024 * 1024;
     private static final long METADATA_TIMEOUT_SECONDS = 60;
@@ -351,7 +351,7 @@ public class YtDlpClient {
             // binary must degrade to "unavailable", not block forever
             if (!process.waitFor(10, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                LOGGER.warning("yt-dlp at path '" + ytDlpPath
+                LOGGER.warn("yt-dlp at path '" + ytDlpPath
                         + "' did not respond to --version within 10 seconds");
                 return false;
             }
@@ -360,7 +360,7 @@ public class YtDlpClient {
             if (process != null) {
                 process.destroyForcibly();
             }
-            LOGGER.log(Level.WARNING, "yt-dlp not available", e);
+            LOGGER.warn("yt-dlp not available", e);
             return false;
         }
     }
@@ -382,7 +382,7 @@ public class YtDlpClient {
                 return exitCode == 0 ? version : null;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to get yt-dlp version", e);
+            LOGGER.warn("Failed to get yt-dlp version", e);
             return null;
         }
     }
@@ -410,7 +410,7 @@ public class YtDlpClient {
             int exitCode = process.waitFor();
             return exitCode == 0;
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "aria2c not available at path: " + aria2cPath, e);
+            LOGGER.debug("aria2c not available at path: " + aria2cPath, e);
             return false;
         }
     }
@@ -446,7 +446,7 @@ public class YtDlpClient {
                 return null;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to get aria2c version", e);
+            LOGGER.warn("Failed to get aria2c version", e);
             return null;
         }
     }
@@ -496,7 +496,7 @@ public class YtDlpClient {
             } catch (CancellationException e) {
                 throw e;
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to extract video info", e);
+                LOGGER.error("Failed to extract video info", e);
                 throw new RuntimeException("Failed to extract video info: " + e.getMessage(), e);
             }
         }, executor);
@@ -559,7 +559,7 @@ public class YtDlpClient {
             } catch (CancellationException e) {
                 throw e;
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to list formats", e);
+                LOGGER.error("Failed to list formats", e);
                 throw new RuntimeException("Failed to list formats: " + e.getMessage(), e);
             }
         }, executor);
@@ -756,7 +756,7 @@ public class YtDlpClient {
                 if (launch.isCancelled()) {
                     throw new CancellationException("yt-dlp download was cancelled");
                 }
-                LOGGER.log(Level.SEVERE, "Download failed", e);
+                LOGGER.error("Download failed", e);
                 if (callback != null) {
                     callback.onError(e.getMessage());
                 }
@@ -1263,7 +1263,7 @@ public class YtDlpClient {
             }
             return Files.isRegularFile(completedPath) ? Files.size(completedPath) : 0L;
         } catch (IOException | IllegalArgumentException | SecurityException e) {
-            LOGGER.log(Level.FINE, "Unable to inspect completed yt-dlp output size", e);
+            LOGGER.debug("Unable to inspect completed yt-dlp output size", e);
             return 0L;
         }
     }

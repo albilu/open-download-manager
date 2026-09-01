@@ -17,8 +17,8 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,7 +33,7 @@ import org.manager.tools.ToolManagerFactory;
  */
 public class ProxychainsClient {
 
-    private static final Logger LOGGER = Logger.getLogger(ProxychainsClient.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProxychainsClient.class);
     private static final Pattern ARIA2_PROGRESS_PATTERN = Pattern.compile(
             "\\[#([0-9a-f]+)\\s+([0-9.]+)([KMGTkmgt]?i?)B/([0-9.]+)([KMGTkmgt]?i?)B\\(([0-9.]+)%\\).*");
     private static final Pattern SPEED_PATTERN = Pattern.compile(
@@ -249,11 +249,11 @@ public class ProxychainsClient {
                         String line;
                         while ((line = reader.readLine()) != null) {
                             // Per-line tool output at 1+ lines/second: FINE
-                            LOGGER.fine("[ARIA2 STDERR]: " + line);
+                            LOGGER.debug("[ARIA2 STDERR]: " + line);
                             processAria2Output(line, download, listener);
                         }
                     } catch (IOException e) {
-                        LOGGER.severe("Error reading stderr: " + e.getMessage());
+                        LOGGER.error("Error reading stderr: " + e.getMessage());
                     }
                 });
                 stderrReader.setDaemon(true);
@@ -265,7 +265,7 @@ public class ProxychainsClient {
 
                     while ((line = reader.readLine()) != null) {
                         // Per-line tool output at 1+ lines/second: FINE
-                        LOGGER.fine("[ARIA2 STDOUT]: " + line);
+                        LOGGER.debug("[ARIA2 STDOUT]: " + line);
                         processAria2Output(line, download, listener);
                     }
                 }
@@ -561,11 +561,11 @@ public class ProxychainsClient {
                                 download.getDestination());
                     }
                 } else {
-                    LOGGER.warning("Refusing unsafe partial-file deletion for " + download.getId()
+                    LOGGER.warn("Refusing unsafe partial-file deletion for " + download.getId()
                             + ": " + download.getName());
                 }
             } catch (IllegalArgumentException invalidPath) {
-                LOGGER.warning("Refusing unsafe partial-file name for " + download.getId()
+                LOGGER.warn("Refusing unsafe partial-file name for " + download.getId()
                         + ": " + download.getName());
             }
         }
@@ -656,13 +656,13 @@ public class ProxychainsClient {
         // Progress-summary lines arrive every second (--summary-interval=1);
         // keep them out of INFO or a single download floods the log
         if (line.contains("#") || line.contains("%") || line.contains("DL:")) {
-            LOGGER.fine("[POTENTIAL PROGRESS]: " + line);
+            LOGGER.debug("[POTENTIAL PROGRESS]: " + line);
         }
 
         // Parse progress information
         Matcher progressMatcher = ARIA2_PROGRESS_PATTERN.matcher(line);
         if (progressMatcher.find()) {
-            LOGGER.fine("[PROGRESS MATCHED]: " + line);
+            LOGGER.debug("[PROGRESS MATCHED]: " + line);
             String gid = progressMatcher.group(1);
             // Store the GID for this download
             gidMap.put(download.getId(), gid);

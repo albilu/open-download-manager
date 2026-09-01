@@ -23,8 +23,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
@@ -43,7 +43,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 public class Aria2Client {
 
-    private static final Logger LOGGER = Logger.getLogger(Aria2Client.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(Aria2Client.class);
 
     private final String aria2cPath;
     private volatile String rpcUrl;
@@ -489,7 +489,7 @@ public class Aria2Client {
             String arg = extraArgs.get(i);
             String flagName = arg.contains("=") ? arg.substring(0, arg.indexOf('=')) : arg;
             if (RESERVED_RPC_FLAGS.contains(flagName)) {
-                LOGGER.warning("Filtered reserved aria2 RPC argument \"" + arg
+                LOGGER.warn("Filtered reserved aria2 RPC argument \"" + arg
                         + "\": RPC binding, port, secret, and enable-RPC are ODM-owned");
                 // Only value-taking flags consume the next token
                 // unconditionally; a boolean-style reserved flag must never
@@ -574,7 +574,7 @@ public class Aria2Client {
             try {
                 shutdown();
             } catch (Exception e) {
-                LOGGER.warning("Graceful aria2 shutdown failed: " + e.getMessage());
+                LOGGER.warn("Graceful aria2 shutdown failed: " + e.getMessage());
             }
 
             boolean stopped = waitForAria2State(false, 10000, 200);
@@ -583,7 +583,7 @@ public class Aria2Client {
                     forceShutdown();
                     stopped = waitForAria2State(false, 10000, 200);
                 } catch (Exception e) {
-                    LOGGER.warning("Force aria2 shutdown failed: " + e.getMessage());
+                    LOGGER.warn("Force aria2 shutdown failed: " + e.getMessage());
                 }
             }
 
@@ -1070,7 +1070,7 @@ public class Aria2Client {
                         handleNotification(json);
                     }
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Failed to process WebSocket message", e);
+                    LOGGER.warn("Failed to process WebSocket message", e);
                 }
             }
 
@@ -1091,7 +1091,7 @@ public class Aria2Client {
 
             @Override
             public void onError(Exception ex) {
-                LOGGER.log(Level.WARNING, "WebSocket error: " + ex.getMessage(), ex);
+                LOGGER.warn("WebSocket error: " + ex.getMessage(), ex);
             }
         };
 
@@ -1194,7 +1194,7 @@ public class Aria2Client {
                 wsClient.close(); // Force close on interruption
             } catch (Exception e) {
                 // Log error but continue with cleanup
-                LOGGER.severe("Error during WebSocket close: " + e.getMessage());
+                LOGGER.error("Error during WebSocket close: " + e.getMessage());
                 wsClient.close(); // Force close on any error
             } finally {
                 wsClient = null;
@@ -1283,7 +1283,7 @@ public class Aria2Client {
                     wsClient.sendPing();
                 }
             } catch (Exception e) {
-                LOGGER.fine("WebSocket health check ping failed: " + e.getMessage());
+                LOGGER.debug("WebSocket health check ping failed: " + e.getMessage());
             }
         }, 10, 30, TimeUnit.SECONDS);
     }
@@ -1337,7 +1337,7 @@ public class Aria2Client {
 
                                 boolean restartSuccess = restartAria2c();
                                 if (!restartSuccess) {
-                                    LOGGER.severe("Failed to restart aria2 process");
+                                    LOGGER.error("Failed to restart aria2 process");
                                     continue;
                                 }
                             }
@@ -1355,11 +1355,11 @@ public class Aria2Client {
                         LOGGER.info("Successfully reconnected WebSocket");
                         return;
                     } catch (Exception e) {
-                        LOGGER.severe("Failed to reconnect WebSocket: " + e.getMessage());
+                        LOGGER.error("Failed to reconnect WebSocket: " + e.getMessage());
                     }
                 }
 
-                LOGGER.severe("Failed to reconnect WebSocket after " + attempts + " attempts");
+                LOGGER.error("Failed to reconnect WebSocket after " + attempts + " attempts");
             } finally {
                 isReconnecting = false;
             }

@@ -14,7 +14,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import static org.awaitility.Awaitility.await;
@@ -65,7 +66,7 @@ import org.tor.TorService;
 @DisabledIfEnvironmentVariable(named = "SKIP_E2E_TESTS", matches = "true")
 class ProxychainsE2ETest {
 
-    private static final Logger LOGGER = Logger.getLogger(ProxychainsE2ETest.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProxychainsE2ETest.class);
 
     private static final String TEST_FILE_CONTENT = "This is a test file for download testing.\n".repeat(100);
     private static final int TEST_FILE_SIZE = TEST_FILE_CONTENT.length();

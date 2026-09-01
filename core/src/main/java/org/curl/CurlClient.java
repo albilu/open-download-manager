@@ -16,7 +16,8 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.manager.ApplicationContext;
@@ -30,7 +31,7 @@ import org.manager.tools.ToolManagerFactory;
  */
 public class CurlClient {
 
-    private static final Logger LOGGER = Logger.getLogger(CurlClient.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(CurlClient.class);
 
     private static final Pattern PROGRESS_PATTERN = Pattern.compile(
             "\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+([\\d.]+[kmgtKMGT]?)\\s+.*");
@@ -500,11 +501,11 @@ public class CurlClient {
                     org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
                             download.getDestination());
                 } else {
-                    LOGGER.warning("Refusing unsafe partial-file deletion for " + download.getId()
+                    LOGGER.warn("Refusing unsafe partial-file deletion for " + download.getId()
                             + ": " + download.getName());
                 }
             } catch (IllegalArgumentException invalidPath) {
-                LOGGER.warning("Refusing unsafe partial-file name for " + download.getId()
+                LOGGER.warn("Refusing unsafe partial-file name for " + download.getId()
                         + ": " + download.getName());
             }
         }

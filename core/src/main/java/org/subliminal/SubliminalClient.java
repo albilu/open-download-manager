@@ -7,15 +7,15 @@ import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.tools.ExternalProcessRegistry;
 import org.manager.tools.ToolPaths;
 
 /** Process-owning client for the Subliminal command-line tool. */
 public class SubliminalClient {
 
-    private static final Logger LOGGER = Logger.getLogger(SubliminalClient.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SubliminalClient.class);
 
     private final String subliminalPath;
     private final ExternalProcessRegistry activeProcesses =
@@ -55,7 +55,7 @@ public class SubliminalClient {
             boolean finished = process.waitFor(
                     settings.getTimeout().toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
-                LOGGER.warning("Subliminal timed out for " + mediaFile);
+                LOGGER.warn("Subliminal timed out for " + mediaFile);
                 activeProcesses.terminate(operationId, 5);
                 return false;
             }
@@ -63,7 +63,7 @@ public class SubliminalClient {
                 return false;
             }
             if (process.exitValue() != 0) {
-                LOGGER.warning("Subliminal failed with exit code "
+                LOGGER.warn("Subliminal failed with exit code "
                         + process.exitValue() + " for " + mediaFile);
                 return false;
             }
@@ -71,7 +71,7 @@ public class SubliminalClient {
         } catch (CancellationException e) {
             return false;
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Could not start Subliminal", e);
+            LOGGER.warn("Could not start Subliminal", e);
             return false;
         } catch (InterruptedException e) {
             activeProcesses.terminate(operationId, 5);

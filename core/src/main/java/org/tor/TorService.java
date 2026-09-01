@@ -19,8 +19,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Service class to manage Tor process lifecycle. Handles starting, stopping,
@@ -28,7 +28,7 @@ import java.util.logging.Logger;
  */
 public class TorService {
 
-    private static final Logger LOGGER = Logger.getLogger(TorService.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(TorService.class);
 
     // Default Tor configuration
     private static final int DEFAULT_SOCKS_PORT = 9050;
@@ -126,7 +126,7 @@ public class TorService {
                     // relaunched process never becomes ready). After a real
                     // shutdown() the executor is gone: refuse to resurrect.
                     if (executorService.isShutdown()) {
-                        LOGGER.severe("Cannot start Tor service: executor is shut down");
+                        LOGGER.error("Cannot start Tor service: executor is shut down");
                         return false;
                     }
                     isShuttingDown.set(false);
@@ -172,13 +172,13 @@ public class TorService {
                             LOGGER.info("Tor service started successfully");
                             return true;
                         } else {
-                            LOGGER.severe("Tor failed to start within timeout");
+                            LOGGER.error("Tor failed to start within timeout");
                             stopInternal();
                             return false;
                         }
 
                     } catch (Exception e) {
-                        LOGGER.log(Level.SEVERE, "Failed to start Tor service", e);
+                        LOGGER.error("Failed to start Tor service", e);
                         stopInternal();
                         return false;
                     }
@@ -213,7 +213,7 @@ public class TorService {
 
             if (isRunning.get()) {
                 if (!stop()) {
-                    LOGGER.severe("Failed to stop Tor service during restart");
+                    LOGGER.error("Failed to stop Tor service during restart");
                     return false;
                 }
 
@@ -229,7 +229,7 @@ public class TorService {
             try {
                 return start().get(60, TimeUnit.SECONDS);
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to restart Tor service", e);
+                LOGGER.error("Failed to restart Tor service", e);
                 return false;
             }
         }, executorService);
@@ -282,7 +282,7 @@ public class TorService {
                     return true;
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to update Tor configuration", e);
+                LOGGER.error("Failed to update Tor configuration", e);
                 return false;
             }
         }, executorService);
@@ -366,7 +366,7 @@ public class TorService {
                 Files.deleteIfExists(configFile);
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to clean up config file", e);
+            LOGGER.warn("Failed to clean up config file", e);
         }
 
         shutdownFuture.complete(null);
@@ -417,7 +417,7 @@ public class TorService {
 
         Files.write(configFile, lines, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING);
-        LOGGER.fine("Tor configuration written to: " + configFile);
+        LOGGER.debug("Tor configuration written to: " + configFile);
     }
 
     private List<String> buildTorCommand() {
@@ -438,7 +438,7 @@ public class TorService {
                 }
             } catch (IOException e) {
                 if (!isShuttingDown.get()) {
-                    LOGGER.log(Level.WARNING, "Error reading Tor stdout", e);
+                    LOGGER.warn("Error reading Tor stdout", e);
                 }
             }
         });
@@ -452,7 +452,7 @@ public class TorService {
                 }
             } catch (IOException e) {
                 if (!isShuttingDown.get()) {
-                    LOGGER.log(Level.WARNING, "Error reading Tor stderr", e);
+                    LOGGER.warn("Error reading Tor stderr", e);
                 }
             }
         });
@@ -474,10 +474,10 @@ public class TorService {
         }
 
         if (line.contains("[err]")) {
-            LOGGER.warning("Tor reported an error on " + (stderr ? "stderr" : "stdout"));
+            LOGGER.warn("Tor reported an error on " + (stderr ? "stderr" : "stdout"));
             notifyListeners(TorServiceEvent.ERROR);
         } else {
-            LOGGER.fine("Tor emitted " + (stderr ? "stderr" : "stdout") + " output");
+            LOGGER.debug("Tor emitted " + (stderr ? "stderr" : "stdout") + " output");
         }
     }
 
@@ -580,7 +580,7 @@ public class TorService {
                 try {
                     listener.onServiceEvent(event);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error notifying listener", e);
+                    LOGGER.warn("Error notifying listener", e);
                 }
             }
         }

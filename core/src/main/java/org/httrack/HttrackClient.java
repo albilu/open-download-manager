@@ -18,8 +18,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,7 +35,7 @@ import org.httrack.HttrackToolManager;
  */
 public class HttrackClient {
 
-    private static final Logger LOGGER = Logger.getLogger(HttrackClient.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(HttrackClient.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     // Progress parsing patterns
@@ -167,7 +167,7 @@ public class HttrackClient {
                     }
                     activeJobs.remove(jobId);
                 }
-                LOGGER.log(Level.SEVERE, "Failed to start httrack mirror", e);
+                LOGGER.error("Failed to start httrack mirror", e);
                 throw new RuntimeException("Failed to start httrack mirror: " + e.getMessage(), e);
             }
         }, executorService);
@@ -254,7 +254,7 @@ public class HttrackClient {
                             job.setErrorMessage("Failed to resume: " + e.getMessage());
                             notifyJobError(job, e.getMessage());
                         }
-                        LOGGER.log(Level.SEVERE, "Failed to resume httrack job", e);
+                        LOGGER.error("Failed to resume httrack job", e);
                     }
                 }
             }
@@ -296,7 +296,7 @@ public class HttrackClient {
                         try {
                             deleteDirectory(job.getSettings().getOutputDirectory());
                         } catch (IOException e) {
-                            LOGGER.log(Level.WARNING, "Failed to delete output directory", e);
+                            LOGGER.warn("Failed to delete output directory", e);
                         }
                     }
 
@@ -344,7 +344,7 @@ public class HttrackClient {
                 // instead of blocking startup availability checks
                 if (!process.waitFor(10, TimeUnit.SECONDS)) {
                     process.destroyForcibly();
-                    LOGGER.warning("httrack at path '" + httrackPath
+                    LOGGER.warn("httrack at path '" + httrackPath
                             + "' did not respond to --version within 10 seconds");
                     return false;
                 }
@@ -353,7 +353,7 @@ public class HttrackClient {
                 if (process != null) {
                     process.destroyForcibly();
                 }
-                LOGGER.log(Level.WARNING, "httrack not available", e);
+                LOGGER.warn("httrack not available", e);
                 return false;
             }
         }, executorService);
@@ -526,7 +526,7 @@ public class HttrackClient {
                         ? "httrack reported transfer errors and wrote no files"
                         : "httrack process exited with code: " + exitCode);
                 notifyJobError(job, job.getErrorMessage());
-                LOGGER.warning("httrack job failed with exit code " + exitCode + ": " + job.getJobId());
+                LOGGER.warn("httrack job failed with exit code " + exitCode + ": " + job.getJobId());
             }
 
             activeJobs.remove(job.getJobId());
@@ -560,10 +560,10 @@ public class HttrackClient {
                 } else if (realPathConfined(path, lexicalRoot)) {
                     Files.delete(path);
                 } else {
-                    LOGGER.warning("Skipping deletion outside the configured output directory: " + path);
+                    LOGGER.warn("Skipping deletion outside the configured output directory: " + path);
                 }
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to delete: " + path, e);
+                LOGGER.warn("Failed to delete: " + path, e);
             }
         }
     }
@@ -589,7 +589,7 @@ public class HttrackClient {
             try {
                 listener.onJobStarted(job);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in notification listener", e);
+                LOGGER.warn("Error in notification listener", e);
             }
         }
     }
@@ -599,7 +599,7 @@ public class HttrackClient {
             try {
                 listener.onJobProgress(job);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in notification listener", e);
+                LOGGER.warn("Error in notification listener", e);
             }
         }
     }
@@ -609,7 +609,7 @@ public class HttrackClient {
             try {
                 listener.onJobCompleted(job);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in notification listener", e);
+                LOGGER.warn("Error in notification listener", e);
             }
         }
     }
@@ -619,7 +619,7 @@ public class HttrackClient {
             try {
                 listener.onJobPaused(job);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in notification listener", e);
+                LOGGER.warn("Error in notification listener", e);
             }
         }
     }
@@ -629,7 +629,7 @@ public class HttrackClient {
             try {
                 listener.onJobResumed(job);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in notification listener", e);
+                LOGGER.warn("Error in notification listener", e);
             }
         }
     }
@@ -639,7 +639,7 @@ public class HttrackClient {
             try {
                 listener.onJobCanceled(job);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in notification listener", e);
+                LOGGER.warn("Error in notification listener", e);
             }
         }
     }
@@ -649,7 +649,7 @@ public class HttrackClient {
             try {
                 listener.onJobError(job, errorMessage);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in notification listener", e);
+                LOGGER.warn("Error in notification listener", e);
             }
         }
     }

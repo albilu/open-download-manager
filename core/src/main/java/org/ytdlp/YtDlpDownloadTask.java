@@ -6,8 +6,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.ytdlp.YtDlpClient.ProgressCallback;
 
@@ -18,7 +18,7 @@ import org.ytdlp.YtDlpClient.ProgressCallback;
  */
 public class YtDlpDownloadTask {
 
-    private static final Logger LOGGER = Logger.getLogger(YtDlpDownloadTask.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(YtDlpDownloadTask.class);
 
     public enum Status {
         PENDING,
@@ -102,7 +102,7 @@ public class YtDlpDownloadTask {
             try {
                 dispatch.accept(listener);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Progress listener failed", e);
+                LOGGER.warn("Progress listener failed", e);
             }
         }
     }
@@ -197,7 +197,7 @@ public class YtDlpDownloadTask {
                     }
                     errorMessage.set(error);
                     status.set(Status.ERROR);
-                    LOGGER.log(Level.SEVERE, "Download error for task " + taskId + ": " + error);
+                    LOGGER.error("Download error for task " + taskId + ": " + error);
                     forwardToListener(l -> l.onError(error));
                 }
             };
@@ -353,7 +353,7 @@ public class YtDlpDownloadTask {
 
         // Log progress at intervals to avoid spam
         if (percentage % 10 == 0) {
-            LOGGER.fine(String.format("Task %s progress: %.1f%% (%.2f MB/s)",
+            LOGGER.debug(String.format("Task %s progress: %.1f%% (%.2f MB/s)",
                     taskId, percentage, speed / (1024 * 1024)));
         }
     }
@@ -395,7 +395,7 @@ public class YtDlpDownloadTask {
         } catch (java.util.concurrent.ExecutionException | java.util.concurrent.CancellationException e) {
             return true; // abnormal completion is still confirmed completion
         } catch (java.util.concurrent.TimeoutException e) {
-            LOGGER.warning("Run of task " + taskId + " not confirmed complete within " + timeout);
+            LOGGER.warn("Run of task " + taskId + " not confirmed complete within " + timeout);
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

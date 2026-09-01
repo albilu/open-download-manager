@@ -18,8 +18,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  */
 public class TorLeakChecker {
 
-    private static final Logger LOGGER = Logger.getLogger(TorLeakChecker.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(TorLeakChecker.class);
 
     // Test endpoints
     private static final String TOR_CHECK_URL = "https://check.torproject.org/api/ip";
@@ -117,7 +117,7 @@ public class TorLeakChecker {
                 return new LeakCheckResult(isSecure, message, ipResult, dnsResult, torResult);
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error during leak check", e);
+                LOGGER.error("Error during leak check", e);
                 return new LeakCheckResult(false, "Leak check failed: " + e.getMessage(), null, null, null);
             } finally {
                 isRunning.set(false);
@@ -135,7 +135,7 @@ public class TorLeakChecker {
             try {
                 return fetchUrlContent(IP_CHECK_URL, true).trim();
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to get external IP", e);
+                LOGGER.warn("Failed to get external IP", e);
                 return null;
             }
         }, getOrCreateExecutorService());
@@ -166,7 +166,7 @@ public class TorLeakChecker {
             socket.connect(new InetSocketAddress(socksProxyHost, socksProxyPort), 5000);
             return true;
         } catch (Exception e) {
-            LOGGER.fine("Tor proxy not accessible: " + e.getMessage());
+            LOGGER.debug("Tor proxy not accessible: " + e.getMessage());
             return false;
         }
     }
@@ -193,14 +193,14 @@ public class TorLeakChecker {
     // Private helper methods
     private IpLeakResult checkIpLeak() {
         try {
-            LOGGER.fine("Checking IP leak...");
+            LOGGER.debug("Checking IP leak...");
 
             // Get IP without proxy
             String directIp = null;
             try {
                 directIp = fetchUrlContent(IP_CHECK_URL, false);
             } catch (Exception e) {
-                LOGGER.fine("Could not get direct IP: " + e.getMessage());
+                LOGGER.debug("Could not get direct IP: " + e.getMessage());
             }
 
             // Get IP through Tor
@@ -225,14 +225,14 @@ public class TorLeakChecker {
             return new IpLeakResult(isSecure, message, directIp, torIp);
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "IP leak check failed", e);
+            LOGGER.warn("IP leak check failed", e);
             return new IpLeakResult(false, "IP check failed: " + e.getMessage(), null, null);
         }
     }
 
     DnsLeakResult checkDnsLeak() {
         try {
-            LOGGER.fine("Checking DNS leak...");
+            LOGGER.debug("Checking DNS leak...");
 
             List<String> localNameservers = readResolvConfNameservers();
             boolean anyResolvedLocally = false;
@@ -247,7 +247,7 @@ public class TorLeakChecker {
             return evaluateDnsVerdict(localNameservers, anyResolvedLocally, anyRoutedUnresolved);
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "DNS leak check failed", e);
+            LOGGER.warn("DNS leak check failed", e);
             return new DnsLeakResult(DnsVerdict.UNVERIFIED, "DNS check failed: " + e.getMessage(),
                     Collections.emptyList(), Collections.emptyList());
         }
@@ -290,7 +290,7 @@ public class TorLeakChecker {
                     .map(parts -> parts[1])
                     .toList();
         } catch (Exception e) {
-            LOGGER.fine("Could not read /etc/resolv.conf: " + e.getMessage());
+            LOGGER.debug("Could not read /etc/resolv.conf: " + e.getMessage());
             return Collections.emptyList();
         }
     }
@@ -301,7 +301,7 @@ public class TorLeakChecker {
 
     private TorNetworkResult checkTorNetwork() {
         try {
-            LOGGER.fine("Checking Tor network connectivity...");
+            LOGGER.debug("Checking Tor network connectivity...");
 
             // Check with Tor Project's check service
             String response = fetchUrlContent(TOR_CHECK_URL, true);
@@ -332,7 +332,7 @@ public class TorLeakChecker {
             return new TorNetworkResult(isUsingTor, message, exitNode, country);
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Tor network check failed", e);
+            LOGGER.warn("Tor network check failed", e);
             return new TorNetworkResult(false, "Tor network check failed: " + e.getMessage(), null, null);
         }
     }
@@ -382,14 +382,14 @@ public class TorLeakChecker {
             // proxy resolved it remotely.
             return new DnsProbeEvidence(resolvedLocally, !resolvedLocally);
         } catch (Exception e) {
-            LOGGER.fine("DNS probe failed for " + domain + ": " + e.getMessage());
+            LOGGER.debug("DNS probe failed for " + domain + ": " + e.getMessage());
             return new DnsProbeEvidence(resolvedLocally, false);
         } finally {
             if (socket != null) {
                 try {
                     socket.close();
                 } catch (Exception closeError) {
-                    LOGGER.fine("Error closing SOCKS probe socket: " + closeError.getMessage());
+                    LOGGER.debug("Error closing SOCKS probe socket: " + closeError.getMessage());
                 }
             }
         }

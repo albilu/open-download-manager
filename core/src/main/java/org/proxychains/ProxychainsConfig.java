@@ -11,8 +11,8 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Utility class for creating and managing proxychains configuration files. This
@@ -21,7 +21,7 @@ import java.util.logging.Logger;
  */
 public class ProxychainsConfig {
 
-    private static final Logger LOGGER = Logger.getLogger(ProxychainsConfig.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProxychainsConfig.class);
 
     public enum ProxyType {
         HTTP("http"),
@@ -125,7 +125,7 @@ public class ProxychainsConfig {
                         try {
                             this.tcpReadTimeout = Integer.parseInt(parts[1]);
                         } catch (NumberFormatException e) {
-                            LOGGER.log(Level.WARNING, "Invalid tcp_read_time_out value: " + parts[1]);
+                            LOGGER.warn("Invalid tcp_read_time_out value: " + parts[1]);
                         }
                     }
                 } else if (line.startsWith("tcp_connect_time_out")) {
@@ -134,7 +134,7 @@ public class ProxychainsConfig {
                         try {
                             this.tcpConnectTimeout = Integer.parseInt(parts[1]);
                         } catch (NumberFormatException e) {
-                            LOGGER.log(Level.WARNING, "Invalid tcp_connect_time_out value: " + parts[1]);
+                            LOGGER.warn("Invalid tcp_connect_time_out value: " + parts[1]);
                         }
                     }
                 } else if (line.startsWith("http") || line.startsWith("socks")) {
@@ -152,7 +152,7 @@ public class ProxychainsConfig {
                             ProxyEntry entry = new ProxyEntry(type, host, port, username, password);
                             proxyList.add(entry);
                         } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
-                            LOGGER.log(Level.WARNING, "Invalid proxy entry: " + line, e);
+                            LOGGER.warn("Invalid proxy entry: " + line, e);
                         }
                     }
                 }
@@ -366,14 +366,14 @@ public class ProxychainsConfig {
             // the closing bracket instead of the last colon.
             int schemeEnd = proxyString.indexOf("://");
             if (schemeEnd <= 0) {
-                LOGGER.warning("Invalid proxy string format");
+                LOGGER.warn("Invalid proxy string format");
                 return this;
             }
 
             String typeStr = proxyString.substring(0, schemeEnd).toLowerCase();
             ProxyType type = ProxyType.fromString(typeStr);
             if (type == null) {
-                LOGGER.warning("Unknown proxy type: " + typeStr);
+                LOGGER.warn("Unknown proxy type: " + typeStr);
                 return this;
             }
 
@@ -400,7 +400,7 @@ public class ProxychainsConfig {
                 // [ipv6]:port
                 int bracketEnd = rest.indexOf(']');
                 if (bracketEnd < 0 || bracketEnd + 1 >= rest.length() || rest.charAt(bracketEnd + 1) != ':') {
-                    LOGGER.warning("Invalid bracketed IPv6 proxy (expected [host]:port)");
+                    LOGGER.warn("Invalid bracketed IPv6 proxy (expected [host]:port)");
                     return this;
                 }
                 host = rest.substring(1, bracketEnd);
@@ -408,13 +408,13 @@ public class ProxychainsConfig {
             } else {
                 int lastColon = rest.lastIndexOf(':');
                 if (lastColon <= 0 || lastColon == rest.length() - 1) {
-                    LOGGER.warning("Invalid host:port format: " + rest);
+                    LOGGER.warn("Invalid host:port format: " + rest);
                     return this;
                 }
                 // A single colon means IPv4/hostname:port; multiple colons
                 // without brackets is a malformed bare IPv6 with no port
                 if (rest.indexOf(':') != lastColon) {
-                    LOGGER.warning("IPv6 proxies must be bracketed ([host]:port)");
+                    LOGGER.warn("IPv6 proxies must be bracketed ([host]:port)");
                     return this;
                 }
                 host = rest.substring(0, lastColon);
@@ -428,7 +428,7 @@ public class ProxychainsConfig {
             }
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error parsing proxy string", e);
+            LOGGER.warn("Error parsing proxy string", e);
         }
 
         return this;
