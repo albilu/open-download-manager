@@ -21,8 +21,8 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 
 import org.aria2.Aria2ToolManager;
@@ -64,7 +64,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  */
 public class DownloadManagerImpl implements DownloadManager {
 
-    private static final Logger LOGGER = Logger.getLogger(DownloadManagerImpl.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DownloadManagerImpl.class);
     private static final int DEFAULT_MAX_CONCURRENT_DOWNLOADS = 5;
     private static final String STATE_FILE = "odm-state.json";
     private static final String STATE_DB_FILE = "odm-state.db";
@@ -275,7 +275,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
                 LOGGER.info("Download manager initialized successfully");
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to initialize download manager", e);
+                LOGGER.error("Failed to initialize download manager", e);
                 throw new CompletionException(e);
             }
         }, executorManager.getGeneralExecutor());
@@ -291,7 +291,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 try {
                     entry.getValue().removeDownloadListener(reusableListener);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error removing listener during shutdown for download: " + entry.getKey(),
+                    LOGGER.warn("Error removing listener during shutdown for download: " + entry.getKey(),
                             e);
                 }
             }
@@ -314,7 +314,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     ErrorHandler.RetryConfig.noRetry(),
                     "create download");
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to create download", e);
+            LOGGER.warn("Failed to create download", e);
             throw new RuntimeException(e);
         }
     }
@@ -331,7 +331,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     ErrorHandler.RetryConfig.noRetry(),
                     "create torrent download");
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to create torrent download", e);
+            LOGGER.warn("Failed to create torrent download", e);
             throw new RuntimeException(e);
         }
     }
@@ -446,7 +446,7 @@ public class DownloadManagerImpl implements DownloadManager {
                         ErrorHandler.RetryConfig.noRetry(),
                         "queue download: " + download.getId());
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to queue download: " + download.getId(), e);
+                LOGGER.warn("Failed to queue download: " + download.getId(), e);
                 downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
                 download.setErrorMessage(e.getMessage());
                 notifyDownloadError(download, e.getMessage());
@@ -497,7 +497,7 @@ public class DownloadManagerImpl implements DownloadManager {
             if (!admissionAlreadyClaimed) {
                 AdmissionResult admission = claimRunningSlot(download.getId());
                 if (admission == AdmissionResult.DUPLICATE) {
-                    LOGGER.warning("Ignoring duplicate start for active download "
+                    LOGGER.warn("Ignoring duplicate start for active download "
                             + download.getId() + " (status " + download.getStatus() + ")");
                     return;
                 }
@@ -555,11 +555,11 @@ public class DownloadManagerImpl implements DownloadManager {
             CompletableFuture<String> future = handler.startDownload(download);
             future.thenAccept(gid -> {
                 if (!isCurrentAttempt(download.getId(), startGeneration)) {
-                    LOGGER.warning("Dropping stale generation result for download: " + download.getName());
+                    LOGGER.warn("Dropping stale generation result for download: " + download.getName());
                     return;
                 }
                 if (isTerminalAttempt(download.getId(), startGeneration)) {
-                    LOGGER.warning("Dropping start result after terminal event for download: "
+                    LOGGER.warn("Dropping start result after terminal event for download: "
                             + download.getName());
                     return;
                 }
@@ -572,12 +572,12 @@ public class DownloadManagerImpl implements DownloadManager {
                     // in the QUEUED index and breaks status queries).
                     downloadRepository.updateDownloadStatus(download, Download.Status.DOWNLOADING);
                 } else {
-                    LOGGER.warning("Handler returned null GID for download: " + download.getName());
+                    LOGGER.warn("Handler returned null GID for download: " + download.getName());
                     failStart(download, startGeneration, "Handler returned null GID", null);
                 }
             }).exceptionally(e -> {
                 if (!isCurrentAttempt(download.getId(), startGeneration)) {
-                    LOGGER.warning("Dropping stale generation failure for download: " + download.getName());
+                    LOGGER.warn("Dropping stale generation failure for download: " + download.getName());
                     return null;
                 }
                 if (maybeFallbackProxychainsToCurl(download, e, startGeneration)) {
@@ -603,7 +603,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     startNextQueuedDownload();
                 }
             }
-            LOGGER.log(Level.SEVERE, "Failed to start download", e);
+            LOGGER.error("Failed to start download", e);
         }
     }
 
@@ -627,7 +627,7 @@ public class DownloadManagerImpl implements DownloadManager {
         cleanupDownloadResources(download.getId(), generation);
         notifyDownloadError(download, message);
         if (failure != null) {
-            LOGGER.log(Level.SEVERE, "Failed to start download: " + download.getName(), failure);
+            LOGGER.error("Failed to start download: " + download.getName(), failure);
         }
         startNextQueuedDownload();
     }
@@ -707,13 +707,13 @@ public class DownloadManagerImpl implements DownloadManager {
         synchronized (generationLock) {
             Long current = attemptGenerations.get(downloadId);
             if (current == null || current.longValue() != generation) {
-                LOGGER.warning("Stale terminal event for download " + downloadId
+                LOGGER.warn("Stale terminal event for download " + downloadId
                         + " (generation " + generation + ") ignored");
                 return false;
             }
             Long terminated = terminalGenerations.get(downloadId);
             if (terminated != null && terminated.longValue() == generation) {
-                LOGGER.warning("Duplicate terminal event for download " + downloadId
+                LOGGER.warn("Duplicate terminal event for download " + downloadId
                         + " (generation " + generation + ") ignored");
                 return false;
             }
@@ -785,7 +785,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 return true;
             }
 
-            LOGGER.log(Level.WARNING, "Proxychains failed for " + download.getName()
+            LOGGER.warn("Proxychains failed for " + download.getName()
                     + "; falling back to Curl with the same SOCKS proxy", cause);
             cleanupDownloadResources(download.getId(), generation);
             download.setGid(null);
@@ -800,7 +800,7 @@ public class DownloadManagerImpl implements DownloadManager {
             downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
             cleanupDownloadResources(download.getId(), generation);
             notifyDownloadError(download, message);
-            LOGGER.log(Level.SEVERE, message, fallbackFailure);
+            LOGGER.error(message, fallbackFailure);
             startNextQueuedDownload();
             return true;
         }
@@ -827,7 +827,7 @@ public class DownloadManagerImpl implements DownloadManager {
         try {
             return gate == null || gate.test(download.getId());
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Schedule gate check failed; refusing start", e);
+            LOGGER.warn("Schedule gate check failed; refusing start", e);
             return false;
         }
     }
@@ -860,10 +860,10 @@ public class DownloadManagerImpl implements DownloadManager {
                 if (handler != null) {
                     handler.pauseDownload(download).join();
                 } else {
-                    LOGGER.warning("No handler found for download type: " + download.getType());
+                    LOGGER.warn("No handler found for download type: " + download.getType());
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to cancel download: " + download.getName(), e);
+                LOGGER.warn("Failed to cancel download: " + download.getName(), e);
                 throw new CompletionException("Failed to pause download: " + download.getName(), e);
             }
             downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.PAUSED);
@@ -885,7 +885,7 @@ public class DownloadManagerImpl implements DownloadManager {
         }
         AdmissionResult admission = claimRunningSlot(download.getId());
         if (admission == AdmissionResult.DUPLICATE) {
-            LOGGER.warning("Ignoring duplicate resume for active download " + download.getId());
+            LOGGER.warn("Ignoring duplicate resume for active download " + download.getId());
             return;
         }
         if (admission == AdmissionResult.FULL) {
@@ -918,7 +918,7 @@ public class DownloadManagerImpl implements DownloadManager {
         } catch (Exception e) {
             releaseRunningSlot(download.getId());
             downloadRepository.updateDownloadStatus(download, statusBefore);
-            LOGGER.log(Level.WARNING, "Failed to resume download: " + download.getName(), e);
+            LOGGER.warn("Failed to resume download: " + download.getName(), e);
             throw new CompletionException("Failed to resume download: " + download.getName(), e);
         }
     }
@@ -932,10 +932,10 @@ public class DownloadManagerImpl implements DownloadManager {
                 if (handler != null) {
                     handler.changeSettings(download).join();
                 } else {
-                    LOGGER.warning("No handler found for download type: " + download.getType());
+                    LOGGER.warn("No handler found for download type: " + download.getType());
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to change settings for download: " + download.getName(), e);
+                LOGGER.warn("Failed to change settings for download: " + download.getName(), e);
                 throw new CompletionException("Failed to change settings for download: " + download.getName(), e);
             }
         }, executorManager.getGeneralExecutor());
@@ -997,7 +997,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     }
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to cancel download: " + download.getName(), e);
+                LOGGER.warn("Failed to cancel download: " + download.getName(), e);
                 throw new CompletionException("Failed to cancel download: " + download.getName(), e);
             }
         }, executorManager.getGeneralExecutor());
@@ -1104,12 +1104,12 @@ public class DownloadManagerImpl implements DownloadManager {
         // Find the next queued download by queue position (reorderable)
         List<Download> queuedDownloads = queuedDownloadsByPosition();
         // Per-tick diagnostics only: this runs on every completion/queue event
-        LOGGER.fine("Checking for queued downloads - Found: " + queuedDownloads.size()
+        LOGGER.debug("Checking for queued downloads - Found: " + queuedDownloads.size()
                 + ", Running: " + runningDownloads.get()
                 + ", Max concurrent: " + getGlobalSettings().getMaxConcurrentDownloads());
-        if (LOGGER.isLoggable(Level.FINE) && !queuedDownloads.isEmpty()) {
+        if (LOGGER.isDebugEnabled() && !queuedDownloads.isEmpty()) {
             for (Download d : queuedDownloads) {
-                LOGGER.fine("Found queued download: " + d.getName()
+                LOGGER.debug("Found queued download: " + d.getName()
                         + " (actual status: " + d.getStatus() + ", GID: " + d.getGid() + ")");
             }
         }
@@ -1129,7 +1129,7 @@ public class DownloadManagerImpl implements DownloadManager {
             // CRITICAL FIX: Don't start downloads that are already completed or in error
             // state
             if (download.getStatus() == Download.Status.COMPLETED) {
-                LOGGER.severe("Repository inconsistency: Download " + download.getName()
+                LOGGER.error("Repository inconsistency: Download " + download.getName()
                         + " is COMPLETED but found in QUEUED status query - updating repository indices");
                 // Fix the repository inconsistency by updating the status in the repository
                 downloadRepository.updateDownloadStatus(download, Download.Status.COMPLETED);
@@ -1137,7 +1137,7 @@ public class DownloadManagerImpl implements DownloadManager {
             }
 
             if (download.getStatus() == Download.Status.ERROR) {
-                LOGGER.warning("Repository inconsistency: Download " + download.getName()
+                LOGGER.warn("Repository inconsistency: Download " + download.getName()
                         + " is ERROR but found in QUEUED status query - updating repository indices");
                 // Fix the repository inconsistency by updating the status in the repository
                 downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
@@ -1147,7 +1147,7 @@ public class DownloadManagerImpl implements DownloadManager {
             // Check if this download is already running with a different GID
             // This helps prevent starting the same download multiple times
             if (download.getStatus() == Download.Status.DOWNLOADING && download.getGid() != null) {
-                LOGGER.warning("Attempted to start download that's already DOWNLOADING: " + download.getName()
+                LOGGER.warn("Attempted to start download that's already DOWNLOADING: " + download.getName()
                         + " (GID: " + download.getGid() + ") - skipping to prevent duplicate start");
                 continue;
             }
@@ -1157,7 +1157,7 @@ public class DownloadManagerImpl implements DownloadManager {
             startDownloadInternal(download);
             }
         } else {
-            LOGGER.fine("No eligible queued downloads to start");
+            LOGGER.debug("No eligible queued downloads to start");
         }
     }
 
@@ -1243,7 +1243,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 List<CompletableFuture<Void>> pauses = new java.util.ArrayList<>(activeDownloads.size());
                 for (Download download : activeDownloads) {
                     pauses.add(pauseDownload(download).exceptionally(e -> {
-                        LOGGER.log(Level.WARNING, "Failed to pause download: " + download.getName(), e);
+                        LOGGER.warn("Failed to pause download: " + download.getName(), e);
                         return null;
                     }));
                 }
@@ -1264,7 +1264,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 try {
                     resumeDownloadInternal(download);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Failed to resume download: " + download.getName(), e);
+                    LOGGER.warn("Failed to resume download: " + download.getName(), e);
                 }
             }
         }, executorManager.getGeneralExecutor());
@@ -1323,7 +1323,7 @@ public class DownloadManagerImpl implements DownloadManager {
     public void applyGlobalSettingsToActiveDownloads() {
         CompletableFuture.runAsync(this::applyGlobalSettingsToActiveDownloadsInternal,
                 executorManager.getGeneralExecutor()).exceptionally(error -> {
-                    LOGGER.log(Level.WARNING,
+                    LOGGER.warn(
                             "Failed to schedule global runtime settings update", error);
                     return null;
                 });
@@ -1378,7 +1378,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
                 if (changed && !(active instanceof org.manager.download.handler.Aria2DownloadHandler)) {
                     active.changeSettings(download).exceptionally(error -> {
-                        LOGGER.log(Level.SEVERE, "Failed to reroute active download "
+                        LOGGER.error("Failed to reroute active download "
                                 + download.getId(), error);
                         // Privacy changes fail closed: stop a transfer whose
                         // process could not be restarted with the new route.
@@ -1389,7 +1389,7 @@ public class DownloadManagerImpl implements DownloadManager {
             }
         } catch (Exception e) {
             // Handler factory may not be initialized (e.g. tests); not fatal
-            LOGGER.log(Level.WARNING, "Failed to apply global settings to running downloads", e);
+            LOGGER.warn("Failed to apply global settings to running downloads", e);
         }
     }
 
@@ -1407,7 +1407,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     return startDownload(download);
                 })
                 .exceptionally(error -> {
-                    LOGGER.log(Level.SEVERE, "Failed to switch " + download.getId()
+                    LOGGER.error("Failed to switch " + download.getId()
                             + " to " + routeDescription, error);
                     download.setErrorMessage("Failed to switch to " + routeDescription + ": "
                             + messageOf(error));
@@ -1525,7 +1525,7 @@ public class DownloadManagerImpl implements DownloadManager {
                                                 download.getChecksumAlgorithm() + ":"
                                                         + download.getExpectedChecksum()));
                             } catch (IllegalArgumentException invalidChecksum) {
-                                LOGGER.log(Level.WARNING, "Ignoring invalid persisted checksum for "
+                                LOGGER.warn("Ignoring invalid persisted checksum for "
                                         + download.getId(), invalidChecksum);
                             }
                         }
@@ -1552,7 +1552,7 @@ public class DownloadManagerImpl implements DownloadManager {
                             + activeDownloadsIds.size() + " were active before exit");
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to load download state", e);
+                LOGGER.error("Failed to load download state", e);
                 throw new CompletionException("Failed to load download state", e);
             }
         }, executorManager.getGeneralExecutor());
@@ -1717,7 +1717,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     try {
                         action.accept(listener);
                     } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Error in download listener", e);
+                        LOGGER.warn("Error in download listener", e);
                     }
                 });
             } catch (RejectedExecutionException e) {
@@ -1875,7 +1875,7 @@ public class DownloadManagerImpl implements DownloadManager {
             download.initSettings(getSettingsFactory());
 
             downloadRepository.addDownload(download);
-            LOGGER.fine("Created download: " + download.getId());
+            LOGGER.debug("Created download: " + download.getId());
 
             return download;
         } catch (Exception e) {
@@ -1903,7 +1903,7 @@ public class DownloadManagerImpl implements DownloadManager {
             download.initSettings(getSettingsFactory());
 
             downloadRepository.addDownload(download);
-            LOGGER.fine("Created torrent download: " + download.getId());
+            LOGGER.debug("Created torrent download: " + download.getId());
 
             return download;
         } catch (Exception e) {
@@ -1943,7 +1943,7 @@ public class DownloadManagerImpl implements DownloadManager {
                         + " stays queued: outside the active download schedule");
             }
 
-            LOGGER.fine("Queued download: " + download.getId());
+            LOGGER.debug("Queued download: " + download.getId());
             return null;
         } catch (Exception e) {
             throw new RuntimeException("Failed to queue download", e);
@@ -1982,7 +1982,7 @@ public class DownloadManagerImpl implements DownloadManager {
                                 resumedCount++;
                             }
                         } catch (Exception e) {
-                            LOGGER.log(Level.WARNING, "Failed to auto-resume download: "
+                            LOGGER.warn("Failed to auto-resume download: "
                                     + downloadId, e);
                         }
                     }
@@ -1997,7 +1997,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     LOGGER.info("Auto-resumed " + resumedCount + " downloads from previous session");
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to auto-resume downloads", e);
+                LOGGER.error("Failed to auto-resume downloads", e);
             } finally {
                 // QUEUED rows represent prior explicit acceptance. They are
                 // not part of active_before_exit, so without this startup
@@ -2227,18 +2227,18 @@ public class DownloadManagerImpl implements DownloadManager {
             if (handler instanceof RetryEventInterceptor interceptor) {
                 RetryEventInterceptor.RetryDecision decision = interceptor.interceptError(d.getId(), errorMessage);
                 if (decision == RetryEventInterceptor.RetryDecision.RETRY_SCHEDULED) {
-                    LOGGER.fine("Retry scheduled for download " + d.getName() + "; terminal handling deferred");
+                    LOGGER.debug("Retry scheduled for download " + d.getName() + "; terminal handling deferred");
                     return;
                 }
                 if (decision == RetryEventInterceptor.RetryDecision.STALE) {
-                    LOGGER.warning("Stale generation error for download " + d.getName()
+                    LOGGER.warn("Stale generation error for download " + d.getName()
                             + " dropped; terminal handling skipped");
                     return;
                 }
             }
 
             if (!isCurrentAttempt(d.getId(), errorGeneration)) {
-                LOGGER.warning("Stale generation error for download " + d.getName()
+                LOGGER.warn("Stale generation error for download " + d.getName()
                         + " dropped after handler interception");
                 return;
             }
@@ -2306,7 +2306,7 @@ public class DownloadManagerImpl implements DownloadManager {
     private void cleanupDownloadResources(String downloadId, long generation) {
         try {
             if (!isCurrentAttempt(downloadId, generation)) {
-                LOGGER.warning("Stale generation terminal result for download " + downloadId
+                LOGGER.warn("Stale generation terminal result for download " + downloadId
                         + " dropped; current operation left untouched");
                 return;
             }
@@ -2327,7 +2327,7 @@ public class DownloadManagerImpl implements DownloadManager {
             gidToIdMap.entrySet().removeIf(entry -> downloadId.equals(entry.getValue()));
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error during resource cleanup for download: " + downloadId, e);
+            LOGGER.warn("Error during resource cleanup for download: " + downloadId, e);
         }
     }
 }

@@ -5,8 +5,8 @@ import java.nio.file.Paths;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.GlobalSettings;
 import org.manager.download.handler.DownloadHandler;
@@ -25,7 +25,7 @@ import org.manager.util.ExecutorServiceManager;
  */
 class ProxyRotationSupport {
 
-    private static final Logger LOGGER = Logger.getLogger(ProxyRotationSupport.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProxyRotationSupport.class);
 
     private final ProxyRotationManager rotationManager;
     private final Supplier<GlobalSettings> settings;
@@ -65,7 +65,7 @@ class ProxyRotationSupport {
         if (rotationManager.isEmpty()) {
             loadProxyList(current);
             if (rotationManager.isEmpty()) {
-                LOGGER.warning("Proxy rotation is enabled but the proxy list is empty; "
+                LOGGER.warn("Proxy rotation is enabled but the proxy list is empty; "
                         + "starting without rotation");
                 return handler;
             }
@@ -92,7 +92,7 @@ class ProxyRotationSupport {
             int loaded = rotationManager.loadProxiesFromFile(Paths.get(path));
             LOGGER.info("Loaded " + loaded + " proxies for rotation from " + path);
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Could not load proxy list from " + path, e);
+            LOGGER.warn("Could not load proxy list from " + path, e);
         }
     }
 

@@ -13,8 +13,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.GlobalSettings;
 import org.manager.util.ExecutorServiceManager;
@@ -26,7 +26,7 @@ import org.manager.util.ExecutorServiceManager;
  */
 public class DownloadCleanupManager {
 
-    private static final Logger LOGGER = Logger.getLogger(DownloadCleanupManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DownloadCleanupManager.class);
 
     private final PaginatedDownloadRepository downloadRepository;
     private final GlobalSettings globalSettings;
@@ -147,7 +147,7 @@ public class DownloadCleanupManager {
             LOGGER.info("Automatic cleanup completed in " + duration + "ms");
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Automatic cleanup failed", e);
+            LOGGER.warn("Automatic cleanup failed", e);
         }
     }
 
@@ -196,7 +196,7 @@ public class DownloadCleanupManager {
                             totalRemoved, initialCount, downloadRepository.getTotalCount(), duration));
 
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error during full cleanup", e);
+                    LOGGER.warn("Error during full cleanup", e);
                 }
             }
         }, executorManager.getGeneralExecutor());

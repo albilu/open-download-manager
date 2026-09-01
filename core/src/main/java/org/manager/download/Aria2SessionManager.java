@@ -4,8 +4,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.download.handler.Aria2DownloadHandler;
 import org.manager.download.handler.DownloadHandler;
@@ -19,7 +19,7 @@ import org.manager.download.handler.DownloadHandlerFactory;
  */
 class Aria2SessionManager {
 
-    private static final Logger LOGGER = Logger.getLogger(Aria2SessionManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(Aria2SessionManager.class);
 
     private static final String ARIA2_SESSION_FILE = "aria2-session.txt";
     private static final String ARIA2_INPUT_FILE = "aria2-input.txt";
@@ -54,7 +54,7 @@ class Aria2SessionManager {
                 }
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to save aria2 session", e);
+            LOGGER.warn("Failed to save aria2 session", e);
         }
     }
 
@@ -73,7 +73,7 @@ class Aria2SessionManager {
                 }
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to load aria2 session", e);
+            LOGGER.warn("Failed to load aria2 session", e);
         }
     }
 
@@ -96,7 +96,7 @@ class Aria2SessionManager {
             // This configuration will be used by the aria2 handler during initialization
             LOGGER.info("Configured aria2 session management with files: " + sessionFilePath);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to configure aria2 session", e);
+            LOGGER.warn("Failed to configure aria2 session", e);
         }
     }
 

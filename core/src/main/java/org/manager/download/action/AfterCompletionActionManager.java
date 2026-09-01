@@ -10,8 +10,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 
 /**
@@ -19,7 +19,7 @@ import org.manager.download.Download;
  */
 public class AfterCompletionActionManager {
 
-    private static final Logger LOGGER = Logger.getLogger(AfterCompletionActionManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AfterCompletionActionManager.class);
     private static final int DEFAULT_POOL_SIZE =
             Math.max(8, Math.min(32, Runtime.getRuntime().availableProcessors() * 2));
     private static final long TERMINATION_AWAIT_SECONDS = 10;
@@ -136,7 +136,7 @@ public class AfterCompletionActionManager {
         String downloadId = download.getId();
 
         if (!executedDownloads.add(downloadId)) {
-            LOGGER.warning("Ignoring duplicate completion-action execution for " + downloadId);
+            LOGGER.warn("Ignoring duplicate completion-action execution for " + downloadId);
             return CompletableFuture.completedFuture(null);
         }
         List<AfterCompletionAction> registered = downloadActions.remove(downloadId);
@@ -175,7 +175,7 @@ public class AfterCompletionActionManager {
                         }
                     } catch (Exception e) {
                         failedActions.add(action);
-                        LOGGER.log(Level.WARNING, "Error executing after-completion action: "
+                        LOGGER.warn("Error executing after-completion action: "
                                 + action.getDescription(), e);
                         notifyActionError(download, action, e.getMessage(), action.getSeverity());
                     }
@@ -195,7 +195,7 @@ public class AfterCompletionActionManager {
         try {
             return CompletableFuture.runAsync(task, executorService);
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            LOGGER.warning("Action executor is shut down; rejecting after-completion action submission");
+            LOGGER.warn("Action executor is shut down; rejecting after-completion action submission");
             CompletableFuture<Void> rejected = new CompletableFuture<>();
             rejected.completeExceptionally(e);
             return rejected;
@@ -229,7 +229,7 @@ public class AfterCompletionActionManager {
             executorService.shutdown();
             try {
                 if (!executorService.awaitTermination(TERMINATION_AWAIT_SECONDS, TimeUnit.SECONDS)) {
-                    LOGGER.warning("Action executor did not terminate within "
+                    LOGGER.warn("Action executor did not terminate within "
                             + TERMINATION_AWAIT_SECONDS + "s; forcing");
                     executorService.shutdownNow();
                 }
@@ -254,7 +254,7 @@ public class AfterCompletionActionManager {
             try {
                 listener.onActionStart(download, action);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener of action start", e);
+                LOGGER.warn("Error notifying listener of action start", e);
             }
         }
     }
@@ -264,7 +264,7 @@ public class AfterCompletionActionManager {
             try {
                 listener.onActionComplete(download, action);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener of action complete", e);
+                LOGGER.warn("Error notifying listener of action complete", e);
             }
         }
     }
@@ -275,7 +275,7 @@ public class AfterCompletionActionManager {
             try {
                 listener.onActionError(download, action, errorMessage, severity);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener of action error", e);
+                LOGGER.warn("Error notifying listener of action error", e);
             }
         }
     }
@@ -286,7 +286,7 @@ public class AfterCompletionActionManager {
             try {
                 listener.onAllActionsComplete(download, successfulActions, failedActions);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener of all actions complete", e);
+                LOGGER.warn("Error notifying listener of all actions complete", e);
             }
         }
     }

@@ -16,7 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Predicate;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 import org.manager.GlobalSettings;
 
@@ -27,7 +28,7 @@ import org.manager.GlobalSettings;
  */
 public class PaginatedDownloadRepository {
 
-    private static final Logger LOGGER = Logger.getLogger(PaginatedDownloadRepository.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(PaginatedDownloadRepository.class);
 
     private final Map<String, Download> downloads;
     private final Map<Download.Status, Set<String>> statusIndex;
@@ -169,7 +170,7 @@ public class PaginatedDownloadRepository {
             }
             updateIndices(download);
             invalidateCacheForAdd(download);
-            LOGGER.fine("Added download: " + download.getId());
+            LOGGER.debug("Added download: " + download.getId());
         } finally {
             lock.writeLock().unlock();
         }
@@ -188,7 +189,7 @@ public class PaginatedDownloadRepository {
             if (removed != null) {
                 removeFromIndices(removed);
                 invalidateCacheForRemove(removed);
-                LOGGER.fine("Removed download: " + downloadId);
+                LOGGER.debug("Removed download: " + downloadId);
             }
             return removed;
         } finally {
@@ -239,7 +240,7 @@ public class PaginatedDownloadRepository {
             }
 
             invalidateCacheForStatusChange(oldStatus, newStatus);
-            LOGGER.fine("Updated download status: " + download.getId() + " " + oldStatus + " -> " + newStatus);
+            LOGGER.debug("Updated download status: " + download.getId() + " " + oldStatus + " -> " + newStatus);
         } finally {
             lock.writeLock().unlock();
         }
@@ -282,7 +283,7 @@ public class PaginatedDownloadRepository {
             }
 
             invalidateCacheForStatusChange(fromStatus, toStatus);
-            LOGGER.fine("Transitioned download status: " + download.getId() + " " + fromStatus + " -> " + toStatus);
+            LOGGER.debug("Transitioned download status: " + download.getId() + " " + fromStatus + " -> " + toStatus);
         } finally {
             lock.writeLock().unlock();
         }
@@ -688,7 +689,7 @@ public class PaginatedDownloadRepository {
             keysToRemove.forEach(queryCache::remove);
         }
         selectiveInvalidations++;
-        LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for add operation");
+        LOGGER.debug("Selectively invalidated " + keysToRemove.size() + " cache entries for add operation");
     }
 
     /**
@@ -719,7 +720,7 @@ public class PaginatedDownloadRepository {
             keysToRemove.forEach(queryCache::remove);
         }
         selectiveInvalidations++;
-        LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for remove operation");
+        LOGGER.debug("Selectively invalidated " + keysToRemove.size() + " cache entries for remove operation");
     }
 
     /**
@@ -749,7 +750,7 @@ public class PaginatedDownloadRepository {
             keysToRemove.forEach(queryCache::remove);
         }
         selectiveInvalidations++;
-        LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for status change: " + oldStatus
+        LOGGER.debug("Selectively invalidated " + keysToRemove.size() + " cache entries for status change: " + oldStatus
                 + " -> " + newStatus);
     }
 
@@ -777,7 +778,7 @@ public class PaginatedDownloadRepository {
             }
         } catch (Exception e) {
             // If parsing fails, invalidate to be safe
-            LOGGER.fine("Failed to parse time range cache key: " + cacheKey + ", invalidating to be safe");
+            LOGGER.debug("Failed to parse time range cache key: " + cacheKey + ", invalidating to be safe");
             return true;
         }
         return false;
@@ -831,7 +832,7 @@ public class PaginatedDownloadRepository {
             keysToRemove.forEach(queryCache::remove);
         }
         selectiveInvalidations++;
-        LOGGER.fine("Selectively invalidated " + keysToRemove.size() + " cache entries for bulk remove of "
+        LOGGER.debug("Selectively invalidated " + keysToRemove.size() + " cache entries for bulk remove of "
                 + removedDownloads.size() + " downloads");
     }
 

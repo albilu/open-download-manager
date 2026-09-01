@@ -20,8 +20,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.schedule.ScheduleSettings;
 
 /**
@@ -42,7 +42,7 @@ import org.manager.schedule.ScheduleSettings;
  */
 public final class SqliteDownloadStateStore implements AutoCloseable {
 
-    private static final Logger LOGGER = Logger.getLogger(SqliteDownloadStateStore.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SqliteDownloadStateStore.class);
 
     private static final String CREATE_TABLE = """
             CREATE TABLE IF NOT EXISTS downloads (
@@ -144,7 +144,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 }
             }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to load download state from " + databasePath, e);
+            LOGGER.error("Failed to load download state from " + databasePath, e);
             throw new IllegalStateException("Failed to load download state from " + databasePath, e);
         }
         return new StateSnapshot(downloads, activeIds);
@@ -182,7 +182,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             connection.commit();
         } catch (Exception e) {
             rollbackQuietly();
-            LOGGER.log(Level.SEVERE, "Failed to save download state to " + databasePath, e);
+            LOGGER.error("Failed to save download state to " + databasePath, e);
             throw new IllegalStateException("Failed to save download state to " + databasePath, e);
         } finally {
             restoreAutoCommitQuietly();
@@ -198,7 +198,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             try {
                 connection.close();
             } catch (SQLException e) {
-                LOGGER.log(Level.WARNING, "Failed to close download state database", e);
+                LOGGER.warn("Failed to close download state database", e);
             } finally {
                 connection = null;
                 initialized = false;
@@ -272,7 +272,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                     new TypeReference<Map<String, Object>>() {
                     });
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Unreadable legacy state file " + legacyJsonPath
+            LOGGER.warn("Unreadable legacy state file " + legacyJsonPath
                     + "; starting from an empty database", e);
             return;
         }
@@ -310,7 +310,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             LOGGER.info("Migrated " + downloads.size() + " downloads from " + legacyJsonPath.getFileName()
                     + " into " + databasePath.getFileName());
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to migrate legacy state file " + legacyJsonPath, e);
+            LOGGER.warn("Failed to migrate legacy state file " + legacyJsonPath, e);
         }
     }
 
@@ -335,7 +335,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 });
                 download.setMirrors(mirrors);
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Dropping unreadable mirrors for download " + download.getId(), e);
+                LOGGER.warn("Dropping unreadable mirrors for download " + download.getId(), e);
             }
         }
         String destination = rs.getString("destination");
@@ -365,7 +365,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             try {
                 download.setScheduleSettings(mapper.readValue(scheduleJson, ScheduleSettings.class));
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Dropping unreadable schedule for download "
+                LOGGER.warn("Dropping unreadable schedule for download "
                         + download.getId(), e);
             }
         }
@@ -377,7 +377,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 download.setSettings(settings);
             }
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Dropping unreadable settings for download " + download.getId(), e);
+            LOGGER.warn("Dropping unreadable settings for download " + download.getId(), e);
         }
         return download;
     }
@@ -455,7 +455,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         try {
             return mapper.readValue(json, type);
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Dropping unreadable column " + column, e);
+            LOGGER.warn("Dropping unreadable column " + column, e);
             return null;
         }
     }
@@ -473,7 +473,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         try {
             connection.rollback();
         } catch (SQLException e) {
-            LOGGER.log(Level.WARNING, "Failed to rollback download state transaction", e);
+            LOGGER.warn("Failed to rollback download state transaction", e);
         }
     }
 
@@ -481,7 +481,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         try {
             connection.setAutoCommit(true);
         } catch (SQLException e) {
-            LOGGER.log(Level.WARNING, "Failed to restore autocommit on download state database", e);
+            LOGGER.warn("Failed to restore autocommit on download state database", e);
         }
     }
 

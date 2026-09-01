@@ -2,8 +2,8 @@ package org.manager.download.action;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 
 /**
@@ -11,7 +11,7 @@ import org.manager.download.Download;
  */
 public class ShutdownComputerAction implements AfterCompletionAction {
 
-    private static final Logger LOGGER = Logger.getLogger(ShutdownComputerAction.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ShutdownComputerAction.class);
 
     private final int delayInSeconds;
     private volatile Process shutdownProcess;
@@ -57,7 +57,7 @@ public class ShutdownComputerAction implements AfterCompletionAction {
             } else if (osName.contains("windows")) {
                 command = new String[] { "shutdown", "/s", "/t", "0" };
             } else {
-                LOGGER.severe("Unsupported operating system for shutdown: " + osName);
+                LOGGER.error("Unsupported operating system for shutdown: " + osName);
                 return false;
             }
 
@@ -73,7 +73,7 @@ public class ShutdownComputerAction implements AfterCompletionAction {
             // Wait for the process to complete (with timeout)
             boolean completed = shutdownProcess.waitFor(5, TimeUnit.SECONDS);
             if (!completed) {
-                LOGGER.warning("Shutdown command did not complete within timeout period");
+                LOGGER.warn("Shutdown command did not complete within timeout period");
                 shutdownProcess.destroyForcibly();
                 return false;
             }
@@ -81,16 +81,16 @@ public class ShutdownComputerAction implements AfterCompletionAction {
             // Check exit value
             int exitValue = shutdownProcess.exitValue();
             if (exitValue != 0) {
-                LOGGER.warning("Shutdown command returned non-zero exit value: " + exitValue);
+                LOGGER.warn("Shutdown command returned non-zero exit value: " + exitValue);
                 return false;
             }
 
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to execute shutdown command: " + e.getMessage(), e);
+            LOGGER.error("Failed to execute shutdown command: " + e.getMessage(), e);
             return false;
         } catch (InterruptedException e) {
-            LOGGER.log(Level.WARNING, "Shutdown process was interrupted", e);
+            LOGGER.warn("Shutdown process was interrupted", e);
             Thread.currentThread().interrupt();
             return false;
         }
@@ -132,7 +132,7 @@ public class ShutdownComputerAction implements AfterCompletionAction {
                 // Windows cancel shutdown command
                 command = new String[] { "shutdown", "/a" };
             } else {
-                LOGGER.severe("Unsupported operating system for canceling shutdown: " + osName);
+                LOGGER.error("Unsupported operating system for canceling shutdown: " + osName);
                 return false;
             }
 
@@ -141,13 +141,13 @@ public class ShutdownComputerAction implements AfterCompletionAction {
             boolean completed = process.waitFor(5, TimeUnit.SECONDS);
 
             if (!completed) {
-                LOGGER.warning("Cancel shutdown command did not complete within timeout period");
+                LOGGER.warn("Cancel shutdown command did not complete within timeout period");
                 process.destroyForcibly();
             }
 
             int exitValue = process.exitValue();
             if (exitValue != 0) {
-                LOGGER.warning("Cancel shutdown command returned non-zero exit value: " + exitValue);
+                LOGGER.warn("Cancel shutdown command returned non-zero exit value: " + exitValue);
                 return false;
             }
 
@@ -155,10 +155,10 @@ public class ShutdownComputerAction implements AfterCompletionAction {
             LOGGER.info("Shutdown canceled successfully");
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to cancel shutdown: " + e.getMessage(), e);
+            LOGGER.error("Failed to cancel shutdown: " + e.getMessage(), e);
             return false;
         } catch (InterruptedException e) {
-            LOGGER.log(Level.WARNING, "Cancel shutdown process was interrupted", e);
+            LOGGER.warn("Cancel shutdown process was interrupted", e);
             Thread.currentThread().interrupt();
             return false;
         }

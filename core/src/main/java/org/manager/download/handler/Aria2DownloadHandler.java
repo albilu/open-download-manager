@@ -21,8 +21,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
 import org.aria2.Aria2Client;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.aria2.Aria2Client.Aria2RpcError;
 import org.aria2.Aria2Client.Aria2RpcException;
 import org.aria2.Aria2NotificationListener;
@@ -256,7 +257,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage(e.getMessage());
                 notifyDownloadError(download, e.getMessage());
-                LOGGER.log(Level.SEVERE, "Failed to start download: " + download.getName(), e);
+                LOGGER.error("Failed to start download: " + download.getName(), e);
                 throw new RuntimeException("Failed to start download", e);
             }
         }, executor);
@@ -295,7 +296,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 download.setStatus(Download.Status.PAUSED);
                 notifyDownloadPause(download);
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to pause download: " + download.getName(), e);
+                LOGGER.error("Failed to pause download: " + download.getName(), e);
                 throw new RuntimeException("Failed to pause download", e);
             }
         }, executor);
@@ -317,7 +318,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     startProgressPolling(gid);
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to resume download: " + download.getName(), e);
+                LOGGER.error("Failed to resume download: " + download.getName(), e);
                 throw new RuntimeException("Failed to resume download", e);
             }
         }, executor);
@@ -371,13 +372,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 if (firstFailure == null) {
                     firstFailure = e;
                 }
-                LOGGER.log(Level.WARNING, "Failed to force-remove GID " + gid, e);
+                LOGGER.warn("Failed to force-remove GID " + gid, e);
             } catch (Exception e) {
                 failures++;
                 if (firstFailure == null) {
                     firstFailure = e;
                 }
-                LOGGER.log(Level.WARNING, "Failed to force-remove GID " + gid, e);
+                LOGGER.warn("Failed to force-remove GID " + gid, e);
             }
         }
         if (!gids.isEmpty() && failures == gids.size()) {
@@ -388,7 +389,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             try {
                 aria2Client.removeDownloadResult(gid);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to remove download result for GID " + gid, e);
+                LOGGER.warn("Failed to remove download result for GID " + gid, e);
             }
         }
         // aria2 flushes .aria2 control files asynchronously: a stale write
@@ -416,7 +417,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
             return paths;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to collect reported files for GID " + gid, e);
+            LOGGER.warn("Failed to collect reported files for GID " + gid, e);
             return List.of();
         }
     }
@@ -449,8 +450,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         return java.util.Optional.of(normalized);
     }
 
-    private static final java.util.logging.Logger DELETE_LOGGER =
-            java.util.logging.Logger.getLogger(Aria2DownloadHandler.class.getName());
+    private static final Logger DELETE_LOGGER =
+            LoggerFactory.getLogger(Aria2DownloadHandler.class);
 
     /**
      * Best-effort removal of a canceled aria2 download's payload and
@@ -469,12 +470,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     static void deleteAria2Payloads(Download download, List<String> reportedPaths) {
         Path destination = download.getDestination();
         if (destination == null) {
-            DELETE_LOGGER.warning("Cannot delete aria2 payload for " + download.getId()
+            DELETE_LOGGER.warn("Cannot delete aria2 payload for " + download.getId()
                     + ": destination unknown");
             return;
         }
         if (reportedPaths == null || reportedPaths.isEmpty()) {
-            DELETE_LOGGER.warning("No aria2 file paths reported for " + download.getId()
+            DELETE_LOGGER.warn("No aria2 file paths reported for " + download.getId()
                     + "; refusing deletion (display names are not deletion authority)");
             return;
         }
@@ -488,7 +489,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         for (String candidate : reportedPaths) {
             java.util.Optional<Path> eligible = eligibleAria2Path(normalizedDestination, candidate);
             if (eligible.isEmpty()) {
-                DELETE_LOGGER.warning("Refusing to delete aria2 output outside the destination for "
+                DELETE_LOGGER.warn("Refusing to delete aria2 output outside the destination for "
                         + download.getId() + ": " + candidate);
                 continue;
             }
@@ -500,13 +501,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     }
                     Path real = target.toRealPath();
                     if (!real.startsWith(realDestination)) {
-                        DELETE_LOGGER.warning("Refusing to delete aria2 output whose real path escapes "
+                        DELETE_LOGGER.warn("Refusing to delete aria2 output whose real path escapes "
                                 + "the destination for " + download.getId() + ": " + target);
                         continue;
                     }
                     Files.deleteIfExists(real);
                 } catch (Exception e) {
-                    DELETE_LOGGER.warning("Could not delete aria2 output " + target + ": " + e.getMessage());
+                    DELETE_LOGGER.warn("Could not delete aria2 output " + target + ": " + e.getMessage());
                 }
             }
         }
@@ -528,7 +529,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 if (firstFailure == null) {
                     firstFailure = e;
                 }
-                LOGGER.log(Level.WARNING, "Failed to " + operation + " GID " + gid, e);
+                LOGGER.warn("Failed to " + operation + " GID " + gid, e);
             }
         }
         if (!gids.isEmpty() && failures == gids.size()) {
@@ -560,7 +561,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     notifyDownloadCanceled(download);
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to cancel download: " + download.getName(), e);
+                LOGGER.error("Failed to cancel download: " + download.getName(), e);
                 throw new RuntimeException("Failed to cancel download", e);
             }
         }, executor);
@@ -625,7 +626,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
             LOGGER.info("Configured aria2 session management with file: " + sessionPath);
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "Could not configure aria2 session management", e);
+            LOGGER.warn("Could not configure aria2 session management", e);
         }
 
         // Start aria2 with RPC enabled. A false return or an exception
@@ -668,11 +669,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 aria2Client.changeOption(gid, Map.of("bt-tracker", trackerList));
                 applied++;
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to refresh trackers for GID " + gid, e);
+                LOGGER.warn("Failed to refresh trackers for GID " + gid, e);
             }
         }
         if (applied > 0) {
-            LOGGER.fine("Refreshed trackers on " + applied + " download(s)");
+            LOGGER.debug("Refreshed trackers on " + applied + " download(s)");
         }
         return applied;
     }
@@ -714,7 +715,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     String.valueOf(globalSettings.getMaxConcurrentDownloads()));
             aria2Client.changeGlobalOption(globalOptions);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to apply global options to aria2", e);
+            LOGGER.warn("Failed to apply global options to aria2", e);
         }
 
         // Per-download proxy: global proxy applies unless the download has
@@ -738,7 +739,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             try {
                 aria2Client.changeOption(gid, Map.of("all-proxy", globalProxy));
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to update proxy option for GID " + gid, e);
+                LOGGER.warn("Failed to update proxy option for GID " + gid, e);
             }
         }
     }
@@ -782,7 +783,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             saveSession();
             LOGGER.info("Saved aria2 session before shutdown");
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "Failed to save aria2 session during shutdown", e);
+            LOGGER.warn("Failed to save aria2 session during shutdown", e);
         }
 
         // Shutdown is ownership-driven (Aria2Client.DaemonOwnership):
@@ -799,7 +800,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             aria2Client.disconnectWebSocket();
             LOGGER.info("Aria2 WebSocket disconnected");
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "Error disconnecting WebSocket", e);
+            LOGGER.warn("Error disconnecting WebSocket", e);
         }
 
         // Finally stop the daemon attachment: polls daemon state with a
@@ -808,7 +809,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         try {
             aria2Client.stopAria2c();
         } catch (Exception e) {
-            LOGGER.log(java.util.logging.Level.WARNING, "Error stopping aria2 process", e);
+            LOGGER.warn("Error stopping aria2 process", e);
         }
 
         // Shutdown progress poller
@@ -844,7 +845,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 try {
                     pollAllDownloadsProgress();
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error polling download progress", e);
+                    LOGGER.warn("Error polling download progress", e);
                 }
             }, 0, PROGRESS_POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
         }
@@ -909,7 +910,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 dispatchPollResult(gids.get(i), results.get(i));
             }
         } catch (Exception batchError) {
-            LOGGER.log(Level.WARNING,
+            LOGGER.warn(
                     "Multicall progress poll failed; falling back to per-download polling", batchError);
             for (String gid : gids) {
                 pollDownloadProgress(gid);
@@ -941,7 +942,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // An error entry or missing GID mapping is silently skipped; the
             // per-GID fallback in pollDownloadProgress handles persistent failures
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error processing multicall result for GID " + gid, e);
+            LOGGER.warn("Error processing multicall result for GID " + gid, e);
         }
     }
 
@@ -976,7 +977,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 processProgressUpdate(downloadId, gid, status);
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error polling download progress: " + e.getMessage(), e);
+            LOGGER.warn("Error polling download progress: " + e.getMessage(), e);
         }
     }
 
@@ -992,7 +993,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // Get the download object
             Download download = getDownloadById(downloadId);
             if (download == null) {
-                LOGGER.warning("Download not found for ID: " + downloadId);
+                LOGGER.warn("Download not found for ID: " + downloadId);
                 stopProgressPolling(gid);
                 return;
             }
@@ -1057,7 +1058,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             notifyDownloadProgress(download, progress, aggregatedCompleted, aggregatedTotal, downloadSpeed);
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error processing progress update for GID " + gid, e);
+            LOGGER.warn("Error processing progress update for GID " + gid, e);
         }
     }
 
@@ -1079,7 +1080,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     download.setName(artifact.getFileName().toString());
                 }
             } catch (IllegalArgumentException invalidPath) {
-                LOGGER.log(Level.WARNING, "Ignoring invalid aria2 output path", invalidPath);
+                LOGGER.warn("Ignoring invalid aria2 output path", invalidPath);
             }
         }
     }
@@ -1149,7 +1150,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         // Per-tick diagnostics (1 Hz per download): FINE so a busy queue
         // does not generate a log line per second per download
-        LOGGER.fine("Aria2 status update - GID: " + gid + ", Download: " + download.getName()
+        LOGGER.debug("Aria2 status update - GID: " + gid + ", Download: " + download.getName()
                 + ", Current status: " + download.getStatus() + ", Aria2 status: " + aria2Status);
 
         switch (aria2Status) {
@@ -1200,7 +1201,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 untrackEntireDownload(download.getId());
                 break;
             default:
-                LOGGER.warning("Unknown aria2 status: " + aria2Status + " for GID: " + gid);
+                LOGGER.warn("Unknown aria2 status: " + aria2Status + " for GID: " + gid);
                 break;
         }
     }
@@ -1451,7 +1452,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         if (lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
             return startMetaLinkDownload(download);
         }
-        LOGGER.warning("Unsupported local descriptor type for aria2 download");
+        LOGGER.warn("Unsupported local descriptor type for aria2 download");
         return null;
     }
 
@@ -1600,7 +1601,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // Request all fields (no keys parameter)
             return aria2Client.tellStatus(gid);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to get full status for debugging: " + e.getMessage(), e);
+            LOGGER.warn("Failed to get full status for debugging: " + e.getMessage(), e);
             return null;
         }
     }
@@ -1619,7 +1620,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         try {
             return aria2Client.getPeers(gid);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to get peers for gid " + gid, e);
+            LOGGER.warn("Failed to get peers for gid " + gid, e);
             return List.of();
         }
     }
@@ -1638,7 +1639,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         try {
             return aria2Client.getFiles(gid);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to get files for gid " + gid, e);
+            LOGGER.warn("Failed to get files for gid " + gid, e);
             return List.of();
         }
     }
@@ -1673,7 +1674,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 }
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to get trackers for gid " + gid, e);
+            LOGGER.warn("Failed to get trackers for gid " + gid, e);
         }
         return List.of();
     }
@@ -1707,10 +1708,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
                 if (!options.isEmpty()) {
                     aria2Client.changeOption(gid, options);
-                    LOGGER.fine("Changed aria2 options for gid " + gid + ": " + options.keySet());
+                    LOGGER.debug("Changed aria2 options for gid " + gid + ": " + options.keySet());
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to change settings for download: " + download.getName(), e);
+                LOGGER.error("Failed to change settings for download: " + download.getName(), e);
                 throw new RuntimeException("Failed to change aria2 settings", e);
             }
         }, executor);
@@ -1772,7 +1773,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     try {
                         pollDownloadProgress(gid);
                     } catch (Exception e) {
-                        LOGGER.log(java.util.logging.Level.WARNING,
+                        LOGGER.warn(
                                 "Notification-triggered poll failed for GID " + gid, e);
                     }
                 });

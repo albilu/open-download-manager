@@ -15,8 +15,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettings;
 import org.subliminal.SubliminalClient;
@@ -32,7 +32,7 @@ import org.ytdlp.YtDlpSettings;
  */
 public final class SubtitleDownloadAction implements AfterCompletionAction {
 
-    private static final Logger LOGGER = Logger.getLogger(SubtitleDownloadAction.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SubtitleDownloadAction.class);
 
     // Keep this aligned with the video extensions recognized by Subliminal's
     // scanner so valid generic videos are not silently treated as no-ops.
@@ -103,7 +103,7 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
                     ? downloadWithYtDlp(download)
                     : downloadWithSubliminal(download);
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Subtitle completion action failed", e);
+            LOGGER.warn("Subtitle completion action failed", e);
             return false;
         }
     }
@@ -172,12 +172,12 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
             return !cancelled.get();
         } catch (TimeoutException e) {
             ytDlpClient.cancelDownload(operationId);
-            LOGGER.warning("yt-dlp subtitle download timed out for " + download.getUri());
+            LOGGER.warn("yt-dlp subtitle download timed out for " + download.getUri());
             return false;
         } catch (CancellationException e) {
             return false;
         } catch (ExecutionException e) {
-            LOGGER.log(Level.WARNING, "yt-dlp subtitle download failed", e.getCause());
+            LOGGER.warn("yt-dlp subtitle download failed", e.getCause());
             return false;
         } catch (InterruptedException e) {
             ytDlpClient.cancelDownload(operationId);
@@ -237,7 +237,7 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
                         || languagePart.startsWith(wanted + ".");
             });
         } catch (java.io.IOException e) {
-            LOGGER.log(Level.FINE, "Could not inspect existing subtitle files", e);
+            LOGGER.debug("Could not inspect existing subtitle files", e);
             return false;
         }
     }

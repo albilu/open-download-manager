@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 
 /**
@@ -14,7 +14,7 @@ import org.manager.download.Download;
  */
 public class MoveFileAction implements AfterCompletionAction {
 
-    private static final Logger LOGGER = Logger.getLogger(MoveFileAction.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(MoveFileAction.class);
 
     private final Path destinationPath;
     private boolean overwriteExisting;
@@ -37,19 +37,19 @@ public class MoveFileAction implements AfterCompletionAction {
     public boolean execute(Download download) {
         // If no download destination is set, we can't move the file
         if (download.getDestination() == null) {
-            LOGGER.warning("Cannot move file: download destination is not set");
+            LOGGER.warn("Cannot move file: download destination is not set");
             return false;
         }
 
         sourceFile = download.getPrimaryOutputPath();
         if (sourceFile == null) {
-            LOGGER.warning("Cannot move file: output path is unknown");
+            LOGGER.warn("Cannot move file: output path is unknown");
             return false;
         }
 
         // Check if source file exists
         if (!Files.exists(sourceFile)) {
-            LOGGER.warning("Cannot move file: source file does not exist: " + sourceFile);
+            LOGGER.warn("Cannot move file: source file does not exist: " + sourceFile);
             return false;
         }
 
@@ -73,7 +73,7 @@ public class MoveFileAction implements AfterCompletionAction {
             LOGGER.info("Moved file from " + sourceFile + " to " + targetPath);
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to move file: " + e.getMessage(), e);
+            LOGGER.error("Failed to move file: " + e.getMessage(), e);
             return false;
         }
     }

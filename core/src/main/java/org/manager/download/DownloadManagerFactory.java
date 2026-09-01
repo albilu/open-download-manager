@@ -6,12 +6,16 @@ import java.nio.file.Paths;
 import org.manager.ApplicationContext;
 import org.manager.GlobalSettings;
 import org.manager.di.DependencyContainer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Factory for creating instances of the DownloadManager.
  * Uses dependency injection for proper component management and lifecycle handling.
  */
 public class DownloadManagerFactory {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(DownloadManagerFactory.class);
 
     private static DownloadManager instance;
     private static DependencyContainer container;
@@ -124,11 +128,9 @@ public class DownloadManagerFactory {
             try {
                 instance.shutdown().get(30, java.util.concurrent.TimeUnit.SECONDS);
             } catch (java.util.concurrent.ExecutionException e) {
-                java.util.logging.Logger.getLogger(DownloadManagerFactory.class.getName())
-                        .warning("DownloadManager shutdown failed: " + e.getCause());
+                LOGGER.warn("DownloadManager shutdown failed: " + e.getCause());
             } catch (Exception e) {
-                java.util.logging.Logger.getLogger(DownloadManagerFactory.class.getName())
-                        .warning("DownloadManager shutdown interrupted or timed out: " + e.getMessage());
+                LOGGER.warn("DownloadManager shutdown interrupted or timed out: " + e.getMessage());
             } finally {
                 instance = null;
             }

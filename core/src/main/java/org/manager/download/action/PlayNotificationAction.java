@@ -15,8 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * After completion action that plays a sound notification when a download
@@ -25,7 +25,7 @@ import java.util.logging.Logger;
  */
 public class PlayNotificationAction implements AfterCompletionAction {
 
-    private static final Logger LOGGER = Logger.getLogger(PlayNotificationAction.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(PlayNotificationAction.class);
 
     public enum NotificationSound {
         SYSTEM_BEEP, // System beep sound
@@ -93,12 +93,12 @@ public class PlayNotificationAction implements AfterCompletionAction {
                 case SYSTEM_COMMAND ->
                     playWithSystemCommand();
                 default -> {
-                    LOGGER.warning("Unknown sound type: " + soundType);
+                    LOGGER.warn("Unknown sound type: " + soundType);
                     yield false;
                 }
             };
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to play notification sound: " + e.getMessage(), e);
+            LOGGER.error("Failed to play notification sound: " + e.getMessage(), e);
             return false;
         }
     }
@@ -125,7 +125,7 @@ public class PlayNotificationAction implements AfterCompletionAction {
             LOGGER.info("System beep played successfully");
             return true;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to play system beep: " + e.getMessage(), e);
+            LOGGER.warn("Failed to play system beep: " + e.getMessage(), e);
             return false;
         }
     }
@@ -136,14 +136,14 @@ public class PlayNotificationAction implements AfterCompletionAction {
             byte[] soundData = generateBuiltInSound();
             return playAudioData(soundData);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to play built-in sound: " + e.getMessage(), e);
+            LOGGER.error("Failed to play built-in sound: " + e.getMessage(), e);
             return false;
         }
     }
 
     private boolean playCustomFile() {
         if (customSoundFile == null || !Files.exists(customSoundFile)) {
-            LOGGER.warning("Custom sound file not found: " + customSoundFile);
+            LOGGER.warn("Custom sound file not found: " + customSoundFile);
             return false;
         }
 
@@ -151,17 +151,17 @@ public class PlayNotificationAction implements AfterCompletionAction {
             AudioInputStream audioInputStream = AudioSystem.getAudioInputStream(customSoundFile.toFile());
             return playAudioStream(audioInputStream);
         } catch (UnsupportedAudioFileException e) {
-            LOGGER.warning("Unsupported audio file format: " + customSoundFile);
+            LOGGER.warn("Unsupported audio file format: " + customSoundFile);
             return false;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to read audio file: " + e.getMessage(), e);
+            LOGGER.error("Failed to read audio file: " + e.getMessage(), e);
             return false;
         }
     }
 
     private boolean playWithSystemCommand() {
         if (systemCommand == null || systemCommand.trim().isEmpty()) {
-            LOGGER.warning("System command is empty");
+            LOGGER.warn("System command is empty");
             return false;
         }
 
@@ -175,12 +175,12 @@ public class PlayNotificationAction implements AfterCompletionAction {
                 try {
                     boolean finished = systemProcess.waitFor(timeoutSeconds, TimeUnit.SECONDS);
                     if (!finished) {
-                        LOGGER.warning("Sound command timed out, terminating process");
+                        LOGGER.warn("Sound command timed out, terminating process");
                         systemProcess.destroyForcibly();
                     } else {
                         int exitCode = systemProcess.exitValue();
                         if (exitCode != 0) {
-                            LOGGER.warning("Sound command exited with code: " + exitCode);
+                            LOGGER.warn("Sound command exited with code: " + exitCode);
                         } else {
                             LOGGER.info("Sound played successfully via system command");
                         }
@@ -195,7 +195,7 @@ public class PlayNotificationAction implements AfterCompletionAction {
 
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to execute sound command: " + e.getMessage(), e);
+            LOGGER.error("Failed to execute sound command: " + e.getMessage(), e);
             isPlaying = false;
             return false;
         }
@@ -247,7 +247,7 @@ public class PlayNotificationAction implements AfterCompletionAction {
             LOGGER.info("Audio playback started");
             return true;
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to play audio stream: " + e.getMessage(), e);
+            LOGGER.error("Failed to play audio stream: " + e.getMessage(), e);
             isPlaying = false;
             return false;
         }
@@ -259,7 +259,7 @@ public class PlayNotificationAction implements AfterCompletionAction {
             DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
 
             if (!AudioSystem.isLineSupported(info)) {
-                LOGGER.warning("Audio format not supported");
+                LOGGER.warn("Audio format not supported");
                 return false;
             }
 
@@ -291,7 +291,7 @@ public class PlayNotificationAction implements AfterCompletionAction {
             LOGGER.info("Generated audio playback started");
             return true;
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to play generated audio: " + e.getMessage(), e);
+            LOGGER.error("Failed to play generated audio: " + e.getMessage(), e);
             isPlaying = false;
             return false;
         }
@@ -394,7 +394,7 @@ public class PlayNotificationAction implements AfterCompletionAction {
             LOGGER.info("Sound playback canceled");
             return true;
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to cancel sound playback: " + e.getMessage(), e);
+            LOGGER.error("Failed to cancel sound playback: " + e.getMessage(), e);
             return false;
         }
     }

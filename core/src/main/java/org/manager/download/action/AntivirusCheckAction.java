@@ -9,8 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 
 /**
@@ -20,7 +20,7 @@ import org.manager.download.Download;
  */
 public class AntivirusCheckAction implements AfterCompletionAction {
 
-    private static final Logger LOGGER = Logger.getLogger(AntivirusCheckAction.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AntivirusCheckAction.class);
 
     public enum AntivirusType {
         CLAMAV, // ClamAV scanner
@@ -70,26 +70,26 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     public boolean execute(Download download) {
         // If no download destination is set, we can't scan the file
         if (download.getDestination() == null) {
-            LOGGER.warning("Cannot scan file: download destination is not set");
+            LOGGER.warn("Cannot scan file: download destination is not set");
             return false;
         }
 
         Path sourceFile = download.getPrimaryOutputPath();
         if (sourceFile == null) {
-            LOGGER.warning("Cannot scan file: output path is unknown");
+            LOGGER.warn("Cannot scan file: output path is unknown");
             return false;
         }
 
         // Check if source file exists
         if (!Files.exists(sourceFile)) {
-            LOGGER.warning("Cannot scan file: source file does not exist: " + sourceFile);
+            LOGGER.warn("Cannot scan file: source file does not exist: " + sourceFile);
             return false;
         }
 
         try {
             List<String> command = buildCommand(sourceFile);
             if (command.isEmpty()) {
-                LOGGER.severe("Failed to build command for antivirus scan");
+                LOGGER.error("Failed to build command for antivirus scan");
                 return false;
             }
 
@@ -120,7 +120,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                         }
                     }
                 } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Error reading scan output", e);
+                    LOGGER.warn("Error reading scan output", e);
                 }
             });
 
@@ -129,7 +129,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             if (timeoutSeconds > 0) {
                 completed = scanProcess.waitFor(timeoutSeconds, TimeUnit.SECONDS);
                 if (!completed) {
-                    LOGGER.warning("Antivirus scan timed out after " + timeoutSeconds + " seconds");
+                    LOGGER.warn("Antivirus scan timed out after " + timeoutSeconds + " seconds");
                     scanProcess.destroyForcibly();
                     scanFuture.cancel(true);
                     isScanning = false;
@@ -155,16 +155,16 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                 LOGGER.info("Antivirus scan completed successfully"
                         + (threatDetected ? ". THREATS DETECTED!" : ". No threats detected."));
             } else {
-                LOGGER.warning("Antivirus scan failed with exit code: " + exitValue);
+                LOGGER.warn("Antivirus scan failed with exit code: " + exitValue);
             }
 
             return success;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to execute antivirus scan: " + e.getMessage(), e);
+            LOGGER.error("Failed to execute antivirus scan: " + e.getMessage(), e);
             isScanning = false;
             return false;
         } catch (InterruptedException e) {
-            LOGGER.log(Level.WARNING, "Antivirus scan was interrupted", e);
+            LOGGER.warn("Antivirus scan was interrupted", e);
             Thread.currentThread().interrupt();
             isScanning = false;
             return false;
@@ -203,7 +203,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                 }
             }
             default -> {
-                LOGGER.warning("Unknown antivirus type: " + antivirusType);
+                LOGGER.warn("Unknown antivirus type: " + antivirusType);
                 return new ArrayList<>();
             }
         }
@@ -257,7 +257,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             LOGGER.info("Antivirus scan canceled");
             return true;
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to cancel antivirus scan: " + e.getMessage(), e);
+            LOGGER.error("Failed to cancel antivirus scan: " + e.getMessage(), e);
             return false;
         }
     }

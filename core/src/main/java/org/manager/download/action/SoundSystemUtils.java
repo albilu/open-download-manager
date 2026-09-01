@@ -10,8 +10,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioSystem;
@@ -27,7 +27,7 @@ import org.manager.download.Download;
  */
 public class SoundSystemUtils {
 
-    private static final Logger LOGGER = Logger.getLogger(SoundSystemUtils.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SoundSystemUtils.class);
 
     // Common system sound files across different operating systems
     private static final String[] COMMON_SOUND_FILES = {
@@ -190,7 +190,7 @@ public class SoundSystemUtils {
                 return true;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Java Audio test failed: " + e.getMessage());
+            LOGGER.debug("Java Audio test failed: " + e.getMessage());
         }
         return false;
     }
@@ -203,7 +203,7 @@ public class SoundSystemUtils {
             java.awt.Toolkit.getDefaultToolkit().beep();
             return true;
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "System beep test failed: " + e.getMessage());
+            LOGGER.debug("System beep test failed: " + e.getMessage());
             return false;
         }
     }
@@ -256,7 +256,7 @@ public class SoundSystemUtils {
                 formats.add(type.getExtension().toUpperCase());
             }
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Failed to detect audio formats: " + e.getMessage());
+            LOGGER.debug("Failed to detect audio formats: " + e.getMessage());
         }
 
         return formats;
@@ -282,7 +282,7 @@ public class SoundSystemUtils {
                 }
             }
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Failed to detect audio devices: " + e.getMessage());
+            LOGGER.debug("Failed to detect audio devices: " + e.getMessage());
         }
 
         return devices;
@@ -317,7 +317,7 @@ public class SoundSystemUtils {
         }
 
         // Last resort - return a non-functional action
-        LOGGER.warning("No suitable sound method found on this system");
+        LOGGER.warn("No suitable sound method found on this system");
         return new PlayNotificationAction(PlayNotificationAction.NotificationSound.SYSTEM_BEEP);
     }
 
@@ -346,7 +346,7 @@ public class SoundSystemUtils {
 
             return result;
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Sound test failed: " + e.getMessage());
+            LOGGER.debug("Sound test failed: " + e.getMessage());
             return false;
         }
     }

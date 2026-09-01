@@ -12,8 +12,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.schedule.ScheduleSettings;
 
 /**
@@ -23,7 +23,7 @@ import org.manager.schedule.ScheduleSettings;
  */
 public class DownloadScheduler {
 
-    private static final Logger LOGGER = Logger.getLogger(DownloadScheduler.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DownloadScheduler.class);
 
     private final DownloadManager downloadManager;
     private final ScheduledExecutorService scheduler;
@@ -186,7 +186,7 @@ public class DownloadScheduler {
                 download.setScheduleSettings(schedule);
                 downloadManager.saveState();
             }
-            LOGGER.fine("Set schedule for download " + downloadId + ": " + schedule);
+            LOGGER.debug("Set schedule for download " + downloadId + ": " + schedule);
 
             // Immediately check this download's schedule if scheduler is running
             if (running) {
@@ -212,7 +212,7 @@ public class DownloadScheduler {
                     download.setScheduleSettings(null);
                     downloadManager.saveState();
                 }
-                LOGGER.fine("Removed schedule for download " + downloadId);
+                LOGGER.debug("Removed schedule for download " + downloadId);
 
                 // Check if download should be controlled by global schedule now
                 if (running) {
@@ -265,7 +265,7 @@ public class DownloadScheduler {
             try {
                 listener.onGlobalScheduleChanged(oldSchedule, globalSchedule);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener of global schedule change", e);
+                LOGGER.warn("Error notifying listener of global schedule change", e);
             }
         }
 
@@ -461,7 +461,7 @@ public class DownloadScheduler {
                 return;
             }
 
-            LOGGER.fine("Checking schedules for all downloads");
+            LOGGER.debug("Checking schedules for all downloads");
 
             // Get all downloads from the manager
             List<Download> downloads = downloadManager.getAllDownloads();
@@ -471,7 +471,7 @@ public class DownloadScheduler {
             }
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error during scheduled check", e);
+            LOGGER.warn("Error during scheduled check", e);
         }
     }
 
@@ -529,7 +529,7 @@ public class DownloadScheduler {
             }
 
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error checking schedule for download " + downloadId, e);
+            LOGGER.warn("Error checking schedule for download " + downloadId, e);
         }
     }
 
@@ -541,7 +541,7 @@ public class DownloadScheduler {
         downloadManager.pauseDownload(download).whenComplete((ignored, error) -> {
             scheduleOperationsInFlight.remove(downloadId);
             if (error != null) {
-                LOGGER.log(Level.WARNING, "Failed to pause download " + downloadId
+                LOGGER.warn("Failed to pause download " + downloadId
                         + " due to schedule", error);
                 return;
             }
@@ -559,7 +559,7 @@ public class DownloadScheduler {
         downloadManager.resumeDownload(download).whenComplete((ignored, error) -> {
             scheduleOperationsInFlight.remove(downloadId);
             if (error != null) {
-                LOGGER.log(Level.WARNING, "Failed to resume download " + downloadId
+                LOGGER.warn("Failed to resume download " + downloadId
                         + " due to schedule", error);
                 return;
             }
@@ -577,7 +577,7 @@ public class DownloadScheduler {
             try {
                 listener.onDownloadPausedBySchedule(downloadId, schedule);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener of download pause", e);
+                LOGGER.warn("Error notifying listener of download pause", e);
             }
         }
     }
@@ -590,7 +590,7 @@ public class DownloadScheduler {
             try {
                 listener.onDownloadResumedBySchedule(downloadId, schedule);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error notifying listener of download resume", e);
+                LOGGER.warn("Error notifying listener of download resume", e);
             }
         }
     }

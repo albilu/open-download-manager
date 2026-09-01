@@ -6,8 +6,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadListener;
@@ -19,7 +19,7 @@ import org.manager.download.DownloadSettingsFactory;
  */
 public abstract class AbstractDownloadHandler implements DownloadHandler, DownloadListener {
 
-    protected final Logger LOGGER = Logger.getLogger(this.getClass().getName());
+    protected final Logger LOGGER = LoggerFactory.getLogger(this.getClass());
     protected final Set<DownloadListener> listeners;
     protected final GlobalSettings globalSettings;
     protected final DownloadSettingsFactory settingsFactory;
@@ -72,7 +72,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
                 initialized = true;
                 LOGGER.info(getSupportedType() + " download handler initialized successfully");
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to initialize " + getSupportedType() + " download handler", e);
+                LOGGER.error("Failed to initialize " + getSupportedType() + " download handler", e);
                 throw new RuntimeException("Failed to initialize download handler", e);
             }
         });
@@ -92,7 +92,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
                 initialized = false;
                 LOGGER.info(getSupportedType() + " download handler shut down successfully");
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to shut down " + getSupportedType() + " download handler", e);
+                LOGGER.error("Failed to shut down " + getSupportedType() + " download handler", e);
                 throw new RuntimeException("Failed to shut down download handler", e);
             }
         });
@@ -146,7 +146,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             try {
                 listener.onDownloadStart(download);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                LOGGER.warn("Error in download listener", e);
             }
         }
     }
@@ -172,7 +172,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             try {
                 listener.onDownloadProgress(download, progress, downloadedBytes, totalBytes, speed);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                LOGGER.warn("Error in download listener", e);
             }
         }
     }
@@ -192,7 +192,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             try {
                 listener.onDownloadPause(download);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                LOGGER.warn("Error in download listener", e);
             }
         }
     }
@@ -212,7 +212,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             try {
                 listener.onDownloadResume(download);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                LOGGER.warn("Error in download listener", e);
             }
         }
     }
@@ -232,7 +232,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             try {
                 listener.onDownloadComplete(download);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                LOGGER.warn("Error in download listener", e);
             }
         }
     }
@@ -253,7 +253,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             try {
                 listener.onDownloadError(download, errorMessage);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                LOGGER.warn("Error in download listener", e);
             }
         }
     }
@@ -273,7 +273,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             try {
                 listener.onDownloadCanceled(download);
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error in download listener", e);
+                LOGGER.warn("Error in download listener", e);
             }
         }
     }
@@ -306,7 +306,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
      */
     protected void setDefaultDestinationIfNeeded(Download download) {
         if (download != null && download.getDestination() == null) {
-            LOGGER.fine("Setting default download directory to: "
+            LOGGER.debug("Setting default download directory to: "
                     + globalSettings.getDefaultDownloadDirectory());
             download.setDestination(globalSettings.getDefaultDownloadDirectory());
         }

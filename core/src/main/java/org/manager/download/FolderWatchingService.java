@@ -9,8 +9,8 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.GlobalSettings;
 import org.manager.folder.FolderMonitorService;
@@ -27,7 +27,7 @@ import org.manager.folder.TorrentFolderMonitor;
  */
 class FolderWatchingService {
 
-    private static final Logger LOGGER = Logger.getLogger(FolderWatchingService.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(FolderWatchingService.class);
 
     private final DownloadManager downloadManager;
     private final Supplier<GlobalSettings> settings;
@@ -212,12 +212,12 @@ class FolderWatchingService {
     private void startConfiguredFolderMonitoring() {
         String pathText = settings.get().getProperty("folder.monitorPath", "");
         if (pathText.isBlank()) {
-            LOGGER.fine("No monitored folder configured; folder monitoring stays idle");
+            LOGGER.debug("No monitored folder configured; folder monitoring stays idle");
             return;
         }
         Path folder = Paths.get(pathText);
         if (!Files.isDirectory(folder)) {
-            LOGGER.warning("Configured monitored folder does not exist: " + folder);
+            LOGGER.warn("Configured monitored folder does not exist: " + folder);
             return;
         }
         boolean recursive = settings.get().getBooleanProperty("ui.folderRecursive", false);
@@ -245,7 +245,7 @@ class FolderWatchingService {
                     .setMinFileSize(50L)
                     .setMaxFileSize(10L * 1024 * 1024);
             folderMonitorService.startMonitoring(folder, combined).exceptionally(e -> {
-                LOGGER.log(Level.WARNING, "Failed to start descriptor folder monitoring", e);
+                LOGGER.warn("Failed to start descriptor folder monitoring", e);
                 return null;
             });
         }
@@ -288,7 +288,7 @@ class FolderWatchingService {
                     torrentShutdown = torrentFolderMonitor.shutdown();
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error initiating torrent folder monitor shutdown", e);
+                LOGGER.warn("Error initiating torrent folder monitor shutdown", e);
             }
 
             try {
@@ -296,7 +296,7 @@ class FolderWatchingService {
                     metaLinkShutdown = metaLinkFolderMonitor.shutdown();
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error initiating Metalink folder monitor shutdown", e);
+                LOGGER.warn("Error initiating Metalink folder monitor shutdown", e);
             }
 
             try {
@@ -304,14 +304,14 @@ class FolderWatchingService {
                     folderShutdown = folderMonitorService.shutdown();
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error initiating folder monitor service shutdown", e);
+                LOGGER.warn("Error initiating folder monitor service shutdown", e);
             }
 
             if (torrentShutdown != null) {
                 try {
                     torrentShutdown.get(8, TimeUnit.SECONDS);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Torrent folder monitor shutdown timeout or error", e);
+                    LOGGER.warn("Torrent folder monitor shutdown timeout or error", e);
                 }
             }
 
@@ -319,7 +319,7 @@ class FolderWatchingService {
                 try {
                     metaLinkShutdown.get(8, TimeUnit.SECONDS);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Metalink folder monitor shutdown timeout or error", e);
+                    LOGGER.warn("Metalink folder monitor shutdown timeout or error", e);
                 }
             }
 
@@ -327,13 +327,13 @@ class FolderWatchingService {
                 try {
                     folderShutdown.get(8, TimeUnit.SECONDS);
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Folder monitor service shutdown timeout or error", e);
+                    LOGGER.warn("Folder monitor service shutdown timeout or error", e);
                 }
             }
 
             LOGGER.info("Folder monitoring services shutdown complete");
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to shutdown folder monitoring services", e);
+            LOGGER.warn("Failed to shutdown folder monitoring services", e);
         }
     }
 }

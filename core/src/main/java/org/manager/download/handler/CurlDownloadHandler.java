@@ -2,7 +2,6 @@ package org.manager.download.handler;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.logging.Level;
 import org.curl.CurlClient;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
@@ -98,7 +97,7 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
                     download.setErrorMessage("Failed to start curl download: " + e.getMessage());
                     notifyDownloadError(download, download.getErrorMessage());
                 }
-                LOGGER.log(Level.SEVERE, "Failed to start curl download", e);
+                LOGGER.error("Failed to start curl download", e);
                 throw new RuntimeException("Failed to start curl download", e);
             }
         }, executor);

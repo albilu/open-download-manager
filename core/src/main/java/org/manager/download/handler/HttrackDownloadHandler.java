@@ -6,7 +6,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.logging.Level;
 import org.httrack.HttrackClient;
 import org.httrack.HttrackJob;
 import org.httrack.HttrackSettings;
@@ -148,7 +147,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage("Failed to start httrack download: " + e.getMessage());
                 notifyDownloadError(download, download.getErrorMessage());
-                LOGGER.log(Level.SEVERE, "Failed to start httrack download", e);
+                LOGGER.error("Failed to start httrack download", e);
                 throw new RuntimeException("Failed to start httrack download", e);
             }
         }, executor);
@@ -337,7 +336,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                     downloadToJobMap.remove(download.getId());
                     jobToDownloadMap.remove(job.getJobId());
 
-                    LOGGER.severe("Httrack job error: " + job.getJobId() + " for download " + download.getId() + " - "
+                    LOGGER.error("Httrack job error: " + job.getJobId() + " for download " + download.getId() + " - "
                             + errorMessage);
                 }
             }

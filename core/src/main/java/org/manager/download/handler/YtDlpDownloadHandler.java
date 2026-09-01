@@ -5,7 +5,6 @@ import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.logging.Level;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettingsFactory;
@@ -14,6 +13,8 @@ import org.ytdlp.YtDlpToolManager;
 import org.ytdlp.YtDlpDownloadTask;
 import org.ytdlp.YtDlpFactory;
 import org.ytdlp.YtDlpSettings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Download handler for YouTube and other streaming sites using yt-dlp. This
@@ -75,7 +76,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             try {
                 task.cancel();
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error cancelling task during shutdown", e);
+                LOGGER.warn("Error cancelling task during shutdown", e);
             }
         }
 
@@ -150,7 +151,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage("Failed to start yt-dlp download: " + e.getMessage());
                 notifyDownloadError(download, download.getErrorMessage());
-                LOGGER.log(Level.SEVERE, "Failed to start yt-dlp download", e);
+                LOGGER.error("Failed to start yt-dlp download", e);
                 throw new RuntimeException("Failed to start yt-dlp download", e);
             }
         }, executor);
@@ -165,7 +166,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 notifyDownloadPause(download);
                 LOGGER.info("Paused yt-dlp download: " + download.getId());
             } else {
-                LOGGER.warning("Could not pause yt-dlp download: " + download.getId());
+                LOGGER.warn("Could not pause yt-dlp download: " + download.getId());
             }
         }, executor);
     }
@@ -183,7 +184,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 notifyDownloadResume(download);
                 LOGGER.info("Resumed yt-dlp download: " + download.getId());
             } else {
-                LOGGER.warning("Could not resume yt-dlp download: " + download.getId());
+                LOGGER.warn("Could not resume yt-dlp download: " + download.getId());
             }
         }, executor);
     }
@@ -249,7 +250,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 if (task == null || task.awaitRunCompletion(TASK_COMPLETION_AWAIT_TIMEOUT)) {
                     deleteYtDlpOutput(download, task);
                 } else {
-                    LOGGER.warning("Task completion for " + download.getId()
+                    LOGGER.warn("Task completion for " + download.getId()
                             + " not confirmed; skipping output deletion");
                 }
             }
@@ -263,8 +264,8 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
     private static final java.time.Duration TASK_COMPLETION_AWAIT_TIMEOUT =
             java.time.Duration.ofSeconds(10);
 
-    private static final java.util.logging.Logger DELETE_LOGGER =
-            java.util.logging.Logger.getLogger(YtDlpDownloadHandler.class.getName());
+    private static final Logger DELETE_LOGGER =
+            LoggerFactory.getLogger(YtDlpDownloadHandler.class);
 
     /**
      * Deletion eligibility for a yt-dlp output path. Only a path produced by
@@ -310,28 +311,28 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
     static void deleteYtDlpOutput(Download download, YtDlpDownloadTask task) {
         Path destination = download.getDestination();
         if (destination == null) {
-            DELETE_LOGGER.warning("Cannot delete yt-dlp output for " + download.getId()
+            DELETE_LOGGER.warn("Cannot delete yt-dlp output for " + download.getId()
                     + ": destination unknown");
             return;
         }
         Path normalizedDestination = destination.toAbsolutePath().normalize();
         java.util.List<String> recorded = task != null ? task.getRecordedOutputPaths() : java.util.List.of();
         if (recorded.isEmpty()) {
-            DELETE_LOGGER.warning("No yt-dlp output paths recorded for " + download.getId()
+            DELETE_LOGGER.warn("No yt-dlp output paths recorded for " + download.getId()
                     + "; refusing deletion (display names are not deletion authority)");
             return;
         }
         for (String candidate : recorded) {
             java.util.Optional<Path> eligible = eligibleOutputPath(normalizedDestination, candidate);
             if (eligible.isEmpty()) {
-                DELETE_LOGGER.warning("Refusing to delete yt-dlp output outside the destination for "
+                DELETE_LOGGER.warn("Refusing to delete yt-dlp output outside the destination for "
                         + download.getId() + ": " + candidate);
                 continue;
             }
             Path base = eligible.get();
             for (Path target : new Path[]{base, Path.of(base + ".part")}) {
                 if (!org.manager.util.PathSafety.isConfined(target, destination)) {
-                    DELETE_LOGGER.warning("Refusing to delete yt-dlp output whose real path escapes the destination: "
+                    DELETE_LOGGER.warn("Refusing to delete yt-dlp output whose real path escapes the destination: "
                             + target);
                     continue;
                 }
@@ -342,7 +343,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         Files.deleteIfExists(target);
                     }
                 } catch (Exception e) {
-                    DELETE_LOGGER.warning("Could not delete yt-dlp output " + target + ": " + e.getMessage());
+                    DELETE_LOGGER.warn("Could not delete yt-dlp output " + target + ": " + e.getMessage());
                 }
             }
         }
@@ -390,7 +391,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     try {
                         download.recordOutputPath(Path.of(filename));
                     } catch (IllegalArgumentException invalidPath) {
-                        LOGGER.log(Level.WARNING, "Ignoring invalid yt-dlp output path", invalidPath);
+                        LOGGER.warn("Ignoring invalid yt-dlp output path", invalidPath);
                     }
                 }
                 if (filename != null && !filename.isBlank()
@@ -415,7 +416,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     try {
                         download.recordOutputPath(Path.of(filename));
                     } catch (IllegalArgumentException invalidPath) {
-                        LOGGER.log(Level.WARNING, "Ignoring invalid yt-dlp output path", invalidPath);
+                        LOGGER.warn("Ignoring invalid yt-dlp output path", invalidPath);
                     }
                 }
                 download.setStatus(Download.Status.COMPLETED);
@@ -463,7 +464,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     ytDlpFactory.removeDownloadTask(download.getId(), task);
                     startDownload(download).join();
                 } else {
-                    LOGGER.warning("Could not pause yt-dlp download for settings change: "
+                    LOGGER.warn("Could not pause yt-dlp download for settings change: "
                             + download.getId());
                 }
             }

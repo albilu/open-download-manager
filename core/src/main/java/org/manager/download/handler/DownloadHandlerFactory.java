@@ -11,8 +11,8 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.GlobalSettings;
 import org.manager.StartupCoordinator;
 import org.manager.download.Download;
@@ -27,7 +27,7 @@ import org.manager.tools.ToolManagerFactory;
  */
 public class DownloadHandlerFactory {
 
-    private static final Logger LOGGER = Logger.getLogger(DownloadHandlerFactory.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DownloadHandlerFactory.class);
 
     // Read from UI/event/executor threads while registration mutates during
     // init and shutdownHandlers clears during teardown
@@ -68,14 +68,14 @@ public class DownloadHandlerFactory {
     public void initializeHandlers() {
         // Check if handlers are already initialized to prevent duplicates
         if (handlersInitialized.get()) {
-            LOGGER.fine("Download handlers already initialized, skipping duplicate initialization");
+            LOGGER.debug("Download handlers already initialized, skipping duplicate initialization");
             return;
         }
 
         // Use startup coordination to prevent multiple initialization attempts
         String componentId = StartupCoordinator.DOWNLOAD_HANDLER_FACTORY;
         if (!startupCoordinator.beginComponentInitialization(componentId)) {
-            LOGGER.fine("Download handler initialization already in progress or complete");
+            LOGGER.debug("Download handler initialization already in progress or complete");
             return;
         }
 
@@ -122,7 +122,7 @@ public class DownloadHandlerFactory {
                     LOGGER.info("Initialized aria2 download handler");
                 } catch (Exception e) {
                     startupCoordinator.failComponentInitialization(StartupCoordinator.ARIA2_HANDLER, e);
-                    LOGGER.log(Level.SEVERE, "Failed to initialize aria2 download handler", e);
+                    LOGGER.error("Failed to initialize aria2 download handler", e);
                     // Remove the handler if initialization failed
                     handlers.remove(Download.Type.ARIA2);
                     handlers.remove(Download.Type.TOR);
@@ -130,7 +130,7 @@ public class DownloadHandlerFactory {
                 }
             }
         } else if (!toolManagerFactory.isToolAvailable("aria2")) {
-            LOGGER.warning("aria2 is not available, HTTP/FTP/BitTorrent downloads will not be supported");
+            LOGGER.warn("aria2 is not available, HTTP/FTP/BitTorrent downloads will not be supported");
         }
 
         // Create YouTube handler (yt-dlp-based)
@@ -148,12 +148,12 @@ public class DownloadHandlerFactory {
                     LOGGER.info("Initialized yt-dlp download handler");
                 } catch (Exception e) {
                     startupCoordinator.failComponentInitialization(StartupCoordinator.YTDLP_HANDLER, e);
-                    LOGGER.log(Level.SEVERE, "Failed to initialize yt-dlp download handler", e);
+                    LOGGER.error("Failed to initialize yt-dlp download handler", e);
                     handlers.remove(Download.Type.YOUTUBE);
                 }
             }
         } else if (!toolManagerFactory.isToolAvailable("yt-dlp")) {
-            LOGGER.warning("yt-dlp is not available, YouTube downloads will not be supported");
+            LOGGER.warn("yt-dlp is not available, YouTube downloads will not be supported");
         }
 
         // Create website scraping handler (httrack-based)
@@ -171,12 +171,12 @@ public class DownloadHandlerFactory {
                     LOGGER.info("Initialized httrack download handler");
                 } catch (Exception e) {
                     startupCoordinator.failComponentInitialization(StartupCoordinator.HTTRACK_HANDLER, e);
-                    LOGGER.log(Level.SEVERE, "Failed to initialize httrack download handler", e);
+                    LOGGER.error("Failed to initialize httrack download handler", e);
                     handlers.remove(Download.Type.WEBSITE_SCRAPING);
                 }
             }
         } else if (!toolManagerFactory.isToolAvailable("httrack")) {
-            LOGGER.warning("httrack is not available, website scraping will not be supported");
+            LOGGER.warn("httrack is not available, website scraping will not be supported");
         }
 
         // Create curl handler (as fallback)
@@ -194,12 +194,12 @@ public class DownloadHandlerFactory {
                     LOGGER.info("Initialized curl download handler");
                 } catch (Exception e) {
                     startupCoordinator.failComponentInitialization(StartupCoordinator.CURL_HANDLER, e);
-                    LOGGER.log(Level.SEVERE, "Failed to initialize curl download handler", e);
+                    LOGGER.error("Failed to initialize curl download handler", e);
                     handlers.remove(Download.Type.CURL);
                 }
             }
         } else if (!toolManagerFactory.isToolAvailable("curl")) {
-            LOGGER.warning("curl is not available, fallback downloads will not be supported");
+            LOGGER.warn("curl is not available, fallback downloads will not be supported");
         }
 
         // Create proxychains handler
@@ -217,12 +217,12 @@ public class DownloadHandlerFactory {
                     LOGGER.info("Initialized proxychains download handler");
                 } catch (Exception e) {
                     startupCoordinator.failComponentInitialization(StartupCoordinator.PROXYCHAINS_HANDLER, e);
-                    LOGGER.log(Level.SEVERE, "Failed to initialize proxychains download handler", e);
+                    LOGGER.error("Failed to initialize proxychains download handler", e);
                     handlers.remove(Download.Type.PROXYCHAINS);
                 }
             }
         } else if (!toolManagerFactory.isToolAvailable("proxychains")) {
-            LOGGER.warning("proxychains is not available, proxy downloads will not be supported");
+            LOGGER.warn("proxychains is not available, proxy downloads will not be supported");
         }
     }
 
@@ -276,7 +276,7 @@ public class DownloadHandlerFactory {
             }
 
             // No suitable handler found
-            LOGGER.warning("No suitable handler found for download type: " + download.getType());
+            LOGGER.warn("No suitable handler found for download type: " + download.getType());
             return null;
         }
 
@@ -307,7 +307,7 @@ public class DownloadHandlerFactory {
                     return proxychains;
                 }
             } catch (RuntimeException routingFailure) {
-                LOGGER.log(Level.WARNING, "Proxychains rejected SOCKS download "
+                LOGGER.warn("Proxychains rejected SOCKS download "
                         + download.getId() + "; considering Curl fallback", routingFailure);
             }
             download.setType(originalType);
@@ -320,7 +320,7 @@ public class DownloadHandlerFactory {
             return curl;
         }
 
-        LOGGER.severe("Proxychains is unavailable and no valid Curl fallback exists for "
+        LOGGER.error("Proxychains is unavailable and no valid Curl fallback exists for "
                 + "SOCKS-proxied download " + download.getId());
         return null;
     }
@@ -382,7 +382,7 @@ public class DownloadHandlerFactory {
                 return true;
             }
         } catch (RuntimeException routingFailure) {
-            LOGGER.log(Level.WARNING, "Curl rejected proxychains fallback for "
+            LOGGER.warn("Curl rejected proxychains fallback for "
                     + download.getId(), routingFailure);
         }
 
@@ -490,14 +490,14 @@ public class DownloadHandlerFactory {
             try {
                 handler.shutdown().get(HANDLER_SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             } catch (java.util.concurrent.TimeoutException e) {
-                LOGGER.log(Level.SEVERE, "Handler shutdown timed out after "
+                LOGGER.error("Handler shutdown timed out after "
                         + HANDLER_SHUTDOWN_TIMEOUT_SECONDS + "s: " + handler.getSupportedType());
                 failures.add(new RuntimeException(
                         "Handler shutdown timed out: " + handler.getSupportedType(), e));
             } catch (Exception e) {
                 Throwable cause = (e instanceof java.util.concurrent.ExecutionException && e.getCause() != null)
                         ? e.getCause() : e;
-                LOGGER.log(Level.SEVERE, "Handler shutdown failed: " + handler.getSupportedType(), cause);
+                LOGGER.error("Handler shutdown failed: " + handler.getSupportedType(), cause);
                 failures.add(new RuntimeException(
                         "Handler shutdown failed: " + handler.getSupportedType(), cause));
             }

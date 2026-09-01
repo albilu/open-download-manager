@@ -8,8 +8,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.download.Download;
 
@@ -19,7 +19,7 @@ import org.manager.download.Download;
  */
 public class ChecksumValidationAction implements AfterCompletionAction {
 
-    private static final Logger LOGGER = Logger.getLogger(ChecksumValidationAction.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ChecksumValidationAction.class);
 
     public enum ChecksumAlgorithm {
         MD5("MD5"),
@@ -85,25 +85,25 @@ public class ChecksumValidationAction implements AfterCompletionAction {
 
         // Validate download has a destination
         if (download.getDestination() == null) {
-            LOGGER.warning("Cannot validate checksum: download destination is not set");
+            LOGGER.warn("Cannot validate checksum: download destination is not set");
             return false;
         }
 
         validatedFile = download.getPrimaryOutputPath();
         if (validatedFile == null) {
-            LOGGER.warning("Cannot validate checksum: output path is unknown");
+            LOGGER.warn("Cannot validate checksum: output path is unknown");
             return false;
         }
 
         // Check if file exists
         if (!Files.exists(validatedFile)) {
-            LOGGER.warning("Cannot validate checksum: file does not exist: " + validatedFile);
+            LOGGER.warn("Cannot validate checksum: file does not exist: " + validatedFile);
             return false;
         }
 
         // Check if file is readable
         if (!Files.isReadable(validatedFile)) {
-            LOGGER.warning("Cannot validate checksum: file is not readable: " + validatedFile);
+            LOGGER.warn("Cannot validate checksum: file is not readable: " + validatedFile);
             return false;
         }
 
@@ -128,21 +128,21 @@ public class ChecksumValidationAction implements AfterCompletionAction {
                 LOGGER.info("Actual: " + actualChecksum);
                 return true;
             } else {
-                LOGGER.severe("Checksum validation FAILED for file: " + validatedFile);
-                LOGGER.severe("Expected: " + expectedChecksum);
-                LOGGER.severe("Actual: " + actualChecksum);
-                LOGGER.severe("Algorithm: " + algorithm.getAlgorithmName());
+                LOGGER.error("Checksum validation FAILED for file: " + validatedFile);
+                LOGGER.error("Expected: " + expectedChecksum);
+                LOGGER.error("Actual: " + actualChecksum);
+                LOGGER.error("Algorithm: " + algorithm.getAlgorithmName());
                 return false;
             }
 
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "I/O error during checksum validation: " + e.getMessage(), e);
+            LOGGER.error("I/O error during checksum validation: " + e.getMessage(), e);
             return false;
         } catch (NoSuchAlgorithmException e) {
-            LOGGER.log(Level.SEVERE, "Unsupported checksum algorithm: " + algorithm.getAlgorithmName(), e);
+            LOGGER.error("Unsupported checksum algorithm: " + algorithm.getAlgorithmName(), e);
             return false;
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Unexpected error during checksum validation: " + e.getMessage(), e);
+            LOGGER.error("Unexpected error during checksum validation: " + e.getMessage(), e);
             return false;
         }
     }

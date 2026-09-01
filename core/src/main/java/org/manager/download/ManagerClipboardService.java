@@ -3,7 +3,8 @@ package org.manager.download;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.GlobalSettings;
 import org.manager.clipboard.ClipboardFactory;
@@ -19,7 +20,7 @@ import org.manager.clipboard.ClipboardSettings;
  */
 class ManagerClipboardService {
 
-    private static final Logger LOGGER = Logger.getLogger(ManagerClipboardService.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ManagerClipboardService.class);
 
     private final Supplier<GlobalSettings> settings;
     private final ClipboardService clipboardService;

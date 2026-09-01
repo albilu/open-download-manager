@@ -7,8 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.manager.download.Download;
@@ -36,7 +36,7 @@ import org.manager.download.Download;
  */
 public class ExecuteCommandAction implements AfterCompletionAction {
 
-    private static final Logger LOGGER = Logger.getLogger(ExecuteCommandAction.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ExecuteCommandAction.class);
 
     /** Default process timeout in seconds; 0 means no timeout. */
     private static final int DEFAULT_TIMEOUT_SECONDS = 300;
@@ -81,18 +81,18 @@ public class ExecuteCommandAction implements AfterCompletionAction {
     @Override
     public boolean execute(Download download) {
         if (commandTemplate.isBlank()) {
-            LOGGER.warning("Custom command is empty; nothing to execute");
+            LOGGER.warn("Custom command is empty; nothing to execute");
             return false;
         }
         Path filePath = resolveFilePath(download);
         if (filePath == null) {
-            LOGGER.warning("Cannot run custom command: no file path for download " + download.getName());
+            LOGGER.warn("Cannot run custom command: no file path for download " + download.getName());
             return false;
         }
 
         List<String> command = tokenize(substitute(commandTemplate, download, filePath));
         if (command.isEmpty()) {
-            LOGGER.warning("Custom command produced no tokens");
+            LOGGER.warn("Custom command produced no tokens");
             return false;
         }
 
@@ -106,22 +106,22 @@ public class ExecuteCommandAction implements AfterCompletionAction {
                 return false;
             }
             if (!finished) {
-                LOGGER.warning("Custom command timed out after " + timeoutSeconds + "s");
+                LOGGER.warn("Custom command timed out after " + timeoutSeconds + "s");
                 process.destroyForcibly();
                 return false;
             }
             int exit = process.exitValue();
             if (exit != 0) {
-                LOGGER.warning("Custom command exited with code " + exit);
+                LOGGER.warn("Custom command exited with code " + exit);
                 return false;
             }
             return true;
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to execute custom command", e);
+            LOGGER.error("Failed to execute custom command", e);
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            LOGGER.warning("Custom command execution interrupted");
+            LOGGER.warn("Custom command execution interrupted");
             return false;
         }
     }

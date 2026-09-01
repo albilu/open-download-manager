@@ -13,8 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.manager.download.Download;
@@ -39,7 +39,7 @@ import org.manager.proxy.ProxyRotationManager;
  */
 public class RetryableDownloadHandler implements DownloadHandler, RetryEventInterceptor {
 
-    private static final Logger LOGGER = Logger.getLogger(RetryableDownloadHandler.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(RetryableDownloadHandler.class);
 
     /**
      * Extracts HTTP status codes ONLY when an HTTP-ish keyword precedes them.
@@ -219,7 +219,7 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             }
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to start download attempt " + (attemptNumber + 1), e);
+            LOGGER.error("Failed to start download attempt " + (attemptNumber + 1), e);
             handleFailure(download, e.getMessage());
         }
     }
@@ -314,7 +314,7 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             }
             String finalError = "Download failed after " + (attempt.get() + 1) + " attempts. Last error: "
                     + errorMessage;
-            LOGGER.warning(finalError);
+            LOGGER.warn(finalError);
             download.setErrorMessage(finalError);
             CompletableFuture<String> future = operation.get();
             if (future != null && !future.isDone()) {
@@ -362,7 +362,7 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             // The download was started again through a newer generation:
             // this event belongs to the superseded operation and must be
             // dropped, not retried and not propagated terminally.
-            LOGGER.fine("Dropping stale-generation error for download " + downloadId);
+            LOGGER.debug("Dropping stale-generation error for download " + downloadId);
             return RetryDecision.STALE;
         }
         State current = state.get();
@@ -382,7 +382,7 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             return;
         }
         if (!ownsCurrentGeneration(download)) {
-            LOGGER.fine("Ignoring stale-generation completion for download " + downloadId);
+            LOGGER.debug("Ignoring stale-generation completion for download " + downloadId);
             return;
         }
         lifecycleLock.lock();
@@ -412,7 +412,7 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
             return;
         }
         if (!ownsCurrentGeneration(download)) {
-            LOGGER.fine("Ignoring stale-generation cancellation for download " + downloadId);
+            LOGGER.debug("Ignoring stale-generation cancellation for download " + downloadId);
             return;
         }
         lifecycleLock.lock();

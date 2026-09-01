@@ -3,7 +3,8 @@ package org.manager.download.action;
 import java.net.URI;
 import java.nio.file.Paths;
 import java.util.Map;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 
 /**
@@ -12,7 +13,7 @@ import org.manager.download.Download;
  */
 public class SoundSystemDetector {
 
-    private static final Logger LOGGER = Logger.getLogger(SoundSystemDetector.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SoundSystemDetector.class);
 
     public static void main(String[] args) {
         SoundSystemDetector detector = new SoundSystemDetector();
@@ -20,7 +21,7 @@ public class SoundSystemDetector {
         try {
             detector.runDetection();
         } catch (Exception e) {
-            LOGGER.severe("Sound system detection failed: " + e.getMessage());
+            LOGGER.error("Sound system detection failed: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -261,7 +262,7 @@ public class SoundSystemDetector {
 
             return result;
         } catch (Exception e) {
-            LOGGER.fine("Test failed: " + e.getMessage());
+            LOGGER.debug("Test failed: " + e.getMessage());
             return false;
         }
     }

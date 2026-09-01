@@ -8,7 +8,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.logging.Level;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettingsFactory;
@@ -217,7 +216,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage("Failed to start proxychains download: " + e.getMessage());
                 notifyDownloadError(download, download.getErrorMessage());
-                LOGGER.log(Level.SEVERE, "Failed to start proxychains download", e);
+                LOGGER.error("Failed to start proxychains download", e);
                 throw new RuntimeException("Failed to start proxychains download", e);
             }
         }, executor);

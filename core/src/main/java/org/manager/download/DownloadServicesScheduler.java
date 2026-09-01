@@ -4,8 +4,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.GlobalSettings;
 import org.manager.download.handler.Aria2DownloadHandler;
@@ -20,7 +20,7 @@ import org.manager.util.ExecutorServiceManager;
  */
 class DownloadServicesScheduler {
 
-    private static final Logger LOGGER = Logger.getLogger(DownloadServicesScheduler.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DownloadServicesScheduler.class);
 
     /** Interval of the periodic state snapshot job (5 minutes). */
     private static final long STATE_SNAPSHOT_INTERVAL_SECONDS = 300;
@@ -76,7 +76,7 @@ class DownloadServicesScheduler {
                 aria2Handler.refreshTrackers();
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Tracker refresh failed", e);
+            LOGGER.warn("Tracker refresh failed", e);
         }
     }
 
@@ -114,7 +114,7 @@ class DownloadServicesScheduler {
         try {
             stateSnapshot.run();
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Periodic state snapshot failed", e);
+            LOGGER.warn("Periodic state snapshot failed", e);
         }
     }
 

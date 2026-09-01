@@ -6,8 +6,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.manager.ShutdownCoordinator;
 import org.manager.di.DependencyContainer;
@@ -31,7 +31,7 @@ import org.manager.util.ExecutorServiceManager;
  */
 class ManagerShutdownHooks {
 
-    private static final Logger LOGGER = Logger.getLogger(ManagerShutdownHooks.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ManagerShutdownHooks.class);
 
     private final ShutdownCoordinator coordinator;
     private final AtomicBoolean isShuttingDown;
@@ -126,7 +126,7 @@ class ManagerShutdownHooks {
                         // Now pause all downloads
                         pauseAllDownloads.get().get(30, TimeUnit.SECONDS);
                     } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to pause all downloads during shutdown", e);
+                        LOGGER.warn("Failed to pause all downloads during shutdown", e);
                         throw new RuntimeException("Active downloads could not be paused", e);
                     }
                 }, 35, true);
@@ -141,7 +141,7 @@ class ManagerShutdownHooks {
                     try {
                         cleanupManager.shutdown().get(30, TimeUnit.SECONDS);
                     } catch (Exception e) {
-                        LOGGER.log(Level.WARNING, "Failed to shutdown cleanup manager", e);
+                        LOGGER.warn("Failed to shutdown cleanup manager", e);
                     }
                 }, 35, false);
 
