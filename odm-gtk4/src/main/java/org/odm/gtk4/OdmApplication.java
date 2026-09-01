@@ -32,6 +32,10 @@ public final class OdmApplication {
     }
 
     public static void main(String[] args) {
+        wireJulBridge();
+        LOGGER.info("Open Download Manager starting ({} / Java {})",
+                System.getProperty("os.name") + "/" + System.getProperty("os.arch"),
+                System.getProperty("java.version"));
         Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
         // A second launch of the same app id forwards "activate" to this
         // primary instance; the startup gate single-flights the asynchronous
@@ -388,6 +392,11 @@ public final class OdmApplication {
                                               // onShutdown unregisters the tray, run() returns
                     }));
         });
+    }
+
+    static void wireJulBridge() {
+        org.slf4j.bridge.SLF4JBridgeHandler.removeHandlersForRootLogger();
+        org.slf4j.bridge.SLF4JBridgeHandler.install();
     }
 
     static org.tor.TorService createTorService() {
