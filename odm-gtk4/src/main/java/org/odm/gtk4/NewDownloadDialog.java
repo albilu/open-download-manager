@@ -17,15 +17,14 @@ import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.Window;
+import org.manager.download.DescriptorImport;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 
 /**
- * New Download dialog — 1:1 GTK4 port of new-download.glade. Same widget ids,
- * same layout (Download / Files / Options tabs), same options surface
- * (connections, retry, speed limits, HTTP headers, proxy with auth, Tor,
- * start-automatically, move-torrent-to-draft). All signals connected
- * programmatically.
+ * New Download dialog with Download, Files, and per-download engine/network
+ * option tabs. This explicit user action queues immediately; background
+ * automatic-start and descriptor-trash policies stay in Settings.
  */
 public class NewDownloadDialog {
 
@@ -61,8 +60,6 @@ public class NewDownloadDialog {
     private final Entry proxyUsernameEntry;
     private final Entry proxyPasswordEntry;
     private final Switch torSwitch;
-    private final CheckButton startAutomaticallyCheck;
-    private final CheckButton moveTorrentCheck;
     private final Label checksumLabel;
     private final CheckButton verifyChecksumCheck;
     private final Button startButton;
@@ -105,8 +102,6 @@ public class NewDownloadDialog {
         this.proxyUsernameEntry = Widgets.require(builder, "proxy_username_entry", Entry.class);
         this.proxyPasswordEntry = Widgets.require(builder, "proxy_password_entry", Entry.class);
         this.torSwitch = Widgets.require(builder, "tor_switch", Switch.class);
-        this.startAutomaticallyCheck = Widgets.require(builder, "start_automatically_check", CheckButton.class);
-        this.moveTorrentCheck = Widgets.require(builder, "move_torrent_check", CheckButton.class);
         this.checksumLabel = Widgets.require(builder, "checksum_label", Label.class);
         this.verifyChecksumCheck = Widgets.require(builder, "verify_checksum_check", CheckButton.class);
 
@@ -128,8 +123,6 @@ public class NewDownloadDialog {
         AccessibilitySupport.label(referrerEntry, "HTTP referrer");
         AccessibilitySupport.label(cookieEntry, "HTTP cookie header");
         AccessibilitySupport.label(userAgentEntry, "HTTP user agent");
-        AccessibilitySupport.label(startAutomaticallyCheck, "Start automatically");
-        AccessibilitySupport.label(moveTorrentCheck, "Move descriptor to drafts");
         AccessibilitySupport.label(verifyChecksumCheck, "Verify checksum at completion");
 
         dialog.setTransientFor(parent);
@@ -402,11 +395,6 @@ public class NewDownloadDialog {
                 applyOptions(download);
                 registerChecksumVerification(download);
             }
-            if (!startAutomaticallyCheck.getActive()) {
-                finishSubmission(download, false);
-                return;
-            }
-
             pendingDownload = download;
             startButton.setSensitive(false);
             AccessibilitySupport.status(diskSpaceLabel, "Adding download to queue…");
@@ -415,7 +403,7 @@ public class NewDownloadDialog {
                     UiThread.marshal(() -> {
                         if (error == null) {
                             pendingDownload = null;
-                            finishSubmission(submitted, true);
+                            finishSubmission(submitted);
                         } else {
                             startButton.setSensitive(true);
                             AccessibilitySupport.status(diskSpaceLabel,
@@ -433,8 +421,8 @@ public class NewDownloadDialog {
         }
     }
 
-    private void finishSubmission(Download download, boolean queued) {
-        LOGGER.info((queued ? "Queued" : "Created") + " new download: " + download.getName());
+    private void finishSubmission(Download download) {
+        LOGGER.info("Queued new download: " + download.getName());
         if (onDownloadQueued != null) {
             onDownloadQueued.run();
         }
@@ -486,13 +474,10 @@ public class NewDownloadDialog {
                 : Path.of(currentDefaultDirectory());
 
         if (selectedTorrentFile != null) {
-            Path descriptor = moveTorrentCheck.getActive()
-                    ? moveDescriptorToDrafts(selectedTorrentFile)
-                    : selectedTorrentFile;
-            if (Download.Protocol.fromPath(descriptor) == Download.Protocol.METALINK) {
-                return downloadManager.createMetaLinkDownload(descriptor.toUri(), destination);
-            }
-            return downloadManager.createTorrentDownload(descriptor, destination);
+            boolean trashOriginal = downloadManager.getGlobalSettings()
+                    .getBooleanProperty("ui.moveTorrent", false);
+            return DescriptorImport.create(downloadManager, selectedTorrentFile,
+                    destination, trashOriginal);
         }
 
         String url = urlEntry.getText().trim();
@@ -501,25 +486,6 @@ public class NewDownloadDialog {
         }
         return downloadManager.createDownload(
                 org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
-    }
-
-    private Path moveDescriptorToDrafts(Path source) {
-        try {
-            Path drafts = org.manager.util.OdmPaths.dataDirectory().resolve("drafts");
-            java.nio.file.Files.createDirectories(drafts);
-            Path target = drafts.resolve(source.getFileName());
-            if (java.nio.file.Files.exists(target)) {
-                String name = source.getFileName().toString();
-                int dot = name.lastIndexOf('.');
-                String base = dot > 0 ? name.substring(0, dot) : name;
-                String extension = dot > 0 ? name.substring(dot) : "";
-                target = drafts.resolve(base + "-" + java.util.UUID.randomUUID() + extension);
-            }
-            return java.nio.file.Files.move(source, target);
-        } catch (java.io.IOException e) {
-            throw new IllegalArgumentException("Could not move the descriptor to ODM drafts: "
-                    + e.getMessage(), e);
-        }
     }
 
     private void loadGlobalDefaults() {
@@ -532,9 +498,6 @@ public class NewDownloadDialog {
         referrerEntry.setText(settings.getProperty("aria2.referer", ""));
         cookieEntry.setText(settings.getProperty("aria2.cookie", ""));
         userAgentEntry.setText(settings.getProperty("aria2.userAgent", ""));
-        startAutomaticallyCheck.setActive(
-                settings.getBooleanProperty("ui.startAutomatically", true));
-        moveTorrentCheck.setActive(settings.getBooleanProperty("ui.moveTorrent", false));
         torSwitch.setActive(settings.getBooleanProperty("tor.enabled", false));
 
         DialogOptions.ProxyFields proxy = settings.isGlobalProxyEnabled()

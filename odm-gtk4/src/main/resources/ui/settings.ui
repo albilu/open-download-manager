@@ -90,14 +90,14 @@
                             <layout><property name="row">3</property><property name="column">0</property><property name="column-span">2</property></layout>
                             <child><object class="GtkCheckButton" id="folder_monitoring_check"><property name="label">Enable folder monitoring</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="folder_recursive_check"><property name="label">Recursive</property><property name="margin-start">24</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                            <child><object class="GtkCheckButton" id="move_to_trash_check"><property name="label">Move deleted files to trash</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                            <child><object class="GtkCheckButton" id="move_to_trash_check"><property name="label">Move processed watched descriptors to Trash</property><property name="margin-start">24</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="clipboard_monitor_check"><property name="label">Enable clipboard monitoring</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="clipboard_silent_check"><property name="label">Silent mode</property><property name="margin-start">24</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="save_download_history_check"><property name="label">Save download history</property><layout><property name="row">5</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="system_tray_check"><property name="label">Enable system tray icon</property><layout><property name="row">6</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="startup_check"><property name="label">Start at login</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
-                            <child><object class="GtkCheckButton" id="start_automatically_check"><property name="label">Start downloads automatically</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
-                            <child><object class="GtkCheckButton" id="move_torrent_check"><property name="label">Move .torrent/.meta4 to draft</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
+                            <child><object class="GtkCheckButton" id="start_automatically_check"><property name="label">Start downloads automatically</property><property name="tooltip-text">Applies to downloads detected by clipboard and folder monitoring</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
+                            <child><object class="GtkCheckButton" id="move_torrent_check"><property name="label">Move selected .torrent/.metalink/.meta4 descriptors to Trash</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
                           </object>
                         </child>
                       </object>
@@ -151,14 +151,6 @@
                             <child><object class="GtkEntry" id="cookie_entry"><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
                             <child><object class="GtkLabel" id="proxy_password_label1"><property name="label">User Agent:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkEntry" id="user_agent_entry"><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
-                          </object>
-                        </child>
-                        <child><object class="GtkLabel" id="download_options_heading"><property name="label">&lt;b&gt;Options&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property><property name="margin-top">4</property></object></child>
-                        <child>
-                          <object class="GtkBox" id="download_options_box">
-                            <property name="orientation">vertical</property><property name="spacing">8</property>
-                            <child><object class="GtkCheckButton" id="start_automatically_check2"><property name="label">Start automatically</property><property name="active">true</property></object></child>
-                            <child><object class="GtkCheckButton" id="move_torrent_check2"><property name="label">Move .torrent/.meta4 to draft</property></object></child>
                           </object>
                         </child>
                       </object>

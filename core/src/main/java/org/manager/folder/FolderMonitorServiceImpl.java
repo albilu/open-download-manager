@@ -7,10 +7,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
@@ -37,6 +34,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 import org.manager.util.DescriptorStaging;
+import org.manager.util.XdgTrash;
 
 /**
  * Implementation of FolderMonitorService using Java NIO WatchService for
@@ -780,7 +778,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 LOGGER.info("Deleted file: " + filePath);
             }
             case MOVE_TO_TRASH -> {
-                moveToTrash(filePath);
+                XdgTrash.moveToTrash(filePath);
                 LOGGER.info("Moved file to trash: " + filePath);
             }
             case MOVE_TO_DIRECTORY -> {
@@ -841,60 +839,6 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         } catch (IOException e) {
             LOGGER.warn("Error validating file format: " + filePath, e);
             return false;
-        }
-    }
-
-    private void moveToTrash(Path filePath) throws IOException {
-        // Try to use system trash if available (Linux-specific)
-        String userHome = System.getProperty("user.home");
-        Path trashDir = Paths.get(userHome, ".local/share/Trash/files");
-        Path trashInfoDir = Paths.get(userHome, ".local/share/Trash/info");
-
-        if (!Files.exists(trashDir)) {
-            // Create trash directory if it exists
-            Files.createDirectories(trashDir);
-        }
-
-        String fileName = filePath.getFileName().toString();
-
-        // Reserve a collision-safe name via the .trashinfo record: it is
-        // written FIRST (freedesktop spec — file managers treat a trashed
-        // file without it as unknown junk and may purge it) with CREATE_NEW,
-        // so an existing file or .trashinfo record is never replaced
-        Files.createDirectories(trashInfoDir);
-        int attempt = -1;
-        while (true) {
-            attempt++;
-            Path trashPath = DescriptorStaging.collisionSafeTarget(trashDir, fileName, attempt);
-            Path infoPath = trashInfoDir.resolve(trashPath.getFileName() + ".trashinfo");
-            String trashInfo = "[Trash Info]\nPath="
-                    + filePath.toAbsolutePath().toString().replace("\n", "%0A")
-                    + "\nDeletionDate="
-                    + java.time.LocalDateTime.now()
-                            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
-                    + "\n";
-            try {
-                Files.writeString(infoPath, trashInfo, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-            } catch (FileAlreadyExistsException reserved) {
-                continue; // name already taken: try the next candidate
-            }
-            try {
-                // No REPLACE_EXISTING: losing a race for the reserved name
-                // must not silently clobber the winner
-                Files.move(filePath, trashPath, StandardCopyOption.ATOMIC_MOVE);
-                return;
-            } catch (FileAlreadyExistsException raced) {
-                // The reserved name lost the race; drop our info record and
-                // reserve the next candidate
-                Files.deleteIfExists(infoPath);
-            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-                try {
-                    Files.move(filePath, trashPath);
-                    return;
-                } catch (FileAlreadyExistsException racedFallback) {
-                    Files.deleteIfExists(infoPath);
-                }
-            }
         }
     }
 

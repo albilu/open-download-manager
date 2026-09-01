@@ -87,7 +87,9 @@ public class SettingsDialog {
 
     private record SettingsApplication(GlobalSettings settings,
             boolean previousStartAtLogin, boolean requestedStartAtLogin,
-            boolean schedulingEnabled, boolean[][] hourGrid, boolean torEnabled) {
+            boolean schedulingEnabled, boolean[][] hourGrid, boolean torEnabled,
+            boolean clipboardMonitoring, boolean clipboardSilent,
+            boolean folderMonitoring) {
     }
 
     /** 7x24 toggle buttons of the scheduler grid (row 0 = Monday). */
@@ -150,10 +152,8 @@ public class SettingsDialog {
         onPickFile("browse_subliminal_button", "Select Subliminal binary",
                 e -> setText("subliminal_path_entry", e));
 
-        mirrorCheckButtons("start_automatically_check", "start_automatically_check2");
-        mirrorCheckButtons("move_torrent_check", "move_torrent_check2");
-
         load();
+        bindFolderMonitoringChildren();
 
         Widgets.require(builder, "settings_cancel_button", Button.class).onClicked(dialog::close);
         Widgets.require(builder, "settings_reset_button", Button.class).onClicked(this::load);
@@ -375,19 +375,17 @@ public class SettingsDialog {
         });
     }
 
-    private void mirrorCheckButtons(String firstId, String secondId) {
-        CheckButton first = check(firstId);
-        CheckButton second = check(secondId);
-        first.onToggled(() -> {
-            if (second.getActive() != first.getActive()) {
-                second.setActive(first.getActive());
-            }
-        });
-        second.onToggled(() -> {
-            if (first.getActive() != second.getActive()) {
-                first.setActive(second.getActive());
-            }
-        });
+    private void bindFolderMonitoringChildren() {
+        CheckButton enabled = check("folder_monitoring_check");
+        CheckButton recursive = check("folder_recursive_check");
+        CheckButton trashProcessed = check("move_to_trash_check");
+        Runnable updateSensitivity = () -> {
+            boolean active = enabled.getActive();
+            recursive.setSensitive(active);
+            trashProcessed.setSensitive(active);
+        };
+        enabled.onToggled(() -> updateSensitivity.run());
+        updateSensitivity.run();
     }
 
     // ---- load / apply ----
@@ -559,20 +557,11 @@ public class SettingsDialog {
         s.setProperty("ui.startAutomatically", String.valueOf(check("start_automatically_check").getActive()));
         s.setProperty("ui.moveTorrent", String.valueOf(check("move_torrent_check").getActive()));
         s.setProperty("ui.startAtLogin", String.valueOf(check("startup_check").getActive()));
-        s.setProperty("ui.clipboardSilent", String.valueOf(check("clipboard_silent_check").getActive()));
-        // Push silent mode into the core clipboard service immediately
-        try {
-            downloadManager.updateClipboardSettings(
-                    downloadManager.getClipboardService().getSettings()
-                            .copy()
-                            .setSilentMode(check("clipboard_silent_check").getActive()));
-        } catch (Exception e) {
-            LOGGER.debug("Clipboard settings sync skipped", e);
-        }
+        boolean clipboardSilent = check("clipboard_silent_check").getActive();
+        s.setProperty("ui.clipboardSilent", String.valueOf(clipboardSilent));
         s.setProperty("ui.folderRecursive", String.valueOf(check("folder_recursive_check").getActive()));
         s.setProperty("ui.moveToTrash", String.valueOf(check("move_to_trash_check").getActive()));
-        // Runtime toggles apply immediately
-        downloadManager.setClipboardMonitoringEnabled(check("clipboard_monitor_check").getActive());
+        boolean clipboardMonitoring = check("clipboard_monitor_check").getActive();
         boolean folderMonitoring = check("folder_monitoring_check").getActive();
         // Persist the monitored folder so monitoring survives restarts.
         Path monitoredDirectory = monitoredDirectoryChooser.getPath();
@@ -580,8 +569,7 @@ public class SettingsDialog {
         boolean hasMonitoredDir = !monitoredDir.isBlank();
         s.setProperty("folder.monitorPath", hasMonitoredDir ? monitoredDir : "");
         s.setProperty("folder.monitorEnabled", String.valueOf(folderMonitoring && hasMonitoredDir));
-        downloadManager.setTorrentFolderMonitoringEnabled(folderMonitoring && hasMonitoredDir);
-        downloadManager.setMetaLinkFolderMonitoringEnabled(folderMonitoring && hasMonitoredDir);
+        boolean effectiveFolderMonitoring = folderMonitoring && hasMonitoredDir;
         // Network
         s.setProperty("aria2.maxConnections", String.valueOf((int) spin("max_connections_spin").getValue()));
         s.setProperty("aria2.maxTries", String.valueOf((int) spin("retry_limit_spin").getValue()));
@@ -660,7 +648,8 @@ public class SettingsDialog {
 
         return new SettingsApplication(s, previousStartAtLogin,
                 check("startup_check").getActive(), effectiveSchedulingEnabled,
-                hourGrid, torEnabled);
+                hourGrid, torEnabled, clipboardMonitoring, clipboardSilent,
+                effectiveFolderMonitoring);
     }
 
     /** Performs filesystem and core/service work away from the GTK thread. */
@@ -692,7 +681,25 @@ public class SettingsDialog {
         }
         boolean saved = settingsSaved && autostartApplied;
         downloadManager.setGlobalSettings(s);
+        applyMonitoringPreferences(application);
         return saved;
+    }
+
+    /** Applies monitoring only after the manager sees the newly collected
+     * settings, so folder action/recursion changes cannot restart a watcher
+     * against stale values. */
+    private void applyMonitoringPreferences(SettingsApplication application) {
+        try {
+            downloadManager.updateClipboardSettings(
+                    downloadManager.getClipboardService().getSettings()
+                            .copy()
+                            .setSilentMode(application.clipboardSilent()));
+        } catch (Exception e) {
+            LOGGER.debug("Clipboard settings sync skipped", e);
+        }
+        downloadManager.setClipboardMonitoringEnabled(application.clipboardMonitoring());
+        downloadManager.setTorrentFolderMonitoringEnabled(application.folderMonitoring());
+        downloadManager.setMetaLinkFolderMonitoringEnabled(application.folderMonitoring());
     }
 
     private void applyTorPreference(SettingsApplication application) {

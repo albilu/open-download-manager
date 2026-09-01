@@ -195,7 +195,27 @@ class ClipboardServiceIntegrationTest {
 
             // Then
             verify(downloadManager, times(2)).createDownload(any(URI.class), any(Path.class));
-            verify(downloadManager, times(2)).queueDownload(any(Download.class));
+            verify(downloadManager, times(2))
+                    .queueDownloadFromBackgroundSource(any(Download.class));
+        }
+
+        @Test
+        @DisplayName("Silent mode skips confirmation and uses the global queue policy")
+        @Timeout(value = 5, unit = TimeUnit.SECONDS)
+        void testSilentModeUsesGlobalQueuePolicy() throws Exception {
+            settings.setMonitoringEnabled(true)
+                    .setSilentMode(true)
+                    .setAutoDownloadDetectedUrls(false);
+            clipboardService.updateSettings(settings);
+            clipboardService.startService().get(3, TimeUnit.SECONDS);
+
+            clipboardService.onUrlsDetected(
+                    List.of(URI.create("https://example.com/silent.zip")), "silent URL");
+
+            verify(downloadManager).createDownload(any(URI.class), any(Path.class));
+            verify(downloadManager).queueDownloadFromBackgroundSource(mockDownload);
+            verify(downloadManager, never()).queueDownload(any(Download.class));
+            verify(downloadManager, never()).queueDownloadForManualStart(any(Download.class));
         }
 
         @Test
@@ -223,7 +243,7 @@ class ClipboardServiceIntegrationTest {
                     eq(URI.create("https://example.com/file.zip")), any(Path.class));
             verify(downloadManager, never()).createYoutubeDownload(
                     any(URI.class), any(Path.class), any());
-            verify(downloadManager).queueDownload(mockDownload);
+            verify(downloadManager).queueDownloadFromBackgroundSource(mockDownload);
         }
 
         @Test
@@ -245,7 +265,7 @@ class ClipboardServiceIntegrationTest {
             verify(downloadManager).createYoutubeDownload(eq(soundCloud), any(Path.class), any());
             verify(downloadManager).createYoutubeDownload(eq(manifest), any(Path.class), any());
             verify(downloadManager).createDownload(eq(lookalike), any(Path.class));
-            verify(downloadManager, times(3)).queueDownload(mockDownload);
+            verify(downloadManager, times(3)).queueDownloadFromBackgroundSource(mockDownload);
         }
 
         @Test
@@ -271,7 +291,8 @@ class ClipboardServiceIntegrationTest {
 
             // Then - only first 2 URLs should be processed
             verify(downloadManager, times(2)).createDownload(any(URI.class), any(Path.class));
-            verify(downloadManager, times(2)).queueDownload(any(Download.class));
+            verify(downloadManager, times(2))
+                    .queueDownloadFromBackgroundSource(any(Download.class));
         }
 
         @Test
@@ -376,6 +397,9 @@ class ClipboardServiceIntegrationTest {
             // Then
             assertEquals(2, downloads.size());
             verify(downloadManager, times(2)).createDownload(any(URI.class), any(Path.class));
+            verify(downloadManager, times(2)).queueDownload(mockDownload);
+            verify(downloadManager, never())
+                    .queueDownloadFromBackgroundSource(any(Download.class));
         }
 
         @Test

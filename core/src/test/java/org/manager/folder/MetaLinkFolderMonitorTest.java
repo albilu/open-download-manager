@@ -69,7 +69,7 @@ class MetaLinkFolderMonitorTest {
         Download download = new Download(URI.create("file:///metalink/" + name));
         download.setName(name);
         when(downloadManager.createMetaLinkDownload(any(URI.class), any(Path.class))).thenReturn(download);
-        when(downloadManager.queueDownload(download)).thenReturn(CompletableFuture.completedFuture(null));
+        when(downloadManager.queueDownloadFromBackgroundSource(download)).thenReturn(CompletableFuture.completedFuture(null));
         return download;
     }
 
@@ -86,7 +86,7 @@ class MetaLinkFolderMonitorTest {
         monitor.onFileAdded(watch, metalink, settings);
 
         verify(downloadManager).createMetaLinkDownload(metalink.toUri(), downloads);
-        verify(downloadManager).queueDownload(download);
+        verify(downloadManager).queueDownloadFromBackgroundSource(download);
     }
 
     @Test
@@ -100,7 +100,7 @@ class MetaLinkFolderMonitorTest {
         monitor.onFileAdded(meta4.getParent(), meta4, MetaLinkFolderMonitor.createDefaultMetaLinkSettings());
 
         verify(downloadManager).createMetaLinkDownload(meta4.toUri(), downloads);
-        verify(downloadManager).queueDownload(download);
+        verify(downloadManager).queueDownloadFromBackgroundSource(download);
     }
 
     @Test
@@ -121,7 +121,7 @@ class MetaLinkFolderMonitorTest {
         monitor.onFileAdded(tempDir, tiny, MetaLinkFolderMonitor.createDefaultMetaLinkSettings());
 
         verify(downloadManager, never()).createMetaLinkDownload(any(URI.class), any(Path.class));
-        verify(downloadManager, never()).queueDownload(any());
+        verify(downloadManager, never()).queueDownloadFromBackgroundSource(any());
     }
 
     @Test
@@ -140,7 +140,7 @@ class MetaLinkFolderMonitorTest {
     @DisplayName("a queueing failure propagates so the folder service can retry or hold the file")
     void queueFailurePropagates() throws Exception {
         Download download = stubMetalinkCreation("failing.metalink");
-        when(downloadManager.queueDownload(download))
+        when(downloadManager.queueDownloadFromBackgroundSource(download))
                 .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("queue is closed")));
 
         Path metalink = tempDir.resolve("failing.metalink");
@@ -170,7 +170,7 @@ class MetaLinkFolderMonitorTest {
         bareMonitor.onFileAdded(watch, metalink, MetaLinkFolderMonitor.createDefaultMetaLinkSettings());
 
         verify(downloadManager).createMetaLinkDownload(metalink.toUri(), watch.resolve("downloads"));
-        verify(downloadManager).queueDownload(download);
+        verify(downloadManager).queueDownloadFromBackgroundSource(download);
     }
 
     @Test

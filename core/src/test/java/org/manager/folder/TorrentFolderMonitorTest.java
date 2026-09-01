@@ -63,7 +63,7 @@ class TorrentFolderMonitorTest {
         when(mockDownloadManager.getGlobalSettings()).thenReturn(mockGlobalSettings);
         when(mockGlobalSettings.getDefaultDownloadDirectory()).thenReturn(defaultDownloadDirectory);
         when(mockDownloadManager.createTorrentDownload(any(Path.class), any(Path.class))).thenReturn(mockDownload);
-        when(mockDownloadManager.queueDownload(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
+        when(mockDownloadManager.queueDownloadFromBackgroundSource(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
 
         torrentFolderMonitor = new TorrentFolderMonitor(
                 mockDownloadManager,
@@ -269,7 +269,7 @@ class TorrentFolderMonitorTest {
             torrentFolderMonitor.onFileAdded(tempDir, torrentFile, settings);
 
             verify(mockDownloadManager).createTorrentDownload(torrentFile, defaultDownloadDirectory);
-            verify(mockDownloadManager).queueDownload(mockDownload);
+            verify(mockDownloadManager).queueDownloadFromBackgroundSource(mockDownload);
         }
 
         @Test
@@ -283,7 +283,7 @@ class TorrentFolderMonitorTest {
             torrentFolderMonitor.onFileAdded(tempDir, textFile, settings);
 
             verify(mockDownloadManager, never()).createTorrentDownload(any(), any());
-            verify(mockDownloadManager, never()).queueDownload(any());
+            verify(mockDownloadManager, never()).queueDownloadFromBackgroundSource(any());
         }
 
         @Test
@@ -302,7 +302,7 @@ class TorrentFolderMonitorTest {
 
             // Should not process invalid torrent
             verify(mockDownloadManager, never()).createTorrentDownload(any(), any());
-            verify(mockDownloadManager, never()).queueDownload(any());
+            verify(mockDownloadManager, never()).queueDownloadFromBackgroundSource(any());
         }
 
         @Test
@@ -318,7 +318,7 @@ class TorrentFolderMonitorTest {
 
             // Should not process empty torrent
             verify(mockDownloadManager, never()).createTorrentDownload(any(), any());
-            verify(mockDownloadManager, never()).queueDownload(any());
+            verify(mockDownloadManager, never()).queueDownloadFromBackgroundSource(any());
         }
 
         @Test
@@ -351,7 +351,7 @@ class TorrentFolderMonitorTest {
 
             // Should not process modified torrent files
             verify(mockDownloadManager, never()).createTorrentDownload(any(), any());
-            verify(mockDownloadManager, never()).queueDownload(any());
+            verify(mockDownloadManager, never()).queueDownloadFromBackgroundSource(any());
         }
     }
 
@@ -564,14 +564,14 @@ class TorrentFolderMonitorTest {
             // Make queue download fail asynchronously
             CompletableFuture<Void> failedFuture = new CompletableFuture<>();
             failedFuture.completeExceptionally(new RuntimeException("Queue failed"));
-            when(mockDownloadManager.queueDownload(any())).thenReturn(failedFuture);
+            when(mockDownloadManager.queueDownloadFromBackgroundSource(any())).thenReturn(failedFuture);
 
             assertThrows(RuntimeException.class,
                     () -> torrentFolderMonitor.onFileAdded(tempDir, torrentFile, settings),
                     "queue rejection must propagate to the folder disposition boundary");
 
             verify(mockDownloadManager).createTorrentDownload(torrentFile, defaultDownloadDirectory);
-            verify(mockDownloadManager).queueDownload(mockDownload);
+            verify(mockDownloadManager).queueDownloadFromBackgroundSource(mockDownload);
         }
     }
 

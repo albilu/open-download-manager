@@ -1,5 +1,6 @@
 package org.manager.util;
 
+import com.github.stefanbirkner.systemlambda.SystemLambda;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -85,6 +86,24 @@ class DescriptorStagingTest {
                 "different source paths must stage into different entries");
         assertArrayEquals("descriptor a".getBytes(StandardCharsets.UTF_8), read(stagedFirst));
         assertArrayEquals("descriptor b".getBytes(StandardCharsets.UTF_8), read(stagedSecond));
+    }
+
+    @Test
+    @DisplayName("Manual imports always receive unique managed copies")
+    void manualImportsUseUniqueStagedCopies() throws Exception {
+        Path source = tempDir.resolve("restored.torrent");
+        Files.writeString(source, "descriptor");
+
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", tempDir.toString()).execute(() -> {
+            Path first = DescriptorStaging.stageManualFile(source);
+            Path second = DescriptorStaging.stageManualFile(source);
+
+            assertNotEquals(first, second);
+            assertTrue(DescriptorStaging.isStagedPath(first, DescriptorStaging.stagingRoot()));
+            assertTrue(DescriptorStaging.isStagedPath(second, DescriptorStaging.stagingRoot()));
+            assertArrayEquals(read(source), read(first));
+            assertArrayEquals(read(source), read(second));
+        });
     }
 
     @Test

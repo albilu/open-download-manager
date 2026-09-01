@@ -20,6 +20,11 @@ import org.manager.download.MediaUrlDetector;
  */
 public class ClipboardService implements ClipboardListener {
 
+    private enum AdmissionSource {
+        USER_ACTION,
+        BACKGROUND_MONITOR
+    }
+
     private static final Logger LOGGER = LoggerFactory.getLogger(ClipboardService.class);
 
     private final DownloadManager downloadManager;
@@ -143,8 +148,8 @@ public class ClipboardService implements ClipboardListener {
                 return Collections.emptyList();
             }
 
-            LOGGER.info("Found " + urls.size() + " URL(s) in clipboard, creating downloads");
-            return createDownloadsFromUrls(urls, false);
+            LOGGER.info("Found " + urls.size() + " URL(s) in clipboard, queuing downloads");
+            return createDownloadsFromUrls(urls, AdmissionSource.USER_ACTION);
         });
     }
 
@@ -201,14 +206,17 @@ public class ClipboardService implements ClipboardListener {
 
         // Handle based on settings
         if (settings.isAutoDownloadDetectedUrls()) {
-            // Auto-download without confirmation
-            List<Download> downloads = createDownloadsFromUrls(finalFilteredUrls, true);
-            LOGGER.info("Auto-downloading " + downloads.size() + " URL(s)");
+            // Queue without confirmation. Background admission still follows
+            // the global automatic-start policy.
+            List<Download> downloads = createDownloadsFromUrls(
+                    finalFilteredUrls, AdmissionSource.BACKGROUND_MONITOR);
+            LOGGER.info("Queued " + downloads.size() + " auto-detected URL(s)");
         } else if (settings.isSilentMode()) {
-            // Silent mode: register the downloads in QUEUED status without
-            // starting them; the user starts them from the list at will
-            List<Download> downloads = createDownloadsFromUrls(finalFilteredUrls, false);
-            LOGGER.info("Silently created " + downloads.size() + " download(s) in QUEUED state");
+            // Silent controls confirmation only. Background admission still
+            // follows the global automatic-start policy.
+            List<Download> downloads = createDownloadsFromUrls(
+                    finalFilteredUrls, AdmissionSource.BACKGROUND_MONITOR);
+            LOGGER.info("Silently queued " + downloads.size() + " download(s)");
         } else {
             // Show confirmation dialog (this would typically be handled by the UI layer)
             notifyServiceListeners(listener -> listener.onConfirmationRequired(finalFilteredUrls, clipboardContent));
@@ -301,13 +309,15 @@ public class ClipboardService implements ClipboardListener {
     /**
      * Creates downloads from a list of URLs.
      *
-     * @param urls      The URLs to create downloads from
-     * @param autoQueue Whether to automatically queue the downloads
+     * @param urls The URLs to create downloads from
+     * @param admissionSource Whether the URLs were discovered in the background
+     *                        or imported by an explicit user action
      * @return The list of created downloads
      */
-    private List<Download> createDownloadsFromUrls(List<URI> urls, boolean autoQueue) {
+    private List<Download> createDownloadsFromUrls(
+            List<URI> urls, AdmissionSource admissionSource) {
         return urls.stream()
-                .map(url -> createDownloadFromUrl(url, autoQueue))
+                .map(url -> createDownloadFromUrl(url, admissionSource))
                 .filter(download -> download != null)
                 .collect(Collectors.toList());
     }
@@ -315,11 +325,12 @@ public class ClipboardService implements ClipboardListener {
     /**
      * Creates a download from a single URL.
      *
-     * @param url       The URL to create a download from
-     * @param autoQueue Whether to automatically queue the download
+     * @param url The URL to create a download from
+     * @param admissionSource Whether this URL was discovered in the background
+     *                        or imported by an explicit user action
      * @return The created download, or null if creation failed
      */
-    private Download createDownloadFromUrl(URI url, boolean autoQueue) {
+    private Download createDownloadFromUrl(URI url, AdmissionSource admissionSource) {
         try {
             Download download;
             Path defaultDir = downloadManager.getGlobalSettings().getDefaultDownloadDirectory();
@@ -336,11 +347,15 @@ public class ClipboardService implements ClipboardListener {
                 download = downloadManager.createDownload(url, defaultDir);
             }
 
-            if (download != null && autoQueue) {
-                downloadManager.queueDownload(download);
+            if (download != null) {
+                if (admissionSource == AdmissionSource.BACKGROUND_MONITOR) {
+                    downloadManager.queueDownloadFromBackgroundSource(download);
+                } else {
+                    downloadManager.queueDownload(download);
+                }
             }
 
-            LOGGER.debug("Created clipboard download");
+            LOGGER.debug("Queued clipboard download");
             return download;
 
         } catch (Exception e) {

@@ -103,7 +103,8 @@ class FolderWatchingServiceTest {
 
         when(downloadManager.createTorrentDownload(any(Path.class), any(Path.class)))
                 .thenAnswer(inv -> new Download(URI.create("file:///dropped.torrent")));
-        when(downloadManager.queueDownload(any())).thenReturn(CompletableFuture.completedFuture(null));
+        when(downloadManager.queueDownloadFromBackgroundSource(any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
 
         service.setTorrentFolderMonitoringEnabled(true);
         service.startTorrentFolderMonitoring(watch,
@@ -125,6 +126,7 @@ class FolderWatchingServiceTest {
                 "the dispatched descriptor must be the dropped torrent (possibly staged with a "
                         + "generation prefix), got: " + torrentPath.getValue().getFileName());
         assertEquals(tempDir.resolve("downloads"), torrentDest.getValue());
+        verify(downloadManager).queueDownloadFromBackgroundSource(any());
 
         service.stopTorrentFolderMonitoring(watch).get(30, TimeUnit.SECONDS);
         assertFalse(service.isTorrentFolderMonitored(watch));
@@ -140,7 +142,8 @@ class FolderWatchingServiceTest {
 
         when(downloadManager.createMetaLinkDownload(any(URI.class), any(Path.class)))
                 .thenAnswer(inv -> new Download(URI.create("file:///dropped.metalink")));
-        when(downloadManager.queueDownload(any())).thenReturn(CompletableFuture.completedFuture(null));
+        when(downloadManager.queueDownloadFromBackgroundSource(any()))
+                .thenReturn(CompletableFuture.completedFuture(null));
 
         service.setMetaLinkFolderMonitoringEnabled(true);
         service.startMetaLinkFolderMonitoring(watch,
@@ -164,6 +167,7 @@ class FolderWatchingServiceTest {
                 "the dispatched descriptor must reference the dropped metalink, got: "
                         + metalinkUri.getValue());
         assertEquals(tempDir.resolve("downloads"), metalinkDest.getValue());
+        verify(downloadManager).queueDownloadFromBackgroundSource(any());
 
         service.stopMetaLinkFolderMonitoring(watch).get(30, TimeUnit.SECONDS);
     }

@@ -71,7 +71,7 @@ class TorrentFolderMonitorIntegrationTest {
         when(mockDownloadManager.getGlobalSettings()).thenReturn(mockGlobalSettings);
         when(mockGlobalSettings.getDefaultDownloadDirectory()).thenReturn(defaultDownloadDirectory);
         when(mockDownloadManager.createTorrentDownload(any(Path.class), any(Path.class))).thenReturn(mockDownload);
-        when(mockDownloadManager.queueDownload(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
+        when(mockDownloadManager.queueDownloadFromBackgroundSource(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
 
         // Create real folder monitor service (temp staging root: staging
         // watched .torrent fixtures must not write into the real ODM data
@@ -149,7 +149,7 @@ class TorrentFolderMonitorIntegrationTest {
 
             // Verify download manager interactions
             verify(mockDownloadManager, times(2)).createTorrentDownload(any(Path.class), eq(defaultDownloadDirectory));
-            verify(mockDownloadManager, times(2)).queueDownload(mockDownload);
+            verify(mockDownloadManager, times(2)).queueDownloadFromBackgroundSource(mockDownload);
         }
 
         @Test
@@ -192,7 +192,7 @@ class TorrentFolderMonitorIntegrationTest {
 
             // Only one torrent should be processed
             verify(mockDownloadManager, times(1)).createTorrentDownload(any(Path.class), any(Path.class));
-            verify(mockDownloadManager, times(1)).queueDownload(mockDownload);
+            verify(mockDownloadManager, times(1)).queueDownloadFromBackgroundSource(mockDownload);
         }
 
         @Test
@@ -250,7 +250,7 @@ class TorrentFolderMonitorIntegrationTest {
 
             // Only valid torrent should be sent to download manager
             verify(mockDownloadManager, times(1)).createTorrentDownload(any(Path.class), any(Path.class));
-            verify(mockDownloadManager, times(1)).queueDownload(mockDownload);
+            verify(mockDownloadManager, times(1)).queueDownloadFromBackgroundSource(mockDownload);
         }
     }
 
@@ -295,7 +295,7 @@ class TorrentFolderMonitorIntegrationTest {
             assertEquals(3, processedCount.get());
 
             verify(mockDownloadManager, times(3)).createTorrentDownload(any(Path.class), eq(defaultDownloadDirectory));
-            verify(mockDownloadManager, times(3)).queueDownload(mockDownload);
+            verify(mockDownloadManager, times(3)).queueDownloadFromBackgroundSource(mockDownload);
         }
 
         @Test
@@ -616,7 +616,7 @@ class TorrentFolderMonitorIntegrationTest {
                     });
 
             verify(mockDownloadManager).createTorrentDownload(any(), any());
-            verify(mockDownloadManager, never()).queueDownload(any()); // Should not reach this point
+            verify(mockDownloadManager, never()).queueDownloadFromBackgroundSource(any()); // Should not reach this point
         }
 
         @Test
@@ -626,7 +626,7 @@ class TorrentFolderMonitorIntegrationTest {
             // Given
             CompletableFuture<Void> failingFuture = new CompletableFuture<>();
             failingFuture.completeExceptionally(new RuntimeException("Async queue failed"));
-            when(mockDownloadManager.queueDownload(any())).thenReturn(failingFuture);
+            when(mockDownloadManager.queueDownloadFromBackgroundSource(any())).thenReturn(failingFuture);
 
             Path watchFolder = tempDir.resolve("watch");
             Files.createDirectories(watchFolder);
@@ -641,21 +641,21 @@ class TorrentFolderMonitorIntegrationTest {
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         verify(mockDownloadManager).createTorrentDownload(any(), any());
-                        verify(mockDownloadManager).queueDownload(mockDownload);
+                        verify(mockDownloadManager).queueDownloadFromBackgroundSource(mockDownload);
                     });
 
             // Monitoring should continue working
             Thread.sleep(500);
 
             // Reset mock to succeed
-            when(mockDownloadManager.queueDownload(any())).thenReturn(CompletableFuture.completedFuture(null));
+            when(mockDownloadManager.queueDownloadFromBackgroundSource(any())).thenReturn(CompletableFuture.completedFuture(null));
 
             createValidTorrentFile(watchFolder.resolve("success.torrent"));
 
             await().atMost(Duration.ofSeconds(10))
                     .untilAsserted(() -> {
                         verify(mockDownloadManager, times(2)).createTorrentDownload(any(), any());
-                        verify(mockDownloadManager, times(2)).queueDownload(any());
+                        verify(mockDownloadManager, times(2)).queueDownloadFromBackgroundSource(any());
                     });
         }
     }
@@ -759,7 +759,7 @@ class TorrentFolderMonitorIntegrationTest {
             assertEquals(10, processedCount.get());
 
             verify(mockDownloadManager, times(10)).createTorrentDownload(any(Path.class), any(Path.class));
-            verify(mockDownloadManager, times(10)).queueDownload(mockDownload);
+            verify(mockDownloadManager, times(10)).queueDownloadFromBackgroundSource(mockDownload);
         }
     }
 

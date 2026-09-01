@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -130,9 +131,32 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             DownloadSettingsFactory settingsFactory,
             ExecutorService executor,
             ToolManagerFactory toolManagerFactory) {
-        super(globalSettings, settingsFactory, executor);
+        this(globalSettings, settingsFactory, executor,
+                createAria2Client(globalSettings, toolManagerFactory),
+                Executors.newScheduledThreadPool(1));
+    }
 
-        // Use ToolManagerFactory to get aria2 path
+    /** Package-private injection seam for deterministic RPC-routing tests. */
+    Aria2DownloadHandler(GlobalSettings globalSettings,
+            DownloadSettingsFactory settingsFactory,
+            ExecutorService executor,
+            Aria2Client aria2Client,
+            ScheduledExecutorService progressPoller) {
+        super(globalSettings, settingsFactory, executor);
+        this.aria2Client = Objects.requireNonNull(aria2Client, "aria2Client");
+        this.gidToIdMap = new ConcurrentHashMap<>();
+        this.activeDownloads = new ConcurrentHashMap<>();
+        this.downloadGids = new ConcurrentHashMap<>();
+        this.downloadSeenGids = new ConcurrentHashMap<>();
+        this.downloadProgress = new ConcurrentHashMap<>();
+        this.progressPoller = Objects.requireNonNull(progressPoller, "progressPoller");
+        this.pollTasks = ConcurrentHashMap.newKeySet();
+        this.isShuttingDown = new AtomicBoolean(false);
+        this.objectMapper = new ObjectMapper();
+    }
+
+    private static Aria2Client createAria2Client(GlobalSettings globalSettings,
+            ToolManagerFactory toolManagerFactory) {
         Aria2ToolManager aria2Manager = toolManagerFactory.getAria2Manager();
         String aria2Path = aria2Manager != null ? aria2Manager.getToolPath() : "aria2c";
         // A user-configured RPC secret (aria2.rpcSecret) is the ONLY way an
@@ -142,18 +166,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         if (configuredRpcSecret != null && configuredRpcSecret.isBlank()) {
             configuredRpcSecret = null;
         }
-        this.aria2Client = configuredRpcSecret != null
+        return configuredRpcSecret != null
                 ? new Aria2Client(aria2Path, "http://localhost:6800/jsonrpc", configuredRpcSecret)
                 : new Aria2Client(aria2Path);
-        this.gidToIdMap = new ConcurrentHashMap<>();
-        this.activeDownloads = new ConcurrentHashMap<>();
-        this.downloadGids = new ConcurrentHashMap<>();
-        this.downloadSeenGids = new ConcurrentHashMap<>();
-        this.downloadProgress = new ConcurrentHashMap<>();
-        this.progressPoller = Executors.newScheduledThreadPool(1);
-        this.pollTasks = ConcurrentHashMap.newKeySet();
-        this.isShuttingDown = new AtomicBoolean(false);
-        this.objectMapper = new ObjectMapper();
     }
 
     @Override
@@ -314,16 +329,58 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         return "unpause";
     }
 
+    /** Snapshot of GIDs that this handler still owns in its current daemon. */
+    private List<String> liveTrackedGidsSnapshot(Download download) {
+        if (download == null) {
+            return List.of();
+        }
+        java.util.Set<String> tracked = downloadGids.get(download.getId());
+        if (tracked == null || tracked.isEmpty()) {
+            return List.of();
+        }
+        return tracked.stream()
+                .filter(gid -> download.getId().equals(gidToIdMap.get(gid)))
+                .sorted()
+                .toList();
+    }
+
     /**
-     * A snapshot of every tracked GID of the download, falling back to the
-     * primary GID when tracking was already cleaned up.
+     * A snapshot for control operations. The primary-GID fallback supports a
+     * same-session task whose tracking maps were partially cleaned up; detail
+     * and settings RPCs deliberately use only {@link #liveTrackedGidsSnapshot}
+     * so persisted or retired GIDs are never queried.
      */
     private List<String> trackedGidsSnapshot(Download download) {
-        java.util.Set<String> tracked = downloadGids.get(download.getId());
-        if (tracked != null && !tracked.isEmpty()) {
-            return new ArrayList<>(tracked);
+        List<String> live = liveTrackedGidsSnapshot(download);
+        if (!live.isEmpty()) {
+            return live;
         }
-        return download.getGid() != null ? List.of(download.getGid()) : List.of();
+        return download != null && download.getGid() != null
+                ? List.of(download.getGid()) : List.of();
+    }
+
+    /** Returns and publishes a live primary GID, replacing a retired parent. */
+    private String primaryLiveGid(Download download) {
+        List<String> live = liveTrackedGidsSnapshot(download);
+        if (live.isEmpty()) {
+            return null;
+        }
+        String primary = download.getGid();
+        if (primary != null && live.contains(primary)) {
+            return primary;
+        }
+        String replacement = live.getFirst();
+        download.setGid(replacement);
+        return replacement;
+    }
+
+    private boolean isLiveTrackedGid(Download download, String gid) {
+        if (download == null || gid == null) {
+            return false;
+        }
+        java.util.Set<String> tracked = downloadGids.get(download.getId());
+        return tracked != null && tracked.contains(gid)
+                && download.getId().equals(gidToIdMap.get(gid));
     }
 
     /** An aria2 GID-scoped RPC that may fail; used with {@link #applyToEveryGid}. */
@@ -529,8 +586,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             try {
                 ensureInitialized();
 
-                if (download.getGid() != null) {
-                    List<String> gids = trackedGidsSnapshot(download);
+                List<String> gids = trackedGidsSnapshot(download);
+                if (!gids.isEmpty()) {
                     for (String gid : gids) {
                         stopProgressPolling(gid);
                     }
@@ -653,15 +710,18 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }
         int applied = 0;
         for (Download download : activeDownloads.values()) {
-            String gid = download.getGid();
-            if (gid == null) {
+            if (!supportsPeerDetails(download)) {
                 continue;
             }
+            List<String> gids = liveTrackedGidsSnapshot(download);
             try {
-                aria2Client.changeOption(gid, Map.of("bt-tracker", trackerList));
-                applied++;
+                applyToEveryGid(gids, "refresh trackers",
+                        gid -> aria2Client.changeOption(gid, Map.of("bt-tracker", trackerList)));
+                if (!gids.isEmpty()) {
+                    applied++;
+                }
             } catch (Exception e) {
-                LOGGER.warn("Failed to refresh trackers for GID " + gid, e);
+                LOGGER.warn("Failed to refresh trackers for download " + download.getId(), e);
             }
         }
         if (applied > 0) {
@@ -719,8 +779,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                         ? globalSettings.getGlobalProxyAddress()
                         : "";
         for (Download download : activeDownloads.values()) {
-            String gid = download.getGid();
-            if (gid == null) {
+            List<String> gids = liveTrackedGidsSnapshot(download);
+            if (gids.isEmpty()) {
                 continue;
             }
             if (download.getSettings() instanceof Aria2Settings aria2Settings
@@ -729,9 +789,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 continue; // per-download proxy wins
             }
             try {
-                aria2Client.changeOption(gid, Map.of("all-proxy", globalProxy));
+                applyToEveryGid(gids, "update proxy option",
+                        gid -> aria2Client.changeOption(gid, Map.of("all-proxy", globalProxy)));
             } catch (Exception e) {
-                LOGGER.warn("Failed to update proxy option for GID " + gid, e);
+                LOGGER.warn("Failed to update proxy option for download " + download.getId(), e);
             }
         }
     }
@@ -937,7 +998,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> typed = (Map<String, Object>) status;
                 String downloadId = gidToIdMap.get(gid);
-                if (downloadId != null) {
+                if (downloadId != null && isPollableGid(gid)
+                        && downloadId.equals(gidToIdMap.get(gid))) {
                     processProgressUpdate(downloadId, gid, typed);
                 }
             }
@@ -955,15 +1017,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      */
     private void pollDownloadProgress(String gid) {
         try {
-            // Skip if we're shutting down
-            if (isShuttingDown.get()) {
+            if (!isPollableGid(gid)) {
+                stopProgressPolling(gid);
                 return;
             }
 
-            // Get the download ID from GID
             String downloadId = gidToIdMap.get(gid);
-            if (downloadId == null) {
-                stopProgressPolling(gid);
+            if (downloadId == null || !isPollableGid(gid)) {
                 return;
             }
 
@@ -974,13 +1034,24 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             @SuppressWarnings("unchecked")
             Map<String, Object> status = objectMapper.readValue(statusJson, Map.class);
 
-            if (status != null) {
+            if (status != null && isPollableGid(gid)
+                    && downloadId.equals(gidToIdMap.get(gid))) {
                 // Notify progress update
                 processProgressUpdate(downloadId, gid, status);
             }
         } catch (Exception e) {
-            LOGGER.warn("Error polling download progress: " + e.getMessage(), e);
+            if (isGidNotFoundResponse(e) && !isPollableGid(gid)) {
+                LOGGER.debug("Ignoring progress response for retired GID " + gid);
+            } else {
+                LOGGER.warn("Error polling download progress: " + e.getMessage(), e);
+            }
         }
+    }
+
+    /** A GID is pollable only while both its schedule and ownership are live. */
+    private boolean isPollableGid(String gid) {
+        return gid != null && !isShuttingDown.get()
+                && pollTasks.contains(gid) && gidToIdMap.containsKey(gid);
     }
 
     /**
@@ -1227,6 +1298,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             downloadProgress.remove(downloadId);
             return true;
         }
+        Download download = activeDownloads.get(downloadId);
+        if (download != null && Objects.equals(download.getGid(), gid)) {
+            // A magnet metadata GID (or the first file of a Metalink) can
+            // retire while child/file GIDs remain. Keep Download.gid aligned
+            // with a live task for presentation and any legacy consumers.
+            primaryLiveGid(download);
+        }
         LOGGER.info("GID " + gid + " complete; " + tracked.size() + " tracked GID(s) remain for download "
                 + downloadId);
         return false;
@@ -1389,8 +1467,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         String gid = aria2Client.addTorrent(torrentData, uris, download.getDestination().toString(), options);
 
         // Successful ingestion consumes the descriptor: delete it only when
-        // ODM owns it (staged by the folder monitor beneath the staging
-        // root); manually selected files remain user-owned
+        // ODM owns it (staged by folder monitoring or the selected-descriptor
+        // Trash flow); non-staged source files remain user-owned
         if (localTorrentFile != null) {
             DescriptorStaging.deleteIfStaged(localTorrentFile);
         }
@@ -1495,8 +1573,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         List<String> gids = aria2Client.addMetalinkAll(metaLinkData, options);
 
         // Successful ingestion consumes the descriptor: delete it only when
-        // ODM owns it (staged by the folder monitor beneath the staging
-        // root); manually selected files remain user-owned
+        // ODM owns it (staged by folder monitoring or the selected-descriptor
+        // Trash flow); non-staged source files remain user-owned
         if (localMetaLinkFile != null) {
             DescriptorStaging.deleteIfStaged(localMetaLinkFile);
         }
@@ -1592,21 +1670,22 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         if (!supportsPeerDetails(download)) {
             return List.of();
         }
-        String gid = download.getGid();
+        String gid = primaryLiveGid(download);
         if (gid == null) {
             return List.of();
         }
         try {
             return aria2Client.getPeers(gid);
         } catch (Aria2RpcException e) {
-            if (!isNoPeerDataResponse(e)) {
+            if (isNoPeerDataResponse(e)) {
+                // A valid torrent can temporarily have no peer data while
+                // metadata resolves or while it is stopped.
+                LOGGER.debug("No peer data available for gid " + gid + ": " + e.getMessage());
+            } else if (isGidNotFoundResponse(e) && !isLiveTrackedGid(download, gid)) {
+                LOGGER.debug("Ignoring peer query for retired GID " + gid);
+            } else {
                 LOGGER.warn("Failed to get peers for gid " + gid, e);
-                return List.of();
             }
-            // A valid torrent can temporarily have no peer data (metadata is
-            // still resolving, it is stopped, or its result was retired).
-            // That is an empty UI state, not an application warning.
-            LOGGER.debug("No peer data available for gid " + gid + ": " + e.getMessage());
             return List.of();
         } catch (Exception e) {
             LOGGER.warn("Failed to get peers for gid " + gid, e);
@@ -1630,6 +1709,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                         .contains("no peer data is available");
     }
 
+    static boolean isGidNotFoundResponse(Throwable error) {
+        if (error == null || error.getMessage() == null) {
+            return false;
+        }
+        String message = error.getMessage().toLowerCase(java.util.Locale.ROOT);
+        return message.contains("gid") && message.contains("not found");
+    }
+
     /**
      * Fetches the file list of a download (aria2.getFiles).
      *
@@ -1637,16 +1724,21 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @return list of file detail maps; empty when unavailable
      */
     public List<Map<String, Object>> getDownloadFiles(Download download) {
-        String gid = download.getGid();
-        if (gid == null) {
+        List<String> gids = liveTrackedGidsSnapshot(download);
+        if (gids.isEmpty()) {
             return List.of();
         }
-        try {
-            return aria2Client.getFiles(gid);
-        } catch (Exception e) {
-            LOGGER.warn("Failed to get files for gid " + gid, e);
-            return List.of();
+        List<Map<String, Object>> files = new ArrayList<>();
+        for (String gid : gids) {
+            try {
+                files.addAll(aria2Client.getFiles(gid));
+            } catch (Exception e) {
+                if (!(isGidNotFoundResponse(e) && !isLiveTrackedGid(download, gid))) {
+                    LOGGER.warn("Failed to get files for gid " + gid, e);
+                }
+            }
         }
+        return files;
     }
 
     /**
@@ -1657,7 +1749,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @return list of tracker tiers, each a list of announce URLs; empty otherwise
      */
     public List<List<String>> getDownloadTrackers(Download download) {
-        String gid = download.getGid();
+        if (!supportsPeerDetails(download)) {
+            return List.of();
+        }
+        String gid = primaryLiveGid(download);
         if (gid == null) {
             return List.of();
         }
@@ -1679,7 +1774,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 }
             }
         } catch (Exception e) {
-            LOGGER.warn("Failed to get trackers for gid " + gid, e);
+            if (!(isGidNotFoundResponse(e) && !isLiveTrackedGid(download, gid))) {
+                LOGGER.warn("Failed to get trackers for gid " + gid, e);
+            }
         }
         return List.of();
     }
@@ -1690,10 +1787,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             try {
                 ensureInitialized();
 
-                // Only apply when the download is active (has a gid); otherwise
-                // the new settings stored on the Download apply on (re)start.
-                String gid = download.getGid();
-                if (gid == null) {
+                // Only apply to GIDs this handler still owns. Persisted and
+                // retired metadata GIDs are session-scoped and must not receive
+                // live RPC calls; their settings apply on the next start.
+                List<String> gids = liveTrackedGidsSnapshot(download);
+                if (gids.isEmpty()) {
                     return;
                 }
 
@@ -1712,14 +1810,37 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 }
 
                 if (!options.isEmpty()) {
-                    aria2Client.changeOption(gid, options);
-                    LOGGER.debug("Changed aria2 options for gid " + gid + ": " + options.keySet());
+                    applyToEveryGid(gids, "change options",
+                            gid -> aria2Client.changeOption(gid, options));
+                    LOGGER.debug("Changed aria2 options for GIDs " + gids + ": " + options.keySet());
                 }
             } catch (Exception e) {
                 LOGGER.error("Failed to change settings for download: " + download.getName(), e);
                 throw new RuntimeException("Failed to change aria2 settings", e);
             }
         }, executor);
+    }
+
+    /**
+     * Turns a daemon push into an immediate status poll, so terminal and pause
+     * transitions surface without waiting for the next batch tick. Both the
+     * scheduling boundary and the runnable re-check ownership: cancellation
+     * removes the GID from {@code pollTasks} before aria2 emits its final push.
+     */
+    void requestImmediatePoll(String gid) {
+        if (!isPollableGid(gid)) {
+            return;
+        }
+        try {
+            progressPoller.execute(() -> {
+                if (!isPollableGid(gid)) {
+                    return;
+                }
+                pollDownloadProgress(gid);
+            });
+        } catch (java.util.concurrent.RejectedExecutionException shuttingDown) {
+            // Poller already stopped; the batch tick is gone with it.
+        }
     }
 
     /**
@@ -1765,26 +1886,5 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             onDownloadComplete(gid);
         }
 
-        /**
-         * Turns a daemon push into an immediate status poll, so terminal and
-         * pause transitions surface instantly instead of waiting for the
-         * next 1s batch tick. MUST run off the WS reader thread: the poll
-         * performs a synchronous RPC whose response is delivered by that
-         * very thread — polling inline would self-deadlock until timeout.
-         */
-        private void requestImmediatePoll(String gid) {
-            try {
-                progressPoller.execute(() -> {
-                    try {
-                        pollDownloadProgress(gid);
-                    } catch (Exception e) {
-                        LOGGER.warn(
-                                "Notification-triggered poll failed for GID " + gid, e);
-                    }
-                });
-            } catch (java.util.concurrent.RejectedExecutionException shuttingDown) {
-                // poller already stopped; the batch tick is gone with it
-            }
-        }
     }
 }

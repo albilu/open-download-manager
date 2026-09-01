@@ -15,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import org.gnome.gio.File;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CellRendererToggle;
-import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.FileDialog;
@@ -324,8 +323,7 @@ public class ImportListDialog {
                 Widgets.require(builder, "proxy_username_entry", Entry.class).getText(),
                 Widgets.require(builder, "proxy_password_entry", Entry.class).getText(),
                 (int) Widgets.require(builder, "max_connections_spin", SpinButton.class).getValue(),
-                (int) Widgets.require(builder, "max_download_speed_spin", SpinButton.class).getValue(),
-                Widgets.require(builder, "start_automatically_check1", CheckButton.class).getActive());
+                (int) Widgets.require(builder, "max_download_speed_spin", SpinButton.class).getValue());
     }
 
     private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
@@ -335,9 +333,7 @@ public class ImportListDialog {
                 Download download = downloadManager.createDownload(
                         org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
                 options.apply(download);
-                if (options.startAutomatically()) {
-                    downloadManager.queueDownload(download);
-                }
+                downloadManager.queueDownload(download);
                 queued++;
             } catch (Exception e) {
                 LOGGER.debug("Skipped an invalid URL-list entry", e);
@@ -347,8 +343,7 @@ public class ImportListDialog {
     }
 
     private record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,
-            String proxyUser, String proxyPassword, int connections, int downloadLimitKb,
-            boolean startAutomatically) {
+            String proxyUser, String proxyPassword, int connections, int downloadLimitKb) {
         void apply(Download download) {
             DialogOptions.applyProxy(download, tor, proxyType, proxyHost, proxyPort,
                     proxyUser, proxyPassword);
@@ -363,12 +358,6 @@ public class ImportListDialog {
                 .setValue(settings.getIntProperty("aria2.maxConnections", 8));
         Widgets.require(builder, "max_download_speed_spin", SpinButton.class)
                 .setValue(settings.getIntProperty("aria2.maxDownloadSpeedKb", 0));
-        Widgets.require(builder, "start_automatically_check1", CheckButton.class)
-                .setActive(settings.getBooleanProperty("ui.startAutomatically", true));
-        CheckButton moveDescriptor = Widgets.require(builder, "move_torrent_check1", CheckButton.class);
-        moveDescriptor.setActive(false);
-        moveDescriptor.setSensitive(false);
-        moveDescriptor.setTooltipText("This URL-list importer does not move local descriptor files");
         Widgets.require(builder, "tor_switch", Switch.class)
                 .setActive(settings.getBooleanProperty("tor.enabled", false));
 

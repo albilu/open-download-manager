@@ -10,10 +10,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.manager.ApplicationContext;
 import org.manager.download.handler.AbstractDownloadHandler;
 import org.manager.download.handler.DownloadHandlerFactory;
 
@@ -106,21 +108,30 @@ class ManagerStateRehydrationTest {
             idlePaused.setType(Download.Type.ARIA2);
             idlePaused.setName("idle-paused.bin");
             idlePaused.setStatus(Download.Status.PAUSED);
+            idlePaused.setGid("stale-idle-gid");
             Download finished = new Download(new URI("http://example.test/finished.bin"));
             finished.setType(Download.Type.ARIA2);
             finished.setName("finished.bin");
             finished.setStatus(Download.Status.COMPLETED);
+            finished.setGid("stale-finished-gid");
             Download queued = new Download(new URI("http://example.test/queued.bin"));
             queued.setType(Download.Type.ARIA2);
             queued.setName("queued.bin");
             queued.setStatus(Download.Status.QUEUED);
             queued.setQueuePosition(1);
+            Download held = new Download(new URI("http://example.test/held.bin"));
+            held.setType(Download.Type.ARIA2);
+            held.setName("held.bin");
+            held.setStatus(Download.Status.QUEUED);
+            held.setQueuePosition(2);
+            held.setManualStartRequired(true);
+            held.setGid("stale-held-gid");
 
             try (SqliteDownloadStateStore seed = new SqliteDownloadStateStore(
                     xdg.resolve("odm").resolve("odm-state.db"),
                     xdg.resolve("odm").resolve("odm-state.json"),
                     DownloadManagerImpl.createStateObjectMapper())) {
-                seed.save(List.of(resumable, idlePaused, finished, queued), Set.of(resumable.getId()));
+                seed.save(List.of(resumable, idlePaused, finished, queued, held), Set.of(resumable.getId()));
             }
 
             DownloadManagerImpl manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
@@ -132,23 +143,40 @@ class ManagerStateRehydrationTest {
                 // tool-dependent; the fake handler below takes over anyway
             }
             factory.registerHandler(Download.Type.ARIA2, new FakeHandler());
+            // The test's fake handler is ready even when host-level aria2
+            // startup was unavailable; release the production readiness gate
+            // so rehydration remains deterministic in either environment.
+            ApplicationContext.getStartupCoordinator().completeComponentInitialization(
+                    org.manager.StartupCoordinator.DOWNLOAD_HANDLER_FACTORY);
+            ApplicationContext.getGlobalSettings().setProperty(
+                    "ui.startAutomatically", "false");
 
             manager.loadState().join();
 
-            assertEquals(4, manager.getDownloadCount(), "all persisted downloads must be rehydrated");
+            assertEquals(5, manager.getDownloadCount(), "all persisted downloads must be rehydrated");
             assertEquals(Download.Status.COMPLETED, manager.getDownload(finished.getId()).getStatus());
             assertEquals(Download.Status.PAUSED, manager.getDownload(idlePaused.getId()).getStatus(),
                     "a paused download without the active flag must stay paused");
+            assertNull(manager.getDownload(idlePaused.getId()).getGid(),
+                    "persisted process identifiers must not survive handler rehydration");
+            assertNull(manager.getDownload(finished.getId()).getGid(),
+                    "completed rows must not expose stale daemon identifiers either");
+            Download restoredHeld = manager.getDownload(held.getId());
+            assertEquals(Download.Status.QUEUED, restoredHeld.getStatus());
+            assertTrue(restoredHeld.isManualStartRequired());
+            assertNull(restoredHeld.getGid());
 
             assertTrue(awaitTrue(() -> manager.getDownload(resumable.getId()).getStatus()
                     == Download.Status.DOWNLOADING),
-                    "the flagged active download must be auto-resumed on startup");
+                    "startup resume is not background admission and must ignore the monitor setting");
             boolean indexedDownloading = awaitTrue(() -> manager.getDownloadsByStatus(Download.Status.DOWNLOADING)
                     .stream().anyMatch(d -> d.getId().equals(resumable.getId())));
             assertTrue(indexedDownloading, "the resumed download must be indexed DOWNLOADING");
             assertTrue(awaitTrue(() -> manager.getDownload(queued.getId()).getStatus()
                     == Download.Status.DOWNLOADING),
-                    "persisted QUEUED work must enter the startup queue pump");
+                    "accepted QUEUED work must enter the startup pump regardless of the monitor setting");
+            assertEquals(Download.Status.QUEUED, restoredHeld.getStatus(),
+                    "manual-start work must remain held after the startup queue pump");
         });
     }
 }

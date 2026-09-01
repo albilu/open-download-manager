@@ -77,14 +77,6 @@
                             <child><object class="GtkEntry" id="user_agent"><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
                           </object>
                         </child>
-                        <child><object class="GtkLabel" id="download_options_heading"><property name="label">&lt;b&gt;Options&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property><property name="margin-top">4</property></object></child>
-                        <child>
-                          <object class="GtkBox" id="download_options_box">
-                            <property name="orientation">vertical</property><property name="spacing">8</property>
-                            <child><object class="GtkCheckButton" id="start_automatically_check"><property name="label">Start automatically</property><property name="active">true</property></object></child>
-                            <child><object class="GtkCheckButton" id="move_torrent_check"><property name="label">Move .torrent/.meta4 to draft</property></object></child>
-                          </object>
-                        </child>
                       </object>
                     </child>
                     <child>

@@ -23,11 +23,12 @@ import org.manager.download.Download;
  * monitor immediately moves or deletes the watched source file. Staging
  * solves the race: before listeners are notified, the descriptor bytes are
  * copied beneath an exclusive {@code descriptor-staging} directory in ODM's
- * data directory. Containment beneath this root is the ownership marker:
- * only staged paths are automatically deleted (by the aria2 handler, after
- * successful ingestion), so no download-model or persistence-schema field
- * is required. Manually selected torrent or Metalink files remain
- * user-owned and are never auto-deleted.
+ * data directory. The same root holds unique copies of manually selected
+ * descriptors when the user enables the XDG Trash policy. Containment beneath
+ * this root is the ownership marker: only staged paths are automatically
+ * deleted (by the aria2 handler, after successful ingestion), so no
+ * download-model or persistence-schema field is required. Non-staged source
+ * files always remain user-owned.
  *
  * <p>
  * The staged name is deterministic per source file ({@code <16-hex source
@@ -40,8 +41,10 @@ public final class DescriptorStaging {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DescriptorStaging.class);
 
-    /** Name of the staging directory beneath the ODM data directory. */
+    /** Name of the descriptor staging directory beneath the ODM data directory. */
     public static final String STAGING_DIR_NAME = "descriptor-staging";
+    /** Subdirectory for descriptors selected explicitly in a dialog. */
+    public static final String MANUAL_DIR_NAME = "manual";
 
     private DescriptorStaging() {
     }
@@ -53,6 +56,41 @@ public final class DescriptorStaging {
      */
     public static Path stagingRoot() {
         return OdmPaths.dataDirectory().resolve(STAGING_DIR_NAME);
+    }
+
+    /**
+     * Staging root for user-selected descriptors whose originals are moved to
+     * Trash. Keeping these copies in a subdirectory excludes them from folder
+     * monitor reconciliation while retaining the shared ownership marker used
+     * by aria2 cleanup.
+     *
+     * @return {@code <odm data dir>/descriptor-staging/manual}
+     */
+    public static Path manualStagingRoot() {
+        return stagingRoot().resolve(MANUAL_DIR_NAME);
+    }
+
+    /**
+     * Creates a unique ODM-owned copy for one manual descriptor import.
+     * Unlike watched-file staging, this must not reuse a deterministic path:
+     * the same restored source may back several independently queued items.
+     *
+     * @param source the user-selected descriptor
+     * @return unique staged copy beneath {@link #manualStagingRoot()}
+     * @throws IOException if the copy cannot be made durable
+     */
+    public static Path stageManualFile(Path source) throws IOException {
+        Path root = manualStagingRoot();
+        Files.createDirectories(root);
+        Path staged = root.resolve(java.util.UUID.randomUUID() + "-" + source.getFileName());
+        try (OutputStream out = Files.newOutputStream(staged,
+                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+            Files.copy(source, out);
+        } catch (IOException copyFailure) {
+            deleteQuietly(staged);
+            throw copyFailure;
+        }
+        return staged;
     }
 
     /**
@@ -241,7 +279,9 @@ public final class DescriptorStaging {
     /**
      * Deletes a descriptor only when it lies beneath the given staging root.
      * Failures are logged and swallowed: ingestion already succeeded, so a
-     * cleanup failure must not fail the download.
+     * cleanup failure must not fail the download. A manually selected
+     * descriptor's managed copy can be removed here; its non-staged original
+     * is always outside this ownership boundary.
      *
      * @param file the descriptor file considered for deletion
      * @param stagingRoot the exclusive staging directory

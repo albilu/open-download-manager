@@ -498,9 +498,11 @@ public class DownloadScheduler {
 
             if (shouldBeActive) {
                 // Download should be active. Only resume downloads that this
-                // scheduler paused: user-paused downloads must stay paused.
+                // scheduler paused: user-paused and background/manual-held
+                // downloads must stay paused.
                 if (currentStatus == Download.Status.PAUSED && effectiveSchedule.isResumeOnScheduleStart()
-                        && pausedBySchedule.contains(downloadId)) {
+                        && pausedBySchedule.contains(downloadId)
+                        && !download.isManualStartRequired()) {
                     resumeAfterSchedule(download, effectiveSchedule);
                 }
             } else {
@@ -511,12 +513,14 @@ public class DownloadScheduler {
                             if (currentStatus == Download.Status.STARTING
                                     || currentStatus == Download.Status.CONNECTING
                                     || currentStatus == Download.Status.DOWNLOADING
-                                    || currentStatus == Download.Status.QUEUED) {
+                                    || (currentStatus == Download.Status.QUEUED
+                                            && !download.isManualStartRequired())) {
                                 pauseForSchedule(download, effectiveSchedule, "strict policy");
                             }
                         }
                         case GRACEFUL -> {
-                            if (currentStatus == Download.Status.QUEUED) {
+                            if (currentStatus == Download.Status.QUEUED
+                                    && !download.isManualStartRequired()) {
                                 pauseForSchedule(download, effectiveSchedule, "graceful policy");
                             }
                             // Let actively downloading files continue

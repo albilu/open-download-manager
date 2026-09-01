@@ -106,10 +106,9 @@ class FolderMonitorServiceFileActionsTest {
     @Test
     @DisplayName("scanFolder with MOVE_TO_TRASH files the document into the XDG trash")
     void moveToTrashAction() throws Exception {
-        // relocate user.home so the freedesktop trash lands inside the test dir
-        String originalHome = System.getProperty("user.home");
-        System.setProperty("user.home", tempDir.toString());
-        try {
+        Path dataHome = tempDir.resolve("xdg-data");
+        com.github.stefanbirkner.systemlambda.SystemLambda
+                .withEnvironmentVariable("XDG_DATA_HOME", dataHome.toString()).execute(() -> {
             List<Event> processed = new CopyOnWriteArrayList<>();
             service = newService(processed);
             Path folder = Files.createDirectories(tempDir.resolve("watch-trash"));
@@ -120,15 +119,13 @@ class FolderMonitorServiceFileActionsTest {
 
             assertFalse(Files.exists(folder.resolve("trashable.txt")),
                     "the file must leave the watched folder");
-            Path trashed = tempDir.resolve(".local/share/Trash/files/trashable.txt");
+            Path trashed = dataHome.resolve("Trash/files/trashable.txt");
             assertTrue(Files.exists(trashed),
                     "trash semantics must file the document into the XDG trash");
-            assertTrue(Files.exists(tempDir.resolve(".local/share/Trash/info/trashable.txt.trashinfo")),
+            assertTrue(Files.exists(dataHome.resolve("Trash/info/trashable.txt.trashinfo")),
                     "a .trashinfo record must be written per the freedesktop spec");
             assertEquals(1, processed.size());
-        } finally {
-            System.setProperty("user.home", originalHome);
-        }
+        });
     }
 
     @Test

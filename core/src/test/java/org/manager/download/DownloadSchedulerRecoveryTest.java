@@ -119,4 +119,42 @@ class DownloadSchedulerRecoveryTest {
             scheduler.shutdown().join();
         }
     }
+
+    @Test
+    void scheduleCannotOverrideManualStartHold() throws Exception {
+        DownloadManager manager = mock(DownloadManager.class);
+        Download held = new Download(URI.create("https://example.test/held.bin"));
+        held.setStatus(Download.Status.QUEUED);
+        held.setManualStartRequired(true);
+        held.setScheduleSettings(ScheduleSettings.neverActive()
+                .setRespectGlobalSchedule(false)
+                .setPolicy(ScheduleSettings.SchedulePolicy.STRICT));
+
+        AtomicInteger checks = new AtomicInteger();
+        AtomicInteger pauseAttempts = new AtomicInteger();
+        when(manager.getAllDownloads()).thenReturn(List.of(held));
+        when(manager.getDownload(held.getId())).thenAnswer(ignored -> {
+            checks.incrementAndGet();
+            return held;
+        });
+        when(manager.pauseDownload(held)).thenAnswer(ignored -> {
+            pauseAttempts.incrementAndGet();
+            return CompletableFuture.completedFuture(null);
+        });
+
+        DownloadScheduler scheduler = new DownloadScheduler(manager);
+        try {
+            scheduler.start().join();
+            int previousChecks = checks.get();
+            scheduler.checkDownloadScheduleNow(held.getId());
+
+            assertTrue(await(() -> checks.get() > previousChecks));
+            assertEquals(0, pauseAttempts.get(),
+                    "a schedule must not transform or later resume a manually held queue item");
+            assertEquals(Download.Status.QUEUED, held.getStatus());
+            assertTrue(held.isManualStartRequired());
+        } finally {
+            scheduler.shutdown().join();
+        }
+    }
 }

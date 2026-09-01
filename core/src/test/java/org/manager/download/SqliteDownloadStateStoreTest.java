@@ -62,6 +62,7 @@ class SqliteDownloadStateStoreTest {
         original.setSize(123_456);
         original.setDownloaded(1_234);
         original.setQueuePosition(7);
+        original.setManualStartRequired(true);
         original.setGid("abcdef0123456789");
         original.setStartedAt(Instant.parse("2026-08-19T10:15:30Z"));
         original.setCompletedAt(Instant.parse("2026-08-19T11:00:00Z"));
@@ -94,6 +95,7 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getDownloaded(), restored.getDownloaded());
             assertEquals(original.getGid(), restored.getGid());
             assertEquals(original.getQueuePosition(), restored.getQueuePosition());
+            assertTrue(restored.isManualStartRequired());
             assertEquals(original.getStartedAt(), restored.getStartedAt());
             assertEquals(original.getCompletedAt(), restored.getCompletedAt());
             assertEquals(original.getErrorMessage(), restored.getErrorMessage());

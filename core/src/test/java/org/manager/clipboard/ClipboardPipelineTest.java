@@ -76,7 +76,7 @@ class ClipboardPipelineTest {
     }
 
     @Test
-    @DisplayName("monitor detects a pasted URL and notifies the service, which queues it silently")
+    @DisplayName("monitor detects a pasted URL and sends it through the global queue policy")
     @org.junit.jupiter.api.Timeout(60)
     void pastedUrlBecomesQueuedDownload() throws Exception {
         ClipboardSettings settings = new ClipboardSettings()
@@ -125,6 +125,8 @@ class ClipboardPipelineTest {
         assertFalse(created.isEmpty(), "the pasted URL must produce a download");
         assertTrue(created.get(0).getUri().toString().startsWith("https://example.test/pipeline-file-"),
                 "the created download must match the pasted URL");
+        verify(downloadManager, org.mockito.Mockito.atLeastOnce())
+                .queueDownloadFromBackgroundSource(any(Download.class));
     }
 
     @Test
@@ -184,7 +186,7 @@ class ClipboardPipelineTest {
     }
 
     @Test
-    @DisplayName("silently queued URLs create downloads without auto-start notifications")
+    @DisplayName("silent mode skips confirmation but uses the global queue policy")
     @org.junit.jupiter.api.Timeout(60)
     void silentModeQueuesWithoutConfirmation() throws Exception {
         ClipboardSettings settings = new ClipboardSettings()
@@ -207,6 +209,9 @@ class ClipboardPipelineTest {
 
         assertEquals(0, confirmations.get());
         verify(downloadManager).createDownload(any(URI.class), any(Path.class));
+        verify(downloadManager).queueDownloadFromBackgroundSource(any(Download.class));
+        verify(downloadManager, never()).queueDownload(any(Download.class));
+        verify(downloadManager, never()).queueDownloadForManualStart(any(Download.class));
     }
 
     @Test
@@ -228,13 +233,15 @@ class ClipboardPipelineTest {
     }
 
     @Test
-    @DisplayName("importFromClipboard extracts and creates downloads from pasted text")
+    @DisplayName("importFromClipboard extracts and queues downloads from pasted text")
     @org.junit.jupiter.api.Timeout(60)
     void manualImport() throws Exception {
         monitor.setClipboardContent("grab https://example.test/manual.bin please");
         List<Download> imported = service.importFromClipboard().get(15, TimeUnit.SECONDS);
         assertEquals(1, imported.size());
         assertEquals("https://example.test/manual.bin", imported.get(0).getUri().toString());
+        verify(downloadManager).queueDownload(imported.get(0));
+        verify(downloadManager, never()).queueDownloadFromBackgroundSource(any(Download.class));
     }
 
     @Test

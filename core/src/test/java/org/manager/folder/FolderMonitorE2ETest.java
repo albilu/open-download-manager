@@ -82,7 +82,7 @@ class FolderMonitorE2ETest {
         when(mockGlobalSettings.getDefaultDownloadDirectory()).thenReturn(downloadsDir);
         when(mockDownloadManager.createTorrentDownload(any(Path.class), any(Path.class))).thenReturn(mockTorrentDownload);
         when(mockDownloadManager.createMetaLinkDownload(any(java.net.URI.class), any(Path.class))).thenReturn(mockMetaLinkDownload);
-        when(mockDownloadManager.queueDownload(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
+        when(mockDownloadManager.queueDownloadFromBackgroundSource(any(Download.class))).thenReturn(CompletableFuture.completedFuture(null));
 
         // Create services (temp staging root: processing .torrent fixtures
         // must not write into the real ODM data directory)
@@ -150,7 +150,7 @@ class FolderMonitorE2ETest {
                         verify(mockDownloadManager).createTorrentDownload(
                                 argThat(p -> p.getFileName().toString().endsWith("ubuntu-22.04.torrent")),
                                 eq(downloadsDir));
-                        verify(mockDownloadManager).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager).queueDownloadFromBackgroundSource(mockTorrentDownload);
 
                         // File action should be executed (move to processed folder)
                         assertTrue(tracker.fileProcessed.get(), "File should be marked as processed");
@@ -204,7 +204,7 @@ class FolderMonitorE2ETest {
 
                         // All valid torrents should be sent to download manager
                         verify(mockDownloadManager, times(3)).createTorrentDownload(any(Path.class), eq(downloadsDir));
-                        verify(mockDownloadManager, times(3)).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager, times(3)).queueDownloadFromBackgroundSource(mockTorrentDownload);
                     });
         }
 
@@ -269,7 +269,7 @@ class FolderMonitorE2ETest {
                         assertTrue(foundPaths.stream().anyMatch(p -> p.contains("software.torrent")));
 
                         verify(mockDownloadManager, times(6)).createTorrentDownload(any(Path.class), eq(downloadsDir));
-                        verify(mockDownloadManager, times(6)).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager, times(6)).queueDownloadFromBackgroundSource(mockTorrentDownload);
                     });
         }
     }
@@ -323,7 +323,7 @@ class FolderMonitorE2ETest {
 
                         verify(mockDownloadManager, times(2)).createTorrentDownload(any(Path.class), eq(downloadsDir));
         verify(mockDownloadManager, times(2)).createMetaLinkDownload(any(java.net.URI.class), eq(downloadsDir));
-                        verify(mockDownloadManager, times(4)).queueDownload(any(Download.class));
+                        verify(mockDownloadManager, times(4)).queueDownloadFromBackgroundSource(any(Download.class));
                     });
         }
 
@@ -368,7 +368,7 @@ class FolderMonitorE2ETest {
                         assertTrue(tracker.sharedFormatEncountered.get(), "Shared format should be encountered");
 
                         // Total calls should account for potential duplicate processing
-                        verify(mockDownloadManager, atLeast(2)).queueDownload(any(Download.class));
+                        verify(mockDownloadManager, atLeast(2)).queueDownloadFromBackgroundSource(any(Download.class));
                     });
         }
     }
@@ -427,7 +427,7 @@ class FolderMonitorE2ETest {
                         assertTrue(tracker.instantDownloadHandled.get(), "Instant download should be handled");
 
                         verify(mockDownloadManager, times(2)).createTorrentDownload(any(Path.class), eq(downloadsDir));
-                        verify(mockDownloadManager, times(2)).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager, times(2)).queueDownloadFromBackgroundSource(mockTorrentDownload);
                     });
         }
 
@@ -484,7 +484,7 @@ class FolderMonitorE2ETest {
                         assertTrue(tracker.batchProcessingOccurred.get(), "Batch processing should occur");
 
                         verify(mockDownloadManager, times(8)).createTorrentDownload(any(Path.class), eq(downloadsDir));
-                        verify(mockDownloadManager, times(8)).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager, times(8)).queueDownloadFromBackgroundSource(mockTorrentDownload);
                     });
         }
 
@@ -551,7 +551,7 @@ class FolderMonitorE2ETest {
                         assertTrue(tracker.batchProcessingEffective.get(), "Batch processing should be effective");
 
                         verify(mockDownloadManager, times(totalTorrents)).createTorrentDownload(any(Path.class), eq(downloadsDir));
-                        verify(mockDownloadManager, times(totalTorrents)).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager, times(totalTorrents)).queueDownloadFromBackgroundSource(mockTorrentDownload);
                     });
 
             // Verify performance statistics
@@ -614,7 +614,7 @@ class FolderMonitorE2ETest {
                         assertTrue(tracker.processingContinued.get(), "Processing should continue after recovery");
 
                         // At least one successful call should happen
-                        verify(mockDownloadManager, atLeast(1)).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager, atLeast(1)).queueDownloadFromBackgroundSource(mockTorrentDownload);
                     });
         }
 
@@ -667,7 +667,7 @@ class FolderMonitorE2ETest {
                         assertTrue(tracker.monitoringRestarted.get(), "Monitoring should restart successfully");
 
                         verify(mockDownloadManager, times(2)).createTorrentDownload(any(Path.class), eq(downloadsDir));
-                        verify(mockDownloadManager, times(2)).queueDownload(mockTorrentDownload);
+                        verify(mockDownloadManager, times(2)).queueDownloadFromBackgroundSource(mockTorrentDownload);
                     });
         }
     }

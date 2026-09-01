@@ -203,7 +203,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
             // Listener return is the folder service's acceptance boundary.
             // A failed queue future must propagate before the descriptor is
             // marked dispatched or the source is moved/deleted.
-            downloadManager.queueDownload(metaLinkDownload).join();
+            downloadManager.queueDownloadFromBackgroundSource(metaLinkDownload).join();
             LOGGER.info("Successfully added Metalink to download queue: " + filePath);
 
         } catch (Exception e) {

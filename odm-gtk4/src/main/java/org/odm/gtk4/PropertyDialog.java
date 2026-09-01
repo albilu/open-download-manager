@@ -5,7 +5,6 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Button;
-import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.GtkBuilder;
@@ -100,14 +99,6 @@ public class PropertyDialog {
             proxyTypes.append(type);
         }
         proxyTypeCombo.setModel(proxyTypes);
-
-        CheckButton startAutomatically = Widgets.require(builder,
-                "start_automatically_check", CheckButton.class);
-        CheckButton moveTorrent = Widgets.require(builder, "move_torrent_check", CheckButton.class);
-        startAutomatically.setSensitive(false);
-        startAutomatically.setTooltipText("Starting is controlled from the main download list");
-        moveTorrent.setSensitive(false);
-        moveTorrent.setTooltipText("Descriptor movement only applies while adding a new download");
 
         loadCurrentSettings();
         applyCapabilities();

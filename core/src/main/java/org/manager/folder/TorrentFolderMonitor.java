@@ -195,7 +195,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
             // Listener return is the folder service's acceptance boundary.
             // Wait for queue acceptance so a failed future prevents source
             // disposition and leaves the staged descriptor retryable.
-            downloadManager.queueDownload(torrentDownload).join();
+            downloadManager.queueDownloadFromBackgroundSource(torrentDownload).join();
             LOGGER.info("Successfully added torrent to download queue: " + filePath);
 
         } catch (Exception e) {

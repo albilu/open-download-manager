@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -279,7 +280,7 @@ class WindowSmokeTest {
         for (String id : new String[]{"save_download_history_check", "clipboard_monitor_check",
                 "clipboard_silent_check", "system_tray_check", "start_automatically_check",
                 "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
-                "move_to_trash_check", "start_automatically_check2", "move_torrent_check2",
+                "move_to_trash_check",
                 "continue_download_check", "check_integrity_check", "enable_auto_save_check",
                 "enable_seeding_check", "write_thumbnail_check", "write_subtitles_check",
                 "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
@@ -320,6 +321,13 @@ class WindowSmokeTest {
         assertTrue(Widgets.require(builder, "folder_recursive_check", CheckButton.class)
                 .getMarginStart() >= 18,
                 "recursive monitoring must read as a child of folder monitoring");
+        assertTrue(Widgets.require(builder, "move_to_trash_check", CheckButton.class)
+                .getMarginStart() >= 18,
+                "processed-descriptor Trash must read as a child of folder monitoring");
+        assertNull(builder.getObject("start_automatically_check2"),
+                "the global automatic-start policy must not be duplicated on Network");
+        assertNull(builder.getObject("move_torrent_check2"),
+                "the global descriptor Trash policy must not be duplicated on Network");
         assertDownloadOptionsLayout(builder);
         for (String id : new String[]{"aria2_layout_grid", "ytdlp_layout_grid",
                 "httrack_layout_grid", "advanced_layout_grid"}) {
@@ -332,7 +340,7 @@ class WindowSmokeTest {
         assertEquals(1, gridColumn(Widgets.require(builder, "httrack_layout_grid", Grid.class),
                 Widgets.require(builder, "depth_spin", SpinButton.class)));
         assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
-                "download_options_heading", "proxy_settings_heading", "tor_settings_heading",
+                "proxy_settings_heading", "tor_settings_heading",
                 "scheduling_heading", "advanced_tools_heading");
         Widgets.require(builder, "scheduler_selection_label", Label.class);
         Box legend = Widgets.require(builder, "scheduler_legend_box", Box.class);
@@ -379,8 +387,8 @@ class WindowSmokeTest {
         Widgets.require(builder, "proxy_username_entry", Entry.class);
         Widgets.require(builder, "proxy_password_entry", Entry.class);
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
-        Widgets.require(builder, "start_automatically_check", CheckButton.class);
-        Widgets.require(builder, "move_torrent_check", CheckButton.class);
+        assertNull(builder.getObject("start_automatically_check"));
+        assertNull(builder.getObject("move_torrent_check"));
         Widgets.require(builder, "new_download_spinner", Spinner.class);
         Widgets.require(builder, "new_download_cancel_button", Button.class);
         Widgets.require(builder, "new_download_start_button", Button.class);
@@ -438,8 +446,8 @@ class WindowSmokeTest {
                 "tor_switch", org.gnome.gtk.Switch.class);
         assertSame(Widgets.require(builder, "tor_settings_grid", Grid.class),
                 propertyTor.getParent());
-        Widgets.require(builder, "start_automatically_check", CheckButton.class);
-        Widgets.require(builder, "move_torrent_check", CheckButton.class);
+        assertNull(builder.getObject("start_automatically_check"));
+        assertNull(builder.getObject("move_torrent_check"));
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "apply_button", Button.class);
         Widgets.require(builder, "ok_button", Button.class);
@@ -492,6 +500,8 @@ class WindowSmokeTest {
             Widgets.require(builder, id, SpinButton.class);
         }
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        assertNull(builder.getObject("start_automatically_check1"));
+        assertNull(builder.getObject("move_torrent_check1"));
         assertDownloadOptionsLayout(builder);
     }
 
@@ -516,6 +526,8 @@ class WindowSmokeTest {
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "validate_button", Button.class);
         assertDiskLabelBelowChooser(builder, "destination_folder", "disk_space_label");
+        assertNull(builder.getObject("start_automatically_check1"));
+        assertNull(builder.getObject("move_torrent_check1"));
         assertDownloadOptionsLayout(builder);
     }
 
@@ -786,7 +798,7 @@ class WindowSmokeTest {
         assertEquals(1, gridColumn(Widgets.require(builder, "proxy_settings_grid", Grid.class),
                 Widgets.require(builder, "proxy_host_entry", Entry.class)));
         assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
-                "download_options_heading", "proxy_settings_heading", "tor_settings_heading");
+                "proxy_settings_heading", "tor_settings_heading");
     }
 
     private static void assertBoldLabels(GtkBuilder builder, String... labelIds) {

@@ -32,6 +32,7 @@ class DownloadStateSerializationTest {
         original.setDownloaded(1_234);
         original.setErrorMessage(null);
         original.setQueuePosition(3);
+        original.setManualStartRequired(true);
         original.setGid("abcdef0123456789");
 
         org.aria2.Aria2Settings settings = (org.aria2.Aria2Settings) original.getSettings();
@@ -52,6 +53,7 @@ class DownloadStateSerializationTest {
         assertEquals(original.getSize(), restored.getSize());
         assertEquals(original.getDownloaded(), restored.getDownloaded());
         assertEquals(original.getGid(), restored.getGid());
+        assertEquals(original.isManualStartRequired(), restored.isManualStartRequired());
 
         var restoredSettings = assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());
         assertEquals("Cookie: session=1", restoredSettings.getOption("header"));

@@ -92,6 +92,8 @@ class Aria2FollowedByDiscoveryTest {
             assertEquals(2, handler.trackedGidsFor(download.getId()).size(),
                     "both followedBy children must be tracked after the metadata GID completes");
             assertTrue(handler.trackedGidsFor(download.getId()).containsAll(List.of("childGid1", "childGid2")));
+            assertEquals("childGid1", download.getGid(),
+                    "the primary GID must advance from retired metadata to a live child");
             assertNotEquals(Download.Status.COMPLETED, download.getStatus(),
                     "the download must not complete while followedBy children are outstanding");
 

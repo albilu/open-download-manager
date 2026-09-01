@@ -160,6 +160,8 @@ public class Download {
     private volatile int seeders; // connected seeder count (BitTorrent)
     private volatile String infoHash; // BitTorrent info hash, when applicable
     private volatile int queuePosition; // position in the download queue (lower = earlier)
+    /** QUEUED but excluded from automatic admission until the user starts it. */
+    private volatile boolean manualStartRequired;
     private final Instant createdAt;
     private volatile Instant startedAt;
     private volatile Instant completedAt;
@@ -696,6 +698,16 @@ public class Download {
     public void setQueuePosition(int queuePosition) {
         synchronized (lock) {
             this.queuePosition = queuePosition;
+        }
+    }
+
+    public boolean isManualStartRequired() {
+        return manualStartRequired;
+    }
+
+    public void setManualStartRequired(boolean manualStartRequired) {
+        synchronized (lock) {
+            this.manualStartRequired = manualStartRequired;
         }
     }
 

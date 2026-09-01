@@ -44,6 +44,7 @@ import org.manager.folder.FolderMonitorSettings;
 import org.manager.folder.MetaLinkFolderMonitor;
 import org.manager.folder.TorrentFolderMonitor;
 import org.manager.tools.ToolManagerFactory;
+import org.manager.util.DescriptorStaging;
 import org.manager.util.ExecutorServiceManager;
 
 import com.fasterxml.jackson.core.JsonGenerator;
@@ -430,6 +431,22 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public CompletableFuture<Void> queueDownload(Download download) {
+        return submitToQueue(download, false);
+    }
+
+    @Override
+    public CompletableFuture<Void> queueDownloadFromBackgroundSource(Download download) {
+        boolean manualStartRequired = !getGlobalSettings()
+                .getBooleanProperty("ui.startAutomatically", true);
+        return submitToQueue(download, manualStartRequired);
+    }
+
+    @Override
+    public CompletableFuture<Void> queueDownloadForManualStart(Download download) {
+        return submitToQueue(download, true);
+    }
+
+    private CompletableFuture<Void> submitToQueue(Download download, boolean manualStartRequired) {
         if (download == null) {
             CompletableFuture<Void> future = new CompletableFuture<>();
             future.completeExceptionally(new IllegalArgumentException("Download cannot be null"));
@@ -439,7 +456,7 @@ public class DownloadManagerImpl implements DownloadManager {
         return CompletableFuture.runAsync(() -> {
             try {
                 ErrorHandler.executeWithRetry(
-                        () -> queueDownloadInternal(download),
+                        () -> queueDownloadInternal(download, manualStartRequired),
                         ErrorHandler.RetryConfig.noRetry(),
                         "queue download: " + download.getId());
             } catch (Exception e) {
@@ -455,6 +472,13 @@ public class DownloadManagerImpl implements DownloadManager {
     @Override
     public CompletableFuture<Void> startDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
+            // An explicit start releases any manual hold, including the hold
+            // applied to a background-discovered item. If admission is
+            // currently unavailable it remains a normal, auto-admissible
+            // queued download.
+            if (download != null) {
+                download.setManualStartRequired(false);
+            }
             startDownloadInternal(download);
         }, executorManager.getGeneralExecutor());
     }
@@ -876,6 +900,9 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private void resumeDownloadInternal(Download download) {
+        // Resume is also an explicit user/startup action and therefore releases
+        // a manual-start hold before schedule/concurrency admission is checked.
+        download.setManualStartRequired(false);
         if (!isStartAllowedBySchedule(download)) {
             requeueAfterDeniedAdmission(download);
             return;
@@ -958,6 +985,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 if (neverStarted) {
                     downloadRepository.updateDownloadStatus(download, Download.Status.CANCELED);
                     downloadRepository.removeDownload(download.getId());
+                    deleteOwnedDescriptor(download);
                     notifyDownloadCanceled(download);
                     startNextQueuedDownload();
                     return;
@@ -969,6 +997,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     handler.cancelDownload(download, deleteFiles).join();
                     // Remove from our downloads map
                     downloadRepository.removeDownload(download.getId());
+                    deleteOwnedDescriptor(download);
                     gidToIdMap.values().removeIf(id -> id.equals(download.getId()));
                     // runningDownloads is decremented by the handler's
                     // onDownloadCanceled notification (reusableListener);
@@ -986,6 +1015,7 @@ public class DownloadManagerImpl implements DownloadManager {
                             && activeHandlers.get(download.getId()) == null) {
                         downloadRepository.updateDownloadStatus(download, Download.Status.CANCELED);
                         downloadRepository.removeDownload(download.getId());
+                        deleteOwnedDescriptor(download);
                         gidToIdMap.values().removeIf(id -> id.equals(download.getId()));
                         notifyDownloadCanceled(download);
                     } else {
@@ -998,6 +1028,25 @@ public class DownloadManagerImpl implements DownloadManager {
                 throw new CompletionException("Failed to cancel download: " + download.getName(), e);
             }
         }, executorManager.getGeneralExecutor());
+    }
+
+    /** Removes only descriptor bytes copied beneath ODM's staging root. */
+    private void deleteOwnedDescriptor(Download download) {
+        URI uri = download.getUri();
+        if (uri == null || !"file".equalsIgnoreCase(uri.getScheme())) {
+            return;
+        }
+        Download.Protocol protocol = download.getProtocol();
+        if (protocol != Download.Protocol.TORRENT
+                && protocol != Download.Protocol.METALINK) {
+            return;
+        }
+        try {
+            DescriptorStaging.deleteIfStaged(Paths.get(uri));
+        } catch (RuntimeException invalidFileUri) {
+            LOGGER.debug("Could not resolve staged descriptor URI for cleanup: " + uri,
+                    invalidFileUri);
+        }
     }
 
     @Override
@@ -1117,6 +1166,7 @@ public class DownloadManagerImpl implements DownloadManager {
         int available = Math.max(0, getGlobalSettings().getMaxConcurrentDownloads()
                 - runningDownloads.get());
         List<Download> eligible = queuedDownloads.stream()
+                .filter(download -> !download.isManualStartRequired())
                 .filter(this::isStartAllowedBySchedule)
                 .limit(available)
                 .toList();
@@ -1510,6 +1560,13 @@ public class DownloadManagerImpl implements DownloadManager {
                         if (download.getSettings() == null) {
                             download.initSettings(getSettingsFactory());
                         }
+
+                        // Handler/process identifiers belong to the daemon or
+                        // child-process instance that produced them. ODM does
+                        // not reattach persisted jobs to a newly created
+                        // handler, so exposing an old GID causes detail RPCs to
+                        // query a different daemon session.
+                        download.setGid(null);
 
                         downloadRepository.addDownload(download);
 
@@ -1911,12 +1968,13 @@ public class DownloadManagerImpl implements DownloadManager {
     /**
      * Internal method to queue a download with error handling.
      */
-    private Void queueDownloadInternal(Download download) {
+    private Void queueDownloadInternal(Download download, boolean manualStartRequired) {
         try {
             if (isShuttingDown.get()) {
                 throw new RuntimeException("Cannot queue downloads while shutting down");
             }
 
+            download.setManualStartRequired(manualStartRequired);
             download.setQueuePosition(nextQueuePosition());
             if (downloadRepository.getDownload(download.getId()) == null) {
                 download.setStatus(Download.Status.QUEUED);
@@ -1933,8 +1991,11 @@ public class DownloadManagerImpl implements DownloadManager {
             // QUEUED). Admission itself is the atomic slot claim inside
             // startDownloadInternal: a denied claim leaves this download
             // queued without a duplicate queued event.
-            if (isStartAllowedBySchedule(download)) {
+            if (!manualStartRequired && isStartAllowedBySchedule(download)) {
                 startDownloadInternal(download);
+            } else if (manualStartRequired) {
+                LOGGER.info("Download " + download.getName()
+                        + " queued for manual start");
             } else {
                 LOGGER.info("Download " + download.getName()
                         + " stays queued: outside the active download schedule");
@@ -1969,22 +2030,18 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
 
                 int resumedCount = 0;
-                if (getGlobalSettings().getBooleanProperty("ui.startAutomatically", true)) {
-                    for (String downloadId : activeDownloadsBeforeExit) {
-                        try {
-                            Download download = getDownload(downloadId);
-                            if (download != null && download.getStatus() == Download.Status.PAUSED) {
-                                LOGGER.info("Auto-resuming download: " + download.getName());
-                                resumeDownload(download).join();
-                                resumedCount++;
-                            }
-                        } catch (Exception e) {
-                            LOGGER.warn("Failed to auto-resume download: "
-                                    + downloadId, e);
+                for (String downloadId : activeDownloadsBeforeExit) {
+                    try {
+                        Download download = getDownload(downloadId);
+                        if (download != null && download.getStatus() == Download.Status.PAUSED) {
+                            LOGGER.info("Auto-resuming download: " + download.getName());
+                            resumeDownload(download).join();
+                            resumedCount++;
                         }
+                    } catch (Exception e) {
+                        LOGGER.warn("Failed to auto-resume download: "
+                                + downloadId, e);
                     }
-                } else if (!activeDownloadsBeforeExit.isEmpty()) {
-                    LOGGER.info("Automatic startup resume is disabled; recovered downloads remain paused");
                 }
 
                 // Clear the set after attempting resume

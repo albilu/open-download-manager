@@ -70,12 +70,35 @@ public interface DownloadOperations {
     Download createWebsiteDownload(URI websiteUrl, Path destination, Map<String, String> options);
 
     /**
-     * Adds a download to the queue.
+     * Adds a user-requested download to the queue and makes it eligible for
+     * admission. The {@code ui.startAutomatically} setting does not apply to
+     * explicit actions such as dialogs and imports.
      *
      * @param download The download to add
      * @return A future that completes when the download is added
      */
     CompletableFuture<Void> queueDownload(Download download);
+
+    /**
+     * Adds a download discovered by a background source such as clipboard or
+     * folder monitoring. The {@code ui.startAutomatically} setting decides
+     * whether it is immediately eligible for admission or held for an
+     * explicit user start.
+     *
+     * @param download The background-discovered download to add
+     * @return A future that completes when the download is added
+     */
+    CompletableFuture<Void> queueDownloadFromBackgroundSource(Download download);
+
+    /**
+     * Places a download in the visible queue without making it eligible for
+     * automatic admission. An explicit {@link #startDownload(Download)} or
+     * {@link #resumeDownload(Download)} releases the manual-start hold.
+     *
+     * @param download The download to queue for an explicit user start
+     * @return A future that completes when the queued state is published
+     */
+    CompletableFuture<Void> queueDownloadForManualStart(Download download);
 
     /**
      * Starts a download immediately.
