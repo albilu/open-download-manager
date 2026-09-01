@@ -1,9 +1,11 @@
 package org.odm.gtk4;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.gnome.glib.MainLoop;
 import org.gnome.gtk.Gtk;
 import org.junit.jupiter.api.AfterAll;
@@ -93,10 +95,12 @@ class OdmApplicationTeardownTest {
 
     @Test
     @Timeout(60)
-    @DisplayName("the shared release helper is single-shot")
-    void ownedServicesReleaseIsSingleShot() {
+    @DisplayName("the shared core shutdown is single-flight and stops the manager")
+    void coreShutdownIsSingleFlightAndStopsManager() {
         StartupGate.CoreRefs refs = newRefs();
-        OdmApplication.OwnedServicesRelease release = new OdmApplication.OwnedServicesRelease();
+        AtomicInteger managerShutdowns = new AtomicInteger();
+        OdmApplication.CoreShutdown release =
+                new OdmApplication.CoreShutdown(managerShutdowns::incrementAndGet);
         assertFalse(release.isReleased());
 
         release.capture(refs);
@@ -104,8 +108,24 @@ class OdmApplicationTeardownTest {
         release.release();
 
         assertTrue(release.isReleased());
+        assertEquals(1, managerShutdowns.get(),
+                "every application exit path must share one manager teardown");
         assertTrue(refs.scheduleManager().getScheduler().isShutdown());
         assertTrue(refs.torService().getShutdownFuture().isDone());
+    }
+
+    @Test
+    @DisplayName("fallback shutdown still stops the manager when no window refs were published")
+    void fallbackWithoutPublishedRefsStillStopsManager() {
+        AtomicInteger managerShutdowns = new AtomicInteger();
+        OdmApplication.CoreShutdown release =
+                new OdmApplication.CoreShutdown(managerShutdowns::incrementAndGet);
+
+        release.release();
+
+        assertTrue(release.isReleased());
+        assertEquals(1, managerShutdowns.get(),
+                "native application exit must drain the manager and its aria2 daemon");
     }
 
     @Test

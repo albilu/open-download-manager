@@ -339,11 +339,10 @@ public class DownloadManagerImpl implements DownloadManager {
     @Override
     public Download createMagnetDownload(URI magnetUri, Path destination) {
         URI normalizedUri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(magnetUri);
-        if (!org.manager.clipboard.UrlDetector.isMagnetLink(normalizedUri)) {
+        if (Download.Protocol.fromUri(normalizedUri) != Download.Protocol.MAGNET) {
             throw new IllegalArgumentException("A magnet URI is required");
         }
         Download download = new Download(normalizedUri);
-        // download.setType(Download.Type.MAGNET);
         download.setType(Download.Type.ARIA2);
         if (destination != null) {
             download.setDestination(destination);
@@ -352,7 +351,6 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         // Create appropriate settings for magnet downloads
-        // download.setSettings(getSettingsFactory().createSettings(Download.Type.MAGNET));
         download.setSettings(getSettingsFactory().createSettings(Download.Type.ARIA2));
 
         downloadRepository.addDownload(download);
@@ -363,7 +361,7 @@ public class DownloadManagerImpl implements DownloadManager {
     public Download createMetaLinkDownload(URI metaLinkUri, Path destination) {
         URI normalizedUri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(metaLinkUri);
         Download download = new Download(normalizedUri);
-        // download.setType(Download.Type.metaLink);
+        download.setProtocol(Download.Protocol.METALINK);
         download.setType(Download.Type.ARIA2);
         if (destination != null) {
             download.setDestination(destination);
@@ -372,7 +370,6 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         // Create appropriate settings for metaLink downloads
-        // download.setSettings(getSettingsFactory().createSettings(Download.Type.metaLink));
         download.setSettings(getSettingsFactory().createSettings(Download.Type.ARIA2));
 
         downloadRepository.addDownload(download);

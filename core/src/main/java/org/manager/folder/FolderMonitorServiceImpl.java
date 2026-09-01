@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.manager.download.Download;
 import org.manager.util.DescriptorStaging;
 
 /**
@@ -763,9 +764,9 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         }
 
         // Validate file format for specific file types
-        String fileName = filePath.getFileName().toString().toLowerCase();
-        if (fileName.endsWith(".torrent") || fileName.endsWith(".metalink")) {
-            if (!isValidFileFormat(filePath, fileName)) {
+        Download.Protocol protocol = Download.Protocol.fromPath(filePath);
+        if (protocol != null) {
+            if (!isValidFileFormat(filePath, protocol)) {
                 String errorMsg = "Invalid file format";
                 throw new IOException(errorMsg + ": " + filePath);
             }
@@ -815,7 +816,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
         }
     }
 
-    private boolean isValidFileFormat(Path filePath, String fileName) {
+    private boolean isValidFileFormat(Path filePath, Download.Protocol protocol) {
         try {
             // Basic validation - check if file is readable and has minimum size
             if (Files.size(filePath) < 10) {
@@ -823,7 +824,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
             }
 
             // For torrent files, check for basic structure
-            if (fileName.endsWith(".torrent")) {
+            if (protocol == Download.Protocol.TORRENT) {
                 byte[] header = new byte[20];
                 try (var inputStream = Files.newInputStream(filePath)) {
                     int bytesRead = inputStream.read(header);
@@ -1087,8 +1088,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
      * download queue reads later: exactly the files that require staging.
      */
     private static boolean isDescriptorFile(Path filePath) {
-        String fileName = filePath.getFileName().toString().toLowerCase();
-        return fileName.endsWith(".torrent") || fileName.endsWith(".metalink") || fileName.endsWith(".meta4");
+        return Download.Protocol.fromPath(filePath) != null;
     }
 
     private void updateStatistics() {

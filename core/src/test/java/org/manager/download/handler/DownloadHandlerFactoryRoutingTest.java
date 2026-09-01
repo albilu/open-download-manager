@@ -101,14 +101,17 @@ class DownloadHandlerFactoryRoutingTest {
                 new Download.Type[] {Download.Type.CURL}, new DownloadHandler[] {curl});
         // real curl refuses torrent-family work; mirror that in the mock
         when(curl.canHandle(Mockito.argThat(d -> d != null
-                && (d.getUri().toString().endsWith(".meta4")
-                        || d.getUri().toString().startsWith("magnet:"))))).thenReturn(false);
+                && d.getProtocol() != null
+                && d.getProtocol().requiresAria2()))).thenReturn(false);
 
         Download metalink = download("http://e.test/a.meta4", Download.Type.ARIA2);
         assertNull(noAria2.getHandler(metalink), "metalink work must never fall back to curl");
 
         Download magnet = download("magnet:?xt=urn:btih:abcdef", Download.Type.ARIA2);
         assertNull(noAria2.getHandler(magnet), "magnet work must never fall back to curl");
+
+        Download sftp = download("sftp://e.test/a.bin", Download.Type.ARIA2);
+        assertNull(noAria2.getHandler(sftp), "SFTP work must remain on the aria2 path");
 
         Download plainUrl = download("http://e.test/a.bin", Download.Type.ARIA2);
         assertSame(curl, noAria2.getHandler(plainUrl),

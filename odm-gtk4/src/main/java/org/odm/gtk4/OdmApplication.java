@@ -50,20 +50,21 @@ public final class OdmApplication {
         // Quit timer scheduled by the failure notice; a successful retry
         // cancels it so a healthy app is not killed 3s after its last failure
         final int[] quitTimer = {0};
-        // Single-shot release of the scheduler/Tor services OdmApplication
-        // owns; shared by every teardown path
-        final OwnedServicesRelease ownedRelease = new OwnedServicesRelease();
+        // Single-flight release of every core resource, including the
+        // ODM-owned aria2 daemon. Shared by the graceful window-close path,
+        // GtkApplication shutdown, and the post-main-loop safety net.
+        final CoreShutdown coreShutdown = new CoreShutdown();
 
         final StartupGate startup = new StartupGate(
                 () -> new StartShutdownDialog(app),
                 OdmApplication::initializeCoreInBackground,
                 (progress, refs) -> {
                     LOGGER.info("onActivate: constructing MainWindow");
-                    ownedRelease.capture(refs);
+                    coreShutdown.capture(refs);
                     MainWindow mainWindow = new MainWindow(
                             app, refs.manager(), refs.torService(), refs.scheduleManager());
-                    installGracefulShutdown(app, startupHolder[0], mainWindow, refs,
-                            ownedRelease, trayHolder, appShuttingDown);
+                    installGracefulShutdown(app, startupHolder[0], mainWindow,
+                            coreShutdown, trayHolder, appShuttingDown);
                     LOGGER.info("onActivate: MainWindow constructed");
 
                     // Tray (best-effort: no-op when the session bus is unavailable)
@@ -80,17 +81,17 @@ public final class OdmApplication {
                                     return;
                                 }
                                 if (appShuttingDown.get()) {
-                                    tray.unregister();
+                                    UiThread.marshal(tray::unregister);
                                     return;
                                 }
                                 UiThread.marshal(() -> {
                                     if (appShuttingDown.get()) {
-                                        CompletableFuture.runAsync(tray::unregister);
+                                        tray.unregister();
                                         return;
                                     }
                                     StatusNotifierTray replaced = trayHolder.getAndSet(tray);
                                     if (replaced != null) {
-                                        CompletableFuture.runAsync(replaced::unregister);
+                                        replaced.unregister();
                                     }
                                     mainWindow.setTrayAvailable(tray.isAvailable());
                                     LOGGER.info("onActivate: tray constructed");
@@ -148,18 +149,35 @@ public final class OdmApplication {
         app.onShutdown(() -> {
             appShuttingDown.set(true);
             startup.beginShutdown(); // never publish a window once shutdown begins
+            // Drain the manager first. StatusNotifierTray owns native GLib
+            // callbacks and must be released on this GTK context, never on a
+            // worker racing the main loop.
+            coreShutdown.release();
             StatusNotifierTray tray = trayHolder.getAndSet(null);
             if (tray != null) {
-                // The normal close path already drains this on its worker.
-                // Session-manager shutdown remains best-effort and must not
-                // synchronously wait on D-Bus from GTK.
-                CompletableFuture.runAsync(tray::unregister);
+                tray.unregister();
             }
-            ownedRelease.release();
         });
 
-        int status = app.run(args);
-        System.exit(status);
+        int status;
+        try {
+            status = app.run(args);
+        } finally {
+            // Some native/main-loop exit paths can return without delivering
+            // the shutdown signal. This idempotent fallback guarantees that
+            // the manager and its ODM-owned aria2 child are still drained
+            // before the JVM is allowed to exit.
+            appShuttingDown.set(true);
+            startup.beginShutdown();
+            coreShutdown.release();
+        }
+        // A normal GTK exit can return from main naturally. Calling
+        // System.exit(0) here needlessly starts JVM shutdown hooks while
+        // java-gi is still retiring native callback threads; on Java 25 that
+        // race can abort the VM. Preserve non-zero native exit statuses.
+        if (status != 0) {
+            System.exit(status);
+        }
     }
 
     /**
@@ -276,50 +294,46 @@ public final class OdmApplication {
     }
 
     /**
-     * Drains the whole core at exit: owned services first, then the
-     * download manager (which waits for handler teardown and persistence).
+     * Serializes the complete core teardown. A second caller waits for an
+     * in-progress release by taking the same monitor, then observes
+     * {@link #released}; it never returns early while aria2 is still stopping.
+     * The injectable manager shutdown action is a test seam.
      */
-    private static void drainCoreForExit(StartupGate.CoreRefs refs) {
-        releaseOwnedServices(refs);
-        try {
-            DownloadManagerFactory.shutdown();
-        } catch (Exception e) {
-            LOGGER.warn("Graceful core shutdown failed", e);
-        }
-    }
-
-    /**
-     * Single-shot release of the application-owned services (scheduler,
-     * Tor), shared by the graceful close path and the session-manager
-     * fallback so neither leaks them and they are never torn down twice.
-     */
-    static final class OwnedServicesRelease {
+    static final class CoreShutdown {
 
         private final java.util.concurrent.atomic.AtomicReference<StartupGate.CoreRefs> refs =
                 new java.util.concurrent.atomic.AtomicReference<>();
-        private final java.util.concurrent.atomic.AtomicBoolean released =
-                new java.util.concurrent.atomic.AtomicBoolean();
+        private final Runnable managerShutdown;
+        private boolean released;
+
+        CoreShutdown() {
+            this(DownloadManagerFactory::shutdown);
+        }
+
+        CoreShutdown(Runnable managerShutdown) {
+            this.managerShutdown = java.util.Objects.requireNonNull(managerShutdown);
+        }
 
         void capture(StartupGate.CoreRefs coreRefs) {
             refs.set(coreRefs);
         }
 
-        boolean isReleased() {
-            return released.get();
+        synchronized boolean isReleased() {
+            return released;
         }
 
-        void release() {
-            StartupGate.CoreRefs captured = refs.get();
-            if (captured == null || !released.compareAndSet(false, true)) {
+        synchronized void release() {
+            if (released) {
                 return;
             }
-            releaseOwnedServices(captured);
-        }
-
-        /** Marks the services as released without running the sequence
-         * (the caller drained them through another route). */
-        void markReleased() {
-            released.set(true);
+            try {
+                releaseOwnedServices(refs.get());
+                managerShutdown.run();
+            } catch (RuntimeException e) {
+                LOGGER.warn("Graceful core shutdown failed", e);
+            } finally {
+                released = true;
+            }
         }
     }
 
@@ -364,7 +378,7 @@ public final class OdmApplication {
      * invisibly, racing System.exit.
      */
     private static void installGracefulShutdown(Application app, StartupGate startup,
-            MainWindow mainWindow, StartupGate.CoreRefs refs, OwnedServicesRelease ownedRelease,
+            MainWindow mainWindow, CoreShutdown coreShutdown,
             java.util.concurrent.atomic.AtomicReference<StatusNotifierTray> trayHolder,
             java.util.concurrent.atomic.AtomicBoolean appShuttingDown) {
         mainWindow.setFinalCloseDelegate(() -> {
@@ -378,15 +392,15 @@ public final class OdmApplication {
             StartShutdownDialog progress = new StartShutdownDialog(app);
             progress.show("Shutting down Open Download Manager…");
 
-            CompletableFuture.runAsync(() -> {
-                StatusNotifierTray tray = trayHolder.getAndSet(null);
-                if (tray != null) {
-                    tray.unregister();
-                }
-                drainCoreForExit(refs);
-            })
+            // Core teardown is the exit-critical operation. The tray is an
+            // optional native D-Bus integration; it
+            // must never stand between the exit request and aria2 shutdown.
+            CompletableFuture.runAsync(coreShutdown::release)
                     .whenComplete((v, error) -> UiThread.marshal(() -> {
-                        ownedRelease.markReleased();
+                        StatusNotifierTray tray = trayHolder.getAndSet(null);
+                        if (tray != null) {
+                            tray.unregister();
+                        }
                         progress.close();
                         mainWindow.dispose(); // last window gone: main loop exits,
                                               // onShutdown unregisters the tray, run() returns

@@ -13,6 +13,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.manager.download.Download;
 
 /**
  * Descriptor staging for watched torrent and Metalink files.
@@ -135,8 +136,7 @@ public final class DescriptorStaging {
             }
         }
         String original = name.substring(17);
-        String lower = original.toLowerCase();
-        if (lower.endsWith(".torrent") || lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
+        if (Download.Protocol.fromFileName(original) != null) {
             return original;
         }
         return null;

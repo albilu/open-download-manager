@@ -53,6 +53,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 output_paths TEXT,
                 override_output_path INTEGER NOT NULL DEFAULT 1,
                 uri TEXT NOT NULL,
+                protocol TEXT,
                 mirrors TEXT,
                 destination TEXT,
                 type TEXT NOT NULL,
@@ -80,12 +81,12 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
     private static final String INSERT = """
             INSERT INTO downloads (
                 id, gid, name, requested_file_name, output_paths,
-                override_output_path, uri, mirrors, destination,
+                override_output_path, uri, protocol, mirrors, destination,
                 type, status, size, downloaded, speed, upload_speed, connections,
                 seeders, info_hash, queue_position, created_at, started_at,
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, active_before_exit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -222,6 +223,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             }
             ensureColumn("requested_file_name", "TEXT");
             ensureColumn("output_paths", "TEXT");
+            ensureColumn("protocol", "TEXT");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
@@ -324,6 +326,15 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         // and createdAt survive; everything else is restored through setters
         Download download = new Download(rs.getString("id"), readInstant(rs, "created_at"));
         download.setUri(URI.create(rs.getString("uri")));
+        String persistedProtocol = rs.getString("protocol");
+        if (persistedProtocol != null && !persistedProtocol.isBlank()) {
+            try {
+                download.setProtocol(Download.Protocol.valueOf(persistedProtocol));
+            } catch (IllegalArgumentException unknownProtocol) {
+                LOGGER.warn("Ignoring unknown protocol " + persistedProtocol
+                        + " for download " + download.getId() + "; deriving it from the URI");
+            }
+        }
         download.setGid(rs.getString("gid"));
         download.setName(sanitizePersistedName(rs.getString("name")));
         download.setRequestedFileName(sanitizePersistedName(rs.getString("requested_file_name")));
@@ -421,30 +432,31 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                         .map(Path::toString).toList()));
         insert.setInt(6, download.isOverrideOutputPath() ? 1 : 0);
         insert.setString(7, download.getUri().toString());
-        insert.setString(8, download.getMirrors() == null || download.getMirrors().isEmpty()
+        insert.setString(8, download.getProtocol() == null ? null : download.getProtocol().name());
+        insert.setString(9, download.getMirrors() == null || download.getMirrors().isEmpty()
                 ? null
                 : mapper.writeValueAsString(download.getMirrors()));
-        insert.setString(9, download.getDestination() == null ? null : download.getDestination().toString());
-        insert.setString(10, download.getType().name());
-        insert.setString(11, download.getStatus().name());
-        insert.setLong(12, download.getSize());
-        insert.setLong(13, download.getDownloaded());
-        insert.setFloat(14, download.getSpeed());
-        insert.setFloat(15, download.getUploadSpeed());
-        insert.setInt(16, download.getConnections());
-        insert.setInt(17, download.getSeeders());
-        insert.setString(18, download.getInfoHash());
-        insert.setInt(19, download.getQueuePosition());
-        insert.setString(20, formatInstant(download.getCreatedAt()));
-        insert.setString(21, formatInstant(download.getStartedAt()));
-        insert.setString(22, formatInstant(download.getCompletedAt()));
-        insert.setString(23, download.getErrorMessage());
-        insert.setString(24, mapper.writeValueAsString(download.getSettings()));
-        insert.setString(25, download.getScheduleSettings() == null
+        insert.setString(10, download.getDestination() == null ? null : download.getDestination().toString());
+        insert.setString(11, download.getType().name());
+        insert.setString(12, download.getStatus().name());
+        insert.setLong(13, download.getSize());
+        insert.setLong(14, download.getDownloaded());
+        insert.setFloat(15, download.getSpeed());
+        insert.setFloat(16, download.getUploadSpeed());
+        insert.setInt(17, download.getConnections());
+        insert.setInt(18, download.getSeeders());
+        insert.setString(19, download.getInfoHash());
+        insert.setInt(20, download.getQueuePosition());
+        insert.setString(21, formatInstant(download.getCreatedAt()));
+        insert.setString(22, formatInstant(download.getStartedAt()));
+        insert.setString(23, formatInstant(download.getCompletedAt()));
+        insert.setString(24, download.getErrorMessage());
+        insert.setString(25, mapper.writeValueAsString(download.getSettings()));
+        insert.setString(26, download.getScheduleSettings() == null
                 ? null : mapper.writeValueAsString(download.getScheduleSettings()));
-        insert.setString(26, download.getChecksumAlgorithm());
-        insert.setString(27, download.getExpectedChecksum());
-        insert.setInt(28, activeBeforeExit ? 1 : 0);
+        insert.setString(27, download.getChecksumAlgorithm());
+        insert.setString(28, download.getExpectedChecksum());
+        insert.setInt(29, activeBeforeExit ? 1 : 0);
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

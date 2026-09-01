@@ -205,11 +205,11 @@ public class NewDownloadDialog {
             return;
         }
         try {
-            if (url.toLowerCase().startsWith("magnet:")) {
+            java.net.URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
+            if (Download.Protocol.fromUri(uri) == Download.Protocol.MAGNET) {
                 analyzeMagnet(url);
                 return;
             }
-            java.net.URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
             String path = uri.getPath();
             if (path != null && !path.isEmpty()) {
                 String filename = path.substring(path.lastIndexOf('/') + 1);
@@ -489,8 +489,7 @@ public class NewDownloadDialog {
             Path descriptor = moveTorrentCheck.getActive()
                     ? moveDescriptorToDrafts(selectedTorrentFile)
                     : selectedTorrentFile;
-            String lowerName = descriptor.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-            if (lowerName.endsWith(".meta4") || lowerName.endsWith(".metalink")) {
+            if (Download.Protocol.fromPath(descriptor) == Download.Protocol.METALINK) {
                 return downloadManager.createMetaLinkDownload(descriptor.toUri(), destination);
             }
             return downloadManager.createTorrentDownload(descriptor, destination);

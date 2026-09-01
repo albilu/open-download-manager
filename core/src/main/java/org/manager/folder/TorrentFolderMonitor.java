@@ -211,8 +211,7 @@ public class TorrentFolderMonitor implements FolderMonitorListener {
      * @return true if the file is a torrent file
      */
     private boolean isTorrentFile(Path filePath) {
-        String fileName = filePath.getFileName().toString().toLowerCase();
-        return fileName.endsWith(".torrent");
+        return Download.Protocol.fromPath(filePath) == Download.Protocol.TORRENT;
     }
 
     /**

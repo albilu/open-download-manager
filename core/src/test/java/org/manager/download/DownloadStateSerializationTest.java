@@ -44,6 +44,7 @@ class DownloadStateSerializationTest {
         assertEquals(original.getId(), restored.getId(), "download id must survive restart");
         assertEquals(original.getCreatedAt(), restored.getCreatedAt(), "createdAt must survive restart");
         assertEquals(original.getUri(), restored.getUri());
+        assertEquals(original.getProtocol(), restored.getProtocol());
         assertEquals(original.getName(), restored.getName());
         assertEquals(original.getDestination(), restored.getDestination());
         assertEquals(original.getMirrors(), restored.getMirrors());
@@ -88,6 +89,20 @@ class DownloadStateSerializationTest {
         String extended = json.replaceFirst("\\{", "{\"futureField\":42,");
         Download restored = mapper.readValue(extended, Download.class);
         assertEquals(original.getId(), restored.getId());
+    }
+
+    @Test
+    void explicitProtocolRoundTripsAndLegacyStateDerivesIt() throws Exception {
+        Download explicit = new Download(URI.create("https://example.com/opaque-descriptor"));
+        explicit.setProtocol(Download.Protocol.METALINK);
+        assertEquals(Download.Protocol.METALINK, roundTrip(explicit).getProtocol());
+
+        Download legacy = new Download(URI.create("https://example.com/file.torrent"));
+        com.fasterxml.jackson.databind.node.ObjectNode legacyJson = mapper.valueToTree(legacy);
+        legacyJson.remove("protocol");
+
+        Download restoredLegacy = mapper.treeToValue(legacyJson, Download.class);
+        assertEquals(Download.Protocol.TORRENT, restoredLegacy.getProtocol());
     }
 
     @Test

@@ -219,8 +219,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
      * @return true if the file is a Metalink file
      */
     private boolean isMetaLinkFile(Path filePath) {
-        String fileName = filePath.getFileName().toString().toLowerCase();
-        return fileName.endsWith(".metalink") || fileName.endsWith(".meta4");
+        return Download.Protocol.fromPath(filePath) == Download.Protocol.METALINK;
     }
 
     /**

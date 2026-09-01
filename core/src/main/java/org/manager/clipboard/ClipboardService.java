@@ -276,7 +276,9 @@ public class ClipboardService implements ClipboardListener {
         }
 
         boolean mediaUrl = MediaUrlDetector.isMediaUrl(url);
-        boolean torrentUrl = UrlDetector.isMagnetLink(url) || UrlDetector.isTorrentFile(url);
+        Download.Protocol protocol = Download.Protocol.fromUri(url);
+        boolean torrentUrl = protocol == Download.Protocol.MAGNET
+                || protocol == Download.Protocol.TORRENT;
 
         // Check media URL filter
         if (mediaUrl && !settings.isFilterVideoUrls()) {
@@ -321,10 +323,11 @@ public class ClipboardService implements ClipboardListener {
         try {
             Download download;
             Path defaultDir = downloadManager.getGlobalSettings().getDefaultDownloadDirectory();
+            Download.Protocol protocol = Download.Protocol.fromUri(url);
 
-            if (UrlDetector.isMagnetLink(url)) {
+            if (protocol == Download.Protocol.MAGNET) {
                 download = downloadManager.createMagnetDownload(url, defaultDir);
-            } else if (UrlDetector.isTorrentFile(url)) {
+            } else if (protocol == Download.Protocol.TORRENT) {
                 // For torrent files, we might need special handling
                 download = downloadManager.createDownload(url, defaultDir);
             } else if (MediaUrlDetector.isMediaUrl(url)) {

@@ -629,12 +629,9 @@ public class MainWindow {
             return;
         }
         String magnet = null;
-        try {
-            if ("magnet".equals(selectedDownload.getUri().getScheme())) {
-                magnet = selectedDownload.getUri().toString();
-            }
-        } catch (Exception ignored) {
-            // no uri
+        if (selectedDownload.getProtocol() == Download.Protocol.MAGNET
+                && selectedDownload.getUri() != null) {
+            magnet = selectedDownload.getUri().toString();
         }
         if (magnet == null && selectedDownload.getInfoHash() != null) {
             magnet = "magnet:?xt=urn:btih:" + selectedDownload.getInfoHash();

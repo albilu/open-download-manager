@@ -66,14 +66,17 @@ class DownloadTest {
             // HTTP URL
             Download httpDownload = new Download(URI.create("https://example.com/file.zip"));
             assertEquals(Download.Type.ARIA2, httpDownload.getType());
+            assertEquals(Download.Protocol.HTTPS, httpDownload.getProtocol());
 
             // FTP URL
             Download ftpDownload = new Download(URI.create("ftp://example.com/file.zip"));
             assertEquals(Download.Type.ARIA2, ftpDownload.getType());
+            assertEquals(Download.Protocol.FTP, ftpDownload.getProtocol());
 
             // Magnet link
             Download magnetDownload = new Download(URI.create("magnet:?xt=urn:btih:test"));
             assertEquals(Download.Type.ARIA2, magnetDownload.getType());
+            assertEquals(Download.Protocol.MAGNET, magnetDownload.getProtocol());
 
             // YouTube URL
             Download youtubeDownload = new Download(URI.create("https://www.youtube.com/watch?v=test"));
@@ -81,6 +84,51 @@ class DownloadTest {
 
             Download youtubeShortenedDownload = new Download(URI.create("https://youtu.be/test"));
             assertEquals(Download.Type.YOUTUBE, youtubeShortenedDownload.getType());
+            assertEquals(Download.Protocol.HTTPS, youtubeShortenedDownload.getProtocol());
+        }
+
+        @Test
+        @DisplayName("Should derive descriptor protocols before URI transports")
+        void shouldDeriveDescriptorProtocolsBeforeTransport() {
+            assertEquals(Download.Protocol.HTTP,
+                    Download.Protocol.fromUri(URI.create("http://example.com/file.zip")));
+            assertEquals(Download.Protocol.HTTPS,
+                    Download.Protocol.fromUri(URI.create("https://example.com/file.zip")));
+            assertEquals(Download.Protocol.FTP,
+                    Download.Protocol.fromUri(URI.create("ftps://example.com/file.zip")));
+            assertEquals(Download.Protocol.SFTP,
+                    Download.Protocol.fromUri(URI.create("sftp://example.com/file.zip")));
+            assertEquals(Download.Protocol.TORRENT,
+                    Download.Protocol.fromUri(URI.create("https://example.com/file.TORRENT")));
+            assertEquals(Download.Protocol.METALINK,
+                    Download.Protocol.fromUri(URI.create("file:///tmp/file.meta4")));
+            assertEquals(Download.Protocol.METALINK,
+                    Download.Protocol.fromPath(Path.of("/tmp/file.metalink")));
+            assertNull(Download.Protocol.fromUri(null));
+
+            assertTrue(Download.Protocol.SFTP.isDirectTransfer());
+            assertTrue(Download.Protocol.SFTP.requiresAria2());
+            assertFalse(Download.Protocol.SFTP.supportsPeerDetails());
+        }
+
+        @Test
+        @DisplayName("URI changes and discovered info hashes keep protocol current")
+        void shouldKeepProtocolCurrent() {
+            Download classified = new Download(URI.create("https://example.com/file.bin"));
+            assertEquals(Download.Protocol.HTTPS, classified.getProtocol());
+
+            classified.setUri(URI.create("magnet:?xt=urn:btih:abcdef"));
+            assertEquals(Download.Protocol.MAGNET, classified.getProtocol());
+
+            classified.setUri(URI.create("https://example.com/opaque-download"));
+            classified.setInfoHash("0123456789abcdef0123456789abcdef01234567");
+            assertEquals(Download.Protocol.TORRENT, classified.getProtocol());
+
+            classified.setProtocol(null);
+            assertEquals(Download.Protocol.TORRENT, classified.getProtocol());
+            classified.setInfoHash(null);
+            classified.setProtocol(null);
+            assertEquals(Download.Protocol.HTTPS, classified.getProtocol());
         }
 
         @Test
@@ -129,6 +177,7 @@ class DownloadTest {
 
             assertEquals("test.torrent", torrentDownload.getName());
             assertEquals(Download.Type.ARIA2, torrentDownload.getType());
+            assertEquals(Download.Protocol.TORRENT, torrentDownload.getProtocol());
             assertEquals(destination, torrentDownload.getDestination());
             assertNotNull(torrentDownload.getId());
         }
@@ -140,6 +189,7 @@ class DownloadTest {
 
             assertNotNull(newDownload.getId());
             assertEquals(Download.Status.CREATED, newDownload.getStatus());
+            assertNull(newDownload.getProtocol());
             assertNotNull(newDownload.getCreatedAt());
             assertTrue(newDownload.getMirrors().isEmpty());
             assertEquals(0, newDownload.getSize());

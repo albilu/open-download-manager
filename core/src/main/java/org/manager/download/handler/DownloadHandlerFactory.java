@@ -427,28 +427,14 @@ public class DownloadHandlerFactory {
     }
 
     private static boolean isCurlTransfer(Download download) {
-        URI uri = download != null ? download.getUri() : null;
-        if (uri == null || uri.getScheme() == null) {
-            return false;
-        }
-        return switch (uri.getScheme().toLowerCase()) {
-            case "http", "https", "ftp", "ftps" -> true;
-            default -> false;
-        };
+        Download.Protocol protocol = download != null ? download.getProtocol() : null;
+        return protocol != null && protocol.isDirectTransfer();
     }
 
-    /** Torrent descriptors, magnets and Metalinks require aria2 semantics. */
+    /** SFTP, torrent descriptors, magnets and Metalinks require aria2 semantics. */
     private static boolean isAria2OnlyDownload(Download download) {
-        URI uri = download != null ? download.getUri() : null;
-        if (uri == null || uri.getScheme() == null) {
-            return false;
-        }
-        String scheme = uri.getScheme().toLowerCase();
-        if (scheme.equals("magnet") || scheme.equals("torrent") || scheme.equals("metalink")) {
-            return true;
-        }
-        String path = uri.getPath() != null ? uri.getPath().toLowerCase() : "";
-        return path.endsWith(".torrent") || path.endsWith(".metalink") || path.endsWith(".meta4");
+        Download.Protocol protocol = download != null ? download.getProtocol() : null;
+        return protocol != null && protocol.requiresAria2();
     }
 
     /**

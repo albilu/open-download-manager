@@ -85,6 +85,7 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getId(), restored.getId());
             assertEquals(original.getCreatedAt(), restored.getCreatedAt());
             assertEquals(original.getUri(), restored.getUri());
+            assertEquals(Download.Protocol.HTTPS, restored.getProtocol());
             assertEquals(original.getName(), restored.getName());
             assertEquals(original.getDestination(), restored.getDestination());
             assertEquals(original.getMirrors(), restored.getMirrors());
@@ -143,6 +144,19 @@ class SqliteDownloadStateStoreTest {
 
             assertEquals("sha256", restored.getChecksumAlgorithm());
             assertEquals("deadbeef", restored.getExpectedChecksum());
+        }
+    }
+
+    @Test
+    void explicitProtocolSurvivesSqliteRoundTrip() {
+        Download original = new Download(URI.create("https://example.com/opaque-descriptor"));
+        original.setProtocol(Download.Protocol.TORRENT);
+
+        try (SqliteDownloadStateStore store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            store.save(List.of(original), Set.of());
+
+            assertEquals(Download.Protocol.TORRENT,
+                    store.load().downloads().get(0).getProtocol());
         }
     }
 
@@ -352,6 +366,7 @@ class SqliteDownloadStateStoreTest {
             assertNull(restored.getRequestedFileName());
             assertTrue(restored.getOutputPaths().isEmpty());
             assertEquals(Download.Status.QUEUED, restored.getStatus());
+            assertEquals(Download.Protocol.HTTPS, restored.getProtocol());
             assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());
 
             // Opening the old schema added the new columns in place; writing

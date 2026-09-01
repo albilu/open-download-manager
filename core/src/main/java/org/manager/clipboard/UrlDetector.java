@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.manager.download.Download;
 
 /**
  * Utility class for detecting and extracting URLs from text content. Supports
@@ -38,9 +39,6 @@ public class UrlDetector {
             .replaceAll("\\s+", "");
 
     private static final Pattern URL_PATTERN = Pattern.compile(URL_REGEX);
-
-    // Pattern for detecting .torrent file extensions
-    private static final Pattern TORRENT_PATTERN = Pattern.compile("(?i).*\\.torrent$");
 
     // Pattern for magnet links
     private static final Pattern MAGNET_PATTERN = Pattern.compile("(?i)^magnet:\\?xt=urn:");
@@ -208,12 +206,11 @@ public class UrlDetector {
                         .matcher(query).find();
             }
 
-            // For file:// URLs, check if it's a torrent file
+            // Local URLs are valid only for aria2 descriptor files.
             if (scheme.equals("file")) {
-                String path = uri.getPath();
-                return path != null && (TORRENT_PATTERN.matcher(path).matches()
-                        || path.toLowerCase(Locale.ROOT).endsWith(".meta4")
-                        || path.toLowerCase(Locale.ROOT).endsWith(".metalink"));
+                Download.Protocol protocol = Download.Protocol.fromUri(uri);
+                return protocol == Download.Protocol.TORRENT
+                        || protocol == Download.Protocol.METALINK;
             }
 
             if (uri.getHost() == null || uri.getHost().isBlank()) {
@@ -248,7 +245,7 @@ public class UrlDetector {
         }
 
         // Check for torrent files
-        if (TORRENT_PATTERN.matcher(path).matches()) {
+        if (Download.Protocol.fromUri(uri) == Download.Protocol.TORRENT) {
             return true;
         }
 
@@ -347,7 +344,7 @@ public class UrlDetector {
      * @return true if it's a magnet link
      */
     public static boolean isMagnetLink(URI uri) {
-        return uri != null && "magnet".equalsIgnoreCase(uri.getScheme());
+        return Download.Protocol.fromUri(uri) == Download.Protocol.MAGNET;
     }
 
     /**
@@ -357,11 +354,7 @@ public class UrlDetector {
      * @return true if it's a torrent file
      */
     public static boolean isTorrentFile(URI uri) {
-        if (uri == null) {
-            return false;
-        }
-        String path = uri.getPath();
-        return path != null && TORRENT_PATTERN.matcher(path).matches();
+        return Download.Protocol.fromUri(uri) == Download.Protocol.TORRENT;
     }
 
 }

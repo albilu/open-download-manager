@@ -1,16 +1,19 @@
 package org.manager.download;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+
 import org.manager.schedule.ScheduleSettings;
+
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Represents a download task in the download manager.
@@ -29,11 +32,102 @@ public class Download {
         CANCELED
     }
 
+    /**
+     * Source protocol/descriptor semantics, independent of the engine in
+     * {@link Type}. For example, HTTP, SFTP, magnet, and torrent-file downloads
+     * are all currently executed by the ARIA2 engine but retain distinct
+     * protocol values for routing and presentation decisions.
+     */
+    public enum Protocol {
+        HTTP,
+        HTTPS,
+        FTP,
+        SFTP,
+        TORRENT,
+        MAGNET,
+        METALINK;
+
+        /**
+         * Classifies a URI. Descriptor extensions take precedence over their
+         * transport, so an HTTPS URL ending in {@code .torrent} is TORRENT,
+         * not HTTPS.
+         *
+         * @param uri source URI, or null
+         * @return the classified protocol, or null for an unsupported URI
+         */
+        public static Protocol fromUri(URI uri) {
+            if (uri == null) {
+                return null;
+            }
+
+            String scheme = uri.getScheme();
+            if (scheme != null) {
+                switch (scheme.toLowerCase(Locale.ROOT)) {
+                    case "magnet" -> {
+                        return MAGNET;
+                    }
+                    case "torrent" -> {
+                        return TORRENT;
+                    }
+                    case "metalink" -> {
+                        return METALINK;
+                    }
+                    default -> {
+                        // Transport classification follows descriptor detection.
+                    }
+                }
+            }
+
+            Protocol descriptor = fromFileName(uri.getPath());
+            if (descriptor != null) {
+                return descriptor;
+            }
+            if (scheme == null) {
+                return null;
+            }
+            return switch (scheme.toLowerCase(Locale.ROOT)) {
+                case "http" -> HTTP;
+                case "https" -> HTTPS;
+                case "ftp", "ftps" -> FTP;
+                case "sftp" -> SFTP;
+                default -> null;
+            };
+        }
+
+        /** Classifies a local descriptor path; non-descriptors return null. */
+        public static Protocol fromPath(Path path) {
+            return path == null ? null : fromFileName(path.toString());
+        }
+
+        /** Classifies a descriptor file name or URI path. */
+        public static Protocol fromFileName(String fileName) {
+            if (fileName == null) {
+                return null;
+            }
+            String lower = fileName.toLowerCase(Locale.ROOT);
+            if (lower.endsWith(".torrent")) {
+                return TORRENT;
+            }
+            if (lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
+                return METALINK;
+            }
+            return null;
+        }
+
+        public boolean supportsPeerDetails() {
+            return this == TORRENT || this == MAGNET;
+        }
+
+        public boolean requiresAria2() {
+            return supportsPeerDetails() || this == METALINK || this == SFTP;
+        }
+
+        public boolean isDirectTransfer() {
+            return this == HTTP || this == HTTPS || this == FTP || this == SFTP;
+        }
+    }
+
     public enum Type {
-        // HTTP,
-        // FTP,
-        // TORRENT,
-        // MAGNET,
         ARIA2,
         YOUTUBE,
         WEBSITE_SCRAPING,
@@ -52,6 +146,7 @@ public class Download {
     private final List<Path> outputPaths;
     private volatile boolean overrideOutputPath = true;
     private volatile URI uri;
+    private volatile Protocol protocol;
     private volatile List<URI> mirrors;
     private volatile Path destination;
     private volatile Type type;
@@ -107,7 +202,7 @@ public class Download {
      */
     public Download(URI uri) {
         this();
-        this.uri = uri;
+        setUri(uri);
 
         // Set type based on URI. Media detection must come before the generic
         // http/https branch: known media platforms and streaming manifests
@@ -117,14 +212,9 @@ public class Download {
         if (MediaUrlDetector.isMediaUrl(uri)) {
             this.type = Type.YOUTUBE; // Use yt-dlp handler for media URLs
         } else {
-            String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
-            if (scheme.equals("http") || scheme.equals("https") || scheme.equals("ftp")
-                    || scheme.equals("magnet")) {
-                this.type = Type.ARIA2;
-            } else {
-                // Default to ARIA2 for complex downloads
-                this.type = Type.ARIA2;
-            }
+            // Protocol describes the source; Type independently selects the
+            // engine. aria2 owns all non-media protocols accepted by ODM.
+            this.type = Type.ARIA2;
         }
 
         // Settings initialize lazily (getSettings) or via the manager's
@@ -166,8 +256,8 @@ public class Download {
     public static Download fromTorrent(Path torrentPath, Path destination) {
         Download download = new Download();
         download.setName(torrentPath.getFileName().toString());
-        download.uri = torrentPath.toUri();
-        // download.type = Type.TORRENT;
+        download.setUri(torrentPath.toUri());
+        download.setProtocol(Protocol.TORRENT);
         download.type = Type.ARIA2;
         download.destination = destination;
         // Settings initialize lazily via getSettings()
@@ -186,7 +276,8 @@ public class Download {
     public static Download fromMetaLink(Path metaLinkPath, Path destination) {
         Download download = new Download();
         download.setName(metaLinkPath.getFileName().toString());
-        download.uri = metaLinkPath.toUri();
+        download.setUri(metaLinkPath.toUri());
+        download.setProtocol(Protocol.METALINK);
         download.type = Type.ARIA2;
         download.destination = destination;
         // Settings initialize lazily via getSettings()
@@ -363,7 +454,31 @@ public class Download {
     public void setUri(URI uri) {
         synchronized (lock) {
             this.uri = uri;
+            this.protocol = deriveProtocol();
         }
+    }
+
+    public Protocol getProtocol() {
+        return protocol;
+    }
+
+    /**
+     * Overrides URI-derived classification when the caller has stronger
+     * semantic knowledge, such as an opaque endpoint known to return a
+     * torrent descriptor. Null restores URI-derived classification.
+     */
+    public void setProtocol(Protocol protocol) {
+        synchronized (lock) {
+            this.protocol = protocol != null ? protocol : deriveProtocol();
+        }
+    }
+
+    private Protocol deriveProtocol() {
+        Protocol fromUri = Protocol.fromUri(uri);
+        if (infoHash != null && !infoHash.isBlank() && fromUri != Protocol.MAGNET) {
+            return Protocol.TORRENT;
+        }
+        return fromUri;
     }
 
     public List<URI> getMirrors() {
@@ -565,6 +680,12 @@ public class Download {
     public void setInfoHash(String infoHash) {
         synchronized (lock) {
             this.infoHash = infoHash;
+            if (infoHash != null && !infoHash.isBlank() && protocol != Protocol.MAGNET) {
+                // aria2 only reports infoHash for BitTorrent work. This also
+                // classifies opaque HTTP endpoints once their real semantics
+                // become known.
+                this.protocol = Protocol.TORRENT;
+            }
         }
     }
 

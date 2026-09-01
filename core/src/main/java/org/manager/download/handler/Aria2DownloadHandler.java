@@ -145,7 +145,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         this.aria2Client = configuredRpcSecret != null
                 ? new Aria2Client(aria2Path, "http://localhost:6800/jsonrpc", configuredRpcSecret)
                 : new Aria2Client(aria2Path);
-        this.aria2Client.setUseWebSocket(true);
         this.gidToIdMap = new ConcurrentHashMap<>();
         this.activeDownloads = new ConcurrentHashMap<>();
         this.downloadGids = new ConcurrentHashMap<>();
@@ -160,7 +159,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     @Override
     public Download.Type getSupportedType() {
         // This handler primarily supports HTTP downloads
-        // but also handles FTP, BitTorrent, and Magnet
+        // but also handles FTP, SFTP, BitTorrent, and Magnet
         return Download.Type.ARIA2;
     }
 
@@ -204,32 +203,19 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
                 List<String> gids = switch (download.getType()) {
                     case ARIA2 -> {
-                        // For aria2 downloads, we can use the same method for HTTP/FTP
-                        yield switch (download.getUri().getScheme()) {
-                            // Descriptor files referenced over http(s) are fetched
-                            // and added via addTorrent/addMetalink so mirrors and
-                            // multi-file handling work like local files
-                            case "http", "https" -> {
-                                String path = download.getUri().getPath();
-                                String lower = path != null ? path.toLowerCase() : "";
-                                if (lower.endsWith(".torrent")) {
-                                    yield startTorrentDownload(download);
-                                }
-                                if (lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
-                                    yield startMetaLinkDownload(download);
-                                }
-                                yield startHttpDownload(download);
+                        // Protocol captures descriptor semantics independently
+                        // of transport: remote and local descriptor files take
+                        // the same addTorrent/addMetalink route.
+                        yield switch (download.getProtocol()) {
+                            case HTTP, HTTPS, FTP, SFTP -> startUriDownload(download);
+                            case MAGNET -> startMagnetDownload(download);
+                            case TORRENT -> startTorrentDownload(download);
+                            case METALINK -> startMetaLinkDownload(download);
+                            case null -> {
+                                String scheme = download.getUri().getScheme();
+                                LOGGER.warn("Unsupported URI protocol for aria2 download: " + scheme);
+                                yield null;
                             }
-                            case "ftp", "ftps" -> startHttpDownload(download);
-                            // aria2 handles SFTP natively when built with
-                            // libssh2 (Debian/Ubuntu builds are); credentials
-                            // embedded in the URI userinfo are honored
-                            case "sftp" -> startHttpDownload(download);
-                            case "magnet" -> startMagnetDownload(download);
-                            case "torrent" -> startTorrentDownload(download);
-                            case "metalink" -> startMetaLinkDownload(download);
-                            case "file" -> startLocalFileDownload(download);
-                            default -> null;
                         };
                     }
                     default -> throw new IllegalArgumentException("Unsupported download type: " + download.getType());
@@ -638,6 +624,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     + "(aria2c did not become responsive within the startup timeout)");
         }
 
+        // Startup discovery/readiness probes deliberately use HTTP. Enabling
+        // WebSocket earlier makes the expected free-port probe try to open a
+        // socket before aria2c exists, producing a misleading connection-
+        // refused warning on every healthy launch.
+        aria2Client.setUseWebSocket(true);
+
         // Register notification listener
         aria2Client.addNotificationListener(new Aria2NotificationAdapter());
 
@@ -806,9 +798,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Finally stop the daemon attachment: polls daemon state with a
         // bounded wait (no fixed sleeps) and escalates to destroy on
         // timeout for ODM-owned children
+        boolean daemonStopped = false;
+        Exception daemonStopFailure = null;
         try {
-            aria2Client.stopAria2c();
+            daemonStopped = aria2Client.stopAria2c();
         } catch (Exception e) {
+            daemonStopFailure = e;
             LOGGER.warn("Error stopping aria2 process", e);
         }
 
@@ -816,6 +811,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         progressPoller.shutdown();
         if (!progressPoller.awaitTermination(5, TimeUnit.SECONDS)) {
             progressPoller.shutdownNow();
+        }
+
+        if (!daemonStopped) {
+            if (daemonStopFailure != null) {
+                throw daemonStopFailure;
+            }
+            throw new IOException("ODM-owned aria2 RPC daemon is still running after shutdown escalation");
         }
 
         LOGGER.info("aria2 download handler shut down successfully");
@@ -1277,15 +1279,15 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
-     * Starts an HTTP or FTP download using aria2.
+     * Starts an HTTP, HTTPS, FTP, or SFTP URI using aria2's addUri RPC.
      *
      * @param download The download to start
      * @return the aria2 GIDs of the download (single element)
      * @throws IOException if an I/O error occurs
      * @throws Aria2RpcException if an error occurs in the aria2 RPC call
      */
-    private List<String> startHttpDownload(Download download) throws IOException, Aria2RpcException {
-        LOGGER.info("Starting HTTP download " + download.getId());
+    private List<String> startUriDownload(Download download) throws IOException, Aria2RpcException {
+        LOGGER.info("Starting " + download.getProtocol() + " download " + download.getId());
         Map<String, Object> options = new HashMap<>();
         options.put("dir", download.getDestination().toString());
         if (download.getRequestedFileName() != null) {
@@ -1428,32 +1430,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Start download with aria2
         String gid = aria2Client.addUriRpc(download.getUri().toString(), options);
         return List.of(gid);
-    }
-
-    /**
-     * Routes a local file:// URI to the right aria2 entry point by extension:
-     * .torrent goes to addTorrent, .metalink/.meta4 to addMetalink. Anything
-     * else is not a downloadable local file and yields no GID.
-     *
-     * @param download The download to start
-     * @return the aria2 GIDs, or null if the file type is unsupported
-     * @throws IOException if an I/O error occurs
-     * @throws Aria2RpcException if an error occurs in the aria2 RPC call
-     */
-    private List<String> startLocalFileDownload(Download download) throws IOException, Aria2RpcException {
-        String path = download.getUri().getPath();
-        if (path == null) {
-            return null;
-        }
-        String lower = path.toLowerCase();
-        if (lower.endsWith(".torrent")) {
-            return startTorrentDownload(download);
-        }
-        if (lower.endsWith(".metalink") || lower.endsWith(".meta4")) {
-            return startMetaLinkDownload(download);
-        }
-        LOGGER.warn("Unsupported local descriptor type for aria2 download");
-        return null;
     }
 
     /**
@@ -1613,16 +1589,45 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @return list of peer detail maps; empty when unavailable or not BT
      */
     public List<Map<String, Object>> getDownloadPeers(Download download) {
+        if (!supportsPeerDetails(download)) {
+            return List.of();
+        }
         String gid = download.getGid();
         if (gid == null) {
             return List.of();
         }
         try {
             return aria2Client.getPeers(gid);
+        } catch (Aria2RpcException e) {
+            if (!isNoPeerDataResponse(e)) {
+                LOGGER.warn("Failed to get peers for gid " + gid, e);
+                return List.of();
+            }
+            // A valid torrent can temporarily have no peer data (metadata is
+            // still resolving, it is stopped, or its result was retired).
+            // That is an empty UI state, not an application warning.
+            LOGGER.debug("No peer data available for gid " + gid + ": " + e.getMessage());
+            return List.of();
         } catch (Exception e) {
             LOGGER.warn("Failed to get peers for gid " + gid, e);
             return List.of();
         }
+    }
+
+    /**
+     * Whether aria2 can meaningfully answer {@code aria2.getPeers} for this
+     * download. The consolidated ARIA2 type also represents ordinary HTTP and
+     * FTP downloads, for which getPeers always returns an RPC error.
+     */
+    static boolean supportsPeerDetails(Download download) {
+        Download.Protocol protocol = download != null ? download.getProtocol() : null;
+        return protocol != null && protocol.supportsPeerDetails();
+    }
+
+    static boolean isNoPeerDataResponse(Aria2RpcException error) {
+        return error != null && error.getMessage() != null
+                && error.getMessage().toLowerCase(java.util.Locale.ROOT)
+                        .contains("no peer data is available");
     }
 
     /**

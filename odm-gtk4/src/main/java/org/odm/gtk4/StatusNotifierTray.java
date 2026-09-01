@@ -36,6 +36,7 @@ public class StatusNotifierTray {
     private final Arena callbackArena;
     private int registrationId = -1;
     private boolean registeredWithWatcher = false;
+    private boolean unregisterStarted;
 
     public interface TrayHandlers {
 
@@ -145,7 +146,11 @@ public class StatusNotifierTray {
                 && registrationId > 0 && registeredWithWatcher;
     }
 
-    public void unregister() {
+    public synchronized void unregister() {
+        if (unregisterStarted) {
+            return;
+        }
+        unregisterStarted = true;
         if (connection != null && registrationId >= 0) {
             try {
                 connection.unregisterObject(registrationId);
@@ -157,14 +162,30 @@ public class StatusNotifierTray {
             registrationId = -1;
         }
         // The tray owns a dedicated session-bus connection; leaving it open
-        // leaks a DBus connection per window/tray lifecycle
-        if (connection != null) {
+        // leaks a DBus connection per window/tray lifecycle. Close it
+        // asynchronously on the GLib context that owns the callback sources:
+        // closeSync can block application exit, while closing the callback
+        // arena from a worker can race g_main_context_iteration and crash.
+        if (connection != null && !connection.isClosed()) {
             try {
-                connection.closeSync(null);
+                connection.close(null, result -> {
+                    try {
+                        connection.closeFinish(result);
+                    } catch (Exception e) {
+                        LOGGER.warn("Error closing tray DBus connection", e);
+                    } finally {
+                        closeCallbackArena();
+                    }
+                });
+                return;
             } catch (Exception e) {
-                LOGGER.warn("Error closing tray DBus connection", e);
+                LOGGER.warn("Error starting tray DBus connection close", e);
             }
         }
+        closeCallbackArena();
+    }
+
+    private void closeCallbackArena() {
         if (callbackArena.scope().isAlive()) {
             callbackArena.close();
         }
