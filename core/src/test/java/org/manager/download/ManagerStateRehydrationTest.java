@@ -99,7 +99,8 @@ class ManagerStateRehydrationTest {
     void startupRehydratesAndAutoResumesFlaggedDownload() throws Exception {
         Path xdg = tempDir.resolve("xdg-home");
         Files.createDirectories(xdg.resolve("odm"));
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString())
+                .and("XDG_STATE_HOME", xdg.toString()).execute(() -> {
             Download resumable = new Download(new URI("http://example.test/resumable.bin"));
             resumable.setType(Download.Type.ARIA2);
             resumable.setName("resumable.bin");

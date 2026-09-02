@@ -105,7 +105,8 @@ class ManagerShutdownPersistenceTest {
     @DisplayName("Graceful shutdown persists exactly the pre-pause active downloads as resumable")
     void shutdownPersistsPrePauseActiveSet() throws Exception {
         Path xdg = tempDir.resolve("xdg-home");
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString())
+                .and("XDG_STATE_HOME", xdg.toString()).execute(() -> {
             DownloadManagerImpl manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
             FakeHandler handler = new FakeHandler();
             DownloadHandlerFactory factory = DownloadManagerFactory.getContainer()

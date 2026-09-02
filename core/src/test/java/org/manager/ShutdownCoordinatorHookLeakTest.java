@@ -41,7 +41,8 @@ class ShutdownCoordinatorHookLeakTest {
         int baseline = ShutdownCoordinator.liveJvmHookCount();
 
         Path xdg = tempDir.resolve("xdg-home");
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString())
+                .and("XDG_STATE_HOME", xdg.toString()).execute(() -> {
             for (int i = 0; i < 2; i++) {
                 org.manager.download.DownloadManager manager =
                         org.manager.download.DownloadManagerFactory.createDefaultManager();

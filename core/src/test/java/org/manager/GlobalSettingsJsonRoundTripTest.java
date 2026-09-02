@@ -142,6 +142,20 @@ class GlobalSettingsJsonRoundTripTest {
                 "null proxy list path must not resurrect the stale key");
     }
 
+    @Test
+    @DisplayName("ODM auto save migrates the legacy aria2 preference lazily")
+    void odmAutoSaveReadsLegacyThenUsesNewKey() {
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty("aria2.autoSave", "false");
+        assertFalse(settings.isOdmAutoSaveEnabled());
+
+        settings.setOdmAutoSaveEnabled(true);
+        assertTrue(settings.isOdmAutoSaveEnabled());
+        assertEquals("true", settings.getProperty("odm.autoSave", null));
+        assertEquals("false", settings.getProperty("aria2.autoSave", null),
+                "migration must not destructively rewrite an existing settings file");
+    }
+
     private static Map<String, String> sorted(Map<String, String> map) {
         return new TreeMap<>(map);
     }

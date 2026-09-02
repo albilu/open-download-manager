@@ -182,8 +182,22 @@ class AntivirusCheckActionTest {
         assertEquals(Severity.HIGH, custom.getSeverity());
 
         AntivirusCheckAction clamav = new AntivirusCheckAction(AntivirusCheckAction.AntivirusType.CLAMAV, 0);
+        assertEquals("clamscan", clamav.getExecutablePath());
         assertTrue(clamav.getDescription().contains("ClamAV"));
         assertFalse(clamav.getDescription().contains("timeout"), "timeout 0 means none, so it is not advertised");
+    }
+
+    @Test
+    @DisplayName("built-in scanners execute through their discovered path")
+    void builtInScannerUsesDiscoveredPath() throws Exception {
+        Path file = Files.writeString(tempDir.resolve("sample.txt"), "hello");
+        Path scanner = scannerScript("#!/bin/sh\necho clean\nexit 0\n");
+        AntivirusCheckAction action = new AntivirusCheckAction(
+                AntivirusCheckAction.AntivirusType.CLAMAV, scanner.toString(), 30);
+
+        assertEquals(scanner.toString(), action.getExecutablePath());
+        assertTrue(action.execute(completedDownload(file)));
+        assertEquals("clean", action.getScanResult().trim());
     }
 
     @Test

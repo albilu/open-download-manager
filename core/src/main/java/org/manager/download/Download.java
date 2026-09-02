@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.manager.schedule.ScheduleSettings;
+import org.manager.download.action.AfterCompletionAction;
+import org.manager.download.action.CompletionActionResult;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -176,6 +178,8 @@ public class Download {
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
     private volatile String expectedChecksum; // detected expected hash in hex
     private volatile ScheduleSettings scheduleSettings;
+    /** Persisted execution history shown in the download's Details tab. */
+    private final List<CompletionActionResult> completionActionResults;
     private volatile long attemptGeneration; // per-start operation token, never persisted
 
     /**
@@ -197,6 +201,7 @@ public class Download {
         this.id = id;
         this.mirrors = new ArrayList<>();
         this.outputPaths = new ArrayList<>();
+        this.completionActionResults = new ArrayList<>();
         this.status = Status.CREATED;
         this.createdAt = createdAt;
 
@@ -860,6 +865,85 @@ public class Download {
     public void setScheduleSettings(ScheduleSettings scheduleSettings) {
         synchronized (lock) {
             this.scheduleSettings = scheduleSettings != null ? scheduleSettings.copy() : null;
+        }
+    }
+
+    /** Returns an immutable snapshot of recorded completion-action executions. */
+    public List<CompletionActionResult> getCompletionActionResults() {
+        synchronized (lock) {
+            return List.copyOf(completionActionResults);
+        }
+    }
+
+    /** Restores completion-action history from persisted state. */
+    public void setCompletionActionResults(List<CompletionActionResult> results) {
+        synchronized (lock) {
+            completionActionResults.clear();
+            if (results != null) {
+                completionActionResults.addAll(results);
+            }
+        }
+    }
+
+    /** Starts and records one completion action, returning its execution id. */
+    public String beginCompletionAction(AfterCompletionAction action) {
+        CompletionActionResult result = CompletionActionResult.running(action);
+        synchronized (lock) {
+            completionActionResults.add(result);
+        }
+        return result.id();
+    }
+
+    /** Atomically replaces a running action result with its terminal outcome. */
+    public boolean finishCompletionAction(String resultId,
+            CompletionActionResult.Status status, String message) {
+        synchronized (lock) {
+            for (int i = 0; i < completionActionResults.size(); i++) {
+                CompletionActionResult current = completionActionResults.get(i);
+                if (current.id().equals(resultId) && current.isRunning()) {
+                    completionActionResults.set(i, current.finished(status, message));
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /** Marks actions left running by an earlier process as interrupted. */
+    public boolean interruptRunningCompletionActions(String message) {
+        boolean changed = false;
+        synchronized (lock) {
+            for (int i = 0; i < completionActionResults.size(); i++) {
+                CompletionActionResult current = completionActionResults.get(i);
+                if (current.isRunning()) {
+                    completionActionResults.set(i, current.finished(
+                            CompletionActionResult.Status.INTERRUPTED, message));
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
+    /** Whether at least one completion action is currently executing. */
+    @JsonIgnore
+    public boolean hasRunningCompletionActions() {
+        synchronized (lock) {
+            return completionActionResults.stream().anyMatch(CompletionActionResult::isRunning);
+        }
+    }
+
+    /**
+     * Whether a running completion action represents file post-processing
+     * that should animate the completed row. Notifications and global power
+     * actions still appear in Details, but do not replace 100% with a pulse.
+     */
+    @JsonIgnore
+    public boolean hasRunningProgressCompletionActions() {
+        synchronized (lock) {
+            return completionActionResults.stream()
+                    .anyMatch(result -> result.isRunning()
+                            && result.actionType().contributesToFinalizingProgress());
         }
     }
 

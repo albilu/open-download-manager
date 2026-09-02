@@ -2,7 +2,7 @@ package org.manager.download.action;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -29,7 +29,11 @@ public class AfterCompletionActionManager {
     private final ExecutorService executorService;
     private final java.util.Set<String> executedDownloads =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private volatile AfterCompletionAction globalAction;
+    /** Snapshot of the actions selected in the application completion menu. */
+    private volatile List<AfterCompletionAction> configuredActions = List.of();
+    /** Ensures power actions execute once for each active-to-idle cycle. */
+    private final java.util.concurrent.atomic.AtomicBoolean globalActionsExecuted =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
     private final java.util.concurrent.atomic.AtomicBoolean shutdown =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -79,7 +83,19 @@ public class AfterCompletionActionManager {
     }
 
     public void setGlobalAction(AfterCompletionAction action) {
-        this.globalAction = action;
+        setGlobalActions(action == null ? List.of() : List.of(action));
+    }
+
+    /** Replaces the settings-backed completion-action policy atomically. */
+    public void setGlobalActions(List<AfterCompletionAction> actions) {
+        this.configuredActions = sortedCopy(actions);
+        // A changed policy should be eligible for the next completed batch.
+        globalActionsExecuted.set(false);
+    }
+
+    /** Marks the beginning/resumption of work, rearming global power actions. */
+    public void markDownloadActivity() {
+        globalActionsExecuted.set(false);
     }
 
     /**
@@ -123,11 +139,10 @@ public class AfterCompletionActionManager {
     }
 
     /**
-     * Execute all actions for a download that has completed. Actions run
-     * concurrently (one task each, joined with allOf) so independent actions
-     * such as notification, antivirus scan, and file moves do not serialize
-     * behind the slowest one. onAllActionsComplete fires once, after every
-     * action has settled.
+     * Executes per-download actions in explicit priority order. Settings-backed
+     * power actions are deliberately excluded; they are run by
+     * {@link #executeGlobalActions(Download)} only after the manager establishes
+     * that every download is terminal.
      *
      * @param download The completed download
      * @return CompletableFuture that completes when all actions are done
@@ -142,49 +157,114 @@ public class AfterCompletionActionManager {
         List<AfterCompletionAction> registered = downloadActions.remove(downloadId);
         List<AfterCompletionAction> actions = registered != null
                 ? new ArrayList<>(registered) : new ArrayList<>();
-        AfterCompletionAction currentGlobal = globalAction;
-        if (currentGlobal != null && !actions.contains(currentGlobal)) {
-            actions.add(currentGlobal);
+        for (AfterCompletionAction configured : configuredActions) {
+            if (!configured.isGlobal() && !actions.contains(configured)) {
+                actions.add(configured);
+            }
         }
+        actions.removeIf(AfterCompletionAction::isGlobal);
+        return executeOrdered(download, actions);
+    }
+
+    /**
+     * Executes configured global actions once for the current idle cycle.
+     * The caller owns the all-downloads-finished check; this method owns the
+     * race-proof once-only claim.
+     */
+    public CompletableFuture<Void> executeGlobalActions(Download contextDownload) {
+        List<AfterCompletionAction> actions = configuredActions.stream()
+                .filter(AfterCompletionAction::isGlobal)
+                .toList();
+        if (actions.isEmpty()
+                || !globalActionsExecuted.compareAndSet(false, true)) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return executeOrdered(contextDownload, actions);
+    }
+
+    private CompletableFuture<Void> executeOrdered(Download download,
+            List<AfterCompletionAction> requestedActions) {
+        List<AfterCompletionAction> actions = sortedCopy(requestedActions);
         if (actions.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
 
-        List<AfterCompletionAction> successfulActions = Collections.synchronizedList(new ArrayList<>());
-        List<AfterCompletionAction> failedActions = Collections.synchronizedList(new ArrayList<>());
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        List<AfterCompletionAction> successfulActions = new ArrayList<>();
+        List<AfterCompletionAction> failedActions = new ArrayList<>();
+        CompletableFuture<Void> sequence = CompletableFuture.completedFuture(null);
 
         for (AfterCompletionAction action : actions) {
-            futures.add(submitAsync(() -> {
-                // Action implementations hold invocation-specific mutable
-                // fields. The same global instance can be selected by many
-                // completions, so serialize only that instance while still
-                // allowing distinct actions to execute concurrently.
-                synchronized (action) {
-                    try {
-                        notifyActionStart(download, action);
-                        boolean success = action.execute(download);
-
-                        if (success) {
-                            successfulActions.add(action);
-                            notifyActionComplete(download, action);
-                        } else {
-                            failedActions.add(action);
-                            notifyActionError(download, action, "Action returned false",
-                                    action.getSeverity());
-                        }
-                    } catch (Exception e) {
-                        failedActions.add(action);
-                        LOGGER.warn("Error executing after-completion action: "
-                                + action.getDescription(), e);
-                        notifyActionError(download, action, e.getMessage(), action.getSeverity());
-                    }
-                }
-            }));
+            sequence = sequence.thenCompose(ignored ->
+                    executeOne(download, action, successfulActions, failedActions));
         }
 
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenRun(() -> notifyAllActionsComplete(download, successfulActions, failedActions));
+        return sequence.thenRun(() ->
+                notifyAllActionsComplete(download, successfulActions, failedActions));
+    }
+
+    private CompletableFuture<Void> executeOne(Download download,
+            AfterCompletionAction action,
+            List<AfterCompletionAction> successfulActions,
+            List<AfterCompletionAction> failedActions) {
+        String resultId = download.beginCompletionAction(action);
+        CompletableFuture<Void> future = submitAsync(() -> {
+            // A configured instance is shared across downloads. Synchronizing
+            // the instance protects invocation-specific fields while the
+            // ordered chain protects priority within one download.
+            synchronized (action) {
+                try {
+                    notifyActionStart(download, action);
+                    boolean success = action.execute(download);
+
+                    if (success) {
+                        successfulActions.add(action);
+                        download.finishCompletionAction(resultId,
+                                CompletionActionResult.Status.SUCCEEDED,
+                                action.getResultMessage());
+                        notifyActionComplete(download, action);
+                    } else {
+                        failedActions.add(action);
+                        String failureMessage = action.getFailureMessage();
+                        download.finishCompletionAction(resultId,
+                                CompletionActionResult.Status.FAILED, failureMessage);
+                        notifyActionError(download, action, failureMessage,
+                                action.getSeverity());
+                    }
+                } catch (Exception e) {
+                    failedActions.add(action);
+                    LOGGER.warn("Error executing after-completion action: "
+                            + action.getDescription(), e);
+                    String failureMessage = e.getMessage() == null
+                            ? e.getClass().getSimpleName() : e.getMessage();
+                    download.finishCompletionAction(resultId,
+                            CompletionActionResult.Status.FAILED, failureMessage);
+                    notifyActionError(download, action, failureMessage, action.getSeverity());
+                }
+            }
+        });
+        return future.whenComplete((ignored, error) -> {
+            if (error == null) {
+                return;
+            }
+            failedActions.add(action);
+            String failureMessage = "Could not start action: "
+                    + (error.getMessage() == null
+                            ? error.getClass().getSimpleName() : error.getMessage());
+            download.finishCompletionAction(resultId,
+                    CompletionActionResult.Status.FAILED, failureMessage);
+            notifyActionError(download, action, failureMessage, action.getSeverity());
+        });
+    }
+
+    private static List<AfterCompletionAction> sortedCopy(
+            List<AfterCompletionAction> actions) {
+        if (actions == null || actions.isEmpty()) {
+            return List.of();
+        }
+        return actions.stream()
+                .filter(java.util.Objects::nonNull)
+                .sorted(Comparator.comparingInt(AfterCompletionAction::getPriority))
+                .toList();
     }
 
     /**

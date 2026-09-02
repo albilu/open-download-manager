@@ -109,7 +109,8 @@ class WindowSmokeTest {
         assertFalse(enabledContextItem.hasCssClass("odm-context-menu-item-hover"));
         // stores
         for (String id : new String[]{"status_store", "category_store", "download_store",
-                "files_store", "global_progress_store", "peers_store", "trackers_store"}) {
+                "files_store", "completion_details_store", "global_progress_store",
+                "peers_store", "trackers_store"}) {
             Widgets.require(builder, id, ListStore.class);
         }
         // side panel treeviews + columns
@@ -208,7 +209,10 @@ class WindowSmokeTest {
                     id, TreeViewColumn.class).getSortColumnId(),
                     id + " must expose a typed sort key");
         }
-        assertEquals(27, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
+        assertEquals(28, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
+        assertEquals(5, Widgets.require(builder,
+                "completion_details_store", ListStore.class).getNColumns());
+        Widgets.require(builder, "completion_details_view", TreeView.class);
         TreeViewColumn statusIconColumn = Widgets.require(builder,
                 "status_icon_column", TreeViewColumn.class);
         TreeViewColumn typeIconColumn = Widgets.require(builder,
@@ -274,8 +278,12 @@ class WindowSmokeTest {
         Widgets.require(builder, "peers_view", TreeView.class);
         Widgets.require(builder, "files_view", TreeView.class);
         ListStore detailFilesStore = Widgets.require(builder, "files_store", ListStore.class);
-        assertEquals(9, detailFilesStore.getNColumns(),
-                "detail files need raw size and progress sort keys");
+        assertEquals(10, detailFilesStore.getNColumns(),
+                "detail files need raw sort keys and a hidden full path");
+        TreeViewColumn filesNameColumn = Widgets.require(builder,
+                "files_name_column", TreeViewColumn.class);
+        assertEquals(420, filesNameColumn.getMaxWidth(),
+                "the detail file name column must not grow without bound");
         String[] detailFileColumnIds = {"files_selected_column", "files_name_column",
                 "files_size_column", "files_progress_column", "files_priority_column"};
         int[] detailFileSortIds = {0, 1, 7, 8, 4};
@@ -350,6 +358,8 @@ class WindowSmokeTest {
         }
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "antivirus_type_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "antivirus_detection_label", Label.class);
         org.gnome.gtk.Switch settingsTor = Widgets.require(builder,
                 "tor_switch", org.gnome.gtk.Switch.class);
         assertSame(Widgets.require(builder, "tor_settings_grid", Grid.class),
@@ -372,6 +382,9 @@ class WindowSmokeTest {
         assertTrue(Widgets.require(builder, "move_to_trash_check", CheckButton.class)
                 .getMarginStart() >= 18,
                 "processed-descriptor Trash must read as a child of folder monitoring");
+        assertSame(Widgets.require(builder, "general_options_grid", Grid.class),
+                Widgets.require(builder, "enable_auto_save_check", CheckButton.class).getParent(),
+                "ODM auto save belongs to General rather than the Aria2 engine tab");
         assertNull(builder.getObject("start_automatically_check2"),
                 "the global automatic-start policy must not be duplicated on Network");
         assertNull(builder.getObject("move_torrent_check2"),
@@ -605,9 +618,12 @@ class WindowSmokeTest {
                 "Elapsed", "Left", "Down Speed", "Up Speed", "Retry", "Start Date",
                 "End Date", "Type"), MainWindow.downloadColumnLabels());
         assertEquals(5, window.mainMenuTopLevelCount());
-        assertEquals("s", window.menuActionParameterType("completion"));
+        for (String key : List.of("notify", "antivirus", "subtitles",
+                "suspend", "shutdown", "custom")) {
+            assertNull(window.menuActionParameterType("completion-" + key));
+            assertTrue(window.menuActionEnabled("completion-" + key));
+        }
         assertEquals("s", window.menuActionParameterType("schedule"));
-        assertTrue(window.menuActionEnabled("completion"));
         assertTrue(window.menuActionEnabled("schedule"));
         assertFalse(window.menuActionEnabled("open-file"));
         assertFalse(window.menuActionEnabled("open-folder"));
@@ -680,6 +696,63 @@ class WindowSmokeTest {
         presenter.refresh(List.of(small, large));
         assertSame(small, presenter.rowAt(0),
                 "an in-place update may reorder the GTK model without corrupting identity");
+    }
+
+    @Test
+    @DisplayName("running completion actions pulse a completed row at 100 percent")
+    void completionActionUsesIndeterminateRowProgress() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ListStore downloadStore = Widgets.require(builder, "download_store", ListStore.class);
+        DownloadListPresenter presenter = new DownloadListPresenter(
+                Widgets.require(builder, "status_store", ListStore.class),
+                Widgets.require(builder, "category_store", ListStore.class),
+                downloadStore,
+                Widgets.require(builder, "global_progress_store", ListStore.class),
+                Widgets.require(builder, "status_treeview", TreeView.class),
+                Widgets.require(builder, "category_treeview", TreeView.class), () -> { });
+        org.manager.download.Download download = new org.manager.download.Download(
+                URI.create("https://example.com/finished.bin"));
+        download.setSize(100);
+        download.setDownloaded(100);
+        download.setStatus(org.manager.download.Download.Status.COMPLETED);
+        var running = new org.manager.download.action.CompletionActionResult(
+                "running-action",
+                org.manager.download.action.AfterCompletionAction.ActionType.ANTIVIRUS_CHECK,
+                "Antivirus check",
+                org.manager.download.action.CompletionActionResult.Status.RUNNING,
+                "Running…",
+                org.manager.download.action.AfterCompletionAction.Severity.HIGH,
+                java.time.Instant.now(), null);
+        download.setCompletionActionResults(List.of(running));
+
+        presenter.refresh(List.of(download));
+        TreeIter iter = new TreeIter();
+        assertTrue(downloadStore.getIterFirst(iter));
+        assertEquals(100, ListStoreCells.getInt(downloadStore, iter, 12));
+        assertEquals("100% · Finalizing…", ListStoreCells.getString(downloadStore, iter, 14));
+        presenter.pulseCompletionRows();
+        assertTrue(ListStoreCells.getInt(downloadStore, iter, 27) > 0);
+
+        download.finishCompletionAction("running-action",
+                org.manager.download.action.CompletionActionResult.Status.SUCCEEDED,
+                "No threats detected");
+        presenter.refresh(List.of(download));
+        assertEquals(-1, ListStoreCells.getInt(downloadStore, iter, 27));
+        assertEquals("100.00%", ListStoreCells.getString(downloadStore, iter, 14));
+
+        var sound = new org.manager.download.action.CompletionActionResult(
+                "running-sound",
+                org.manager.download.action.AfterCompletionAction.ActionType.PLAY_SOUND,
+                "Play notification",
+                org.manager.download.action.CompletionActionResult.Status.RUNNING,
+                "Running…",
+                org.manager.download.action.AfterCompletionAction.Severity.LOW,
+                java.time.Instant.now(), null);
+        download.setCompletionActionResults(List.of(sound));
+        presenter.refresh(List.of(download));
+        assertEquals(-1, ListStoreCells.getInt(downloadStore, iter, 27));
+        assertEquals("100.00%", ListStoreCells.getString(downloadStore, iter, 14),
+                "sound and power actions must not show file-finalization progress");
     }
 
     @Test

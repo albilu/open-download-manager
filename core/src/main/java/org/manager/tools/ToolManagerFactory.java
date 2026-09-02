@@ -9,6 +9,7 @@ import java.util.concurrent.ExecutorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.aria2.Aria2ToolManager;
+import org.antivirus.AntivirusToolManager;
 import org.curl.CurlToolManager;
 import org.httrack.HttrackToolManager;
 import org.manager.GlobalSettings;
@@ -113,6 +114,26 @@ public class ToolManagerFactory {
      */
     public TorToolManager getTorManager() {
         return (TorToolManager) managers.get(TorToolManager.TOOL_ID);
+    }
+
+    /** Gets every supported antivirus manager in stable UI order. */
+    public java.util.List<AntivirusToolManager> getAntivirusManagers() {
+        return java.util.Arrays.stream(AntivirusToolManager.Scanner.values())
+                .map(scanner -> (AntivirusToolManager) managers.get(scanner.toolId()))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    /** Gets one antivirus manager by scanner settings key. */
+    public AntivirusToolManager getAntivirusManager(String scannerKey) {
+        if (scannerKey == null) {
+            return null;
+        }
+        return getAntivirusManagers().stream()
+                .filter(manager -> manager.getScanner().key()
+                        .equalsIgnoreCase(scannerKey))
+                .findFirst()
+                .orElse(null);
     }
 
     /**
@@ -302,6 +323,9 @@ public class ToolManagerFactory {
         managers.put(HttrackToolManager.TOOL_ID, new HttrackToolManager(settings, executor));
         managers.put(ProxychainsToolManager.TOOL_ID, new ProxychainsToolManager(settings, executor));
         managers.put(TorToolManager.TOOL_ID, new TorToolManager(settings, executor));
+        for (AntivirusToolManager.Scanner scanner : AntivirusToolManager.Scanner.values()) {
+            managers.put(scanner.toolId(), new AntivirusToolManager(scanner, settings, executor));
+        }
 
         LOGGER.info("Initialized " + managers.size() + " tool managers");
     }

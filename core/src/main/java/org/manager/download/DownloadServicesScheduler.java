@@ -95,7 +95,7 @@ class DownloadServicesScheduler {
      */
     void startStateSnapshotJob() {
         stopStateSnapshotJob();
-        if (!settings.get().getBooleanProperty("aria2.autoSave", true)) {
+        if (!settings.get().isOdmAutoSaveEnabled()) {
             LOGGER.info("Periodic state snapshots disabled by settings");
             return;
         }

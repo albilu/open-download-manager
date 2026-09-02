@@ -59,6 +59,7 @@ class ManagerLiveSettingsApplicationTest {
             });
 
             SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdgData.toString())
+                    .and("XDG_STATE_HOME", xdgData.toString())
                     .and("XDG_CONFIG_HOME", xdgConfig.toString())
                     .execute(() -> {
                         ApplicationContext.initialize();

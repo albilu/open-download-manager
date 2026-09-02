@@ -627,13 +627,6 @@ public class Aria2Client {
 
         boolean wasUsingWebSocket = useWebSocket && wsClient != null;
 
-        // Save session before stopping if possible
-        try {
-            saveSession();
-        } catch (Exception e) {
-            // Ignore if we can't save the session
-        }
-
         // Stop the current aria2c process
         boolean stopSuccess = stopAria2c();
         if (!stopSuccess) {

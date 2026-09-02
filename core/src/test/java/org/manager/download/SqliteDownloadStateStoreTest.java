@@ -22,6 +22,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.schedule.ScheduleSettings;
+import org.manager.download.action.AfterCompletionAction;
+import org.manager.download.action.CompletionActionResult;
 
 /**
  * Tests for the SQLite-backed download state store that replaces
@@ -71,6 +73,16 @@ class SqliteDownloadStateStoreTest {
         original.setRequestedFileName("custom-file.iso");
         original.recordOutputPath(Path.of("/tmp", "odm-downloads", "actual-file.iso"));
         original.recordOutputPath(Path.of("/tmp", "odm-downloads", "actual-file.iso.sha256"));
+        CompletionActionResult completionResult = new CompletionActionResult(
+                "action-result-1",
+                AfterCompletionAction.ActionType.ANTIVIRUS_CHECK,
+                "Antivirus check using ClamAV",
+                CompletionActionResult.Status.SUCCEEDED,
+                "No threats detected",
+                AfterCompletionAction.Severity.HIGH,
+                Instant.parse("2026-08-19T11:00:01Z"),
+                Instant.parse("2026-08-19T11:00:09Z"));
+        original.setCompletionActionResults(List.of(completionResult));
 
         org.aria2.Aria2Settings settings = (org.aria2.Aria2Settings) original.getSettings();
         settings.setOption("header", "Cookie: session=1");
@@ -104,6 +116,8 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getRequestedFileName(), restored.getRequestedFileName());
             assertEquals(original.getOutputPaths(), restored.getOutputPaths());
             assertEquals(original.getOutputPaths().get(0), restored.getPrimaryOutputPath());
+            assertEquals(List.of(completionResult), restored.getCompletionActionResults());
+            assertFalse(restored.hasRunningCompletionActions());
             assertEquals(12, restored.getConnections());
 
             var restoredSettings = assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());

@@ -22,6 +22,7 @@ import org.gnome.gtk.ToggleButton;
 import org.gnome.gtk.Window;
 import org.manager.GlobalSettings;
 import org.manager.download.DownloadManager;
+import org.manager.tools.ToolManagerFactory;
 
 /**
  * Settings dialog — 1:1 GTK4 port of settings.glade (7 tabs: General, Network,
@@ -38,6 +39,9 @@ public class SettingsDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SettingsDialog.class);
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
+
+    record AntivirusChoice(String key, String label) {
+    }
 
     private static final String[] DAY_LABELS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
     private static final String SCHEDULER_CSS = """
@@ -80,10 +84,15 @@ public class SettingsDialog {
     private final GtkBuilder builder;
     private final Label statusLabel;
     private final Label availableSpaceLabel;
+    private final Label antivirusDetectionLabel;
     private final PathChooserButton defaultDirectoryChooser;
     private final PathChooserButton monitoredDirectoryChooser;
     private final java.util.concurrent.atomic.AtomicBoolean saveInProgress =
             new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicBoolean closed =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private java.util.List<AntivirusChoice> antivirusChoices = java.util.List.of();
+    private String requestedAntivirusKey = "clamav";
 
     private record SettingsApplication(GlobalSettings settings,
             boolean previousStartAtLogin, boolean requestedStartAtLogin,
@@ -112,6 +121,8 @@ public class SettingsDialog {
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
         this.statusLabel = Widgets.require(builder, "settings_status_label", Label.class);
         this.availableSpaceLabel = Widgets.require(builder, "available_space_label", Label.class);
+        this.antivirusDetectionLabel = Widgets.require(
+                builder, "antivirus_detection_label", Label.class);
 
         AccessibilitySupport.label(spin("max_concurrent_downloads_spin"),
                 "Maximum concurrent downloads");
@@ -126,6 +137,10 @@ public class SettingsDialog {
 
         initDropdown("proxy_type_combo", DialogOptions.PROXY_TYPES);
         initDropdown("file_allocation_combo", FILE_ALLOCATIONS);
+        initDropdown("antivirus_type_combo", new String[]{"Detecting installed scanners…"});
+        Widgets.require(builder, "antivirus_type_combo", DropDown.class).setSensitive(false);
+        AccessibilitySupport.label(Widgets.require(builder, "antivirus_type_combo", DropDown.class),
+                "Antivirus scanner used by completion actions");
 
         buildSchedulerGrid();
 
@@ -153,7 +168,13 @@ public class SettingsDialog {
                 e -> setText("subliminal_path_entry", e));
 
         load();
+        discoverAvailableAntiviruses();
         bindFolderMonitoringChildren();
+
+        dialog.onCloseRequest(() -> {
+            closed.set(true);
+            return false;
+        });
 
         Widgets.require(builder, "settings_cancel_button", Button.class).onClicked(dialog::close);
         Widgets.require(builder, "settings_reset_button", Button.class).onClicked(this::load);
@@ -357,6 +378,111 @@ public class SettingsDialog {
         Widgets.require(builder, id, DropDown.class).setModel(list);
     }
 
+    /**
+     * Discovers and performs each scanner's real basic validation away from
+     * the GTK thread. The custom-command option is always retained.
+     */
+    static java.util.concurrent.CompletableFuture<java.util.List<AntivirusChoice>>
+            discoverAvailableAntiviruses(ToolManagerFactory factory) {
+        if (factory == null) {
+            return java.util.concurrent.CompletableFuture.completedFuture(
+                    java.util.List.of(new AntivirusChoice("custom", "Custom command")));
+        }
+        java.util.List<java.util.concurrent.CompletableFuture<AntivirusChoice>> checks =
+                factory.getAntivirusManagers().stream()
+                        .map(manager -> manager.checkAvailabilityAsync().thenApply(available -> {
+                            if (!available) {
+                                return null;
+                            }
+                            try {
+                                manager.validateTool();
+                                String version = manager.getVersion();
+                                String label = manager.getScanner().label()
+                                        + (version == null || version.isBlank()
+                                                ? "" : " (" + version + ")");
+                                return new AntivirusChoice(
+                                        manager.getScanner().key(), label);
+                            } catch (org.manager.tools.ToolManager.ToolException e) {
+                                LOGGER.debug(manager.getScanner().label()
+                                        + " was found but failed validation", e);
+                                return null;
+                            }
+                        }).exceptionally(error -> {
+                            LOGGER.debug("Antivirus discovery failed for "
+                                    + manager.getScanner().label(), error);
+                            return null;
+                        }))
+                        .toList();
+        return java.util.concurrent.CompletableFuture
+                .allOf(checks.toArray(java.util.concurrent.CompletableFuture[]::new))
+                .thenApply(ignored -> {
+                    java.util.List<AntivirusChoice> choices = new java.util.ArrayList<>();
+                    checks.stream().map(java.util.concurrent.CompletableFuture::join)
+                            .filter(java.util.Objects::nonNull)
+                            .forEach(choices::add);
+                    choices.add(new AntivirusChoice("custom", "Custom command"));
+                    return java.util.List.copyOf(choices);
+                });
+    }
+
+    private void discoverAvailableAntiviruses() {
+        final ToolManagerFactory factory;
+        try {
+            factory = org.manager.ApplicationContext.getToolManagerFactory();
+        } catch (Exception e) {
+            LOGGER.warn("Could not access antivirus tool managers", e);
+            applyAntivirusChoices(java.util.List.of(
+                    new AntivirusChoice("custom", "Custom command")), true);
+            return;
+        }
+        discoverAvailableAntiviruses(factory).whenComplete((choices, error) ->
+                UiThread.marshal(() -> {
+                    if (closed.get()) {
+                        return;
+                    }
+                    if (error != null) {
+                        LOGGER.warn("Could not discover antivirus scanners", error);
+                        applyAntivirusChoices(java.util.List.of(
+                                new AntivirusChoice("custom", "Custom command")), true);
+                    } else {
+                        applyAntivirusChoices(choices, false);
+                    }
+                }));
+    }
+
+    private void applyAntivirusChoices(java.util.List<AntivirusChoice> choices,
+            boolean discoveryFailed) {
+        antivirusChoices = choices == null || choices.isEmpty()
+                ? java.util.List.of(new AntivirusChoice("custom", "Custom command"))
+                : java.util.List.copyOf(choices);
+        StringList model = new StringList(new String[0]);
+        antivirusChoices.forEach(choice -> model.append(choice.label()));
+        DropDown dropdown = Widgets.require(builder, "antivirus_type_combo", DropDown.class);
+        dropdown.setModel(model);
+        dropdown.setSensitive(true);
+
+        int requestedIndex = -1;
+        for (int i = 0; i < antivirusChoices.size(); i++) {
+            if (antivirusChoices.get(i).key().equals(requestedAntivirusKey)) {
+                requestedIndex = i;
+                break;
+            }
+        }
+        dropdown.setSelected(requestedIndex >= 0 ? requestedIndex : 0);
+        long validatedCount = antivirusChoices.stream()
+                .filter(choice -> !"custom".equals(choice.key())).count();
+        String message = discoveryFailed
+                ? "Scanner discovery failed; custom command remains available."
+                : validatedCount == 0
+                        ? "No supported antivirus scanner was found and validated."
+                        : "Validated " + validatedCount + " installed antivirus scanner"
+                                + (validatedCount == 1 ? "." : "s.");
+        if (requestedIndex < 0 && !"custom".equals(requestedAntivirusKey)) {
+            message += " The configured scanner is unavailable.";
+        }
+        antivirusDetectionLabel.setLabel(message);
+    }
+
     private void onPickFile(String buttonId, String title,
             java.util.function.Consumer<String> consumer) {
         Widgets.require(builder, buttonId, Button.class).onClicked(() -> {
@@ -460,7 +586,7 @@ public class SettingsDialog {
         int allocationIndex = java.util.Arrays.asList(FILE_ALLOCATIONS).indexOf(fileAllocation);
         Widgets.require(builder, "file_allocation_combo", DropDown.class)
                 .setSelected(Math.max(0, allocationIndex));
-        check("enable_auto_save_check").setActive(s.getBooleanProperty("aria2.autoSave", true));
+        check("enable_auto_save_check").setActive(s.isOdmAutoSaveEnabled());
         check("enable_seeding_check").setActive(s.getBooleanProperty("aria2.enableSeeding", false));
         entry("tracker_list_entry").setText(s.getProperty("tracker.list", ""));
         spin("tracker_refresh_spin").setValue(s.getIntProperty("tracker.refreshInterval", 0));
@@ -491,6 +617,11 @@ public class SettingsDialog {
         entry("axel_path_entry").setText(s.getProperty("tools.axelPath", ""));
         entry("subliminal_path_entry").setText(
                 s.getSubliminalPath() != null ? s.getSubliminalPath() : "");
+        requestedAntivirusKey = s.getProperty("antivirus.scanner", "clamav")
+                .toLowerCase(java.util.Locale.ROOT);
+        if (!antivirusChoices.isEmpty()) {
+            applyAntivirusChoices(antivirusChoices, false);
+        }
     }
 
     private void onApply(boolean closeAfterSave) {
@@ -609,7 +740,7 @@ public class SettingsDialog {
         if (allocationIndex >= 0 && allocationIndex < FILE_ALLOCATIONS.length) {
             s.setProperty("aria2.fileAllocation", FILE_ALLOCATIONS[(int) allocationIndex]);
         }
-        s.setProperty("aria2.autoSave", String.valueOf(check("enable_auto_save_check").getActive()));
+        s.setOdmAutoSaveEnabled(check("enable_auto_save_check").getActive());
         s.setProperty("aria2.enableSeeding", String.valueOf(check("enable_seeding_check").getActive()));
         s.setProperty("tracker.list", entry("tracker_list_entry").getText().trim());
         s.setProperty("tracker.refreshInterval",
@@ -652,6 +783,11 @@ public class SettingsDialog {
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());
         s.setSubliminalPath(entry("subliminal_path_entry").getText().trim());
+        long antivirusIndex = Widgets.require(builder, "antivirus_type_combo", DropDown.class)
+                .getSelected();
+        if (antivirusIndex >= 0 && antivirusIndex < antivirusChoices.size()) {
+            s.setProperty("antivirus.scanner", antivirusChoices.get((int) antivirusIndex).key());
+        }
 
         return new SettingsApplication(s, previousStartAtLogin,
                 check("startup_check").getActive(), effectiveSchedulingEnabled,

@@ -29,7 +29,8 @@ class ManagerScopedExecutorShutdownTest {
     @DisplayName("manager shutdown does not break later managers or factory services")
     void standaloneShutdownDoesNotPoisonSharedExecutors() throws Exception {
         Path xdg = tempDir.resolve("xdg-home");
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString())
+                .and("XDG_STATE_HOME", xdg.toString()).execute(() -> {
             DownloadManager first = DownloadManagerFactory.createDefaultManager();
             first.shutdown().get(60, TimeUnit.SECONDS);
 
@@ -49,7 +50,8 @@ class ManagerScopedExecutorShutdownTest {
         Path configHome = tempDir.resolve("config");
         Path dataHome = tempDir.resolve("data");
         SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString())
-                .and("XDG_DATA_HOME", dataHome.toString()).execute(() -> {
+                .and("XDG_DATA_HOME", dataHome.toString())
+                .and("XDG_STATE_HOME", dataHome.toString()).execute(() -> {
                     ExecutorServiceManager shared = ExecutorServiceManager.getInstance();
 
                     org.manager.ApplicationFactory factory = org.manager.ApplicationFactory.getInstance();

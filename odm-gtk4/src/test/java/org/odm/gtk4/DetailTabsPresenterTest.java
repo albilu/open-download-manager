@@ -23,4 +23,14 @@ class DetailTabsPresenterTest {
         assertEquals(50.0, DetailTabsPresenter.progressPercent(5, 10));
         assertEquals(0.0, DetailTabsPresenter.progressPercent(5, 0));
     }
+
+    @Test
+    void fileNameUsesOnlyTheFinalPathComponent() {
+        assertEquals("episode.mkv",
+                DetailTabsPresenter.fileName("series/season/episode.mkv"));
+        assertEquals("episode.mkv",
+                DetailTabsPresenter.fileName("series\\season\\episode.mkv"));
+        assertEquals("episode.mkv", DetailTabsPresenter.fileName("episode.mkv"));
+        assertEquals("—", DetailTabsPresenter.fileName(null));
+    }
 }

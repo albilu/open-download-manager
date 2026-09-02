@@ -31,7 +31,8 @@ class ApplicationFactoryResetRetryTest {
         Files.createDirectories(dataHome);
 
         SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString())
-                .and("XDG_DATA_HOME", dataHome.toString()).execute(() -> {
+                .and("XDG_DATA_HOME", dataHome.toString())
+                .and("XDG_STATE_HOME", dataHome.toString()).execute(() -> {
                     ApplicationFactory factory = ApplicationFactory.getInstance();
 
                     factory.initialize(tempDir.resolve("downloads"), 5, 100);

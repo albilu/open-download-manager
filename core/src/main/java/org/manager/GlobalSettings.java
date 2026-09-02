@@ -876,6 +876,23 @@ public class GlobalSettings {
         }
     }
 
+    /**
+     * Whether ODM periodically snapshots its download state. The legacy
+     * {@code aria2.autoSave} value is read only when the ODM-owned key has not
+     * been written yet, preserving existing user preferences during upgrade.
+     */
+    public boolean isOdmAutoSaveEnabled() {
+        String value = getProperty("odm.autoSave", null);
+        return value != null
+                ? Boolean.parseBoolean(value)
+                : getBooleanProperty("aria2.autoSave", true);
+    }
+
+    /** Sets the ODM state-snapshot preference under its engine-neutral key. */
+    public void setOdmAutoSaveEnabled(boolean enabled) {
+        setProperty("odm.autoSave", String.valueOf(enabled));
+    }
+
     // ------------------------------------------------------------------
     // Persistence
     // ------------------------------------------------------------------

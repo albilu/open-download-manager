@@ -21,7 +21,16 @@ public interface AfterCompletionActions {
      */
     void addAfterCompletionAction(Download download, AfterCompletionAction action);
 
-    /** Sets the one application-wide action included in every completion. */
+    /**
+     * Replaces the configured application-wide completion policy. Multiple
+     * actions are supported and execute in action-priority order.
+     */
+    default void setGlobalAfterCompletionActions(List<AfterCompletionAction> actions) {
+        setGlobalAfterCompletionAction(actions == null || actions.isEmpty()
+                ? null : actions.get(0));
+    }
+
+    /** Compatibility facade for callers configuring zero or one action. */
     void setGlobalAfterCompletionAction(AfterCompletionAction action);
 
     /**

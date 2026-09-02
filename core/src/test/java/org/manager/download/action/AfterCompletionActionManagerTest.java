@@ -117,6 +117,10 @@ class AfterCompletionActionManagerTest {
         assertEquals(2, testListener.getActionCompleteCount());
         assertEquals(0, testListener.getActionErrorCount());
         assertEquals(1, testListener.getAllActionsCompleteCount());
+        assertEquals(2, testDownload.getCompletionActionResults().size());
+        assertTrue(testDownload.getCompletionActionResults().stream()
+                .allMatch(result -> result.status() == CompletionActionResult.Status.SUCCEEDED));
+        assertFalse(testDownload.hasRunningCompletionActions());
     }
 
     @Test
@@ -145,6 +149,12 @@ class AfterCompletionActionManagerTest {
         assertEquals(1, testListener.getFailedActions().size());
         assertTrue(testListener.getSuccessfulActions().contains(successAction));
         assertTrue(testListener.getFailedActions().contains(failAction));
+        assertEquals(1, testDownload.getCompletionActionResults().stream()
+                .filter(result -> result.status() == CompletionActionResult.Status.SUCCEEDED)
+                .count());
+        assertEquals(1, testDownload.getCompletionActionResults().stream()
+                .filter(result -> result.status() == CompletionActionResult.Status.FAILED)
+                .count());
     }
 
     @Test
@@ -182,33 +192,73 @@ class AfterCompletionActionManagerTest {
     }
 
     @Test
-    @DisplayName("Should handle concurrent action execution")
-    void shouldHandleConcurrentActionExecution() throws Exception {
-        // Six rendezvous actions must run simultaneously on the bounded
-        // pool (bounded to at least 8 workers); the old count of 10 assumed
-        // an unbounded cached pool
-        int actionCount = 6;
-        CountDownLatch startLatch = new CountDownLatch(actionCount);
-        CountDownLatch finishLatch = new CountDownLatch(actionCount);
-
-        // Add multiple actions that will execute concurrently
-        for (int i = 0; i < actionCount; i++) {
-            TestAfterCompletionAction action = new TestAfterCompletionAction(
-                AfterCompletionAction.ActionType.PLAY_SOUND,
-                true,
-                startLatch,
-                finishLatch
-            );
-            actionManager.addAction(testDownload, action);
+    @DisplayName("Actions execute sequentially in ActionType priority order")
+    void actionsExecuteInPriorityOrder() throws Exception {
+        List<AfterCompletionAction.ActionType> executionOrder =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        for (AfterCompletionAction.ActionType type : List.of(
+                AfterCompletionAction.ActionType.EXECUTE_COMMAND,
+                AfterCompletionAction.ActionType.ANTIVIRUS_CHECK,
+                AfterCompletionAction.ActionType.PLAY_SOUND)) {
+            actionManager.addAction(testDownload, new TestAfterCompletionAction(type, true) {
+                @Override
+                public boolean execute(Download download) {
+                    executionOrder.add(getType());
+                    return super.execute(download);
+                }
+            });
         }
 
-        CompletableFuture<Void> future = actionManager.executeActions(testDownload);
-        future.get(10, TimeUnit.SECONDS);
+        actionManager.executeActions(testDownload).get(10, TimeUnit.SECONDS);
 
-        assertEquals(actionCount, testListener.getActionStartCount());
-        assertEquals(actionCount, testListener.getActionCompleteCount());
+        assertEquals(List.of(
+                AfterCompletionAction.ActionType.PLAY_SOUND,
+                AfterCompletionAction.ActionType.ANTIVIRUS_CHECK,
+                AfterCompletionAction.ActionType.EXECUTE_COMMAND), executionOrder);
+        assertEquals(3, testListener.getActionStartCount());
+        assertEquals(3, testListener.getActionCompleteCount());
         assertEquals(0, testListener.getActionErrorCount());
         assertEquals(1, testListener.getAllActionsCompleteCount());
+    }
+
+    @Test
+    @DisplayName("ActionType metadata follows declaration order and scopes power actions")
+    void actionTypeMetadataIsConsistent() {
+        AfterCompletionAction.ActionType[] types = AfterCompletionAction.ActionType.values();
+        for (int i = 0; i < types.length; i++) {
+            assertEquals(i, types[i].getPriority());
+        }
+        assertFalse(AfterCompletionAction.ActionType.PLAY_SOUND
+                .contributesToFinalizingProgress());
+        assertFalse(AfterCompletionAction.ActionType.SLEEP_COMPUTER
+                .contributesToFinalizingProgress());
+        assertFalse(AfterCompletionAction.ActionType.SHUTDOWN_COMPUTER
+                .contributesToFinalizingProgress());
+        assertTrue(AfterCompletionAction.ActionType.SLEEP_COMPUTER.isGlobal());
+        assertTrue(AfterCompletionAction.ActionType.SHUTDOWN_COMPUTER.isGlobal());
+        assertFalse(AfterCompletionAction.ActionType.ANTIVIRUS_CHECK.isGlobal());
+    }
+
+    @Test
+    @DisplayName("Global power actions never execute as per-download actions")
+    void globalPowerActionsExecuteOnlyThroughIdleCyclePath() throws Exception {
+        TestAfterCompletionAction suspend = new TestAfterCompletionAction(
+                AfterCompletionAction.ActionType.SLEEP_COMPUTER, true);
+        actionManager.setGlobalActions(List.of(suspend));
+
+        actionManager.executeActions(testDownload).get(5, TimeUnit.SECONDS);
+        assertFalse(suspend.wasExecuted());
+
+        actionManager.executeGlobalActions(testDownload).get(5, TimeUnit.SECONDS);
+        actionManager.executeGlobalActions(testDownload).get(5, TimeUnit.SECONDS);
+        assertTrue(suspend.wasExecuted());
+        assertEquals(1, testDownload.getCompletionActionResults().size(),
+                "a global action must run once in one idle cycle");
+
+        actionManager.markDownloadActivity();
+        Download nextCycle = createTestDownload("next-cycle");
+        actionManager.executeGlobalActions(nextCycle).get(5, TimeUnit.SECONDS);
+        assertEquals(1, nextCycle.getCompletionActionResults().size());
     }
 
     @Test

@@ -27,7 +27,8 @@ class ManagerSettingsToolPathLiveTest {
     @DisplayName("changing the curl path is reflected by the tool manager immediately")
     void toolPathChangeIsLive() throws Exception {
         Path xdgData = tempDir.resolve("xdg-data");
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdgData.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdgData.toString())
+                .and("XDG_STATE_HOME", xdgData.toString()).execute(() -> {
             DownloadManager manager = DownloadManagerFactory.createDefaultManager();
             ToolManagerFactory toolFactory = ApplicationContext.getToolManagerFactory();
 

@@ -44,6 +44,8 @@ public class MainWindow {
     private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
             "#", "Status", "Name", "Completed", "Size", "Progress", "Elapsed",
             "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Type");
+    private static final List<String> COMPLETION_ACTION_KEYS = List.of(
+            "notify", "antivirus", "subtitles", "suspend", "shutdown", "custom");
     private static final Download.Status[] ALWAYS_VISIBLE_STATUSES = {
         Download.Status.CREATED, Download.Status.QUEUED, Download.Status.PAUSED,
         Download.Status.STARTING, Download.Status.CONNECTING, Download.Status.DOWNLOADING,
@@ -124,6 +126,7 @@ public class MainWindow {
     private final ListStore trackersStore;
     private final ListStore peersStore;
     private final ListStore filesStore;
+    private final ListStore completionDetailsStore;
     private final ListStore globalProgressStore;
     private final org.tor.TorService torService;
     private final org.manager.schedule.ScheduleManager scheduleManager;
@@ -133,6 +136,9 @@ public class MainWindow {
             new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicReference<org.tor.TorLeakChecker> torLeakChecker =
             new java.util.concurrent.atomic.AtomicReference<>();
+    /** Download ids with at least one running completion action; GTK-thread confined. */
+    private final java.util.Set<String> runningCompletionDownloads = new java.util.HashSet<>();
+    private int completionPulseSourceId;
     /** Builder reference kept for window-state persistence from menu actions. */
     private final GtkBuilder uiBuilder;
 
@@ -164,6 +170,7 @@ public class MainWindow {
         this.trackersStore = Widgets.require(builder, "trackers_store", ListStore.class);
         this.peersStore = Widgets.require(builder, "peers_store", ListStore.class);
         this.filesStore = Widgets.require(builder, "files_store", ListStore.class);
+        this.completionDetailsStore = Widgets.require(builder, "completion_details_store", ListStore.class);
         this.globalProgressStore = Widgets.require(builder, "global_progress_store", ListStore.class);
         this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
         this.folderOpenButton = Widgets.require(builder, "folder_open_button", Button.class);
@@ -179,7 +186,7 @@ public class MainWindow {
                 downloadsStore, globalProgressStore, statusTreeview, categoryTreeview,
                 this::refresh);
         this.detailTabsPresenter = new DetailTabsPresenter(downloadManager, trackersStore,
-                peersStore, filesStore, () -> selectedDownload);
+                peersStore, filesStore, completionDetailsStore, () -> selectedDownload);
         this.backgroundExecutor = java.util.concurrent.Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "odm-window-fetch");
             t.setDaemon(true);
@@ -305,7 +312,13 @@ public class MainWindow {
         windowCompletionListener = new org.manager.download.action.AfterCompletionActionListener() {
             @Override
             public void onActionStart(Download d, org.manager.download.action.AfterCompletionAction a) {
-                // no-op
+                UiThread.marshal(() -> {
+                    if (a.contributesToFinalizingProgress()) {
+                        runningCompletionDownloads.add(d.getId());
+                        ensureCompletionPulseTimer();
+                    }
+                    refreshCompletionPresentation(d);
+                });
             }
 
             @Override
@@ -323,7 +336,10 @@ public class MainWindow {
                             AccessibilitySupport.status(infoLabel,
                                     "Antivirus scan completed for " + d.getName());
                         }
+                        refreshCompletionPresentation(d);
                     });
+                } else {
+                    UiThread.marshal(() -> refreshCompletionPresentation(d));
                 }
             }
 
@@ -332,13 +348,20 @@ public class MainWindow {
                     String errorMessage, org.manager.download.action.AfterCompletionAction.Severity severity) {
                 LOGGER.warn(
                         "Completion action failed for " + d.getName() + ": " + errorMessage);
+                UiThread.marshal(() -> refreshCompletionPresentation(d));
             }
 
             @Override
             public void onAllActionsComplete(Download d,
                     java.util.List<org.manager.download.action.AfterCompletionAction> successful,
                     java.util.List<org.manager.download.action.AfterCompletionAction> failed) {
-                // no-op
+                UiThread.marshal(() -> {
+                    runningCompletionDownloads.remove(d.getId());
+                    if (runningCompletionDownloads.isEmpty()) {
+                        stopCompletionPulseTimer();
+                    }
+                    refreshCompletionPresentation(d);
+                });
             }
         };
         downloadManager.addAfterCompletionActionListener(windowCompletionListener);
@@ -420,12 +443,45 @@ public class MainWindow {
         torDesiredRunning.set(false);
         torToggleEpoch.incrementAndGet();
         shutdownTorLeakChecker();
+        runningCompletionDownloads.clear();
+        stopCompletionPulseTimer();
         if (contextMenu != null) {
             contextMenu.dispose();
             contextMenu = null;
         }
         detailTabsPresenter.shutdown();
         backgroundExecutor.shutdown();
+    }
+
+    private void ensureCompletionPulseTimer() {
+        if (completionPulseSourceId != 0) {
+            return;
+        }
+        completionPulseSourceId = org.gnome.glib.GLib.timeoutAdd(
+                org.gnome.glib.GLib.PRIORITY_DEFAULT, 100,
+                () -> {
+                    if (runningCompletionDownloads.isEmpty()) {
+                        completionPulseSourceId = 0;
+                        return false;
+                    }
+                    listPresenter.pulseCompletionRows();
+                    return true;
+                });
+    }
+
+    private void stopCompletionPulseTimer() {
+        if (completionPulseSourceId != 0) {
+            org.gnome.glib.Source.remove(completionPulseSourceId);
+            completionPulseSourceId = 0;
+        }
+    }
+
+    private void refreshCompletionPresentation(Download download) {
+        listPresenter.scheduleRefresh();
+        if (selectedDownload != null
+                && selectedDownload.getId().equals(download.getId())) {
+            detailTabsPresenter.load();
+        }
     }
 
     /**
@@ -482,8 +538,7 @@ public class MainWindow {
             applyTorPreference(active);
             // Rebuild settings-backed actions (subtitles, antivirus, custom)
             // so changes apply without requiring a restart or re-selection.
-            setCompletionAction(CompletionActionPolicy.forChoice(
-                    completionActionKey(), downloadManager.getGlobalSettings()));
+            installCompletionActions();
         }).present();
     }
 
@@ -887,13 +942,12 @@ public class MainWindow {
         edit.append("Clipboard Monitoring", "win.clipboard-monitoring");
         edit.append("Silent Mode", "win.clipboard-silent");
         org.gnome.gio.Menu completion = new org.gnome.gio.Menu();
-        completion.append("None", "win.completion::none");
-        completion.append("Notify (sound)", "win.completion::notify");
-        completion.append("Antivirus Scan", "win.completion::antivirus");
-        completion.append("Download Subtitles", "win.completion::subtitles");
-        completion.append("Suspend", "win.completion::suspend");
-        completion.append("Shutdown", "win.completion::shutdown");
-        completion.append("Custom…", "win.completion::custom");
+        completion.append("Notify (sound)", "win.completion-notify");
+        completion.append("Antivirus Scan", "win.completion-antivirus");
+        completion.append("Download Subtitles", "win.completion-subtitles");
+        completion.append("Suspend", "win.completion-suspend");
+        completion.append("Shutdown", "win.completion-shutdown");
+        completion.append("Custom…", "win.completion-custom");
         edit.appendSubmenu("Completion Actions", completion);
         org.gnome.gio.Menu schedule = new org.gnome.gio.Menu();
         schedule.append("Always", "win.schedule::always");
@@ -997,10 +1051,12 @@ public class MainWindow {
                     downloadManager.getGlobalSettings().save();
                     applyClipboardSilentToCore(active);
                 });
-        addRadioAction("completion", completionActionKey(), this::onCompletionActionChosen);
-        // Rebuild the completion action from the persisted key: GTK only
-        // fires radio-action activate on user selection, not at creation.
-        onCompletionActionChosen(completionActionKey(), false);
+        java.util.Set<String> selectedCompletionActions = completionActionKeys();
+        for (String key : COMPLETION_ACTION_KEYS) {
+            addStatefulAction("completion-" + key, selectedCompletionActions.contains(key),
+                    active -> onCompletionActionToggled(key, active));
+        }
+        installCompletionActions();
         addRadioAction("schedule",
                 downloadManager.getGlobalSettings().getProperty("scheduler.preset", "always"),
                 this::applySchedulePreset);
@@ -1105,29 +1161,71 @@ public class MainWindow {
         return type == null ? null : type.dupString();
     }
 
-    private String completionActionKey() {
-        return downloadManager.getGlobalSettings().getProperty("ui.completionAction", "none");
+    /** Selected keys, with transparent migration from the old radio setting. */
+    private java.util.Set<String> completionActionKeys() {
+        String persisted = downloadManager.getGlobalSettings()
+                .getProperty("ui.completionActions", null);
+        java.util.Set<String> selected = new java.util.LinkedHashSet<>();
+        if (persisted == null) {
+            String legacy = downloadManager.getGlobalSettings()
+                    .getProperty("ui.completionAction", "none");
+            if (COMPLETION_ACTION_KEYS.contains(legacy)) {
+                selected.add(legacy);
+            }
+            return selected;
+        }
+        for (String key : persisted.split(",")) {
+            String normalized = key.strip().toLowerCase(java.util.Locale.ROOT);
+            if (COMPLETION_ACTION_KEYS.contains(normalized)) {
+                selected.add(normalized);
+            }
+        }
+        return selected;
     }
 
-    private void onCompletionActionChosen(String choice) {
-        onCompletionActionChosen(choice, true);
+    private java.util.Set<String> completionActionKeysFromMenu() {
+        java.util.Set<String> selected = new java.util.LinkedHashSet<>();
+        for (String key : COMPLETION_ACTION_KEYS) {
+            org.gnome.gio.SimpleAction action = menuActions.get("completion-" + key);
+            if (action != null && action.getState() != null
+                    && action.getState().getBoolean()) {
+                selected.add(key);
+            }
+        }
+        return selected;
     }
 
-    /**
-     * @param choice the completion action key
-     * @param interactive when true, choosing "custom" with no stored command
-     *                    opens the command-entry prompt; the startup rebuild
-     *                    passes false
-     */
-    private void onCompletionActionChosen(String choice, boolean interactive) {
-        downloadManager.getGlobalSettings().setProperty("ui.completionAction", choice);
-        downloadManager.getGlobalSettings().save();
-        if ("custom".equals(choice) && interactive) {
+    private void onCompletionActionToggled(String key, boolean active) {
+        if ("custom".equals(key) && active
+                && downloadManager.getGlobalSettings()
+                        .getProperty("ui.completionCommand", "").isBlank()) {
             promptForCustomCommand();
             return;
         }
-        setCompletionAction(
-                CompletionActionPolicy.forChoice(choice, downloadManager.getGlobalSettings()));
+        persistAndInstallCompletionActions();
+    }
+
+    private void persistAndInstallCompletionActions() {
+        java.util.Set<String> selected = completionActionKeysFromMenu();
+        downloadManager.getGlobalSettings().setProperty(
+                "ui.completionActions", String.join(",", selected));
+        downloadManager.getGlobalSettings().save();
+        setCompletionActions(CompletionActionPolicy.forChoices(
+                selected, downloadManager.getGlobalSettings()));
+    }
+
+    private void installCompletionActions() {
+        java.util.Set<String> selected = menuActionsRegistered
+                ? completionActionKeysFromMenu() : completionActionKeys();
+        setCompletionActions(CompletionActionPolicy.forChoices(
+                selected, downloadManager.getGlobalSettings()));
+    }
+
+    private void setCompletionToggleState(String key, boolean active) {
+        org.gnome.gio.SimpleAction action = menuActions.get("completion-" + key);
+        if (action != null) {
+            action.setState(org.gnome.glib.Variant.boolean_(active));
+        }
     }
 
     /**
@@ -1171,24 +1269,30 @@ public class MainWindow {
             box.append(buttons);
 
             prompt.setChild(box);
+            java.util.concurrent.atomic.AtomicBoolean committed =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
             Runnable apply = () -> {
                 String command = entry.getText().strip();
                 if (!command.isBlank()) {
+                    committed.set(true);
                     downloadManager.getGlobalSettings().setProperty("ui.completionCommand", command);
-                    downloadManager.getGlobalSettings().save();
-                    setCompletionAction(new org.manager.download.action.ExecuteCommandAction(command));
-                } else {
-                    // Empty command: leave no completion action configured
-                    setCompletionAction(null);
+                    persistAndInstallCompletionActions();
                 }
                 prompt.close();
             };
+            prompt.onCloseRequest(() -> {
+                if (!committed.get()) {
+                    setCompletionToggleState("custom", false);
+                    persistAndInstallCompletionActions();
+                }
+                return false;
+            });
             cancel.onClicked(() -> prompt.close());
             ok.onClicked(apply::run);
             entry.onActivate(apply::run);
             prompt.present();
         } else {
-            setCompletionAction(new org.manager.download.action.ExecuteCommandAction(saved));
+            persistAndInstallCompletionActions();
         }
     }
 
@@ -1245,7 +1349,8 @@ public class MainWindow {
         }
         Path file = FileManagerSupport.resolveDetailPath(
                 selectedDownload.getDestination(),
-                ListStoreCells.getString(filesStore, iter, 1));
+                ListStoreCells.getString(filesStore, iter,
+                        DetailTabsPresenter.FILE_PATH_COLUMN));
         if (file != null) {
             CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(file,
                     file.getParent()), backgroundExecutor);
@@ -1435,10 +1540,11 @@ public class MainWindow {
         });
     }
 
-    private void setCompletionAction(org.manager.download.action.AfterCompletionAction action) {
-        downloadManager.setGlobalAfterCompletionAction(action);
-        LOGGER.info("After-completion action set to: "
-                + (action == null ? "none" : action.getClass().getSimpleName()));
+    private void setCompletionActions(
+            java.util.List<org.manager.download.action.AfterCompletionAction> actions) {
+        downloadManager.setGlobalAfterCompletionActions(actions);
+        LOGGER.info("After-completion actions set to: "
+                + actions.stream().map(action -> action.getType().name()).toList());
     }
 
     private boolean onTorToggled(boolean active) {

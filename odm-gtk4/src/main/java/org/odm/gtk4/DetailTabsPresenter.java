@@ -19,6 +19,7 @@ import org.gnome.gtk.TreeRowReference;
 import org.javagi.interop.MemoryCleaner;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
+import org.manager.download.action.CompletionActionResult;
 
 /**
  * Async trackers/peers/files detail-tab presenter. The manager calls
@@ -35,6 +36,7 @@ final class DetailTabsPresenter {
     private static final Logger LOGGER = LoggerFactory.getLogger(DetailTabsPresenter.class);
     private static final int FILE_SIZE_SORT_COLUMN = 7;
     private static final int FILE_PROGRESS_SORT_COLUMN = 8;
+    static final int FILE_PATH_COLUMN = 9;
 
     /** Immutable snapshot fetched off-thread for the trackers/peers/files tabs. */
     private record DetailTabData(List<List<String>> trackers, List<Map<String, Object>> peers,
@@ -48,15 +50,20 @@ final class DetailTabsPresenter {
             String upSpeed, String state) {
     }
 
-    private record FileRow(boolean selected, String path, long length,
+    private record FileRow(boolean selected, String name, String path, long length,
             int progress, String priority, int index, String progressText,
             double preciseProgress) {
+    }
+
+    private record CompletionRow(String action, String status, String result,
+            String started, String finished) {
     }
 
     private final DownloadManager downloadManager;
     private final ListStore trackersStore;
     private final ListStore peersStore;
     private final ListStore filesStore;
+    private final ListStore completionDetailsStore;
     private final Supplier<Download> currentSelection;
     private final ExecutorService fetchExecutor;
 
@@ -67,16 +74,20 @@ final class DetailTabsPresenter {
     private String inFlightTargetId;
     /** Id currently represented by the three stores; GTK-thread confined. */
     private String displayedTargetId;
+    private String displayedCompletionTargetId;
     private final Map<String, TreeRowReference> trackerRows = new java.util.HashMap<>();
     private final Map<String, TreeRowReference> peerRows = new java.util.HashMap<>();
     private final Map<String, TreeRowReference> fileRows = new java.util.HashMap<>();
+    private final Map<String, TreeRowReference> completionRows = new java.util.HashMap<>();
 
     DetailTabsPresenter(DownloadManager downloadManager, ListStore trackersStore,
-            ListStore peersStore, ListStore filesStore, Supplier<Download> currentSelection) {
+            ListStore peersStore, ListStore filesStore, ListStore completionDetailsStore,
+            Supplier<Download> currentSelection) {
         this.downloadManager = downloadManager;
         this.trackersStore = trackersStore;
         this.peersStore = peersStore;
         this.filesStore = filesStore;
+        this.completionDetailsStore = completionDetailsStore;
         this.currentSelection = currentSelection;
         this.fetchExecutor = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "odm-detail-fetch");
@@ -98,8 +109,11 @@ final class DetailTabsPresenter {
             clearStore(trackersStore, trackerRows);
             clearStore(peersStore, peerRows);
             clearStore(filesStore, fileRows);
+            clearStore(completionDetailsStore, completionRows);
+            displayedCompletionTargetId = null;
             return;
         }
+        populateCompletionDetails(target);
         if (fetchExecutor.isShutdown()) {
             return;
         }
@@ -152,6 +166,7 @@ final class DetailTabsPresenter {
         freeRowReferences(trackerRows);
         freeRowReferences(peerRows);
         freeRowReferences(fileRows);
+        freeRowReferences(completionRows);
     }
 
     boolean isShutdown() {
@@ -211,14 +226,14 @@ final class DetailTabsPresenter {
             double progress = progressPercent(completedLength, length);
             int index = (int) parseLong(file.get("index"), fallbackIndex++);
             String key = uniqueKey(files, Integer.toString(index));
-            files.put(key, new FileRow(selected,
-                    String.valueOf(file.getOrDefault("path", "—")), length,
+            String path = String.valueOf(file.getOrDefault("path", "—"));
+            files.put(key, new FileRow(selected, fileName(path), path, length,
                     ProgressPresentation.wholePercentage(progress), "—", index,
                     ProgressPresentation.percentage(progress), progress));
         }
         reconcile(filesStore, fileRows, files, (store, iter, row) -> {
             ListStoreCells.setBoolean(store, iter, 0, row.selected());
-            ListStoreCells.setString(store, iter, 1, row.path());
+            ListStoreCells.setString(store, iter, 1, row.name());
             ListStoreCells.setString(store, iter, 2, DownloadFormats.size(row.length()));
             ListStoreCells.setInt(store, iter, 3, row.progress());
             ListStoreCells.setString(store, iter, 4, row.priority());
@@ -227,7 +242,42 @@ final class DetailTabsPresenter {
             ListStoreCells.setLong(store, iter, FILE_SIZE_SORT_COLUMN, row.length());
             ListStoreCells.setDouble(store, iter, FILE_PROGRESS_SORT_COLUMN,
                     row.preciseProgress());
+            ListStoreCells.setString(store, iter, FILE_PATH_COLUMN, row.path());
         });
+    }
+
+    /** Reconciles persisted completion-action history without an RPC fetch. */
+    private void populateCompletionDetails(Download download) {
+        if (!Objects.equals(displayedCompletionTargetId, download.getId())) {
+            clearStore(completionDetailsStore, completionRows);
+            displayedCompletionTargetId = download.getId();
+        }
+        LinkedHashMap<String, CompletionRow> rows = new LinkedHashMap<>();
+        for (CompletionActionResult result : download.getCompletionActionResults()) {
+            rows.put(result.id(), new CompletionRow(
+                    result.description(),
+                    completionStatus(result),
+                    result.message().isBlank() ? "—" : result.message(),
+                    DownloadFormats.DATE_FORMAT.format(result.startedAt()),
+                    result.finishedAt() == null
+                            ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt())));
+        }
+        reconcile(completionDetailsStore, completionRows, rows, (store, iter, row) -> {
+            ListStoreCells.setString(store, iter, 0, row.action());
+            ListStoreCells.setString(store, iter, 1, row.status());
+            ListStoreCells.setString(store, iter, 2, row.result());
+            ListStoreCells.setString(store, iter, 3, row.started());
+            ListStoreCells.setString(store, iter, 4, row.finished());
+        });
+    }
+
+    private static String completionStatus(CompletionActionResult result) {
+        return switch (result.status()) {
+            case RUNNING -> "Running";
+            case SUCCEEDED -> "Succeeded";
+            case FAILED -> "Failed (" + result.severity().name().toLowerCase() + ")";
+            case INTERRUPTED -> "Interrupted";
+        };
     }
 
     private static <T> String uniqueKey(Map<String, T> rows, String base) {
@@ -310,6 +360,16 @@ final class DetailTabsPresenter {
 
     static double progressPercent(long done, long total) {
         return total > 0 ? done * 100.0 / total : 0;
+    }
+
+    /** Returns a display-only basename while preserving unusual paths safely. */
+    static String fileName(String path) {
+        if (path == null || path.isBlank() || "—".equals(path)) {
+            return "—";
+        }
+        int separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        return separator >= 0 && separator + 1 < path.length()
+                ? path.substring(separator + 1) : path;
     }
 
     /**

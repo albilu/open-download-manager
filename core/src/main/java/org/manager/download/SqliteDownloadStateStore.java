@@ -23,6 +23,7 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.manager.schedule.ScheduleSettings;
+import org.manager.download.action.CompletionActionResult;
 
 /**
  * SQLite-backed persistence for the download list, replacing the former
@@ -76,6 +77,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 expected_checksum TEXT,
                 manual_start_required INTEGER NOT NULL DEFAULT 0,
                 active_elapsed_millis INTEGER NOT NULL DEFAULT 0,
+                completion_action_results TEXT,
                 active_before_exit INTEGER NOT NULL DEFAULT 0
             )
             """;
@@ -88,8 +90,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 seeders, info_hash, queue_position, created_at, started_at,
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, manual_start_required,
-                active_elapsed_millis, active_before_exit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                active_elapsed_millis, completion_action_results, active_before_exit
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -229,6 +231,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             ensureColumn("protocol", "TEXT");
             ensureColumn("manual_start_required", "INTEGER NOT NULL DEFAULT 0");
             ensureColumn("active_elapsed_millis", "INTEGER NOT NULL DEFAULT 0");
+            ensureColumn("completion_action_results", "TEXT");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
@@ -389,6 +392,11 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         }
         download.setChecksumAlgorithm(rs.getString("checksum_algorithm"));
         download.setExpectedChecksum(rs.getString("expected_checksum"));
+        List<CompletionActionResult> completionResults = readJson(rs,
+                "completion_action_results",
+                new TypeReference<List<CompletionActionResult>>() {
+                });
+        download.setCompletionActionResults(completionResults);
         try {
             DownloadSettings settings = mapper.readValue(rs.getString("settings"), DownloadSettings.class);
             if (settings != null) {
@@ -465,7 +473,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(28, download.getExpectedChecksum());
         insert.setInt(29, download.isManualStartRequired() ? 1 : 0);
         insert.setLong(30, download.getActiveElapsedMillis());
-        insert.setInt(31, activeBeforeExit ? 1 : 0);
+        insert.setString(31, download.getCompletionActionResults().isEmpty()
+                ? null : mapper.writeValueAsString(download.getCompletionActionResults()));
+        insert.setInt(32, activeBeforeExit ? 1 : 0);
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

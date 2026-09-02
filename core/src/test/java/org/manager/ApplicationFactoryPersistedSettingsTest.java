@@ -38,7 +38,8 @@ class ApplicationFactoryPersistedSettingsTest {
                 """);
 
         SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString())
-                .and("XDG_DATA_HOME", dataHome.toString()).execute(() -> {
+                .and("XDG_DATA_HOME", dataHome.toString())
+                .and("XDG_STATE_HOME", dataHome.toString()).execute(() -> {
                     ApplicationFactory factory = ApplicationFactory.getInstance();
                     factory.initialize();
 
@@ -66,7 +67,8 @@ class ApplicationFactoryPersistedSettingsTest {
         Files.createDirectories(dataHome);
 
         SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString())
-                .and("XDG_DATA_HOME", dataHome.toString()).execute(() -> {
+                .and("XDG_DATA_HOME", dataHome.toString())
+                .and("XDG_STATE_HOME", dataHome.toString()).execute(() -> {
                     ApplicationFactory factory = ApplicationFactory.getInstance();
                     factory.initialize(Path.of("/tmp/fresh-downloads"), 9, 256);
 

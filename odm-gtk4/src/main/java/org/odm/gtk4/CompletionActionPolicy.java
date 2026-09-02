@@ -11,13 +11,12 @@ import org.manager.download.action.ExecuteCommandAction;
 import org.manager.download.action.PlayNotificationAction;
 import org.manager.download.action.ShutdownComputerAction;
 import org.manager.download.action.SubtitleDownloadAction;
+import org.manager.tools.ToolPaths;
 import org.subliminal.SubliminalSettings;
 
 /**
- * Maps the completion-action radio choice to the concrete
- * {@link AfterCompletionAction}, including the persisted custom command
- * and antivirus scanner configuration. Plain policy, no GTK; the
- * interactive custom-command prompt stays in the window.
+ * Maps persisted completion-action checkbox keys to concrete actions. Plain
+ * policy, no GTK; the interactive custom-command prompt stays in the window.
  */
 final class CompletionActionPolicy {
 
@@ -45,6 +44,19 @@ final class CompletionActionPolicy {
         };
     }
 
+    /** Builds every selected action and returns them in declared priority order. */
+    static java.util.List<AfterCompletionAction> forChoices(
+            java.util.Collection<String> choices, GlobalSettings settings) {
+        if (choices == null || choices.isEmpty()) {
+            return java.util.List.of();
+        }
+        return choices.stream()
+                .map(choice -> forChoice(choice, settings))
+                .filter(java.util.Objects::nonNull)
+                .sorted(java.util.Comparator.comparingInt(AfterCompletionAction::getPriority))
+                .toList();
+    }
+
     /** Custom completion action from the stored command, or null when blank. */
     static AfterCompletionAction customAction(GlobalSettings settings) {
         String saved = settings.getProperty("ui.completionCommand", "");
@@ -70,7 +82,13 @@ final class CompletionActionPolicy {
             return new AntivirusCheckAction(
                     settings.getProperty("antivirus.command", "clamscan --no-summary {file}"), timeout);
         }
-        return new AntivirusCheckAction(type, timeout);
+        String executable = switch (type) {
+            case CLAMAV -> ToolPaths.resolve("antivirus-clamav", "clamscan");
+            case CHKROOTKIT -> ToolPaths.resolve("antivirus-chkrootkit", "chkrootkit");
+            case RKHUNTER -> ToolPaths.resolve("antivirus-rkhunter", "rkhunter");
+            case CUSTOM -> throw new IllegalStateException("Handled above");
+        };
+        return new AntivirusCheckAction(type, executable, timeout);
     }
 
     /** Subtitle action using the shared yt-dlp language preference. */

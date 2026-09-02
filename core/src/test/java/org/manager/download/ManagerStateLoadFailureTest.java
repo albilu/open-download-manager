@@ -24,7 +24,8 @@ class ManagerStateLoadFailureTest {
     @Test
     @DisplayName("An unreadable state database completes loadState exceptionally")
     void loadStateSurfacesPersistenceFailure() throws Exception {
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", tempDir.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", tempDir.toString())
+                .and("XDG_STATE_HOME", tempDir.toString()).execute(() -> {
             // 'odm' as a regular file makes the state directory unusable
             Files.createFile(tempDir.resolve("odm"));
 

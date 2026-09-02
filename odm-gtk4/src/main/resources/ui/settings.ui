@@ -98,6 +98,7 @@
                             <child><object class="GtkCheckButton" id="startup_check"><property name="label">Start at login</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="start_automatically_check"><property name="label">Start downloads automatically</property><property name="tooltip-text">Applies to downloads detected by clipboard and folder monitoring</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkCheckButton" id="move_torrent_check"><property name="label">Move selected .torrent/.metalink/.meta4 descriptors to Trash</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
+                            <child><object class="GtkCheckButton" id="enable_auto_save_check"><property name="label">Enable auto save</property><property name="tooltip-text">Periodically save ODM download and session state</property><layout><property name="row">10</property><property name="column">0</property></layout></object></child>
                           </object>
                         </child>
                       </object>
@@ -223,9 +224,8 @@
                     <child><object class="GtkSpinButton" id="tracker_refresh_spin"><property name="adjustment">tracker_refresh_adjustment</property><property name="hexpand">true</property><layout><property name="row">7</property><property name="column">1</property></layout></object></child>
                     <child><object class="GtkLabel"><property name="label">Extra trackers:</property><property name="xalign">0</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkEntry" id="tracker_list_entry"><property name="hexpand">true</property><property name="placeholder-text">https://tracker.example.com/announce, …</property><layout><property name="row">8</property><property name="column">1</property></layout></object></child>
-                    <child><object class="GtkCheckButton" id="enable_auto_save_check"><property name="label">Enable auto save</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkCheckButton" id="continue_download_check"><property name="label">Continue partial downloads</property><layout><property name="row">10</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkCheckButton" id="check_integrity_check"><property name="label">Check file integrity</property><layout><property name="row">11</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkCheckButton" id="continue_download_check"><property name="label">Continue partial downloads</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkCheckButton" id="check_integrity_check"><property name="label">Check file integrity</property><layout><property name="row">10</property><property name="column">0</property></layout></object></child>
                       </object>
                     </child>
                   </object>
@@ -336,6 +336,10 @@
                     <child><object class="GtkBox" id="axel_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">5</property><property name="column">1</property></layout><child><object class="GtkEntry" id="axel_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_axel_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel"><property name="label">Subliminal:</property><property name="xalign">0</property><layout><property name="row">6</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="subliminal_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">6</property><property name="column">1</property></layout><child><object class="GtkEntry" id="subliminal_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_subliminal_button"><property name="label">Browse</property></object></child></object></child>
+                    <child><object class="GtkLabel" id="completion_tools_heading"><property name="label">&lt;b&gt;Completion Actions&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property><property name="margin-top">6</property><layout><property name="row">7</property><property name="column">0</property><property name="column-span">2</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Antivirus type:</property><property name="xalign">0</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkDropDown" id="antivirus_type_combo"><property name="hexpand">true</property><layout><property name="row">8</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel" id="antivirus_detection_label"><property name="xalign">0</property><property name="wrap">true</property><property name="css-classes">['dim-label']</property><layout><property name="row">9</property><property name="column">1</property></layout></object></child>
                       </object>
                     </child>
                   </object>

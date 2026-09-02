@@ -5,6 +5,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -108,7 +109,6 @@ public class DownloadManagerImpl implements DownloadManager {
     private final ShutdownCoordinator shutdownCoordinator;
     private final ManagerClipboardService clipboard;
     private final FolderWatchingService folderWatching;
-    private final Aria2SessionManager aria2SessionManager;
     private final ProxyRotationSupport proxyRotation;
     private final DownloadServicesScheduler servicesScheduler;
 
@@ -146,9 +146,10 @@ public class DownloadManagerImpl implements DownloadManager {
         this.proxychainsCurlFallbackGenerations = new ConcurrentHashMap<>();
         this.isShuttingDown = new AtomicBoolean(false);
         this.objectMapper = createStateObjectMapper();
+        Path stateDirectory = prepareStateDirectory();
         this.stateStore = new SqliteDownloadStateStore(
-                xdgDataDirectory().resolve(STATE_DB_FILE),
-                xdgDataDirectory().resolve(STATE_FILE),
+                stateDirectory.resolve(STATE_DB_FILE),
+                stateDirectory.resolve(STATE_FILE),
                 this.objectMapper);
 
         // OPTIMIZATION: Initialize efficient listener management
@@ -197,11 +198,6 @@ public class DownloadManagerImpl implements DownloadManager {
         } else {
             this.defaultDownloadDirectory = Paths.get(getGlobalSettings().getDefaultDownloadDirectory().toString());
         }
-        // ODM state lives in the XDG data dir, not inside the user's
-        // Downloads folder. aria2's own session/input files stay with the
-        // download directory.
-        this.aria2SessionManager = new Aria2SessionManager(defaultDownloadDirectory);
-
         // Register shutdown hooks
         new ManagerShutdownHooks(
                 shutdownCoordinator,
@@ -1692,9 +1688,6 @@ public class DownloadManagerImpl implements DownloadManager {
         // settings.json.
         stateStore.save(persistedDownloads, persistedActive);
 
-        // Save aria2 session if available
-        aria2SessionManager.saveSession(getHandlerFactory());
-
         LOGGER.info("Saved " + persistedDownloads.size() + " downloads (including "
                 + persistedActive.size() + " active) to state database");
     }
@@ -1721,6 +1714,9 @@ public class DownloadManagerImpl implements DownloadManager {
                         if (download.getSettings() == null) {
                             download.initSettings(getSettingsFactory());
                         }
+
+                        download.interruptRunningCompletionActions(
+                                "Interrupted when ODM previously stopped");
 
                         // Handler/process identifiers belong to the daemon or
                         // child-process instance that produced them. ODM does
@@ -1833,6 +1829,11 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     @Override
+    public void setGlobalAfterCompletionActions(List<AfterCompletionAction> actions) {
+        getActionManager().setGlobalActions(actions);
+    }
+
+    @Override
     public boolean removeAfterCompletionAction(Download download, AfterCompletionAction action) {
         return getActionManager().removeAction(download, action);
     }
@@ -1855,6 +1856,36 @@ public class DownloadManagerImpl implements DownloadManager {
     @Override
     public CompletableFuture<Void> executeAfterCompletionActions(Download download) {
         return getActionManager().executeActions(download);
+    }
+
+    /**
+     * Starts global power actions only after every item is terminal, no
+     * handler still owns a running slot, and all per-download actions have
+     * settled. The action manager provides the once-per-active-cycle claim.
+     */
+    private void maybeExecuteGlobalCompletionActions(Download contextDownload) {
+        if (isShuttingDown.get() || !runningDownloadIds.isEmpty()) {
+            return;
+        }
+        List<Download> downloads = getAllDownloads();
+        if (readyForGlobalCompletionActions(downloads)) {
+            getActionManager().executeGlobalActions(contextDownload)
+                    .exceptionally(error -> {
+                        LOGGER.warn("Global completion actions failed", error);
+                        return null;
+                    });
+        }
+    }
+
+    static boolean readyForGlobalCompletionActions(List<Download> downloads) {
+        boolean allTerminal = downloads != null && !downloads.isEmpty() && downloads.stream()
+                .allMatch(download -> switch (download.getStatus()) {
+                    case COMPLETED, ERROR, CANCELED -> true;
+                    default -> false;
+                });
+        boolean actionsSettled = downloads != null && downloads.stream()
+                .noneMatch(Download::hasRunningCompletionActions);
+        return allTerminal && actionsSettled;
     }
 
     @Override
@@ -1987,15 +2018,85 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     /**
-     * Resolves the XDG data directory for ODM state files, honoring
-     * XDG_DATA_HOME and defaulting to ~/.local/share/odm. Delegates to the
-     * shared {@link org.manager.util.OdmPaths} so every component (state
-     * store, descriptor staging, aria2 cleanup) agrees on the same root.
-     *
-     * @return the directory in which to store the state database
+     * Creates the XDG state directory and performs a one-time migration from
+     * the pre-XDG-state location under XDG_DATA_HOME. The SQLite database and
+     * its sidecars move as one group so a partial migration cannot silently
+     * discard committed WAL records.
      */
-    private static Path xdgDataDirectory() {
-        return org.manager.util.OdmPaths.dataDirectory();
+    private static Path prepareStateDirectory() {
+        Path stateDirectory = org.manager.util.OdmPaths.stateDirectory();
+        Path legacyDirectory = org.manager.util.OdmPaths.dataDirectory();
+        try {
+            Files.createDirectories(stateDirectory);
+            migrateLegacyStateFiles(legacyDirectory, stateDirectory);
+            return stateDirectory;
+        } catch (java.nio.file.FileAlreadyExistsException e) {
+            // Preserve the manager's lazy persistence-failure contract: a
+            // malformed state path is surfaced by loadState()/saveState(),
+            // not while unrelated services are being constructed.
+            LOGGER.warn("ODM state path is not a directory: {}", stateDirectory);
+            return stateDirectory;
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to prepare ODM state directory "
+                    + stateDirectory, e);
+        }
+    }
+
+    static void migrateLegacyStateFiles(Path legacyDirectory, Path stateDirectory)
+            throws IOException {
+        if (legacyDirectory.toAbsolutePath().normalize()
+                .equals(stateDirectory.toAbsolutePath().normalize())) {
+            return;
+        }
+
+        List<String> stateFiles = List.of(
+                STATE_DB_FILE,
+                STATE_DB_FILE + "-wal",
+                STATE_DB_FILE + "-shm",
+                STATE_FILE,
+                STATE_FILE + ".migrated");
+        boolean legacyStateExists = stateFiles.stream()
+                .anyMatch(name -> Files.exists(legacyDirectory.resolve(name)));
+        if (!legacyStateExists) {
+            return;
+        }
+
+        boolean targetStateExists = stateFiles.stream()
+                .anyMatch(name -> Files.exists(stateDirectory.resolve(name)));
+        if (targetStateExists) {
+            LOGGER.warn("ODM state already exists in {}; leaving legacy state in {} untouched",
+                    stateDirectory, legacyDirectory);
+            return;
+        }
+
+        Files.createDirectories(stateDirectory);
+        List<Path> movedTargets = new java.util.ArrayList<>();
+        try {
+            for (String name : stateFiles) {
+                Path source = legacyDirectory.resolve(name);
+                if (!Files.exists(source)) {
+                    continue;
+                }
+                Path target = stateDirectory.resolve(name);
+                try {
+                    Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+                } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                    Files.move(source, target);
+                }
+                movedTargets.add(target);
+            }
+        } catch (IOException migrationFailure) {
+            for (int i = movedTargets.size() - 1; i >= 0; i--) {
+                Path target = movedTargets.get(i);
+                try {
+                    Files.move(target, legacyDirectory.resolve(target.getFileName()));
+                } catch (IOException rollbackFailure) {
+                    migrationFailure.addSuppressed(rollbackFailure);
+                }
+            }
+            throw migrationFailure;
+        }
+        LOGGER.info("Migrated ODM restart state from {} to {}", legacyDirectory, stateDirectory);
     }
 
     /**
@@ -2385,6 +2486,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
         @Override
         public void onDownloadStart(Download d) {
+            getActionManager().markDownloadActivity();
             // Route to appropriate download manager listeners
             notifyDownloadStart(d);
         }
@@ -2398,6 +2500,12 @@ public class DownloadManagerImpl implements DownloadManager {
         @Override
         public void onDownloadStatusChanged(Download d,
                 Download.Status previousStatus, Download.Status currentStatus) {
+            if (switch (currentStatus) {
+                case STARTING, CONNECTING, DOWNLOADING, SEEDING -> true;
+                default -> false;
+            }) {
+                getActionManager().markDownloadActivity();
+            }
             // Handler state changes happen before this callback. Reindex from
             // the captured source status so cached status queries and sidebar
             // counts immediately agree with the model.
@@ -2417,6 +2525,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
         @Override
         public void onDownloadResume(Download d) {
+            getActionManager().markDownloadActivity();
             downloadRepository.updateDownloadStatus(d, Download.Status.DOWNLOADING);
             notifyDownloadResume(d);
         }
@@ -2445,11 +2554,12 @@ public class DownloadManagerImpl implements DownloadManager {
 
             notifyDownloadComplete(d);
 
-            // Execute after-completion actions
-            executeAfterCompletionActions(d);
-
-            // Check for queued downloads to start
+            // Register per-download post-processing before advancing the
+            // queue so the global-idle check cannot overtake it.
+            CompletableFuture<Void> completionActions = executeAfterCompletionActions(d);
             startNextQueuedDownload();
+            completionActions.whenComplete((ignored, error) ->
+                    maybeExecuteGlobalCompletionActions(d));
         }
 
         @Override
@@ -2501,6 +2611,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Check for queued downloads to start
             startNextQueuedDownload();
+            maybeExecuteGlobalCompletionActions(d);
         }
 
         @Override
@@ -2528,6 +2639,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Check for queued downloads to start
             startNextQueuedDownload();
+            maybeExecuteGlobalCompletionActions(d);
         }
     }
 

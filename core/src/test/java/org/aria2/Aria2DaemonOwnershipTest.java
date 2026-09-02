@@ -7,8 +7,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,9 +21,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.ApplicationContext;
-import org.manager.GlobalSettings;
-import org.manager.download.DownloadSettingsFactory;
-import org.manager.download.handler.Aria2DownloadHandler;
 
 /**
  * Daemon-ownership contract for {@link Aria2Client}:
@@ -53,8 +48,6 @@ class Aria2DaemonOwnershipTest {
 
     private Path downloadDir;
     private final List<Process> externalDaemons = new ArrayList<>();
-    private final List<Aria2DownloadHandler> handlers = new ArrayList<>();
-    private final List<ExecutorService> executors = new ArrayList<>();
     private Aria2Client odmClient;
 
     @BeforeEach
@@ -66,16 +59,6 @@ class Aria2DaemonOwnershipTest {
 
     @AfterEach
     void tearDown() {
-        for (Aria2DownloadHandler handler : handlers) {
-            try {
-                handler.shutdown().join();
-            } catch (Exception e) {
-                // ignore
-            }
-        }
-        for (ExecutorService executor : executors) {
-            executor.shutdownNow();
-        }
         if (odmClient != null) {
             try {
                 odmClient.disconnectWebSocket();
@@ -282,64 +265,6 @@ class Aria2DaemonOwnershipTest {
         Aria2Client stillAlive = new Aria2Client(
                 ApplicationContext.getToolPath("aria2"), rpcUrl(port), odmClient.getRpcSecret());
         assertDoesNotThrow(stillAlive::getVersion);
-    }
-
-    @Test
-    @DisplayName("handler.saveSession never writes an adopted external daemon's session; an ODM child's is written")
-    @Timeout(60)
-    void handlerSaveSessionIsOwnershipGuarded() throws Exception {
-        // Adopted case: external daemon with its own --save-session file
-        int adoptedPort = BASE_PORT + 7;
-        Path externalSessionFile = tempDir.resolve("external-session.txt");
-        startExternalDaemon(adoptedPort, EXTERNAL_SECRET, "--save-session=" + externalSessionFile);
-
-        GlobalSettings adoptedSettings = new GlobalSettings();
-        adoptedSettings.setDefaultDownloadDirectory(downloadDir);
-        adoptedSettings.setProperty("aria2.rpcPort", String.valueOf(adoptedPort));
-        adoptedSettings.setProperty("aria2.rpcSecret", EXTERNAL_SECRET);
-        ExecutorService adoptedExecutor = Executors.newCachedThreadPool();
-        executors.add(adoptedExecutor);
-        Aria2DownloadHandler adoptedHandler = new Aria2DownloadHandler(
-                adoptedSettings,
-                new DownloadSettingsFactory(adoptedSettings),
-                adoptedExecutor,
-                ApplicationContext.getToolManagerFactory());
-        handlers.add(adoptedHandler);
-
-        adoptedHandler.initialize().join();
-        assertEquals(Aria2Client.DaemonOwnership.EXTERNAL_AUTHENTICATED,
-                adoptedHandler.getAria2Client().getDaemonOwnership(),
-                "handler must adopt the authenticated external daemon");
-
-        adoptedHandler.saveSession();
-        assertFalse(Files.exists(externalSessionFile),
-                "saveSession must never rewrite the adopted daemon's own session file");
-
-        // Control case: an ODM-started child whose --save-session path is
-        // the handler-configured session file must still be written
-        int ownedPort = BASE_PORT + 8;
-        Path ownedDownloads = tempDir.resolve("owned-downloads");
-        Files.createDirectories(ownedDownloads);
-
-        GlobalSettings ownedSettings = new GlobalSettings();
-        ownedSettings.setDefaultDownloadDirectory(ownedDownloads);
-        ownedSettings.setProperty("aria2.rpcPort", String.valueOf(ownedPort));
-        ExecutorService ownedExecutor = Executors.newCachedThreadPool();
-        executors.add(ownedExecutor);
-        Aria2DownloadHandler ownedHandler = new Aria2DownloadHandler(
-                ownedSettings,
-                new DownloadSettingsFactory(ownedSettings),
-                ownedExecutor,
-                ApplicationContext.getToolManagerFactory());
-        handlers.add(ownedHandler);
-
-        ownedHandler.initialize().join();
-        assertEquals(Aria2Client.DaemonOwnership.ODM_STARTED,
-                ownedHandler.getAria2Client().getDaemonOwnership());
-
-        ownedHandler.saveSession();
-        assertTrue(Files.exists(ownedDownloads.resolve("aria2-session.txt")),
-                "an ODM-owned daemon's session must still be saved");
     }
 
     @Test

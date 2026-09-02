@@ -62,6 +62,7 @@ final class DownloadListPresenter {
     private static final int COL_START_SORT = 24;
     private static final int COL_END_SORT = 25;
     private static final int COL_TYPE_SORT = 26;
+    private static final int COL_PROGRESS_PULSE = 27;
 
     // status_store / category_store columns
     private static final int SC_ICON = 0;
@@ -112,6 +113,7 @@ final class DownloadListPresenter {
      * into it.
      */
     private final AtomicBoolean refreshPending = new AtomicBoolean(false);
+    private int completionPulsePosition;
 
     DownloadListPresenter(ListStore statusStore, ListStore categoryStore, ListStore downloadsStore,
             ListStore globalProgressStore, TreeView statusTreeview, TreeView categoryTreeview,
@@ -216,6 +218,42 @@ final class DownloadListPresenter {
                 fullRefresh.run();
             });
         }
+    }
+
+    /**
+     * Advances only the activity cells of visible downloads whose completion
+     * actions are running. This avoids rebuilding or refetching the list at
+     * animation frequency.
+     *
+     * @return true when at least one visible row was pulsed
+     */
+    boolean pulseCompletionRows() {
+        completionPulsePosition = (completionPulsePosition + 8) % 101;
+        boolean anyVisible = false;
+        for (Download download : rowSnapshot) {
+            if (!download.hasRunningProgressCompletionActions()) {
+                continue;
+            }
+            TreeRowReference reference = rowReferences.get(download.getId());
+            TreePath path = reference == null ? null : reference.getPath();
+            if (path == null) {
+                continue;
+            }
+            try {
+                TreeIter iter = new TreeIter();
+                if (downloadsStore.getIter(iter, path)) {
+                    ListStoreCells.setInt(downloadsStore, iter, COL_PROGRESS, 100);
+                    ListStoreCells.setString(downloadsStore, iter, COL_PROGRESS_TEXT,
+                            "100% · Finalizing…");
+                    ListStoreCells.setInt(downloadsStore, iter, COL_PROGRESS_PULSE,
+                            completionPulsePosition);
+                    anyVisible = true;
+                }
+            } finally {
+                MemoryCleaner.free(path.handle());
+            }
+        }
+        return anyVisible;
     }
 
     /**
@@ -509,10 +547,13 @@ final class DownloadListPresenter {
         ListStoreCells.setString(store, iter, COL_NAME, download.getName());
         ListStoreCells.setString(store, iter, COL_COMPLETE, DownloadFormats.size(download.getDownloaded()));
         ListStoreCells.setString(store, iter, COL_SIZE, DownloadFormats.size(download.getSize()));
-        ListStoreCells.setInt(store, iter, COL_PROGRESS,
-                ProgressPresentation.wholePercentage(download.getProgress()));
-        ListStoreCells.setString(store, iter, COL_PROGRESS_TEXT,
-                ProgressPresentation.percentage(download.getProgress()));
+        boolean finalizing = download.hasRunningProgressCompletionActions();
+        ListStoreCells.setInt(store, iter, COL_PROGRESS, finalizing
+                ? 100 : ProgressPresentation.wholePercentage(download.getProgress()));
+        ListStoreCells.setString(store, iter, COL_PROGRESS_TEXT, finalizing
+                ? "100% · Finalizing…" : ProgressPresentation.percentage(download.getProgress()));
+        ListStoreCells.setInt(store, iter, COL_PROGRESS_PULSE,
+                finalizing ? completionPulsePosition : -1);
         ListStoreCells.setString(store, iter, COL_STATUS_ICON,
                 statusIconName(download.getStatus()));
         ListStoreCells.setString(store, iter, COL_ELAPSED, DownloadFormats.elapsed(download));

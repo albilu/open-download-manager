@@ -30,6 +30,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     }
 
     private final AntivirusType antivirusType;
+    private final String executablePath;
     private String customCommand;
     private Process scanProcess;
     private CompletableFuture<Void> scanFuture;
@@ -37,6 +38,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     private boolean isScanning;
     private String scanResult;
     private boolean threatDetected;
+    private String outcomeMessage = "Antivirus scan did not complete";
 
     /**
      * Creates a new AntivirusCheckAction with the specified antivirus type.
@@ -45,7 +47,21 @@ public class AntivirusCheckAction implements AfterCompletionAction {
      * @param timeoutSeconds Timeout in seconds for the scan (0 for no timeout)
      */
     public AntivirusCheckAction(AntivirusType antivirusType, int timeoutSeconds) {
-        this.antivirusType = antivirusType;
+        this(antivirusType, defaultExecutable(antivirusType), timeoutSeconds);
+    }
+
+    /**
+     * Creates an action using a discovered and validated scanner executable.
+     */
+    public AntivirusCheckAction(AntivirusType antivirusType, String executablePath,
+            int timeoutSeconds) {
+        if (antivirusType == AntivirusType.CUSTOM) {
+            throw new IllegalArgumentException(
+                    "Use the custom-command constructor for CUSTOM antivirus type");
+        }
+        this.antivirusType = java.util.Objects.requireNonNull(antivirusType, "antivirusType");
+        this.executablePath = executablePath == null || executablePath.isBlank()
+                ? defaultExecutable(antivirusType) : executablePath;
         this.timeoutSeconds = Math.max(0, timeoutSeconds);
         this.isScanning = false;
         this.threatDetected = false;
@@ -60,6 +76,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
      */
     public AntivirusCheckAction(String customCommand, int timeoutSeconds) {
         this.antivirusType = AntivirusType.CUSTOM;
+        this.executablePath = null;
         this.customCommand = customCommand;
         this.timeoutSeconds = Math.max(0, timeoutSeconds);
         this.isScanning = false;
@@ -68,21 +85,35 @@ public class AntivirusCheckAction implements AfterCompletionAction {
 
     @Override
     public boolean execute(Download download) {
+        // One settings-backed action instance may be reused for multiple
+        // downloads. Reset invocation-specific state before every scan so a
+        // threat or result from an earlier file cannot leak into this row's
+        // Details result.
+        isScanning = false;
+        scanProcess = null;
+        scanFuture = null;
+        scanResult = null;
+        threatDetected = false;
+        outcomeMessage = "Antivirus scan did not complete";
+
         // If no download destination is set, we can't scan the file
         if (download.getDestination() == null) {
             LOGGER.warn("Cannot scan file: download destination is not set");
+            outcomeMessage = "Download destination is not set";
             return false;
         }
 
         Path sourceFile = download.getPrimaryOutputPath();
         if (sourceFile == null) {
             LOGGER.warn("Cannot scan file: output path is unknown");
+            outcomeMessage = "Downloaded file path is unknown";
             return false;
         }
 
         // Check if source file exists
         if (!Files.exists(sourceFile)) {
             LOGGER.warn("Cannot scan file: source file does not exist: " + sourceFile);
+            outcomeMessage = "Downloaded file does not exist: " + sourceFile;
             return false;
         }
 
@@ -90,6 +121,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             List<String> command = buildCommand(sourceFile);
             if (command.isEmpty()) {
                 LOGGER.error("Failed to build command for antivirus scan");
+                outcomeMessage = "Could not build the antivirus command";
                 return false;
             }
 
@@ -133,6 +165,8 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                     scanProcess.destroyForcibly();
                     scanFuture.cancel(true);
                     isScanning = false;
+                    outcomeMessage = "Antivirus scan timed out after "
+                            + timeoutSeconds + " seconds";
                     return false;
                 }
             } else {
@@ -141,7 +175,13 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             }
 
             // Wait for output collection to complete
-            scanFuture.join();
+            try {
+                scanFuture.join();
+            } catch (java.util.concurrent.CancellationException e) {
+                isScanning = false;
+                outcomeMessage = "Antivirus scan was canceled";
+                return false;
+            }
             isScanning = false;
 
             // Store the scan result
@@ -152,9 +192,11 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             boolean success = exitValue == 0 || (antivirusType == AntivirusType.CLAMAV && exitValue == 1);
 
             if (success) {
+                outcomeMessage = threatDetected ? "Threats detected" : "No threats detected";
                 LOGGER.info("Antivirus scan completed successfully"
                         + (threatDetected ? ". THREATS DETECTED!" : ". No threats detected."));
             } else {
+                outcomeMessage = "Antivirus scanner exited with code " + exitValue;
                 LOGGER.warn("Antivirus scan failed with exit code: " + exitValue);
             }
 
@@ -162,11 +204,13 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         } catch (IOException e) {
             LOGGER.error("Failed to execute antivirus scan: " + e.getMessage(), e);
             isScanning = false;
+            outcomeMessage = "Could not run antivirus scanner: " + e.getMessage();
             return false;
         } catch (InterruptedException e) {
             LOGGER.warn("Antivirus scan was interrupted", e);
             Thread.currentThread().interrupt();
             isScanning = false;
+            outcomeMessage = "Antivirus scan was interrupted";
             return false;
         }
     }
@@ -176,17 +220,17 @@ public class AntivirusCheckAction implements AfterCompletionAction {
 
         switch (antivirusType) {
             case CLAMAV -> {
-                command.add("clamscan");
+                command.add(executablePath);
                 command.add("--no-summary");
                 command.add(sourceFile.toString());
             }
             case CHKROOTKIT -> {
-                command.add("chkrootkit");
+                command.add(executablePath);
                 command.add("-p");
                 command.add(sourceFile.getParent().toString());
             }
             case RKHUNTER -> {
-                command.add("rkhunter");
+                command.add(executablePath);
                 command.add("--checkall");
                 command.add("--skip-keypress");
                 command.add("--no-mail-on-warning");
@@ -211,6 +255,16 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         return command;
     }
 
+    private static String defaultExecutable(AntivirusType antivirusType) {
+        return switch (antivirusType) {
+            case CLAMAV -> "clamscan";
+            case CHKROOTKIT -> "chkrootkit";
+            case RKHUNTER -> "rkhunter";
+            case CUSTOM -> throw new IllegalArgumentException(
+                    "CUSTOM antivirus type has no fixed executable");
+        };
+    }
+
     @Override
     public ActionType getType() {
         return ActionType.ANTIVIRUS_CHECK;
@@ -225,6 +279,16 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     @Override
     public Severity getSeverity() {
         return Severity.HIGH;
+    }
+
+    @Override
+    public String getResultMessage() {
+        return outcomeMessage;
+    }
+
+    @Override
+    public String getFailureMessage() {
+        return outcomeMessage;
     }
 
     private String getAntivirusName() {
@@ -296,6 +360,11 @@ public class AntivirusCheckAction implements AfterCompletionAction {
      */
     public String getCustomCommand() {
         return customCommand;
+    }
+
+    /** Discovered executable used for built-in scanners, or null for custom. */
+    public String getExecutablePath() {
+        return executablePath;
     }
 
     /**

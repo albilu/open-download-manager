@@ -21,15 +21,41 @@ public interface AfterCompletionAction {
      * The type of action to be executed after download completion.
      */
     enum ActionType {
-        PLAY_SOUND,//implemeted
-        MOVE_FILE,//implemeted
-        EXTRACT_ARCHIVE,
-        SLEEP_COMPUTER,
-        SHUTDOWN_COMPUTER,//implemeted
-        EXECUTE_COMMAND,
-        ANTIVIRUS_CHECK,//implemeted
-        CHECKSUM_VALIDATION,
-        DOWNLOAD_SUBTITLES
+        PLAY_SOUND(0, false, false),
+        CHECKSUM_VALIDATION(1, true, false),
+        ANTIVIRUS_CHECK(2, true, false),
+        DOWNLOAD_SUBTITLES(3, true, false),
+        EXECUTE_COMMAND(4, true, false),
+        SLEEP_COMPUTER(5, false, true),
+        SHUTDOWN_COMPUTER(6, false, true),
+        MOVE_FILE(7, true, false),
+        EXTRACT_ARCHIVE(8, true, false);
+
+        private final int priority;
+        private final boolean contributesToFinalizingProgress;
+        private final boolean global;
+
+        ActionType(int priority, boolean contributesToFinalizingProgress,
+                boolean global) {
+            this.priority = priority;
+            this.contributesToFinalizingProgress = contributesToFinalizingProgress;
+            this.global = global;
+        }
+
+        /** Execution priority; lower values run first and match declaration order. */
+        public int getPriority() {
+            return priority;
+        }
+
+        /** Whether this action should animate a completed download's progress row. */
+        public boolean contributesToFinalizingProgress() {
+            return contributesToFinalizingProgress;
+        }
+
+        /** Whether this action runs once after the whole download set is idle. */
+        public boolean isGlobal() {
+            return global;
+        }
     }
 
     /**
@@ -48,11 +74,39 @@ public interface AfterCompletionAction {
     ActionType getType();
 
     /**
+     * Execution priority. Implementations normally inherit their type's
+     * priority so the enum declaration remains the single ordering policy.
+     */
+    default int getPriority() {
+        return getType().getPriority();
+    }
+
+    /** Whether the action is a once-per-idle-cycle application action. */
+    default boolean isGlobal() {
+        return getType().isGlobal();
+    }
+
+    /** Whether the action should drive indeterminate finalization progress. */
+    default boolean contributesToFinalizingProgress() {
+        return getType().contributesToFinalizingProgress();
+    }
+
+    /**
      * Get a user-friendly description of this action.
      *
      * @return The action description
      */
     String getDescription();
+
+    /** User-facing result text recorded when the action succeeds. */
+    default String getResultMessage() {
+        return "Completed successfully";
+    }
+
+    /** User-facing result text recorded when {@link #execute} returns false. */
+    default String getFailureMessage() {
+        return "Action did not complete successfully";
+    }
 
     /**
      * Get the severity level of this action when it fails.

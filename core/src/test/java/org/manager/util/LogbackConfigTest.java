@@ -8,6 +8,7 @@ import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.joran.JoranConfigurator;
 import ch.qos.logback.core.status.Status;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -31,6 +32,17 @@ class LogbackConfigTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void productionPathUsesXdgStateHomeInsteadOfXdgDataHome() throws Exception {
+        try (InputStream stream = LogbackConfigTest.class.getResourceAsStream("/logback.xml")) {
+            assertNotNull(stream, "/logback.xml missing from classpath");
+            String configuration = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            assertTrue(configuration.contains("XDG_STATE_HOME"));
+            assertTrue(configuration.contains(".local/state"));
+            assertFalse(configuration.contains("XDG_DATA_HOME"));
+        }
+    }
 
     @Test
     void writesIntoOdmLogsDirectoryWithConfiguredPattern() throws Exception {

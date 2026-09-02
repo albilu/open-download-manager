@@ -747,26 +747,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             extraArgs.add("--bt-tracker-interval=" + (trackerInterval * 60L));
         }
 
-        // Configure session management using global settings
-        try {
-            // Use default session file paths in downloads directory
-            java.nio.file.Path downloadsDir = globalSettings.getDefaultDownloadDirectory();
-            java.nio.file.Path sessionPath = downloadsDir.resolve("aria2-session.txt");
-
-            // Ensure downloads directory exists
-            if (!java.nio.file.Files.exists(downloadsDir)) {
-                java.nio.file.Files.createDirectories(downloadsDir);
-            }
-
-            // Configure aria2 with session support
-            extraArgs.add("--save-session=" + sessionPath.toString());
-            extraArgs.add("--save-session-interval=60");
-
-            LOGGER.info("Configured aria2 session management with file: " + sessionPath);
-        } catch (Exception e) {
-            LOGGER.warn("Could not configure aria2 session management", e);
-        }
-
         // Start aria2 with RPC enabled. A false return or an exception
         // means no usable daemon (e.g. the endpoint is occupied without
         // valid credentials) — fail initialization visibly instead of
@@ -788,7 +768,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Connect WebSocket for notifications
         aria2Client.connectWebSocket();
 
-        LOGGER.info("aria2 RPC server started successfully with session management");
+        LOGGER.info("aria2 RPC server started successfully");
     }
 
     /**
@@ -892,32 +872,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }
     }
 
-    /**
-     * Saves the current aria2 session. Ownership-guarded: an adopted
-     * external daemon never receives aria2.saveSession — that would
-     * rewrite the user's own session file at ODM's cadence, and ODM's
-     * recovery state comes from its own state store anyway.
-     */
-    public void saveSession() throws Exception {
-        if (aria2Client != null) {
-            if (aria2Client.getDaemonOwnership() == Aria2Client.DaemonOwnership.EXTERNAL_AUTHENTICATED) {
-                LOGGER.info("Skipping aria2.saveSession: daemon is an adopted external instance");
-                return;
-            }
-            aria2Client.saveSession();
-            LOGGER.info("Saved aria2 session");
-        }
-    }
-
-    /**
-     * Loads aria2 session from the specified file.
-     */
-    public void loadSession(java.nio.file.Path sessionFile) throws Exception {
-        // ODM's SQLite state is the only replay authority. Retained as a
-        // compatibility no-op for callers compiled against the old API.
-        LOGGER.info("Ignoring aria2 session replay; ODM state owns recovery");
-    }
-
     @Override
     protected void doShutdown() throws Exception {
         // Mark as shutting down to prevent new tasks FIRST
@@ -925,14 +879,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         // Stop all progress polling
         stopAllProgressPolling();
-
-        // Save session before disconnecting
-        try {
-            saveSession();
-            LOGGER.info("Saved aria2 session before shutdown");
-        } catch (Exception e) {
-            LOGGER.warn("Failed to save aria2 session during shutdown", e);
-        }
 
         // Shutdown is ownership-driven (Aria2Client.DaemonOwnership):
         // - ODM_STARTED: stopAria2c sends the authenticated shutdown RPC

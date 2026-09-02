@@ -45,7 +45,8 @@ class ManagerShutdownFailureSurfacingTest {
     @DisplayName("failing essential hook fails manager shutdown while later cleanup still runs")
     void essentialHookFailureSurfacesThroughManagerShutdown() throws Exception {
         Path xdg = tempDir.resolve("xdg-home");
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString())
+                .and("XDG_STATE_HOME", xdg.toString()).execute(() -> {
             DownloadManagerImpl manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
             ShutdownCoordinator coordinator = coordinatorOf(manager);
             AtomicInteger cleanupRuns = new AtomicInteger();
@@ -71,7 +72,8 @@ class ManagerShutdownFailureSurfacingTest {
     @DisplayName("healthy manager shutdown completes normally")
     void healthyManagerShutdownCompletesNormally() throws Exception {
         Path xdg = tempDir.resolve("xdg-home-2");
-        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString()).execute(() -> {
+        SystemLambda.withEnvironmentVariable("XDG_DATA_HOME", xdg.toString())
+                .and("XDG_STATE_HOME", xdg.toString()).execute(() -> {
             DownloadManagerImpl manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
 
             manager.shutdown().get(60, TimeUnit.SECONDS);

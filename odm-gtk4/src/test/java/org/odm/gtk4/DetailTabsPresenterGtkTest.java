@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
+import org.manager.download.action.AfterCompletionAction;
+import org.manager.download.action.CompletionActionResult;
 import org.manager.schedule.ScheduleManager;
 import org.mockito.Mockito;
 import org.tor.TorService;
@@ -52,11 +55,12 @@ class DetailTabsPresenterGtkTest {
     private ListStore trackersStore;
     private ListStore peersStore;
     private ListStore filesStore;
+    private ListStore completionDetailsStore;
     private final AtomicReference<Download> selection = new AtomicReference<>();
     private DetailTabsPresenter presenter;
 
     private record PresenterFixture(ListStore trackers, ListStore peers, ListStore files,
-            DetailTabsPresenter presenter) {
+            ListStore completionDetails, DetailTabsPresenter presenter) {
     }
 
     @BeforeAll
@@ -90,12 +94,16 @@ class DetailTabsPresenterGtkTest {
             ListStore trackers = Widgets.require(builder, "trackers_store", ListStore.class);
             ListStore peers = Widgets.require(builder, "peers_store", ListStore.class);
             ListStore files = Widgets.require(builder, "files_store", ListStore.class);
-            return new PresenterFixture(trackers, peers, files,
-                    new DetailTabsPresenter(manager, trackers, peers, files, selection::get));
+            ListStore completionDetails = Widgets.require(builder,
+                    "completion_details_store", ListStore.class);
+            return new PresenterFixture(trackers, peers, files, completionDetails,
+                    new DetailTabsPresenter(manager, trackers, peers, files,
+                            completionDetails, selection::get));
         });
         trackersStore = fixture.trackers();
         peersStore = fixture.peers();
         filesStore = fixture.files();
+        completionDetailsStore = fixture.completionDetails();
         presenter = fixture.presenter();
     }
 
@@ -172,14 +180,45 @@ class DetailTabsPresenterGtkTest {
 
     @Test
     @Timeout(60)
+    @DisplayName("completion action results are rendered in the Details store")
+    void completionActionResultsPopulateDetailsStore() throws Exception {
+        Download download = download("completed");
+        download.setCompletionActionResults(List.of(new CompletionActionResult(
+                "result-1",
+                AfterCompletionAction.ActionType.ANTIVIRUS_CHECK,
+                "Antivirus check using ClamAV",
+                CompletionActionResult.Status.FAILED,
+                "Scanner executable was not found",
+                AfterCompletionAction.Severity.HIGH,
+                Instant.parse("2026-09-02T10:00:00Z"),
+                Instant.parse("2026-09-02T10:00:01Z"))));
+        Mockito.when(manager.getDownloadTrackers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadPeers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadFiles(download)).thenReturn(List.of());
+
+        onLoop(() -> {
+            selection.set(download);
+            presenter.load();
+        });
+
+        assertEquals("Antivirus check using ClamAV",
+                onLoop(() -> firstValue(completionDetailsStore, 0)));
+        assertEquals("Failed (high)",
+                onLoop(() -> firstValue(completionDetailsStore, 1)));
+        assertEquals("Scanner executable was not found",
+                onLoop(() -> firstValue(completionDetailsStore, 2)));
+    }
+
+    @Test
+    @Timeout(60)
     @DisplayName("file size and progress sorting use raw numeric values")
     void fileRowsUseTypedSortKeys() throws Exception {
         Download download = download("files");
         Mockito.when(manager.getDownloadTrackers(download)).thenReturn(List.of());
         Mockito.when(manager.getDownloadPeers(download)).thenReturn(List.of());
         Mockito.when(manager.getDownloadFiles(download)).thenReturn(List.of(
-                file("ten-kib.bin", 10 * 1024L, 1024L, 1),
-                file("nine-kib.bin", 9 * 1024L, 9000L, 2)));
+                file("season/ten-kib.bin", 10 * 1024L, 1024L, 1),
+                file("season/nine-kib.bin", 9 * 1024L, 9000L, 2)));
 
         onLoop(() -> {
             selection.set(download);
@@ -202,6 +241,11 @@ class DetailTabsPresenterGtkTest {
             ((TreeSortable) filesStore).setSortColumnId(8, SortType.DESCENDING);
             return firstValue(filesStore, 1);
         }), "97.66% must sort above 10.00% by precise progress");
+
+        assertEquals("season/nine-kib.bin",
+                onLoop(() -> firstValue(filesStore,
+                        DetailTabsPresenter.FILE_PATH_COLUMN)),
+                "the hidden path must remain available for reveal-in-folder actions");
     }
 
     @Test

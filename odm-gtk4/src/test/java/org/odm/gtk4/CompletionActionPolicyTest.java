@@ -3,6 +3,7 @@ package org.odm.gtk4;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
 import org.junit.jupiter.api.Test;
 import org.manager.GlobalSettings;
@@ -42,6 +43,22 @@ class CompletionActionPolicyTest {
         SubtitleDownloadAction subtitles = assertInstanceOf(SubtitleDownloadAction.class,
                 CompletionActionPolicy.forChoice("subtitles", settings));
         assertEquals(java.util.List.of("fr", "it"), subtitles.getLanguages());
+    }
+
+    @Test
+    void multipleChoicesAreBuiltInActionTypePriorityOrder() {
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty("ui.completionCommand", "echo {file_path}");
+
+        var actions = CompletionActionPolicy.forChoices(
+                java.util.List.of("shutdown", "custom", "notify", "antivirus"), settings);
+
+        assertIterableEquals(java.util.List.of(
+                AfterCompletionAction.ActionType.PLAY_SOUND,
+                AfterCompletionAction.ActionType.ANTIVIRUS_CHECK,
+                AfterCompletionAction.ActionType.EXECUTE_COMMAND,
+                AfterCompletionAction.ActionType.SHUTDOWN_COMPUTER),
+                actions.stream().map(AfterCompletionAction::getType).toList());
     }
 
     @Test

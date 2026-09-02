@@ -20,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.manager.GlobalSettings;
 import org.manager.tools.ToolManager.ToolException;
 import org.aria2.Aria2ToolManager;
+import org.antivirus.AntivirusToolManager;
 import org.curl.CurlToolManager;
 import org.httrack.HttrackToolManager;
 import org.proxychains.ProxychainsToolManager;
@@ -66,6 +67,9 @@ class ToolManagerContractTest {
                 new HttrackToolManager(settings, EXECUTOR),
                 new ProxychainsToolManager(settings, EXECUTOR),
                 new TorToolManager(settings, EXECUTOR),
+                new AntivirusToolManager(AntivirusToolManager.Scanner.CLAMAV, settings, EXECUTOR),
+                new AntivirusToolManager(AntivirusToolManager.Scanner.CHKROOTKIT, settings, EXECUTOR),
+                new AntivirusToolManager(AntivirusToolManager.Scanner.RKHUNTER, settings, EXECUTOR),
         };
     }
 
@@ -78,6 +82,12 @@ class ToolManagerContractTest {
         assertEquals("httrack", HttrackToolManager.TOOL_ID);
         assertEquals("proxychains", ProxychainsToolManager.TOOL_ID);
         assertEquals("tor", TorToolManager.TOOL_ID);
+        assertEquals("antivirus-clamav",
+                AntivirusToolManager.Scanner.CLAMAV.toolId());
+        assertEquals("antivirus-chkrootkit",
+                AntivirusToolManager.Scanner.CHKROOTKIT.toolId());
+        assertEquals("antivirus-rkhunter",
+                AntivirusToolManager.Scanner.RKHUNTER.toolId());
 
         for (AbstractToolManager manager : allManagers()) {
             assertNotNull(manager.getToolId());
