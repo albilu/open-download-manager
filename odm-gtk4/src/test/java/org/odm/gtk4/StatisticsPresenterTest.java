@@ -44,18 +44,19 @@ class StatisticsPresenterTest {
         StatisticsPresenter.Stats stats = StatisticsPresenter.aggregate(List.of(
                 download("a.zip", Download.Status.DOWNLOADING, 100, 40),
                 download("b.zip", Download.Status.CONNECTING, 50, 0),
+                download("seed.iso", Download.Status.SEEDING, 100, 100),
                 download("c.zip", Download.Status.QUEUED, 10, 0),
                 download("d.zip", Download.Status.PAUSED, 10, 5),
                 download("e.zip", Download.Status.COMPLETED, 200, 200),
                 download("f.zip", Download.Status.ERROR, 30, 10),
                 download("g.zip", Download.Status.CANCELED, 30, 0)));
 
-        assertEquals(7, stats.total());
-        assertEquals(2, stats.active());
+        assertEquals(8, stats.total());
+        assertEquals(3, stats.active());
         assertEquals(2, stats.queued());
         assertEquals(1, stats.finished());
         assertEquals(2, stats.errors());
-        assertEquals(430, stats.totalSize());
-        assertEquals(255, stats.doneSize());
+        assertEquals(530, stats.totalSize());
+        assertEquals(355, stats.doneSize());
     }
 }

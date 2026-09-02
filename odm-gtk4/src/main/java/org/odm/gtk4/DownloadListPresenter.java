@@ -26,7 +26,9 @@ import org.manager.download.Download;
  */
 final class DownloadListPresenter {
 
-    static final String[] STATUS_FILTERS = {"All Status", "Active", "Queuing", "Finished", "Deleted"};
+    static final String[] STATUS_FILTERS = {
+        "All Status", "Active", "Seeding", "Queued", "Paused", "Finished", "Error", "Canceled"
+    };
     static final String[] CATEGORIES = {"All", "Videos", "Audios", "Photos", "Programs", "Others"};
 
     // Visible download_store columns. Number is gint; 1-11 are strings,
@@ -250,9 +252,11 @@ final class DownloadListPresenter {
             }
             if (download.getStatus() == Download.Status.STARTING
                     || download.getStatus() == Download.Status.CONNECTING
-                    || download.getStatus() == Download.Status.DOWNLOADING) {
+                    || download.getStatus() == Download.Status.DOWNLOADING
+                    || download.getStatus() == Download.Status.SEEDING) {
                 anyActive = true;
-                if (download.getStatus() == Download.Status.DOWNLOADING) {
+                if (download.getStatus() == Download.Status.DOWNLOADING
+                        || download.getStatus() == Download.Status.SEEDING) {
                     totalDownSpeed += download.getSpeed();
                     totalUpSpeed += download.getUploadSpeed();
                     totalSeeders += download.getSeeders();
@@ -391,30 +395,39 @@ final class DownloadListPresenter {
             case "All Status" -> true;
             case "Active" -> download.getStatus() == Download.Status.STARTING
                     || download.getStatus() == Download.Status.CONNECTING
-                    || download.getStatus() == Download.Status.DOWNLOADING;
-            case "Queuing" -> download.getStatus() == Download.Status.CREATED
-                    || download.getStatus() == Download.Status.QUEUED
-                    || download.getStatus() == Download.Status.PAUSED;
+                    || download.getStatus() == Download.Status.DOWNLOADING
+                    || download.getStatus() == Download.Status.SEEDING;
+            case "Seeding" -> download.getStatus() == Download.Status.SEEDING;
+            case "Queued" -> download.getStatus() == Download.Status.CREATED
+                    || download.getStatus() == Download.Status.QUEUED;
+            case "Paused" -> download.getStatus() == Download.Status.PAUSED;
             case "Finished" -> download.getStatus() == Download.Status.COMPLETED;
-            case "Deleted" -> download.getStatus() == Download.Status.ERROR
-                    || download.getStatus() == Download.Status.CANCELED;
+            case "Error" -> download.getStatus() == Download.Status.ERROR;
+            case "Canceled" -> download.getStatus() == Download.Status.CANCELED;
             default -> true;
         };
     }
 
     /** Counts per status filter, index-aligned with STATUS_FILTERS (minus "All Status"). */
     static int[] computeCounts(List<Download> downloads) {
-        int active = 0, queuing = 0, finished = 0, deleted = 0;
+        int active = 0, seeding = 0, queued = 0, paused = 0;
+        int finished = 0, error = 0, canceled = 0;
         for (Download d : downloads) {
             switch (d.getStatus()) {
                 case STARTING, CONNECTING, DOWNLOADING -> active++;
-                case CREATED, QUEUED, PAUSED -> queuing++;
+                case SEEDING -> {
+                    active++;
+                    seeding++;
+                }
+                case CREATED, QUEUED -> queued++;
+                case PAUSED -> paused++;
                 case COMPLETED -> finished++;
-                case ERROR, CANCELED -> deleted++;
+                case ERROR -> error++;
+                case CANCELED -> canceled++;
                 default -> { }
             }
         }
-        return new int[]{active, queuing, finished, deleted};
+        return new int[]{active, seeding, queued, paused, finished, error, canceled};
     }
 
     static int[] computeCounts(java.util.Map<Download.Status, Integer> counts) {
@@ -423,13 +436,15 @@ final class DownloadListPresenter {
         return new int[]{
             count.applyAsInt(Download.Status.STARTING)
                     + count.applyAsInt(Download.Status.CONNECTING)
-                    + count.applyAsInt(Download.Status.DOWNLOADING),
+                    + count.applyAsInt(Download.Status.DOWNLOADING)
+                    + count.applyAsInt(Download.Status.SEEDING),
+            count.applyAsInt(Download.Status.SEEDING),
             count.applyAsInt(Download.Status.CREATED)
-                    + count.applyAsInt(Download.Status.QUEUED)
-                    + count.applyAsInt(Download.Status.PAUSED),
+                    + count.applyAsInt(Download.Status.QUEUED),
+            count.applyAsInt(Download.Status.PAUSED),
             count.applyAsInt(Download.Status.COMPLETED),
-            count.applyAsInt(Download.Status.ERROR)
-                    + count.applyAsInt(Download.Status.CANCELED)
+            count.applyAsInt(Download.Status.ERROR),
+            count.applyAsInt(Download.Status.CANCELED)
         };
     }
 
@@ -477,11 +492,12 @@ final class DownloadListPresenter {
         return switch (status) {
             case CREATED -> "document-new-symbolic";
             case STARTING -> "media-playback-start-symbolic";
-            case DOWNLOADING -> "go-down-symbolic";
-            case QUEUED -> "view-list-symbolic";
+            case DOWNLOADING -> "media-playback-start-symbolic";
+            case SEEDING -> "network-transmit-symbolic";
+            case QUEUED -> "view-grid-symbolic";
             case PAUSED -> "media-playback-pause-symbolic";
             case ERROR -> "dialog-error-symbolic";
-            case COMPLETED -> "emblem-ok-symbolic";
+            case COMPLETED -> "object-select-symbolic";
             case CONNECTING -> "network-transmit-receive-symbolic";
             case CANCELED -> "process-stop-symbolic";
         };
@@ -543,11 +559,7 @@ final class DownloadListPresenter {
     }
 
     private static long elapsedSeconds(Download download) {
-        if (download.getCreatedAt() == null) {
-            return 0;
-        }
-        return Math.max(0, java.time.Duration.between(
-                download.getCreatedAt(), java.time.Instant.now()).toSeconds());
+        return Math.max(0, download.getActiveElapsedMillis() / 1000);
     }
 
     private void freeRowReferences() {
@@ -605,13 +617,16 @@ final class DownloadListPresenter {
         }
     }
 
-    private static String iconForFilterRow(String label) {
+    static String iconForFilterRow(String label) {
         return switch (label) {
             case "All Status" -> "view-list-symbolic";
             case "Active" -> "media-playback-start-symbolic";
-            case "Queuing" -> "view-grid-symbolic";
-            case "Finished" -> "emblem-ok-symbolic";
-            case "Deleted" -> "edit-delete-symbolic";
+            case "Seeding" -> "network-transmit-symbolic";
+            case "Queued" -> "view-grid-symbolic";
+            case "Paused" -> "media-playback-pause-symbolic";
+            case "Finished" -> "object-select-symbolic";
+            case "Error" -> "dialog-error-symbolic";
+            case "Canceled" -> "process-stop-symbolic";
             case "All" -> "view-list-symbolic";
             case "Videos" -> "video-x-generic-symbolic";
             case "Audios" -> "audio-x-generic-symbolic";

@@ -27,6 +27,19 @@ class DownloadSettingsFactoryTest {
         assertFalse(settings.isCheckIntegrity(), "integrity check off by default");
         assertNull(settings.getOption("max-download-limit"), "no speed cap by default");
         assertNull(settings.getOption("max-tries"), "unlimited retries by default");
+        assertEquals("0", settings.getOption("seed-time"),
+                "disabled seeding must explicitly finish a completed torrent");
+    }
+
+    @Test
+    void enabledSeedingUsesTheConfiguredDuration() {
+        GlobalSettings global = new GlobalSettings();
+        global.setProperty("aria2.enableSeeding", "true");
+        global.setProperty("aria2.seedTimeMin", "45");
+
+        Aria2Settings settings = new DownloadSettingsFactory(global).createAria2Settings();
+
+        assertEquals("45", settings.getOption("seed-time"));
     }
 
     @Test

@@ -1,7 +1,6 @@
 package org.odm.gtk4;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
@@ -46,12 +45,12 @@ final class DownloadFormats {
         return hms(d.toHours(), d.toMinutesPart(), d.toSecondsPart());
     }
 
-    /** Time since the download was created, or an em-dash without a timestamp. */
+    /** Active transfer time; queued and paused wall-clock time is excluded. */
     static String elapsed(Download download) {
-        if (download.getCreatedAt() == null) {
+        if (download.getStartedAt() == null && download.getActiveElapsedMillis() == 0) {
             return "—";
         }
-        Duration d = Duration.between(download.getCreatedAt(), Instant.now());
+        Duration d = Duration.ofMillis(download.getActiveElapsedMillis());
         return hms(d.toHours(), d.toMinutesPart(), d.toSecondsPart());
     }
 

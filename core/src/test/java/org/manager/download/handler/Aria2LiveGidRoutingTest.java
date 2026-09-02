@@ -88,6 +88,7 @@ class Aria2LiveGidRoutingTest {
 
         private final Path outputPath;
         private final List<String> optionGids = new CopyOnWriteArrayList<>();
+        private final List<Map<String, Object>> optionValues = new CopyOnWriteArrayList<>();
         private final List<String> peerGids = new CopyOnWriteArrayList<>();
         private final List<String> fileGids = new CopyOnWriteArrayList<>();
         private final List<String> statusGids = new CopyOnWriteArrayList<>();
@@ -102,6 +103,7 @@ class Aria2LiveGidRoutingTest {
         @Override
         public String changeOption(String gid, Map<String, Object> options) {
             optionGids.add(gid);
+            optionValues.add(Map.copyOf(options));
             return "OK";
         }
 
@@ -148,6 +150,7 @@ class Aria2LiveGidRoutingTest {
 
         void clearRecordings() {
             optionGids.clear();
+            optionValues.clear();
             peerGids.clear();
             fileGids.clear();
             statusGids.clear();
@@ -161,15 +164,17 @@ class Aria2LiveGidRoutingTest {
     private RecordingPoller poller;
     private RecordingClient client;
     private InitializedHandler handler;
+    private GlobalSettings globalSettings;
 
     @BeforeEach
     void setUp() {
-        GlobalSettings settings = new GlobalSettings();
-        settings.setDefaultDownloadDirectory(tempDir);
+        globalSettings = new GlobalSettings();
+        globalSettings.setDefaultDownloadDirectory(tempDir);
         executor = Executors.newSingleThreadExecutor();
         poller = new RecordingPoller();
         client = new RecordingClient(tempDir.resolve("payload.bin"));
-        handler = new InitializedHandler(settings, new DownloadSettingsFactory(settings),
+        handler = new InitializedHandler(globalSettings,
+                new DownloadSettingsFactory(globalSettings),
                 executor, client, poller);
     }
 
@@ -208,6 +213,61 @@ class Aria2LiveGidRoutingTest {
 
         assertEquals(Set.of("payload-a", "payload-b"), Set.copyOf(client.optionGids));
         assertFalse(client.optionGids.contains("metadata-gid"));
+    }
+
+    @Test
+    @DisplayName("Disabled seeding stops an active local seeder and then completes normally")
+    void disabledSeedingStopsLegacySeeder() {
+        Download download = new Download(URI.create(
+                "magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        handler.registerTrackedDownload(download, List.of("payload-gid"));
+        Map<String, Object> seeding = status("active", 1_000, 1_000);
+        seeding.put("seeder", "true");
+        seeding.put("infoHash", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+        handler.processProgressUpdate(download.getId(), "payload-gid", seeding);
+        handler.processProgressUpdate(download.getId(), "payload-gid", seeding);
+
+        assertEquals(List.of("payload-gid"), client.optionGids,
+                "the stop request is sent once even if several active polls arrive");
+        assertEquals(List.of(Map.of("seed-time", "0")), client.optionValues);
+        assertEquals(Download.Status.SEEDING, download.getStatus(),
+                "ODM waits for aria2's authoritative complete transition");
+
+        handler.processProgressUpdate(download.getId(), "payload-gid",
+                status("complete", 1_000, 1_000));
+        assertEquals(Download.Status.COMPLETED, download.getStatus());
+    }
+
+    @Test
+    @DisplayName("Enabled seeding leaves an active local seeder running")
+    void enabledSeedingIsNotStopped() {
+        globalSettings.setProperty("aria2.enableSeeding", "true");
+        Download download = new Download(URI.create(
+                "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc"));
+        handler.registerTrackedDownload(download, List.of("seed-gid"));
+        Map<String, Object> seeding = status("active", 100, 100);
+        seeding.put("seeder", "true");
+
+        handler.processProgressUpdate(download.getId(), "seed-gid", seeding);
+
+        assertTrue(client.optionValues.isEmpty());
+        assertEquals(Download.Status.SEEDING, download.getStatus());
+    }
+
+    @Test
+    @DisplayName("A paused live GID receives the relocated output directory")
+    void changeDestinationRepointsEveryLiveGid() {
+        Download download = new Download(URI.create("https://example.test/archive.bin"));
+        handler.registerTrackedDownload(download, List.of("gid-a", "gid-b"));
+        Path previous = tempDir.resolve("old");
+        Path destination = tempDir.resolve("new");
+
+        handler.changeDestination(download, previous, destination).join();
+
+        assertEquals(Set.of("gid-a", "gid-b"), Set.copyOf(client.optionGids));
+        assertEquals(List.of(Map.of("dir", destination.toString()),
+                Map.of("dir", destination.toString())), client.optionValues);
     }
 
     @Test

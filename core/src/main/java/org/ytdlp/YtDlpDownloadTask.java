@@ -33,7 +33,8 @@ public class YtDlpDownloadTask {
     private final String taskId;
     private final String url;
     private final YtDlpSettings settings;
-    private final Path outputPath;
+    /** Destination directory; mutable only while the task is not running. */
+    private volatile Path outputPath;
     private final YtDlpClient client;
 
     // Task state
@@ -413,6 +414,23 @@ public class YtDlpDownloadTask {
 
     public Path getOutputPath() {
         return outputPath;
+    }
+
+    /**
+     * Repoints a pending/paused task after its partial output was moved.
+     * Active tasks must be paused first so yt-dlp cannot write through the
+     * old path while relocation is in progress.
+     *
+     * @param newOutputPath the new destination directory
+     */
+    public synchronized void changeOutputPath(Path newOutputPath) {
+        Status current = status.get();
+        if (current != Status.PENDING && current != Status.PAUSED) {
+            throw new IllegalStateException(
+                    "Cannot change output path while task is " + current);
+        }
+        outputPath = java.util.Objects.requireNonNull(newOutputPath,
+                "newOutputPath").toAbsolutePath().normalize();
     }
 
     public Status getStatus() {

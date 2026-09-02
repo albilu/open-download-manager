@@ -15,7 +15,10 @@ import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.SortType;
 import org.gnome.gtk.TreeIter;
+import org.gnome.gtk.TreePath;
+import org.gnome.gtk.TreeRowReference;
 import org.gnome.gtk.TreeSortable;
+import org.javagi.interop.MemoryCleaner;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -199,6 +202,53 @@ class DetailTabsPresenterGtkTest {
             ((TreeSortable) filesStore).setSortColumnId(8, SortType.DESCENDING);
             return firstValue(filesStore, 1);
         }), "97.66% must sort above 10.00% by precise progress");
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("unchanged detail rows update in place instead of being redrawn")
+    void stableRowsAreUpdatedInPlace() throws Exception {
+        Download download = download("stable-files");
+        Mockito.when(manager.getDownloadTrackers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadPeers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadFiles(download)).thenReturn(
+                List.of(file("stable.bin", 100, 10, 1)),
+                List.of(file("stable.bin", 100, 50, 1)));
+
+        onLoop(() -> {
+            selection.set(download);
+            presenter.load();
+        });
+        awaitTrue(() -> {
+            try {
+                return "10.00%".equals(onLoop(() -> firstValue(filesStore, 6)));
+            } catch (Exception e) {
+                return false;
+            }
+        }, "initial file progress must be populated");
+
+        TreeRowReference stableReference = onLoop(() -> {
+            TreePath path = TreePath.fromString("0");
+            try {
+                return new TreeRowReference(filesStore, path);
+            } finally {
+                MemoryCleaner.free(path.handle());
+            }
+        });
+        try {
+            onLoop(presenter::load);
+            awaitTrue(() -> {
+                try {
+                    return "50.00%".equals(onLoop(() -> firstValue(filesStore, 6)));
+                } catch (Exception e) {
+                    return false;
+                }
+            }, "updated file progress must reach the existing row");
+            assertTrue(onLoop(stableReference::valid),
+                    "clearing and appending would invalidate the original GTK row reference");
+        } finally {
+            onLoop(() -> MemoryCleaner.free(stableReference.handle()));
+        }
     }
 
     @Test

@@ -1000,6 +1000,12 @@ public class GlobalSettings {
         toolPaths.syncTo(custom);
 
         custom.set("saveDownloadHistory", String.valueOf(saveDownloadHistory));
+        if (clipboardSettings != null) {
+            custom.set("clipboard.monitoringEnabled",
+                    String.valueOf(clipboardSettings.isMonitoringEnabled()));
+        } else {
+            custom.remove("clipboard.monitoringEnabled");
+        }
         if (defaultDownloadDirectory != null) {
             custom.set("defaultDownloadDirectory", defaultDownloadDirectory.toString());
         } else {
@@ -1024,6 +1030,13 @@ public class GlobalSettings {
         }
         if (custom.containsKey("saveDownloadHistory")) {
             saveDownloadHistory = Boolean.parseBoolean(custom.get("saveDownloadHistory", null));
+        }
+        if (custom.containsKey("clipboard.monitoringEnabled")) {
+            if (clipboardSettings == null) {
+                clipboardSettings = new ClipboardSettings();
+            }
+            clipboardSettings.setMonitoringEnabled(Boolean.parseBoolean(
+                    custom.get("clipboard.monitoringEnabled", null)));
         }
     }
 

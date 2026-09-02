@@ -178,6 +178,24 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
     }
 
     @Override
+    public void onDownloadStatusChanged(Download download,
+            Download.Status previousStatus, Download.Status currentStatus) {
+        notifyDownloadStatusChanged(download, previousStatus, currentStatus);
+    }
+
+    /** Notifies listeners about an engine-reported non-terminal state change. */
+    protected void notifyDownloadStatusChanged(Download download,
+            Download.Status previousStatus, Download.Status currentStatus) {
+        for (DownloadListener listener : listeners) {
+            try {
+                listener.onDownloadStatusChanged(download, previousStatus, currentStatus);
+            } catch (Exception e) {
+                LOGGER.warn("Error in download listener", e);
+            }
+        }
+    }
+
+    @Override
     public void onDownloadPause(Download download) {
         notifyDownloadPause(download);
     }

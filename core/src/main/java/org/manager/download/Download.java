@@ -2,6 +2,7 @@ package org.manager.download;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +25,7 @@ public class Download {
         CREATED,
         STARTING,
         DOWNLOADING,
+        SEEDING,
         QUEUED,
         PAUSED,
         ERROR,
@@ -165,6 +167,10 @@ public class Download {
     private final Instant createdAt;
     private volatile Instant startedAt;
     private volatile Instant completedAt;
+    /** Accumulated wall-clock time spent in an active transfer state. */
+    private volatile long activeElapsedMillis;
+    /** Start of the current active interval; runtime-only and never persisted. */
+    private volatile Instant activeElapsedSince;
     private volatile String errorMessage;
     private volatile DownloadSettings settings; // unified settings object
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
@@ -539,14 +545,7 @@ public class Download {
 
     public void setStatus(Status status) {
         synchronized (lock) {
-            this.status = status;
-
-            // Update timestamps based on status changes
-            if (status == Status.DOWNLOADING && startedAt == null) {
-                this.startedAt = Instant.now();
-            } else if (status == Status.COMPLETED && completedAt == null) {
-                this.completedAt = Instant.now();
-            }
+            applyStatusTransition(status, Instant.now());
         }
     }
 
@@ -562,14 +561,43 @@ public class Download {
             if (this.status != expected) {
                 return false;
             }
-            this.status = replacement;
-            if (replacement == Status.DOWNLOADING && startedAt == null) {
-                this.startedAt = Instant.now();
-            } else if (replacement == Status.COMPLETED && completedAt == null) {
-                this.completedAt = Instant.now();
-            }
+            applyStatusTransition(replacement, Instant.now());
             return true;
         }
+    }
+
+    /** Applies one lifecycle transition and maintains active elapsed time. */
+    private void applyStatusTransition(Status replacement, Instant now) {
+        boolean wasActive = isElapsedActiveStatus(this.status);
+        boolean willBeActive = isElapsedActiveStatus(replacement);
+        if (wasActive && !willBeActive) {
+            accumulateActiveInterval(now);
+        } else if (!wasActive && willBeActive) {
+            activeElapsedSince = now;
+        }
+
+        this.status = replacement;
+        if ((replacement == Status.DOWNLOADING || replacement == Status.SEEDING)
+                && startedAt == null) {
+            this.startedAt = now;
+        } else if (replacement == Status.COMPLETED && completedAt == null) {
+            this.completedAt = now;
+        }
+    }
+
+    private void accumulateActiveInterval(Instant now) {
+        if (activeElapsedSince != null) {
+            activeElapsedMillis += Math.max(0,
+                    Duration.between(activeElapsedSince, now).toMillis());
+            activeElapsedSince = null;
+        }
+    }
+
+    private static boolean isElapsedActiveStatus(Status status) {
+        return status == Status.STARTING
+                || status == Status.CONNECTING
+                || status == Status.DOWNLOADING
+                || status == Status.SEEDING;
     }
 
     public long getSize() {
@@ -756,6 +784,28 @@ public class Download {
     public void setCompletedAt(Instant completedAt) {
         synchronized (lock) {
             this.completedAt = completedAt;
+        }
+    }
+
+    /**
+     * Returns active transfer time, including the current active interval.
+     * Queued and paused wall-clock time is deliberately excluded.
+     */
+    @JsonProperty("activeElapsedMillis")
+    public long getActiveElapsedMillis() {
+        synchronized (lock) {
+            if (activeElapsedSince == null) {
+                return activeElapsedMillis;
+            }
+            return activeElapsedMillis + Math.max(0,
+                    Duration.between(activeElapsedSince, Instant.now()).toMillis());
+        }
+    }
+
+    @JsonProperty("activeElapsedMillis")
+    public void setActiveElapsedMillis(long activeElapsedMillis) {
+        synchronized (lock) {
+            this.activeElapsedMillis = Math.max(0, activeElapsedMillis);
         }
     }
 

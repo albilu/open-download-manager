@@ -349,6 +349,7 @@ public class DownloadCleanupManager {
         return status == Download.Status.CREATED
                 || status == Download.Status.STARTING
                 || status == Download.Status.DOWNLOADING
+                || status == Download.Status.SEEDING
                 || status == Download.Status.QUEUED
                 || status == Download.Status.PAUSED
                 || status == Download.Status.CONNECTING;

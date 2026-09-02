@@ -36,15 +36,31 @@ class DownloadListPresenterTest {
                 download("starting.zip", Download.Status.STARTING),
                 download("a.zip", Download.Status.DOWNLOADING),
                 download("b.zip", Download.Status.CONNECTING),
+                download("seed.iso", Download.Status.SEEDING),
                 download("c.zip", Download.Status.QUEUED),
                 download("d.zip", Download.Status.PAUSED),
                 download("e.zip", Download.Status.COMPLETED),
                 download("f.zip", Download.Status.ERROR),
                 download("g.zip", Download.Status.CANCELED));
 
-        // index-aligned with STATUS_FILTERS[1..]: active, queuing, finished, deleted
-        assertArrayEquals(new int[]{3, 3, 1, 2},
+        // index-aligned with STATUS_FILTERS[1..]: active, seeding, queued, paused,
+        // finished, error, canceled
+        assertArrayEquals(new int[]{4, 1, 2, 1, 1, 1, 1},
                 DownloadListPresenter.computeCounts(downloads));
+        assertArrayEquals(new String[]{"All Status", "Active", "Seeding", "Queued", "Paused",
+                "Finished", "Error", "Canceled"}, DownloadListPresenter.STATUS_FILTERS);
+        assertArrayEquals(new int[]{4, 1, 2, 1, 1, 1, 1},
+                DownloadListPresenter.computeCounts(java.util.Map.of(
+                        Download.Status.STARTING, 1,
+                        Download.Status.DOWNLOADING, 1,
+                        Download.Status.CONNECTING, 1,
+                        Download.Status.SEEDING, 1,
+                        Download.Status.CREATED, 1,
+                        Download.Status.QUEUED, 1,
+                        Download.Status.PAUSED, 1,
+                        Download.Status.COMPLETED, 1,
+                        Download.Status.ERROR, 1,
+                        Download.Status.CANCELED, 1)));
     }
 
     @Test
@@ -81,15 +97,21 @@ class DownloadListPresenterTest {
         assertFalse(DownloadListPresenter.matchesFilters(movie, "nomatch", "All", "All Status"));
         // wrong category excludes even when search matches
         assertFalse(DownloadListPresenter.matchesFilters(movie, "", "Audios", "All Status"));
-        // Queuing covers CREATED/QUEUED/PAUSED, while CONNECTING is active
-        assertFalse(DownloadListPresenter.matchesFilters(movie, "", "All", "Queuing"));
+        // Queued covers CREATED/QUEUED; paused has its own visible filter.
+        assertFalse(DownloadListPresenter.matchesFilters(movie, "", "All", "Queued"));
         assertTrue(DownloadListPresenter.matchesFilters(
-                download("x.mp4", Download.Status.PAUSED), "", "All", "Queuing"));
+                download("x.mp4", Download.Status.PAUSED), "", "All", "Paused"));
         assertTrue(DownloadListPresenter.matchesFilters(
                 download("x.mp4", Download.Status.CONNECTING), "", "All", "Active"));
-        // Deleted covers ERROR and CANCELED
         assertTrue(DownloadListPresenter.matchesFilters(
-                download("x.mp4", Download.Status.CANCELED), "", "All", "Deleted"));
+                download("x.iso", Download.Status.SEEDING), "", "All", "Active"));
+        assertTrue(DownloadListPresenter.matchesFilters(
+                download("x.iso", Download.Status.SEEDING), "", "All", "Seeding"));
+        // Error and canceled are distinct user-visible outcomes.
+        assertTrue(DownloadListPresenter.matchesFilters(
+                download("x.mp4", Download.Status.ERROR), "", "All", "Error"));
+        assertTrue(DownloadListPresenter.matchesFilters(
+                download("x.mp4", Download.Status.CANCELED), "", "All", "Canceled"));
         // Finished covers COMPLETED only
         assertTrue(DownloadListPresenter.matchesFilters(
                 download("x.mp4", Download.Status.COMPLETED), "", "All", "Finished"));
@@ -143,16 +165,22 @@ class DownloadListPresenterTest {
                 DownloadListPresenter.statusIconName(Download.Status.CREATED));
         assertEquals("media-playback-start-symbolic",
                 DownloadListPresenter.statusIconName(Download.Status.STARTING));
-        assertEquals("go-down-symbolic",
+        assertEquals("media-playback-start-symbolic",
                 DownloadListPresenter.statusIconName(Download.Status.DOWNLOADING));
-        assertEquals("view-list-symbolic",
+        assertEquals("network-transmit-symbolic",
+                DownloadListPresenter.statusIconName(Download.Status.SEEDING));
+        assertEquals("view-grid-symbolic",
                 DownloadListPresenter.statusIconName(Download.Status.QUEUED));
         assertEquals("media-playback-pause-symbolic",
                 DownloadListPresenter.statusIconName(Download.Status.PAUSED));
         assertEquals("dialog-error-symbolic",
                 DownloadListPresenter.statusIconName(Download.Status.ERROR));
-        assertEquals("emblem-ok-symbolic",
+        assertEquals("object-select-symbolic",
                 DownloadListPresenter.statusIconName(Download.Status.COMPLETED));
+        assertEquals("object-select-symbolic",
+                DownloadListPresenter.iconForFilterRow("Finished"));
+        assertEquals("network-transmit-symbolic",
+                DownloadListPresenter.iconForFilterRow("Seeding"));
         assertEquals("network-transmit-receive-symbolic",
                 DownloadListPresenter.statusIconName(Download.Status.CONNECTING));
         assertEquals("process-stop-symbolic",

@@ -514,6 +514,17 @@ public class ProxychainsClient {
     }
 
     /**
+     * Stops the standalone proxychains/aria2c process for an engine route
+     * handoff. The manager owns the subsequent status/type transition, so
+     * this deliberately emits no pause or cancellation callback.
+     */
+    public void stopForRouteChange(Download download) {
+        activeProcesses.terminate(download.getId(), 5);
+        gidMap.remove(download.getId());
+        activeDownloads.remove(download.getId());
+    }
+
+    /**
      * Resumes a paused download.
      *
      * @param download The download to resume

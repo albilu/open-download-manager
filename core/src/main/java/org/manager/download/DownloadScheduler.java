@@ -513,6 +513,7 @@ public class DownloadScheduler {
                             if (currentStatus == Download.Status.STARTING
                                     || currentStatus == Download.Status.CONNECTING
                                     || currentStatus == Download.Status.DOWNLOADING
+                                    || currentStatus == Download.Status.SEEDING
                                     || (currentStatus == Download.Status.QUEUED
                                             && !download.isManualStartRequired())) {
                                 pauseForSchedule(download, effectiveSchedule, "strict policy");

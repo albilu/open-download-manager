@@ -1,5 +1,6 @@
 package org.odm.gtk4;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
@@ -45,11 +46,25 @@ public class MainWindow {
             "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Type");
     private static final Download.Status[] ALWAYS_VISIBLE_STATUSES = {
         Download.Status.CREATED, Download.Status.QUEUED, Download.Status.PAUSED,
-        Download.Status.STARTING, Download.Status.CONNECTING, Download.Status.DOWNLOADING
+        Download.Status.STARTING, Download.Status.CONNECTING, Download.Status.DOWNLOADING,
+        Download.Status.SEEDING
     };
 
     private record RefreshSnapshot(List<Download> downloads, int totalCount,
             java.util.Map<Download.Status, Integer> statusCounts) {
+    }
+
+    /** Applicability of selection-scoped context and Download-menu actions. */
+    record DownloadSelectionCapabilities(boolean any, boolean single,
+            boolean openFile, boolean openFolder, boolean pause, boolean resume,
+            boolean start, boolean copyMagnet, boolean changeDestination,
+            boolean verifyData, boolean delete, boolean deleteWithFiles,
+            boolean properties) {
+    }
+
+    enum DownloadActivation {
+        OPEN_FILE,
+        REVEAL_IN_FOLDER
     }
     private final ApplicationWindow window;
     private final ListStore statusStore;
@@ -58,6 +73,7 @@ public class MainWindow {
     private final TreeView statusTreeview;
     private final TreeView categoryTreeview;
     private final TreeView downloadsTreeview;
+    private final TreeView filesTreeview;
     private final GestureClick downloadContextClick;
     private final Label infoLabel;
     private final Label downSpeedLabel;
@@ -102,6 +118,8 @@ public class MainWindow {
     private List<Download> selectedDownloads = List.of();
     /** Guard so menu actions register on the window only once. */
     private boolean menuActionsRegistered;
+    private final java.util.Map<String, org.gnome.gio.SimpleAction> menuActions =
+            new java.util.HashMap<>();
     private volatile boolean trayAvailable;
     private final ListStore trackersStore;
     private final ListStore peersStore;
@@ -134,6 +152,7 @@ public class MainWindow {
         this.statusTreeview = Widgets.require(builder, "status_treeview", TreeView.class);
         this.categoryTreeview = Widgets.require(builder, "category_treeview", TreeView.class);
         this.downloadsTreeview = Widgets.require(builder, "download_treeview", TreeView.class);
+        this.filesTreeview = Widgets.require(builder, "files_view", TreeView.class);
         this.infoLabel = Widgets.require(builder, "info_label", Label.class);
         this.downSpeedLabel = Widgets.require(builder, "down_speed_label", Label.class);
         this.upSpeedLabel = Widgets.require(builder, "up_speed_label", Label.class);
@@ -194,7 +213,9 @@ public class MainWindow {
         categoryTreeview.getSelection().onChanged(this::onCategorySelectionChanged);
         downloadsTreeview.getSelection().setMode(SelectionMode.MULTIPLE);
         downloadsTreeview.getSelection().onChanged(this::onDownloadSelectionChanged);
-        downloadsTreeview.onRowActivated((path, column) -> onPropertiesClicked());
+        downloadsTreeview.onRowActivated((path, column) ->
+                activateDownload(downloadAt(path)));
+        filesTreeview.onRowActivated((path, column) -> revealDetailFile(path));
 
         // Torrent per-file selection: toggle a row -> apply aria2 select-file
         Widgets.require(builder, "files_selected_renderer", org.gnome.gtk.CellRendererToggle.class)
@@ -206,7 +227,10 @@ public class MainWindow {
         // press before a child renderer can consume it, then retarget the
         // selection to the row beneath the pointer.
         downloadContextClick.setPropagationPhase(PropagationPhase.CAPTURE);
-        downloadContextClick.onPressed((nPress, x, y) -> showContextMenu(x, y));
+        // Open only after the secondary-button sequence ends. Opening during
+        // the captured press leaves TreeView owning pointer motion, so custom
+        // popover rows never receive hover/prelight events.
+        downloadContextClick.onReleased((nPress, x, y) -> showContextMenu(x, y));
         downloadsTreeview.addController(downloadContextClick);
         var contextKey = new EventControllerKey();
         contextKey.onKeyPressed((keyval, keycode, state) -> {
@@ -258,6 +282,10 @@ public class MainWindow {
         windowDownloadListener = new DownloadListener() {
             @Override public void onDownloadStart(Download d) { listPresenter.scheduleRefresh(); }
             @Override public void onDownloadProgress(Download d, float p, long db, long tb, float s) {
+                listPresenter.scheduleRefresh();
+            }
+            @Override public void onDownloadStatusChanged(Download d,
+                    Download.Status previousStatus, Download.Status currentStatus) {
                 listPresenter.scheduleRefresh();
             }
             @Override public void onDownloadPause(Download d) { listPresenter.scheduleRefresh(); }
@@ -480,30 +508,86 @@ public class MainWindow {
     }
 
     private void onPauseClicked() {
-        if (selectedDownload != null) downloadManager.pauseDownload(selectedDownload);
+        runSelectedDownloads(MainWindow::canPause, downloadManager::pauseDownload, "pause");
     }
 
     private void onResumeClicked() {
-        if (selectedDownload != null) downloadManager.resumeDownload(selectedDownload);
+        onDownloadSelectionChanged();
+        List<Download> targets = selectedDownloads.stream()
+                .filter(MainWindow::canStartOrResume)
+                .toList();
+        if (targets.isEmpty()) {
+            return;
+        }
+        allOf(targets.stream()
+                .map(download -> download.getStatus() == Download.Status.PAUSED
+                        ? downloadManager.resumeDownload(download)
+                        : downloadManager.startDownload(download))
+                .toList()).whenComplete((ignored, error) -> UiThread.marshal(() -> {
+                    if (error != null) {
+                        AccessibilitySupport.status(infoLabel,
+                                "Could not start or resume all selected downloads: "
+                                        + failureMessage(error),
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                    }
+                    refresh();
+                }));
     }
 
     private void onDeleteClicked() {
-        if (selectedDownload != null) downloadManager.cancelDownload(selectedDownload, false);
+        runSelectedDownloads(download -> true,
+                download -> downloadManager.cancelDownload(download, false), "delete");
+    }
+
+    private void startSelectedDownloads() {
+        runSelectedDownloads(MainWindow::canStart, downloadManager::startDownload, "start");
+    }
+
+    private void runSelectedDownloads(java.util.function.Predicate<Download> applicable,
+            java.util.function.Function<Download, CompletableFuture<Void>> operation,
+            String operationName) {
+        onDownloadSelectionChanged();
+        List<Download> targets = selectedDownloads.stream().filter(applicable).toList();
+        if (targets.isEmpty()) {
+            return;
+        }
+        allOf(targets.stream().map(operation).toList()).whenComplete((ignored, error) ->
+                UiThread.marshal(() -> {
+                    if (error != null) {
+                        AccessibilitySupport.status(infoLabel,
+                                "Could not " + operationName + " all selected downloads: "
+                                        + failureMessage(error),
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                    }
+                    refresh();
+                }));
+    }
+
+    private static CompletableFuture<Void> allOf(
+            List<? extends CompletableFuture<?>> futures) {
+        return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
     }
 
     /** Requires an explicit destructive confirmation and captures the target
      * before showing the asynchronous dialog so a later selection change
      * cannot delete a different download's files. */
-    private void confirmDeleteWithFiles(Download target) {
-        if (target == null) {
+    private void confirmDeleteWithFiles(List<Download> targets) {
+        List<Download> capturedTargets = targets == null ? List.of() : List.copyOf(targets);
+        if (capturedTargets.isEmpty()) {
             return;
         }
+        boolean multiple = capturedTargets.size() > 1;
         org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
         confirmation.setTransientFor(window);
         confirmation.setModal(true);
-        confirmation.setMarkup("<b>Delete this download and its files?</b>");
-        confirmation.formatSecondaryText("This permanently removes files for \"%s\"."
-                .formatted(target.getName()));
+        confirmation.setMarkup(multiple
+                ? "<b>Delete these downloads and their files?</b>"
+                : "<b>Delete this download and its files?</b>");
+        confirmation.formatSecondaryText(multiple
+                ? "This permanently removes files for %d selected downloads."
+                        .formatted(capturedTargets.size())
+                : "This permanently removes files for \"%s\"."
+                        .formatted(capturedTargets.getFirst().getName()));
         int cancelResponse = org.gnome.gtk.ResponseType.CANCEL.getValue();
         int acceptResponse = org.gnome.gtk.ResponseType.ACCEPT.getValue();
         confirmation.addButton("Cancel", cancelResponse);
@@ -516,11 +600,13 @@ public class MainWindow {
             if (response != acceptResponse) {
                 return;
             }
-            downloadManager.cancelDownload(target, true).whenComplete((ignored, error) ->
+            allOf(capturedTargets.stream()
+                    .map(target -> downloadManager.cancelDownload(target, true))
+                    .toList()).whenComplete((ignored, error) ->
                     UiThread.marshal(() -> {
                         if (error != null) {
                             AccessibilitySupport.status(infoLabel,
-                                    "Could not delete download files: "
+                                    "Could not delete all selected download files: "
                                             + failureMessage(error),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         }
@@ -537,7 +623,7 @@ public class MainWindow {
         }
     }
 
-    /** Context menu built once and reused; the actions re-read the selection at click time. */
+    /** Context menu rebuilt on popup so sensitivity reflects the current multi-selection. */
     private PopupMenu contextMenu;
 
     private void showContextMenu(double x, double y) {
@@ -601,41 +687,33 @@ public class MainWindow {
     }
 
     private void showContextMenuAt(int x, int y) {
-        // 1:1 port of download_context_menu from the original glade
-        if (contextMenu == null) {
-            contextMenu = new PopupMenu()
-                    .add("Open", () -> openSelected("file"))
-                    .add("Open Folder", () -> openSelected("folder"))
-                    .separator()
-                    .add("Pause", this::onPauseClicked)
-                    .add("Resume", this::onResumeClicked)
-                    .add("Start", () -> downloadManager.startDownload(selectedDownload))
-                    .separator()
-                    .add("Copy Magnet URI", this::copyMagnetUri)
-                    .add("Change Destination…", this::changeDestination)
-                    .add("Verify Data", this::verifyData)
-                    .add("Properties", this::onPropertiesClicked)
-                    .separator()
-                    .add("Delete", this::onDeleteClicked)
-                    .add("Delete with Files", () ->
-                            confirmDeleteWithFiles(selectedDownload));
+        // 1:1 action set from download_context_menu, now selection-aware.
+        if (contextMenu != null) {
+            contextMenu.dispose();
         }
+        DownloadSelectionCapabilities capabilities = selectionCapabilities(selectedDownloads);
+        contextMenu = new PopupMenu()
+                .add("Open", capabilities.openFile(), () -> openSelected("file"))
+                .add("Open Folder", capabilities.openFolder(), () -> openSelected("folder"))
+                .separator()
+                .add("Pause", capabilities.pause(), this::onPauseClicked)
+                .add("Resume", capabilities.resume(), this::onResumeClicked)
+                .add("Start", capabilities.start(), this::startSelectedDownloads)
+                .separator()
+                .add("Copy Magnet URI", capabilities.copyMagnet(), this::copyMagnetUri)
+                .add("Change Destination…", capabilities.changeDestination(), this::changeDestination)
+                .add("Verify Data", capabilities.verifyData(), this::verifyData)
+                .add("Properties", capabilities.properties(), this::onPropertiesClicked)
+                .separator()
+                .add("Delete", capabilities.delete(), this::onDeleteClicked)
+                .add("Delete with Files", capabilities.deleteWithFiles(), () ->
+                        confirmDeleteWithFiles(selectedDownloads));
         contextMenu.popupAt(downloadsTreeview, x, y);
     }
 
     /** Copies the selected download's magnet URI (or builds one from its info hash). */
     private void copyMagnetUri() {
-        if (selectedDownload == null) {
-            return;
-        }
-        String magnet = null;
-        if (selectedDownload.getProtocol() == Download.Protocol.MAGNET
-                && selectedDownload.getUri() != null) {
-            magnet = selectedDownload.getUri().toString();
-        }
-        if (magnet == null && selectedDownload.getInfoHash() != null) {
-            magnet = "magnet:?xt=urn:btih:" + selectedDownload.getInfoHash();
-        }
+        String magnet = magnetUri(selectedDownload);
         if (magnet != null) {
             downloadsTreeview.getClipboard().setText(magnet);
             AccessibilitySupport.status(infoLabel, "Magnet URI copied");
@@ -650,7 +728,7 @@ public class MainWindow {
         Download targetDownload = selectedDownload;
         if (!canChangeDestination(targetDownload)) {
             AccessibilitySupport.status(infoLabel,
-                    "Destination can only be changed before a download starts");
+                    "Destination cannot be changed for this download");
             return;
         }
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
@@ -660,8 +738,22 @@ public class MainWindow {
                 org.gnome.gio.File folder = dialog.selectFolderFinish(result);
                 if (folder != null && folder.getPath() != null
                         && canChangeDestination(targetDownload)) {
-                    targetDownload.setDestination(java.nio.file.Path.of(folder.getPath().toString()));
-                    UiThread.marshal(this::refresh);
+                    java.nio.file.Path destination = java.nio.file.Path.of(
+                            folder.getPath().toString());
+                    AccessibilitySupport.status(infoLabel,
+                            "Moving “" + targetDownload.getName() + "”…");
+                    downloadManager.relocateDownload(targetDownload, destination)
+                            .whenComplete((ignored, error) -> UiThread.marshal(() -> {
+                                if (error == null) {
+                                    AccessibilitySupport.status(infoLabel,
+                                            "Moved “" + targetDownload.getName() + "”");
+                                } else {
+                                    AccessibilitySupport.status(infoLabel,
+                                            "Could not move download: " + failureMessage(error),
+                                            org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                                }
+                                refresh();
+                            }));
                 }
             } catch (Exception e) {
                 LOGGER.debug("Destination change cancelled or failed", e);
@@ -670,23 +762,97 @@ public class MainWindow {
     }
 
     private static boolean canChangeDestination(Download download) {
-        return download != null
-                && (download.getStatus() == Download.Status.CREATED
-                        || download.getStatus() == Download.Status.QUEUED)
-                && download.getGid() == null
-                && download.getAttemptGeneration() == 0
-                && download.getOutputPaths().isEmpty();
+        return download != null && download.getDestination() != null
+                && download.getStatus() != Download.Status.CANCELED;
+    }
+
+    static DownloadSelectionCapabilities selectionCapabilities(List<Download> selection) {
+        List<Download> downloads = selection == null
+                ? List.of()
+                : selection.stream().filter(java.util.Objects::nonNull).toList();
+        boolean any = !downloads.isEmpty();
+        boolean single = downloads.size() == 1;
+        Download only = single ? downloads.getFirst() : null;
+        return new DownloadSelectionCapabilities(
+                any,
+                single,
+                single && only.getStatus() == Download.Status.COMPLETED
+                        && only.getPrimaryOutputPath() != null,
+                single && only.getDestination() != null,
+                allSelectedMatch(downloads, MainWindow::canPause),
+                allSelectedMatch(downloads,
+                        download -> download.getStatus() == Download.Status.PAUSED),
+                allSelectedMatch(downloads, MainWindow::canStart),
+                single && magnetUri(only) != null,
+                single && canChangeDestination(only),
+                allSelectedMatch(downloads,
+                        download -> download.getSettings() instanceof org.aria2.Aria2Settings),
+                any,
+                any,
+                any);
+    }
+
+    private static boolean allSelectedMatch(List<Download> downloads,
+            java.util.function.Predicate<Download> predicate) {
+        return !downloads.isEmpty() && downloads.stream().allMatch(predicate);
+    }
+
+    private static boolean canPause(Download download) {
+        return download != null && switch (download.getStatus()) {
+            case QUEUED, STARTING, CONNECTING, DOWNLOADING, SEEDING -> true;
+            default -> false;
+        };
+    }
+
+    static boolean canStartOrResume(Download download) {
+        return download != null && (download.getStatus() == Download.Status.PAUSED
+                || canStart(download));
+    }
+
+    private static boolean canStart(Download download) {
+        return download != null && switch (download.getStatus()) {
+            case CREATED, QUEUED, ERROR -> true;
+            default -> false;
+        };
+    }
+
+    private static String magnetUri(Download download) {
+        if (download == null) {
+            return null;
+        }
+        if (download.getProtocol() == Download.Protocol.MAGNET && download.getUri() != null) {
+            return download.getUri().toString();
+        }
+        return download.getInfoHash() == null || download.getInfoHash().isBlank()
+                ? null : "magnet:?xt=urn:btih:" + download.getInfoHash();
     }
 
     /** Requests an integrity re-check of the selected download (aria2). */
     private void verifyData() {
-        if (selectedDownload == null) {
+        List<Download> targets = selectedDownloads;
+        if (targets.isEmpty()) {
             return;
         }
-        if (selectedDownload.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
-            aria2Settings.setOption("check-integrity", "true");
-            downloadManager.changeSettings(selectedDownload);
-            AccessibilitySupport.status(infoLabel, "Integrity check requested");
+        java.util.List<CompletableFuture<Void>> updates = new java.util.ArrayList<>();
+        for (Download target : targets) {
+            if (target.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
+                aria2Settings.setOption("check-integrity", "true");
+                updates.add(downloadManager.changeSettings(target));
+            }
+        }
+        if (!updates.isEmpty()) {
+            allOf(updates).whenComplete((ignored, error) -> UiThread.marshal(() -> {
+                if (error == null) {
+                    AccessibilitySupport.status(infoLabel,
+                            targets.size() == 1
+                                    ? "Integrity check requested"
+                                    : "Integrity checks requested for " + targets.size() + " downloads");
+                } else {
+                    AccessibilitySupport.status(infoLabel,
+                            "Could not request all integrity checks: " + failureMessage(error),
+                            org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                }
+            }));
         }
     }
 
@@ -853,12 +1019,7 @@ public class MainWindow {
         // Download
         addAction("open-file", () -> openSelected("file"));
         addAction("open-folder", () -> openSelected("folder"));
-        addAction("force-download", () -> {
-            onDownloadSelectionChanged();
-            if (selectedDownload != null) {
-                downloadManager.startDownload(selectedDownload);
-            }
-        });
+        addAction("force-download", this::startSelectedDownloads);
         addAction("pause-all", () -> downloadManager.pauseAllDownloads()
                 .thenRun(() -> UiThread.marshal(this::refresh)));
         addAction("resume-all", () -> downloadManager.resumeAllDownloads()
@@ -866,8 +1027,8 @@ public class MainWindow {
         addAction("delete", this::onDeleteClicked);
         addAction("delete-with-files", () -> {
             onDownloadSelectionChanged();
-            if (selectedDownload != null) {
-                confirmDeleteWithFiles(selectedDownload);
+            if (!selectedDownloads.isEmpty()) {
+                confirmDeleteWithFiles(selectedDownloads);
             }
         });
         addAction("remove-finished", () -> downloadManager.pruneCompletedDownloads(java.time.Duration.ZERO)
@@ -879,12 +1040,14 @@ public class MainWindow {
         addAction("donation", () -> org.gnome.gtk.Gtk.showUri(window,
                 "https://github.com/albilu/odm", 0));
         addAction("about", () -> AboutDialogPresenter.present(window));
+        updateSelectionActionSensitivity();
     }
 
     private void addAction(String name, Runnable handler) {
         org.gnome.gio.SimpleAction action = new org.gnome.gio.SimpleAction(name, null);
         action.onActivate(parameter -> handler.run());
         window.addAction(action);
+        menuActions.put(name, action);
     }
 
     private void addStatefulAction(String name, boolean initial,
@@ -897,11 +1060,13 @@ public class MainWindow {
             onToggle.accept(newState);
         });
         window.addAction(action);
+        menuActions.put(name, action);
     }
 
     private void addRadioAction(String name, String initial,
             java.util.function.Consumer<String> onChoice) {
-        org.gnome.gio.SimpleAction action = org.gnome.gio.SimpleAction.stateful(name, null,
+        org.gnome.gio.SimpleAction action = org.gnome.gio.SimpleAction.stateful(name,
+                new org.gnome.glib.VariantType("s"),
                 org.gnome.glib.Variant.string(initial));
         action.onActivate(parameter -> {
             String choice = parameter != null ? parameter.dupString(new org.javagi.base.Out<>()) : initial;
@@ -909,6 +1074,35 @@ public class MainWindow {
             onChoice.accept(choice);
         });
         window.addAction(action);
+        menuActions.put(name, action);
+    }
+
+    private void updateSelectionActionSensitivity() {
+        DownloadSelectionCapabilities capabilities = selectionCapabilities(selectedDownloads);
+        setMenuActionEnabled("open-file", capabilities.openFile());
+        setMenuActionEnabled("open-folder", capabilities.openFolder());
+        setMenuActionEnabled("force-download", capabilities.start());
+        setMenuActionEnabled("delete", capabilities.delete());
+        setMenuActionEnabled("delete-with-files", capabilities.deleteWithFiles());
+        setMenuActionEnabled("properties", capabilities.properties());
+    }
+
+    private void setMenuActionEnabled(String name, boolean enabled) {
+        org.gnome.gio.SimpleAction action = menuActions.get(name);
+        if (action != null) {
+            action.setEnabled(enabled);
+        }
+    }
+
+    boolean menuActionEnabled(String name) {
+        org.gnome.gio.SimpleAction action = menuActions.get(name);
+        return action != null && action.getEnabled();
+    }
+
+    String menuActionParameterType(String name) {
+        org.gnome.gio.SimpleAction action = menuActions.get(name);
+        org.gnome.glib.VariantType type = action == null ? null : action.getParameterType();
+        return type == null ? null : type.dupString();
     }
 
     private String completionActionKey() {
@@ -998,22 +1192,63 @@ public class MainWindow {
         }
     }
 
-    /** Opens the selected download's file or its folder with xdg-open. */
+    /** Opens the selected file, or reveals it in its containing folder. */
     private void openSelected(String what) {
         onDownloadSelectionChanged();
         if (selectedDownload == null || selectedDownload.getDestination() == null) {
             return;
         }
-        try {
-            java.nio.file.Path target = "folder".equals(what)
-                    ? selectedDownload.getDestination()
-                    : selectedDownload.getPrimaryOutputPath();
-            if (target == null) {
-                return;
-            }
-            new ProcessBuilder("xdg-open", target.toString()).inheritIO().start();
-        } catch (Exception e) {
-            LOGGER.warn("Failed to open " + what + ": " + e.getMessage());
+        Path target = selectedDownload.getPrimaryOutputPath();
+        Path destination = selectedDownload.getDestination();
+        if ("folder".equals(what)) {
+            CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(target,
+                    destination), backgroundExecutor);
+        } else if (target != null) {
+            CompletableFuture.supplyAsync(() -> FileManagerSupport.open(target),
+                    backgroundExecutor);
+        }
+    }
+
+    private Download downloadAt(TreePath path) {
+        int[] indices = path == null ? null : path.getIndices();
+        return indices == null || indices.length == 0
+                ? null : listPresenter.rowAt(indices[0]);
+    }
+
+    private void activateDownload(Download download) {
+        if (download == null || download.getDestination() == null) {
+            return;
+        }
+        Path target = download.getPrimaryOutputPath();
+        if (activationFor(download) == DownloadActivation.OPEN_FILE && target != null) {
+            CompletableFuture.supplyAsync(() -> FileManagerSupport.open(target),
+                    backgroundExecutor);
+        } else {
+            CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(target,
+                    download.getDestination()), backgroundExecutor);
+        }
+    }
+
+    static DownloadActivation activationFor(Download download) {
+        return download != null && download.getStatus() == Download.Status.COMPLETED
+                ? DownloadActivation.OPEN_FILE
+                : DownloadActivation.REVEAL_IN_FOLDER;
+    }
+
+    private void revealDetailFile(TreePath path) {
+        if (path == null || selectedDownload == null) {
+            return;
+        }
+        TreeIter iter = new TreeIter();
+        if (!filesStore.getIter(iter, path)) {
+            return;
+        }
+        Path file = FileManagerSupport.resolveDetailPath(
+                selectedDownload.getDestination(),
+                ListStoreCells.getString(filesStore, iter, 1));
+        if (file != null) {
+            CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(file,
+                    file.getParent()), backgroundExecutor);
         }
     }
 
@@ -1512,6 +1747,7 @@ public class MainWindow {
         selectedDownloads = listPresenter.rowsAt(indexes);
         selectedDownload = selectedDownloads.isEmpty()
                 ? null : selectedDownloads.getFirst();
+        updateSelectionActionSensitivity();
         updateInfoPanel();
     }
 
@@ -1625,7 +1861,20 @@ public class MainWindow {
             downloadsTreeview.getSelection().unselectAll();
             selectedDownload = null;
             selectedDownloads = List.of();
+            updateSelectionActionSensitivity();
         }
+        java.util.Map<Download.Status, Integer> counts = snapshot.statusCounts();
+        int activeCount = counts.getOrDefault(Download.Status.STARTING, 0)
+                + counts.getOrDefault(Download.Status.CONNECTING, 0)
+                + counts.getOrDefault(Download.Status.DOWNLOADING, 0)
+                + counts.getOrDefault(Download.Status.SEEDING, 0);
+        setMenuActionEnabled("pause-all", activeCount > 0);
+        setMenuActionEnabled("resume-all", counts.getOrDefault(Download.Status.PAUSED, 0) > 0);
+        setMenuActionEnabled("remove-finished",
+                counts.getOrDefault(Download.Status.COMPLETED, 0) > 0);
+        // Status changes are normally in-place row updates, so selection
+        // signals do not fire. Re-evaluate Download-menu actions explicitly.
+        updateSelectionActionSensitivity();
         infoLabel.setLabel(summary.totalCount() + " download(s)");
         downSpeedLabel.setLabel(DownloadFormats.size(summary.downBytesPerSec()) + "/s");
         upSpeedLabel.setLabel(summary.upBytesPerSec() > 0
@@ -1677,7 +1926,8 @@ public class MainWindow {
                 .reduce((a, b) -> a + "," + b).orElse("");
         aria2Settings.setOption("select-file", selectFile);
 
-        boolean wasActive = download.getStatus() == Download.Status.DOWNLOADING
+        boolean wasActive = (download.getStatus() == Download.Status.DOWNLOADING
+                || download.getStatus() == Download.Status.SEEDING)
                 && download.getGid() != null;
         // The pause/change/resume chain performs aria2 RPC round trips; run
         // it off the GTK thread instead of blocking the main loop on join().

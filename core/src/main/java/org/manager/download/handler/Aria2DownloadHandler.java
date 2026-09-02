@@ -92,6 +92,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         "uploadSpeed", // Current upload speed in bytes/second (BitTorrent)
         "connections", // Current connection count
         "numSeeders", // Connected seeder count (BitTorrent)
+        "seeder", // True when the local BitTorrent task is only seeding
         "infoHash", // Torrent info hash (present for BitTorrent downloads)
         "files", // Authoritative output artifact paths
         "followedBy", // GIDs spawned by this one (BT metadata -> payload)
@@ -101,6 +102,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
     private final Aria2Client aria2Client;
     private final Map<String, String> gidToIdMap; // aria2 GID -> download ID
+    /** GIDs intentionally removed during an engine route handoff. */
+    private final java.util.Set<String> routeChangeGids;
+    /** GIDs already told to stop seeding because user seeding is disabled. */
+    private final java.util.Set<String> seedingStopRequests;
     private final java.util.Set<String> pollTasks; // GIDs currently polled by the batch task
     /** The single shared batch-poll task covering every GID in pollTasks. */
     private volatile ScheduledFuture<?> batchPollTask;
@@ -145,6 +150,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         super(globalSettings, settingsFactory, executor);
         this.aria2Client = Objects.requireNonNull(aria2Client, "aria2Client");
         this.gidToIdMap = new ConcurrentHashMap<>();
+        this.routeChangeGids = ConcurrentHashMap.newKeySet();
+        this.seedingStopRequests = ConcurrentHashMap.newKeySet();
         this.activeDownloads = new ConcurrentHashMap<>();
         this.downloadGids = new ConcurrentHashMap<>();
         this.downloadSeenGids = new ConcurrentHashMap<>();
@@ -239,7 +246,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 if (gids != null && !gids.isEmpty()) {
                     registerTrackedDownload(download, gids);
 
+                    Download.Status previousStatus = download.getStatus();
                     download.setStatus(Download.Status.DOWNLOADING);
+                    if (previousStatus != Download.Status.DOWNLOADING) {
+                        notifyDownloadStatusChanged(download, previousStatus,
+                                Download.Status.DOWNLOADING);
+                    }
 
                     for (String gid : gids) {
                         startProgressPolling(gid);
@@ -303,6 +315,71 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }, executor);
     }
 
+    /**
+     * Removes aria2's live task while retaining partial files, without
+     * publishing a canceled event. A normal pause is insufficient for a
+     * route handoff because the paused GID would remain owned by aria2 while
+     * proxychains starts a second writer for the same output.
+     */
+    @Override
+    public CompletableFuture<Void> stopForRouteChange(Download download) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                ensureInitialized();
+                List<String> gids = trackedGidsSnapshot(download);
+                routeChangeGids.addAll(gids);
+                for (String gid : gids) {
+                    stopProgressPolling(gid);
+                }
+                try {
+                    forceRemoveEveryGidForRouteChange(gids);
+                    untrackEntireDownload(download.getId());
+                } catch (Exception routeFailure) {
+                    for (String gid : gids) {
+                        if (gidToIdMap.containsKey(gid)) {
+                            startProgressPolling(gid);
+                        }
+                    }
+                    throw routeFailure;
+                } finally {
+                    routeChangeGids.removeAll(gids);
+                }
+            } catch (Exception e) {
+                LOGGER.error("Failed to stop aria2 download for route change: "
+                        + download.getName(), e);
+                throw new RuntimeException("Failed to stop aria2 download for route change", e);
+            }
+        }, executor);
+    }
+
+    /**
+     * Route handoff is stricter than ordinary multi-GID controls: every old
+     * task must be gone before another engine can write the same outputs.
+     * Try all GIDs so one failure does not strand its siblings, but surface
+     * any failure instead of accepting the partial success policy used by
+     * pause and settings updates.
+     */
+    private void forceRemoveEveryGidForRouteChange(List<String> gids) throws Exception {
+        Exception firstFailure = null;
+        int failures = 0;
+        for (String gid : gids) {
+            try {
+                aria2Client.forceRemove(gid);
+            } catch (Exception e) {
+                failures++;
+                if (firstFailure == null) {
+                    firstFailure = e;
+                }
+                LOGGER.warn("Failed to force-remove route-change GID " + gid, e);
+            }
+        }
+        if (failures > 0) {
+            throw new IllegalStateException("Could not force-remove " + failures
+                    + " of " + gids.size() + " aria2 task(s) for route change",
+                    firstFailure);
+        }
+    }
+
     @Override
     public CompletableFuture<Void> resumeDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
@@ -321,6 +398,24 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             } catch (Exception e) {
                 LOGGER.error("Failed to resume download: " + download.getName(), e);
                 throw new RuntimeException("Failed to resume download", e);
+            }
+        }, executor);
+    }
+
+    @Override
+    public CompletableFuture<Void> changeDestination(Download download,
+            Path previousDestination, Path newDestination) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                ensureInitialized();
+                List<String> gids = liveTrackedGidsSnapshot(download);
+                applyToEveryGid(gids, "change destination",
+                        gid -> aria2Client.changeOption(gid,
+                                Map.of("dir", newDestination.toString())));
+            } catch (Exception e) {
+                LOGGER.error("Failed to change aria2 destination for "
+                        + download.getName(), e);
+                throw new RuntimeException("Failed to change aria2 destination", e);
             }
         }, executor);
     }
@@ -1092,6 +1187,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             String connectionsStr = (String) status.get("connections");
             String numSeedersStr = (String) status.get("numSeeders");
             String infoHash = (String) status.get("infoHash");
+            boolean seeder = Boolean.parseBoolean(String.valueOf(
+                    status.getOrDefault("seeder", false)));
 
             // Record this GID's progress, then aggregate across every tracked
             // GID so multi-file downloads report combined numbers
@@ -1117,6 +1214,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 download.setInfoHash(infoHash);
             }
             recordReportedOutputPaths(download, status);
+            stopDisabledSeeding(download, gid, downloadStatus, seeder);
 
             // Calculate progress percentage
             float progress = 0;
@@ -1125,13 +1223,36 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
 
             // Update download status based on aria2 status
-            updateDownloadStatus(download, downloadStatus, gid);
+            updateDownloadStatus(download, downloadStatus, gid, seeder);
 
             // Notify listeners about progress
             notifyDownloadProgress(download, progress, aggregatedCompleted, aggregatedTotal, downloadSpeed);
 
         } catch (Exception e) {
             LOGGER.warn("Error processing progress update for GID " + gid, e);
+        }
+    }
+
+    /**
+     * aria2 keeps a fully downloaded torrent active while it seeds toward its
+     * default share ratio. When ODM's seeding switch is off, explicitly set a
+     * zero seed time on an already-running legacy task; aria2 then emits its
+     * normal complete transition and the manager releases the slot cleanly.
+     */
+    private void stopDisabledSeeding(Download download, String gid,
+            String aria2Status, boolean seeder) {
+        if (!"active".equals(aria2Status) || !seeder
+                || globalSettings.getBooleanProperty("aria2.enableSeeding", false)
+                || !seedingStopRequests.add(gid)) {
+            return;
+        }
+        try {
+            aria2Client.changeOption(gid, Map.of("seed-time", "0"));
+            LOGGER.info("Stopping disabled BitTorrent seeding for download "
+                    + download.getId());
+        } catch (Exception e) {
+            seedingStopRequests.remove(gid);
+            LOGGER.warn("Could not stop BitTorrent seeding for GID " + gid, e);
         }
     }
 
@@ -1216,7 +1337,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * "error", "complete", "removed")
      * @param gid The aria2 GID for cleanup operations
      */
-    private void updateDownloadStatus(Download download, String aria2Status, String gid) {
+    private void updateDownloadStatus(Download download, String aria2Status, String gid,
+            boolean seeder) {
         if (aria2Status == null) {
             return;
         }
@@ -1228,16 +1350,22 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         switch (aria2Status) {
             case "active":
-                if (download.getStatus() != Download.Status.DOWNLOADING) {
-                    LOGGER.info("Setting download status to DOWNLOADING for: " + download.getName());
-                    download.setStatus(Download.Status.DOWNLOADING);
+                Download.Status activeStatus = seeder
+                        ? Download.Status.SEEDING : Download.Status.DOWNLOADING;
+                if (download.getStatus() != activeStatus) {
+                    Download.Status previousStatus = download.getStatus();
+                    LOGGER.info("Setting download status to " + activeStatus
+                            + " for: " + download.getName());
+                    download.setStatus(activeStatus);
+                    notifyDownloadStatusChanged(download, previousStatus, activeStatus);
                 }
                 break;
             case "waiting":
                 // CRITICAL FIX: Don't change status to QUEUED if download is already
                 // DOWNLOADING
                 // This prevents infinite loop where active downloads get reset to QUEUED
-                if (download.getStatus() == Download.Status.DOWNLOADING) {
+                if (download.getStatus() == Download.Status.DOWNLOADING
+                        || download.getStatus() == Download.Status.SEEDING) {
                     LOGGER.info("Ignoring 'waiting' status for active download: " + download.getName()
                             + " (keeping DOWNLOADING status)");
                 } else if (download.getStatus() != Download.Status.QUEUED) {
@@ -1290,6 +1418,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             return true;
         }
         tracked.remove(gid);
+        seedingStopRequests.remove(gid);
         stopProgressPolling(gid);
         gidToIdMap.remove(gid);
         if (tracked.isEmpty()) {
@@ -1321,6 +1450,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             for (String gid : tracked) {
                 stopProgressPolling(gid);
                 gidToIdMap.remove(gid);
+                seedingStopRequests.remove(gid);
             }
         }
         downloadSeenGids.remove(downloadId);
@@ -1855,28 +1985,28 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         @Override
         public void onDownloadPause(String gid) {
-            if (gidToIdMap.get(gid) != null) {
+            if (!routeChangeGids.contains(gid) && gidToIdMap.get(gid) != null) {
                 requestImmediatePoll(gid);
             }
         }
 
         @Override
         public void onDownloadStop(String gid) {
-            if (gidToIdMap.get(gid) != null) {
+            if (!routeChangeGids.contains(gid) && gidToIdMap.get(gid) != null) {
                 requestImmediatePoll(gid);
             }
         }
 
         @Override
         public void onDownloadComplete(String gid) {
-            if (gidToIdMap.get(gid) != null) {
+            if (!routeChangeGids.contains(gid) && gidToIdMap.get(gid) != null) {
                 requestImmediatePoll(gid);
             }
         }
 
         @Override
         public void onDownloadError(String gid, Aria2RpcError error) {
-            if (gidToIdMap.get(gid) != null) {
+            if (!routeChangeGids.contains(gid) && gidToIdMap.get(gid) != null) {
                 requestImmediatePoll(gid);
             }
         }

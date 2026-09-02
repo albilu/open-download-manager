@@ -2,34 +2,67 @@ package org.odm.gtk4;
 
 import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.CssProvider;
+import org.gnome.gtk.EventControllerMotion;
+import org.gnome.gtk.Gtk;
+import org.gnome.gtk.Label;
 import org.gnome.gtk.Orientation;
 import org.gnome.gtk.Popover;
 import org.gnome.gtk.Widget;
 
 /**
  * Simple menu built from a GtkPopover containing a vertical box of buttons.
- * Used for the download context menu (via {@code popup()}). Each entry is a real button with a
- * connected lambda — no string handler names, so a typo'd handler is a
- * compile error, not a dead menu item.
+ * Used for the download context menu. Each entry is a real button with a
+ * connected lambda, so handler wiring remains compile-time checked.
  */
 public class PopupMenu {
+
+    private static final String CONTEXT_MENU_CSS = """
+            button.odm-context-menu-item.odm-context-menu-item-hover,
+            button.odm-context-menu-item:focus-visible {
+              background-color: alpha(@theme_fg_color, 0.14);
+            }
+            button.odm-context-menu-item:active {
+              background-color: alpha(@theme_fg_color, 0.22);
+            }
+            button.odm-context-menu-item:disabled.odm-context-menu-item-hover {
+              background-color: transparent;
+            }
+            """;
+    private static CssProvider contextMenuCssProvider;
 
     private final Popover popover;
     private final Box box;
 
     public PopupMenu() {
+        installContextMenuCss();
         box = new Box(Orientation.VERTICAL, 0);
         popover = new Popover();
+        popover.setHasArrow(false);
         popover.setChild(box);
     }
 
-    /** Adds a menu entry; on pressed the action runs and the menu closes. */
+    /** Adds an enabled menu entry. */
     public PopupMenu add(String label, Runnable action) {
+        return add(label, true, action);
+    }
+
+    /** Adds a menu entry whose sensitivity reflects the current selection. */
+    public PopupMenu add(String label, boolean enabled, Runnable action) {
         Button item = new Button();
-        item.setLabel(label);
-        item.setHalign(org.gnome.gtk.Align.START);
+        Label itemLabel = new Label(label);
+        itemLabel.setXalign(0.0f);
+        itemLabel.setHexpand(true);
+        item.setChild(itemLabel);
+        item.setHalign(org.gnome.gtk.Align.FILL);
         item.setHexpand(true);
+        item.setSensitive(enabled);
         item.addCssClass("flat");
+        item.addCssClass("odm-context-menu-item");
+        EventControllerMotion hover = new EventControllerMotion();
+        hover.onEnter((x, y) -> item.addCssClass("odm-context-menu-item-hover"));
+        hover.onLeave(() -> item.removeCssClass("odm-context-menu-item-hover"));
+        item.addController(hover);
         item.onClicked(() -> {
             popover.popdown();
             action.run();
@@ -72,5 +105,17 @@ public class PopupMenu {
 
     public Popover getPopover() {
         return popover;
+    }
+
+    private static synchronized void installContextMenuCss() {
+        if (contextMenuCssProvider != null
+                || org.gnome.gdk.Display.getDefault() == null) {
+            return;
+        }
+        CssProvider provider = new CssProvider();
+        provider.loadFromString(CONTEXT_MENU_CSS);
+        Gtk.styleContextAddProviderForDisplay(org.gnome.gdk.Display.getDefault(),
+                provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+        contextMenuCssProvider = provider;
     }
 }

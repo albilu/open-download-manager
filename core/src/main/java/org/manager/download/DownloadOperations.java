@@ -135,6 +135,18 @@ public interface DownloadOperations {
     CompletableFuture<Void> changeSettings(Download download);
 
     /**
+     * Moves a download's payload to another directory. Active transfers are
+     * paused while their payload and resume metadata are moved, reconfigured
+     * at the engine, and then resumed. A download that was already paused
+     * remains paused.
+     *
+     * @param download The download to relocate
+     * @param destination The new destination directory
+     * @return A future that completes after relocation (and any required resume)
+     */
+    CompletableFuture<Void> relocateDownload(Download download, Path destination);
+
+    /**
      * Cancels and removes a download.
      *
      * @param download The download to cancel

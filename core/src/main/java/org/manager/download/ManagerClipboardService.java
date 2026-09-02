@@ -69,6 +69,9 @@ class ManagerClipboardService {
         ClipboardSettings currentSettings = clipboardSettingsOrDefault();
         ClipboardSettings updatedSettings = currentSettings.copy().setMonitoringEnabled(enabled);
         updateSettings(updatedSettings);
+        if (!settings.get().save()) {
+            LOGGER.warn("Could not persist clipboard monitoring state");
+        }
 
         if (enabled) {
             clipboardService.startService();

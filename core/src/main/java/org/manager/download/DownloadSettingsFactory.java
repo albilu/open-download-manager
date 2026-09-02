@@ -129,6 +129,10 @@ public class DownloadSettingsFactory {
         int seedTimeMin = g.getIntProperty("aria2.seedTimeMin", 0);
         if (g.getBooleanProperty("aria2.enableSeeding", false) && seedTimeMin > 0) {
             settings.setOption("seed-time", String.valueOf(seedTimeMin));
+        } else if (!g.getBooleanProperty("aria2.enableSeeding", false)) {
+            // aria2 otherwise seeds toward its default 1.0 share ratio. An
+            // explicit zero is the documented way to finish immediately.
+            settings.setOption("seed-time", "0");
         }
         String referer = g.getProperty("aria2.referer", "");
         if (!referer.isEmpty()) {

@@ -182,6 +182,28 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
     }
 
     @Override
+    public CompletableFuture<Void> changeDestination(Download download,
+            Path previousDestination, Path newDestination) {
+        return CompletableFuture.runAsync(() -> {
+            String jobId = downloadToJobMap.get(download.getId());
+            HttrackJob job = jobId != null ? httrackClient.getJobStatus(jobId) : null;
+            if (job != null) {
+                Path oldRoot = previousDestination.toAbsolutePath().normalize();
+                Path newRoot = newDestination.toAbsolutePath().normalize();
+                Path oldOutput = job.getSettings().getOutputDirectory();
+                Path relocatedOutput = newRoot;
+                if (oldOutput != null) {
+                    Path absoluteOutput = oldOutput.toAbsolutePath().normalize();
+                    if (absoluteOutput.startsWith(oldRoot)) {
+                        relocatedOutput = newRoot.resolve(oldRoot.relativize(absoluteOutput));
+                    }
+                }
+                job.getSettings().setOutputDirectory(relocatedOutput);
+            }
+        }, executor);
+    }
+
+    @Override
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
         return CompletableFuture.runAsync(() -> {
             String jobId = downloadToJobMap.get(download.getId());

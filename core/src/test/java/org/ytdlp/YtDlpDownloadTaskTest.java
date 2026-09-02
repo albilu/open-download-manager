@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -100,6 +101,24 @@ class YtDlpDownloadTaskTest {
         assertFalse(downloadTask.isDone());
         assertFalse(downloadTask.isActive());
         assertEquals(-1, downloadTask.getEstimatedTimeRemaining());
+    }
+
+    @Test
+    void destinationCanChangeOnlyWhilePendingOrPaused() throws Exception {
+        Path pendingDestination = tempOutputPath.resolve("pending-destination");
+        downloadTask.changeOutputPath(pendingDestination);
+        assertEquals(pendingDestination.toAbsolutePath().normalize(),
+                downloadTask.getOutputPath());
+
+        setTaskStatus(YtDlpDownloadTask.Status.PAUSED);
+        Path pausedDestination = tempOutputPath.resolve("paused-destination");
+        downloadTask.changeOutputPath(pausedDestination);
+        assertEquals(pausedDestination.toAbsolutePath().normalize(),
+                downloadTask.getOutputPath());
+
+        setTaskStatus(YtDlpDownloadTask.Status.DOWNLOADING);
+        assertThrows(IllegalStateException.class,
+                () -> downloadTask.changeOutputPath(tempOutputPath.resolve("active")));
     }
 
     @Test

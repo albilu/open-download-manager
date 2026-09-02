@@ -76,7 +76,8 @@
                 <property name="margin-bottom">6</property>
                 <child>
                   <object class="GtkLabel" id="status_label">
-                    <property name="label">Status</property>
+                    <property name="label">&lt;b&gt;Status&lt;/b&gt;</property>
+                    <property name="use-markup">true</property>
                     <property name="xalign">0</property>
                   </object>
                 </child>
@@ -110,7 +111,8 @@
                 </child>
                 <child>
                   <object class="GtkLabel" id="category_label">
-                    <property name="label">Categories</property>
+                    <property name="label">&lt;b&gt;Categories&lt;/b&gt;</property>
+                    <property name="use-markup">true</property>
                     <property name="xalign">0</property>
                   </object>
                 </child>
@@ -158,7 +160,7 @@
                     <style><class name="toolbar"/></style>
                     <child><object class="GtkButton" id="new_download_button"><property name="icon-name">list-add</property><property name="tooltip-text">New download</property></object></child>
                     <child><object class="GtkButton" id="pause_button"><property name="icon-name">media-playback-pause</property><property name="tooltip-text">Pause</property></object></child>
-                    <child><object class="GtkButton" id="resume_button"><property name="icon-name">media-playback-start</property><property name="tooltip-text">Resume</property></object></child>
+                    <child><object class="GtkButton" id="resume_button"><property name="icon-name">media-playback-start</property><property name="tooltip-text">Start / Resume</property></object></child>
                     <child><object class="GtkButton" id="delete_button"><property name="icon-name">edit-delete</property><property name="tooltip-text">Delete</property></object></child>
                     <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
                     <child><object class="GtkButton" id="move_up_button"><property name="icon-name">go-up</property><property name="tooltip-text">Move up</property></object></child>
@@ -244,7 +246,7 @@
                                 <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title">Retry</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title">Start date</property><property name="sort-column-id">24</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title">End date</property><property name="sort-column-id">25</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Type</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf"/><attributes><attribute name="icon-name">11</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Type</property><property name="sizing">fixed</property><property name="fixed-width">44</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf"/><attributes><attribute name="icon-name">11</attribute></attributes></child></object></child>
                               </object>
                             </child>
                           </object>

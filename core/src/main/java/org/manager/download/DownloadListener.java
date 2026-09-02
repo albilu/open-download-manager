@@ -47,6 +47,20 @@ public interface DownloadListener {
     void onDownloadProgress(Download download, float progress, long downloadedBytes, long totalBytes, float speed);
 
     /**
+     * Called when an engine reports a non-terminal lifecycle transition that
+     * has no more specific event, such as a completed BitTorrent payload
+     * entering or leaving seeding mode.
+     *
+     * @param download The download whose state changed
+     * @param previousStatus The state before the engine update
+     * @param currentStatus The newly reported state
+     */
+    default void onDownloadStatusChanged(Download download,
+            Download.Status previousStatus, Download.Status currentStatus) {
+        // Optional for listeners interested only in the established events.
+    }
+
+    /**
      * Called when a download is paused.
      *
      * @param download The download that was paused

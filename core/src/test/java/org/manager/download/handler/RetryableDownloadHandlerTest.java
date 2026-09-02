@@ -52,6 +52,7 @@ class RetryableDownloadHandlerTest {
     private static class ScriptedDelegate implements DownloadHandler {
         private final QueueBehavior behavior;
         final AtomicInteger startAttempts = new AtomicInteger(0);
+        final AtomicInteger routeStops = new AtomicInteger(0);
         final List<String> proxiesUsed = new CopyOnWriteArrayList<>();
 
         ScriptedDelegate(QueueBehavior behavior) {
@@ -82,6 +83,12 @@ class RetryableDownloadHandlerTest {
 
         @Override
         public CompletableFuture<Void> pauseDownload(Download download) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public CompletableFuture<Void> stopForRouteChange(Download download) {
+            routeStops.incrementAndGet();
             return CompletableFuture.completedFuture(null);
         }
 
@@ -192,5 +199,19 @@ class RetryableDownloadHandlerTest {
 
         assertThrows(java.util.concurrent.ExecutionException.class, () -> result.get(10, TimeUnit.SECONDS));
         assertEquals(1, delegate.startAttempts.get(), "non-retryable errors must fail immediately");
+    }
+
+    @Test
+    @DisplayName("Route handoff reaches the delegate-specific stop primitive")
+    void routeHandoffUsesDelegatePrimitive() throws Exception {
+        ScriptedDelegate delegate = new ScriptedDelegate(new QueueBehavior(0, ""));
+        RetryableDownloadHandler handler = new RetryableDownloadHandler(
+                delegate, twoProxyManager(), fastRetrySettings(3), scheduler, executor);
+        Download download = new Download(new URI("http://example.test/file.bin"));
+
+        handler.startDownload(download).get(10, TimeUnit.SECONDS);
+        handler.stopForRouteChange(download).get(10, TimeUnit.SECONDS);
+
+        assertEquals(1, delegate.routeStops.get());
     }
 }

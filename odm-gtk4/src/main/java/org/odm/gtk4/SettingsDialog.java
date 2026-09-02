@@ -562,6 +562,13 @@ public class SettingsDialog {
         s.setProperty("ui.folderRecursive", String.valueOf(check("folder_recursive_check").getActive()));
         s.setProperty("ui.moveToTrash", String.valueOf(check("move_to_trash_check").getActive()));
         boolean clipboardMonitoring = check("clipboard_monitor_check").getActive();
+        org.manager.clipboard.ClipboardSettings clipboardSettings =
+                s.getClipboardSettings() == null
+                        ? new org.manager.clipboard.ClipboardSettings()
+                        : s.getClipboardSettings().copy();
+        s.setClipboardSettings(clipboardSettings
+                .setMonitoringEnabled(clipboardMonitoring)
+                .setSilentMode(clipboardSilent));
         boolean folderMonitoring = check("folder_monitoring_check").getActive();
         // Persist the monitored folder so monitoring survives restarts.
         Path monitoredDirectory = monitoredDirectoryChooser.getPath();

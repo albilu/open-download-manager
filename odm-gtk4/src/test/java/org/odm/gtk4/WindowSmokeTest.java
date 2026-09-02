@@ -3,6 +3,7 @@ package org.odm.gtk4;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -21,6 +22,7 @@ import org.gnome.gtk.CellRendererProgress;
 import org.gnome.gtk.CellRendererText;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.Entry;
+import org.gnome.gtk.EventControllerMotion;
 import org.gnome.gtk.Frame;
 import org.gnome.gtk.Grid;
 import org.gnome.gtk.Gtk;
@@ -72,6 +74,39 @@ class WindowSmokeTest {
     void mainWindow() {
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
         Widgets.require(builder, "main_window", ApplicationWindow.class);
+        PopupMenu contextMenu = new PopupMenu()
+                .add("Enabled action", true, () -> { })
+                .add("Disabled action", false, () -> { });
+        assertFalse(contextMenu.getPopover().getHasArrow(),
+                "download context menu should match arrowless menubar dropdowns");
+        Box contextItems = assertInstanceOf(Box.class,
+                contextMenu.getPopover().getChild());
+        Button enabledContextItem = assertInstanceOf(Button.class,
+                contextItems.getFirstChild());
+        Button disabledContextItem = assertInstanceOf(Button.class,
+                enabledContextItem.getNextSibling());
+        assertTrue(enabledContextItem.hasCssClass("flat"));
+        assertTrue(enabledContextItem.hasCssClass("odm-context-menu-item"));
+        assertEquals(Align.FILL, enabledContextItem.getHalign());
+        Label enabledContextLabel = assertInstanceOf(Label.class,
+                enabledContextItem.getChild());
+        assertEquals(0.0f, enabledContextLabel.getXalign());
+        assertTrue(enabledContextItem.getSensitive());
+        assertFalse(disabledContextItem.getSensitive());
+        org.gnome.gio.ListModel<org.gnome.gtk.EventController> contextControllers =
+                enabledContextItem.observeControllers();
+        EventControllerMotion hoverController = null;
+        for (int i = 0; i < contextControllers.getNItems(); i++) {
+            if (contextControllers.getItem(i) instanceof EventControllerMotion motion) {
+                hoverController = motion;
+                break;
+            }
+        }
+        assertNotNull(hoverController);
+        hoverController.emitEnter(1.0, 1.0);
+        assertTrue(enabledContextItem.hasCssClass("odm-context-menu-item-hover"));
+        hoverController.emitLeave();
+        assertFalse(enabledContextItem.hasCssClass("odm-context-menu-item-hover"));
         // stores
         for (String id : new String[]{"status_store", "category_store", "download_store",
                 "files_store", "global_progress_store", "peers_store", "trackers_store"}) {
@@ -87,6 +122,12 @@ class WindowSmokeTest {
         assertTrue(statusScrolled.getPropagateNaturalHeight());
         assertTrue(categoryScrolled.getPropagateNaturalHeight());
         TreeView statusTree = Widgets.require(builder, "status_treeview", TreeView.class);
+        Label statusHeading = Widgets.require(builder, "status_label", Label.class);
+        Label categoryHeading = Widgets.require(builder, "category_label", Label.class);
+        assertTrue(statusHeading.getUseMarkup());
+        assertTrue(categoryHeading.getUseMarkup());
+        assertEquals("<b>Status</b>", statusHeading.getLabel());
+        assertEquals("<b>Categories</b>", categoryHeading.getLabel());
         TreeViewColumn statusColumn = Widgets.require(builder,
                 "status_column", TreeViewColumn.class);
         TreeViewColumn countColumn = Widgets.require(builder,
@@ -135,6 +176,8 @@ class WindowSmokeTest {
                 "settings_button"}) {
             Widgets.require(builder, id, Button.class);
         }
+        assertEquals("Start / Resume",
+                Widgets.require(builder, "resume_button", Button.class).getTooltipText());
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
         Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         Box toolbarSpacer = Widgets.require(builder, "toolbar_spacer", Box.class);
@@ -168,12 +211,17 @@ class WindowSmokeTest {
         assertEquals(27, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
         TreeViewColumn statusIconColumn = Widgets.require(builder,
                 "status_icon_column", TreeViewColumn.class);
+        TreeViewColumn typeIconColumn = Widgets.require(builder,
+                "tor_icon_column", TreeViewColumn.class);
         TreeViewColumn nameColumn = Widgets.require(builder, "name_column", TreeViewColumn.class);
         assertTrue(statusIconColumn.getTitle() == null || statusIconColumn.getTitle().isEmpty(),
                 "the icon-only status column must not show a header label");
         assertEquals(TreeViewColumnSizing.FIXED, statusIconColumn.getSizing());
         assertEquals(32, statusIconColumn.getFixedWidth(),
                 "the status column should remain close to the icon's natural width");
+        assertEquals(TreeViewColumnSizing.FIXED, typeIconColumn.getSizing());
+        assertTrue(typeIconColumn.getFixedWidth() <= 48,
+                "the Type column should remain icon-sized");
         assertTrue(treeColumnIndex(downloadTree, statusIconColumn)
                         < treeColumnIndex(downloadTree, nameColumn),
                 "the lifecycle icon must appear before the download name");
@@ -557,6 +605,13 @@ class WindowSmokeTest {
                 "Elapsed", "Left", "Down Speed", "Up Speed", "Retry", "Start Date",
                 "End Date", "Type"), MainWindow.downloadColumnLabels());
         assertEquals(5, window.mainMenuTopLevelCount());
+        assertEquals("s", window.menuActionParameterType("completion"));
+        assertEquals("s", window.menuActionParameterType("schedule"));
+        assertTrue(window.menuActionEnabled("completion"));
+        assertTrue(window.menuActionEnabled("schedule"));
+        assertFalse(window.menuActionEnabled("open-file"));
+        assertFalse(window.menuActionEnabled("open-folder"));
+        window.dispose();
     }
 
     @Test

@@ -1,5 +1,6 @@
 package org.manager.download.handler;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
@@ -450,6 +451,29 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     }
 
     @Override
+    public CompletableFuture<Void> stopForRouteChange(Download download) {
+        if (!owns(download)) {
+            return delegate.stopForRouteChange(download);
+        }
+        // A route handoff permanently retires this retry generation. Keep
+        // the teardown ordered against start/retry submission exactly like
+        // cancellation, but delegate to the non-terminal handoff primitive.
+        lifecycleLock.lock();
+        try {
+            if (tryFinalize(State.TERMINAL)) {
+                releaseOwnedProxy(download);
+                CompletableFuture<String> future = operation.get();
+                if (future != null && !future.isDone()) {
+                    future.cancel(true);
+                }
+            }
+            return delegate.stopForRouteChange(download);
+        } finally {
+            lifecycleLock.unlock();
+        }
+    }
+
+    @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
         if (!owns(download)) {
             return delegate.pauseDownload(download);
@@ -638,5 +662,11 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
         // Rotation bookkeeping remains wrapper-local; only user-facing
         // settings are forwarded to the native engine.
         return delegate.changeSettings(download);
+    }
+
+    @Override
+    public CompletableFuture<Void> changeDestination(Download download,
+            Path previousDestination, Path newDestination) {
+        return delegate.changeDestination(download, previousDestination, newDestination);
     }
 }

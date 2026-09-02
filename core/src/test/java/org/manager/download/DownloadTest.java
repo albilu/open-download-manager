@@ -249,6 +249,34 @@ class DownloadTest {
             assertEquals(firstCompletionTime, download.getCompletedAt());
         }
 
+        @Test
+        @DisplayName("Elapsed time advances only in active transfer states")
+        void elapsedTimeStopsWhilePaused() throws Exception {
+            download.setActiveElapsedMillis(5_000);
+            download.setStatus(Download.Status.STARTING);
+            Thread.sleep(30);
+            download.setStatus(Download.Status.PAUSED);
+
+            long pausedElapsed = download.getActiveElapsedMillis();
+            assertTrue(pausedElapsed >= 5_000,
+                    "the active interval must be accumulated when pausing");
+
+            Thread.sleep(30);
+            assertEquals(pausedElapsed, download.getActiveElapsedMillis(),
+                    "paused wall-clock time must not increase elapsed transfer time");
+
+            download.setStatus(Download.Status.CONNECTING);
+            Thread.sleep(30);
+            long connectingElapsed = download.getActiveElapsedMillis();
+            assertTrue(connectingElapsed > pausedElapsed,
+                    "resuming an active state must continue the accumulated timer");
+
+            download.setStatus(Download.Status.SEEDING);
+            Thread.sleep(30);
+            assertTrue(download.getActiveElapsedMillis() > connectingElapsed,
+                    "seeding is an active transfer state and must keep advancing elapsed time");
+        }
+
         @ParameterizedTest
         @EnumSource(Download.Status.class)
         @DisplayName("Should handle all status values")

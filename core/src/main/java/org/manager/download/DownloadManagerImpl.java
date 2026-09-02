@@ -81,6 +81,8 @@ public class DownloadManagerImpl implements DownloadManager {
     private final Set<String> runningDownloadIds;
     /** Downloads whose per-item proxy fields were inherited from the global proxy. */
     private final Set<String> globallyProxiedDownloadIds;
+    /** Download IDs currently undergoing a destination move. */
+    private final Set<String> relocatingDownloadIds;
     /** Current start-generation per download id; late events of superseded generations are dropped. */
     private final ConcurrentHashMap<String, Long> attemptGenerations;
     /** Generation that already reached a terminal state per download id; first terminal wins. */
@@ -138,6 +140,7 @@ public class DownloadManagerImpl implements DownloadManager {
         this.bulkPauseOperations = new AtomicInteger(0);
         this.runningDownloadIds = ConcurrentHashMap.newKeySet();
         this.globallyProxiedDownloadIds = ConcurrentHashMap.newKeySet();
+        this.relocatingDownloadIds = ConcurrentHashMap.newKeySet();
         this.attemptGenerations = new ConcurrentHashMap<>();
         this.terminalGenerations = new ConcurrentHashMap<>();
         this.proxychainsCurlFallbackGenerations = new ConcurrentHashMap<>();
@@ -591,7 +594,8 @@ public class DownloadManagerImpl implements DownloadManager {
                     // Route the transition through the repository so status
                     // indexes stay consistent (bare setStatus leaves the id
                     // in the QUEUED index and breaks status queries).
-                    downloadRepository.updateDownloadStatus(download, Download.Status.DOWNLOADING);
+                    downloadRepository.updateDownloadStatus(download,
+                            reportedRunningStatus(download));
                 } else {
                     LOGGER.warn("Handler returned null GID for download: " + download.getName());
                     failStart(download, startGeneration, "Handler returned null GID", null);
@@ -937,7 +941,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 // state captured above so a prewarmed PAUSED query is also
                 // invalidated, rather than only reindexing DOWNLOADING.
                 downloadRepository.transitionDownloadStatus(
-                        download, statusBefore, Download.Status.DOWNLOADING);
+                        download, statusBefore, reportedRunningStatus(download));
             }
         } catch (Exception e) {
             releaseRunningSlot(download.getId());
@@ -963,6 +967,122 @@ public class DownloadManagerImpl implements DownloadManager {
                 throw new CompletionException("Failed to change settings for download: " + download.getName(), e);
             }
         }, executorManager.getGeneralExecutor());
+    }
+
+    @Override
+    public CompletableFuture<Void> relocateDownload(Download download, Path destination) {
+        if (download == null || destination == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("Download and destination are required"));
+        }
+        if (!relocatingDownloadIds.add(download.getId())) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("This download is already being moved"));
+        }
+        return CompletableFuture.runAsync(() -> relocateDownloadInternal(download, destination),
+                executorManager.getGeneralExecutor())
+                .whenComplete((ignored, failure) -> relocatingDownloadIds.remove(download.getId()));
+    }
+
+    private void relocateDownloadInternal(Download download, Path requestedDestination) {
+        Path previousDestination = download.getDestination();
+        if (previousDestination == null) {
+            throw new CompletionException(new IllegalStateException(
+                    "The download has no current destination"));
+        }
+        Path normalizedPrevious = previousDestination.toAbsolutePath().normalize();
+        Path normalizedNew = requestedDestination.toAbsolutePath().normalize();
+        if (normalizedPrevious.equals(normalizedNew)) {
+            return;
+        }
+
+        Download.Status statusBefore = download.getStatus();
+        if (!canRelocate(statusBefore)) {
+            throw new CompletionException(new IllegalStateException(
+                    "Destination cannot be changed while the download is " + statusBefore));
+        }
+        boolean resumeAfterMove = isResumableActiveStatus(statusBefore);
+        DownloadHandler handler = handlerFor(download);
+
+        if (resumeAfterMove) {
+            // Keep the slot available for this same logical download while
+            // pauseDownload releases it. Otherwise its own resume can lose a
+            // race to an unrelated queued item.
+            bulkPauseOperations.incrementAndGet();
+        }
+        try {
+            DownloadRelocator.Relocation relocation = null;
+            try {
+                if (resumeAfterMove) {
+                    pauseDownload(download).join();
+                }
+                relocation = DownloadRelocator.relocate(download, normalizedNew);
+                if (!relocation.noOp()
+                        && handler != null
+                        && (resumeAfterMove || statusBefore == Download.Status.PAUSED)) {
+                    handler.changeDestination(download, relocation.previousDestination(),
+                            relocation.newDestination()).join();
+                }
+            } catch (Exception relocationFailure) {
+                Throwable cause = unwrapCompletion(relocationFailure);
+                boolean safeToResumeOldLocation = cause.getSuppressed().length == 0;
+                if (relocation != null && !relocation.noOp()) {
+                    try {
+                        relocation.rollback(download);
+                    } catch (Exception rollbackFailure) {
+                        cause.addSuppressed(unwrapCompletion(rollbackFailure));
+                        safeToResumeOldLocation = false;
+                    }
+                    if (handler != null
+                            && (resumeAfterMove || statusBefore == Download.Status.PAUSED)) {
+                        try {
+                            handler.changeDestination(download, normalizedNew,
+                                    normalizedPrevious).join();
+                        } catch (Exception engineRollbackFailure) {
+                            cause.addSuppressed(unwrapCompletion(engineRollbackFailure));
+                            safeToResumeOldLocation = false;
+                        }
+                    }
+                }
+                if (resumeAfterMove && safeToResumeOldLocation
+                        && download.getStatus() == Download.Status.PAUSED) {
+                    try {
+                        resumeDownload(download).join();
+                    } catch (Exception resumeFailure) {
+                        cause.addSuppressed(unwrapCompletion(resumeFailure));
+                    }
+                }
+                throw new CompletionException("Could not move download to " + normalizedNew,
+                        cause);
+            }
+
+            if (resumeAfterMove) {
+                // A resume failure intentionally leaves the item paused in its
+                // new, internally consistent location so the user can retry.
+                resumeDownload(download).join();
+            }
+            LOGGER.info("Moved download " + download.getId() + " from "
+                    + normalizedPrevious + " to " + normalizedNew);
+        } finally {
+            if (resumeAfterMove) {
+                bulkPauseOperations.decrementAndGet();
+                startNextQueuedDownload();
+            }
+        }
+    }
+
+    private static boolean canRelocate(Download.Status status) {
+        return status != null && status != Download.Status.CANCELED;
+    }
+
+    private static Throwable unwrapCompletion(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     @Override
@@ -1270,7 +1390,8 @@ public class DownloadManagerImpl implements DownloadManager {
                 List<Download> activeDownloads = java.util.stream.Stream.of(
                                 Download.Status.STARTING,
                                 Download.Status.CONNECTING,
-                                Download.Status.DOWNLOADING)
+                                Download.Status.DOWNLOADING,
+                                Download.Status.SEEDING)
                         .flatMap(status -> downloadRepository
                                 .getDownloadsByStatus(status, 0, Integer.MAX_VALUE)
                                 .getDownloads().stream())
@@ -1388,7 +1509,15 @@ public class DownloadManagerImpl implements DownloadManager {
                     && handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler) {
                 aria2Handler.applyGlobalRuntimeOptions();
             }
-            for (Map.Entry<String, DownloadHandler> entry : activeHandlers.entrySet()) {
+            // Snapshot ownership before applying changes. A successful route
+            // handoff replaces activeHandlers; a weakly-consistent map
+            // iterator could otherwise encounter that replacement and route
+            // the same download twice in one settings pass.
+            List<Map.Entry<String, DownloadHandler>> activeSnapshot = activeHandlers.entrySet()
+                    .stream()
+                    .map(entry -> Map.entry(entry.getKey(), entry.getValue()))
+                    .toList();
+            for (Map.Entry<String, DownloadHandler> entry : activeSnapshot) {
                 Download download = downloadRepository.getDownload(entry.getKey());
                 if (download == null || download.getSettings() == null) {
                     continue;
@@ -1447,18 +1576,50 @@ public class DownloadManagerImpl implements DownloadManager {
      */
     private void restartActiveDownloadForProxyRoute(Download download, Download.Type targetType,
             String routeDescription) {
-        pauseDownload(download)
+        DownloadHandler sourceHandler = activeHandlers.get(download.getId());
+        if (sourceHandler == null) {
+            LOGGER.warn("Cannot switch " + download.getId() + " to " + routeDescription
+                    + ": no active handler owns it");
+            return;
+        }
+        Download.Status statusBefore = download.getStatus();
+        boolean restartAfterHandoff = isResumableActiveStatus(statusBefore);
+        LOGGER.info("Switching download " + download.getId() + " from engine "
+                + sourceHandler.getSupportedType() + " to " + routeDescription);
+
+        // Mark the model paused before terminating a process-backed handler:
+        // its worker interprets a non-zero exit as intentional only in a
+        // paused/canceled state. The specialized handoff then stops/removes
+        // the old task without publishing a terminal event.
+        downloadRepository.updateDownloadStatus(download, Download.Status.PAUSED);
+        sourceHandler.stopForRouteChange(download)
                 .thenCompose(ignored -> {
+                    activeHandlers.remove(download.getId(), sourceHandler);
+                    gidToIdMap.entrySet().removeIf(
+                            entry -> download.getId().equals(entry.getValue()));
                     download.setType(targetType);
                     download.setGid(null);
-                    return startDownload(download);
+                    if (restartAfterHandoff) {
+                        // The logical download already owns a concurrency
+                        // slot. Start the replacement under that claim so a
+                        // queued item cannot steal it between engines.
+                        download.setManualStartRequired(false);
+                        startDownloadInternal(download, true);
+                    } else {
+                        releaseRunningSlot(download.getId());
+                    }
+                    return CompletableFuture.completedFuture(null);
                 })
+                .thenRun(() -> LOGGER.info("Download " + download.getId()
+                        + " handed off to " + routeDescription + " (engine "
+                        + download.getType() + ")"))
                 .exceptionally(error -> {
                     LOGGER.error("Failed to switch " + download.getId()
                             + " to " + routeDescription, error);
                     download.setErrorMessage("Failed to switch to " + routeDescription + ": "
                             + messageOf(error));
                     downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
+                    notifyDownloadError(download, download.getErrorMessage());
                     return null;
                 });
     }
@@ -1619,7 +1780,14 @@ public class DownloadManagerImpl implements DownloadManager {
     private static boolean isResumableActiveStatus(Download.Status status) {
         return status == Download.Status.STARTING
                 || status == Download.Status.CONNECTING
-                || status == Download.Status.DOWNLOADING;
+                || status == Download.Status.DOWNLOADING
+                || status == Download.Status.SEEDING;
+    }
+
+    /** Preserves a seeding report that raced a successful start/resume future. */
+    private static Download.Status reportedRunningStatus(Download download) {
+        return download.getStatus() == Download.Status.SEEDING
+                ? Download.Status.SEEDING : Download.Status.DOWNLOADING;
     }
 
     /**
@@ -1791,6 +1959,11 @@ public class DownloadManagerImpl implements DownloadManager {
     private void notifyDownloadProgress(Download download, float progress, long downloadedBytes, long totalBytes,
             float speed) {
         fireEvent(l -> l.onDownloadProgress(download, progress, downloadedBytes, totalBytes, speed));
+    }
+
+    private void notifyDownloadStatusChanged(Download download,
+            Download.Status previousStatus, Download.Status currentStatus) {
+        fireEvent(l -> l.onDownloadStatusChanged(download, previousStatus, currentStatus));
     }
 
     private void notifyDownloadPause(Download download) {
@@ -2220,6 +2393,17 @@ public class DownloadManagerImpl implements DownloadManager {
         public void onDownloadProgress(Download d, float progress, long downloadedBytes, long totalBytes, float speed) {
             // Route to appropriate download manager listeners
             notifyDownloadProgress(d, progress, downloadedBytes, totalBytes, speed);
+        }
+
+        @Override
+        public void onDownloadStatusChanged(Download d,
+                Download.Status previousStatus, Download.Status currentStatus) {
+            // Handler state changes happen before this callback. Reindex from
+            // the captured source status so cached status queries and sidebar
+            // counts immediately agree with the model.
+            downloadRepository.transitionDownloadStatus(
+                    d, previousStatus, currentStatus);
+            notifyDownloadStatusChanged(d, previousStatus, currentStatus);
         }
 
         @Override

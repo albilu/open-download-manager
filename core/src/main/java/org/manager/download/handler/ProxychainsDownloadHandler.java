@@ -240,6 +240,21 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
     }
 
     @Override
+    public CompletableFuture<Void> stopForRouteChange(Download download) {
+        return CompletableFuture.runAsync(() -> {
+            if (download == null) {
+                return;
+            }
+            Future<?> task = activeTasks.remove(download.getId());
+            if (task != null) {
+                task.cancel(false);
+            }
+            proxychainsClient.stopForRouteChange(download);
+            downloadOptions.remove(download.getId());
+        }, executor);
+    }
+
+    @Override
     public CompletableFuture<Void> resumeDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
             if (download != null && download.getStatus() == Download.Status.PAUSED) {

@@ -1,5 +1,6 @@
 package org.manager.download.handler;
 
+import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import org.manager.download.Download;
 import org.manager.download.DownloadListener;
@@ -44,6 +45,20 @@ public interface DownloadHandler {
     CompletableFuture<Void> pauseDownload(Download download);
 
     /**
+     * Stops the current engine task so the manager can restart the same
+     * download through another routing engine. Implementations should retain
+     * partial files and avoid emitting terminal cancellation/completion events.
+     * The default pause behavior is suitable for handlers without a distinct
+     * route-handoff primitive.
+     *
+     * @param download the download being handed to another engine
+     * @return a future that completes once the old engine no longer transfers it
+     */
+    default CompletableFuture<Void> stopForRouteChange(Download download) {
+        return pauseDownload(download);
+    }
+
+    /**
      * Resumes a paused download.
      *
      * @param download The download to resume
@@ -59,6 +74,22 @@ public interface DownloadHandler {
      * @return A future that completes when the download is updated
      */
     CompletableFuture<Void> changeSettings(Download download);
+
+    /**
+     * Repoints a paused live task after its files were moved. Process-backed
+     * handlers whose resume operation reads {@link Download#getDestination()}
+     * need no extra work; engines retaining their own output directory should
+     * override this method.
+     *
+     * @param download the relocated download (already carrying the new path)
+     * @param previousDestination its previous destination
+     * @param newDestination its new destination
+     * @return a future completing when the engine is ready to resume there
+     */
+    default CompletableFuture<Void> changeDestination(Download download,
+            Path previousDestination, Path newDestination) {
+        return CompletableFuture.completedFuture(null);
+    }
 
     /**
      * Cancels a download.

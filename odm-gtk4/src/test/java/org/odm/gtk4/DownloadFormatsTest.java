@@ -1,8 +1,6 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 import java.net.URI;
 import java.time.Instant;
 
@@ -41,14 +39,17 @@ class DownloadFormatsTest {
     }
 
     @Test
-    void elapsedWithoutCreationTimeIsAnEmDash() throws Exception {
-        // the em-dash path is the restored-without-timestamp case
+    void elapsedUsesActiveTransferTimeAndNotWallClockAge() throws Exception {
         Download d = new Download("id", null);
 
         assertEquals("—", DownloadFormats.elapsed(d));
 
         Download created = new Download("id", Instant.now().minusSeconds(90));
-        // 90s plus test latency: seconds part stays in the 30s bucket
-        assertTrue(DownloadFormats.elapsed(created).matches("1m 3\\ds"));
+        assertEquals("—", DownloadFormats.elapsed(created));
+
+        created.setStartedAt(Instant.now().minusSeconds(90));
+        created.setActiveElapsedMillis(90_000);
+        created.setStatus(Download.Status.PAUSED);
+        assertEquals("1m 30s", DownloadFormats.elapsed(created));
     }
 }

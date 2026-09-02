@@ -189,6 +189,17 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
         }, executor);
     }
 
+    @Override
+    public CompletableFuture<Void> changeDestination(Download download,
+            Path previousDestination, Path newDestination) {
+        return CompletableFuture.runAsync(() -> {
+            YtDlpDownloadTask task = activeDownloadTasks.get(download.getId());
+            if (task != null) {
+                task.changeOutputPath(newDestination);
+            }
+        }, executor);
+    }
+
     /**
      * Completion watcher for one started run. Actions apply only while the
      * observed run is still the task's current generation: a retired run's

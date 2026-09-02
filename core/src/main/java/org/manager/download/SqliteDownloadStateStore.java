@@ -75,6 +75,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 checksum_algorithm TEXT,
                 expected_checksum TEXT,
                 manual_start_required INTEGER NOT NULL DEFAULT 0,
+                active_elapsed_millis INTEGER NOT NULL DEFAULT 0,
                 active_before_exit INTEGER NOT NULL DEFAULT 0
             )
             """;
@@ -87,8 +88,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 seeders, info_hash, queue_position, created_at, started_at,
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, manual_start_required,
-                active_before_exit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                active_elapsed_millis, active_before_exit
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -227,6 +228,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             ensureColumn("output_paths", "TEXT");
             ensureColumn("protocol", "TEXT");
             ensureColumn("manual_start_required", "INTEGER NOT NULL DEFAULT 0");
+            ensureColumn("active_elapsed_millis", "INTEGER NOT NULL DEFAULT 0");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
@@ -372,6 +374,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         download.setInfoHash(rs.getString("info_hash"));
         download.setQueuePosition(rs.getInt("queue_position"));
         download.setManualStartRequired(rs.getInt("manual_start_required") != 0);
+        download.setActiveElapsedMillis(rs.getLong("active_elapsed_millis"));
         download.setStartedAt(readInstant(rs, "started_at"));
         download.setCompletedAt(readInstant(rs, "completed_at"));
         download.setErrorMessage(rs.getString("error_message"));
@@ -461,7 +464,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(27, download.getChecksumAlgorithm());
         insert.setString(28, download.getExpectedChecksum());
         insert.setInt(29, download.isManualStartRequired() ? 1 : 0);
-        insert.setInt(30, activeBeforeExit ? 1 : 0);
+        insert.setLong(30, download.getActiveElapsedMillis());
+        insert.setInt(31, activeBeforeExit ? 1 : 0);
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

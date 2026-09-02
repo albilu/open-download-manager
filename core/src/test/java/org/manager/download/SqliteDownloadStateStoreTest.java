@@ -63,6 +63,7 @@ class SqliteDownloadStateStoreTest {
         original.setDownloaded(1_234);
         original.setQueuePosition(7);
         original.setManualStartRequired(true);
+        original.setActiveElapsedMillis(87_654);
         original.setGid("abcdef0123456789");
         original.setStartedAt(Instant.parse("2026-08-19T10:15:30Z"));
         original.setCompletedAt(Instant.parse("2026-08-19T11:00:00Z"));
@@ -96,6 +97,7 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getGid(), restored.getGid());
             assertEquals(original.getQueuePosition(), restored.getQueuePosition());
             assertTrue(restored.isManualStartRequired());
+            assertEquals(87_654, restored.getActiveElapsedMillis());
             assertEquals(original.getStartedAt(), restored.getStartedAt());
             assertEquals(original.getCompletedAt(), restored.getCompletedAt());
             assertEquals(original.getErrorMessage(), restored.getErrorMessage());
@@ -159,6 +161,22 @@ class SqliteDownloadStateStoreTest {
 
             assertEquals(Download.Protocol.TORRENT,
                     store.load().downloads().get(0).getProtocol());
+        }
+    }
+
+    @Test
+    void seedingStatusSurvivesSqliteRoundTrip() {
+        Download original = new Download(URI.create(
+                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+        original.setStatus(Download.Status.SEEDING);
+
+        try (SqliteDownloadStateStore store = new SqliteDownloadStateStore(
+                dbPath, legacyPath, mapper)) {
+            store.save(List.of(original), Set.of(original.getId()));
+            SqliteDownloadStateStore.StateSnapshot snapshot = store.load();
+
+            assertEquals(Download.Status.SEEDING, snapshot.downloads().getFirst().getStatus());
+            assertEquals(Set.of(original.getId()), snapshot.activeIds());
         }
     }
 
@@ -367,6 +385,7 @@ class SqliteDownloadStateStoreTest {
             assertNull(restored.getErrorMessage());
             assertNull(restored.getRequestedFileName());
             assertTrue(restored.getOutputPaths().isEmpty());
+            assertEquals(0, restored.getActiveElapsedMillis());
             assertEquals(Download.Status.QUEUED, restored.getStatus());
             assertEquals(Download.Protocol.HTTPS, restored.getProtocol());
             assertInstanceOf(org.aria2.Aria2Settings.class, restored.getSettings());
@@ -374,6 +393,7 @@ class SqliteDownloadStateStoreTest {
             // Opening the old schema added the new columns in place; writing
             // and reopening proves the migration is usable, not just readable.
             restored.setRequestedFileName("migrated.bin");
+            restored.setActiveElapsedMillis(321_000);
             restored.recordOutputPath(tempDir.resolve("actual-migrated.bin"));
             store.save(List.of(restored), Set.of());
         }
@@ -381,6 +401,7 @@ class SqliteDownloadStateStoreTest {
         try (SqliteDownloadStateStore reopened = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
             Download restored = reopened.load().downloads().get(0);
             assertEquals("migrated.bin", restored.getRequestedFileName());
+            assertEquals(321_000, restored.getActiveElapsedMillis());
             assertEquals(List.of(tempDir.resolve("actual-migrated.bin").toAbsolutePath().normalize()),
                     restored.getOutputPaths());
         }
