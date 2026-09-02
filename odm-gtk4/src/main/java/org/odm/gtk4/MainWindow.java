@@ -547,6 +547,7 @@ public class MainWindow {
     private void onSettingsClicked() {
         new SettingsDialog(window, downloadManager, scheduleManager, active -> {
             applyTorPreference(active);
+            syncScheduleActionState();
             // Rebuild settings-backed actions (subtitles, antivirus, custom)
             // so changes apply without requiring a restart or re-selection.
             installCompletionActions();
@@ -789,6 +790,11 @@ public class MainWindow {
     private void copyMagnetUri() {
         String magnet = magnetUri(selectedDownload);
         if (magnet != null) {
+            org.manager.clipboard.ClipboardService clipboardService =
+                    downloadManager.getClipboardService();
+            if (clipboardService != null) {
+                clipboardService.bypassNextMonitoredContent(magnet);
+            }
             downloadsTreeview.getClipboard().setText(magnet);
             AccessibilitySupport.status(infoLabel, "Magnet URI copied");
         }
@@ -969,6 +975,7 @@ public class MainWindow {
         completion.append("Custom…", "win.completion-custom");
         edit.appendSubmenu("Completion Actions", completion);
         org.gnome.gio.Menu schedule = new org.gnome.gio.Menu();
+        schedule.append("None (custom grid)", "win.schedule::none");
         schedule.append("Always", "win.schedule::always");
         schedule.append("Business Hours", "win.schedule::business");
         schedule.append("Night Hours", "win.schedule::night");
@@ -1324,11 +1331,11 @@ public class MainWindow {
         Path target = selectedDownload.getPrimaryOutputPath();
         Path destination = selectedDownload.getDestination();
         if ("folder".equals(what)) {
-            CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(target,
-                    destination), backgroundExecutor);
+            performFileManagerAction(() -> FileManagerSupport.reveal(target, destination),
+                    "Could not open containing folder");
         } else if (target != null) {
-            CompletableFuture.supplyAsync(() -> FileManagerSupport.open(target),
-                    backgroundExecutor);
+            performFileManagerAction(() -> FileManagerSupport.open(target),
+                    "Could not open downloaded file");
         }
     }
 
@@ -1344,12 +1351,27 @@ public class MainWindow {
         }
         Path target = download.getPrimaryOutputPath();
         if (activationFor(download) == DownloadActivation.OPEN_FILE && target != null) {
-            CompletableFuture.supplyAsync(() -> FileManagerSupport.open(target),
-                    backgroundExecutor);
+            performFileManagerAction(() -> FileManagerSupport.open(target),
+                    "Could not open downloaded file");
         } else {
-            CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(target,
-                    download.getDestination()), backgroundExecutor);
+            performFileManagerAction(() -> FileManagerSupport.reveal(target,
+                    download.getDestination()), "Could not open containing folder");
         }
+    }
+
+    private void performFileManagerAction(java.util.function.Supplier<Boolean> operation,
+            String failureMessage) {
+        CompletableFuture.supplyAsync(operation, backgroundExecutor)
+                .whenComplete((succeeded, error) -> {
+                    if (error != null) {
+                        LOGGER.error(failureMessage, error);
+                    }
+                    if (error != null || !Boolean.TRUE.equals(succeeded)) {
+                        UiThread.marshal(() -> AccessibilitySupport.status(infoLabel,
+                                failureMessage,
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH));
+                    }
+                });
     }
 
     static DownloadActivation activationFor(Download download) {
@@ -1379,8 +1401,8 @@ public class MainWindow {
                 TreeStoreCells.getString(filesStore, iter,
                         DetailTabsPresenter.FILE_PATH_COLUMN));
         if (file != null) {
-            CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(file,
-                    file.getParent()), backgroundExecutor);
+            performFileManagerAction(() -> FileManagerSupport.reveal(file,
+                    file.getParent()), "Could not reveal downloaded file");
         }
     }
 
@@ -1548,12 +1570,19 @@ public class MainWindow {
     }
 
     private void applySchedulePreset(String preset) {
-        scheduleManager.setGlobalPresetSchedule(preset);
+        if ("none".equalsIgnoreCase(preset)) {
+            downloadManager.getGlobalSettings().setProperty("scheduler.preset", "none");
+            downloadManager.getGlobalSettings().save();
+            LOGGER.info("Schedule preset cleared; the custom hour grid remains active");
+            return;
+        }
+        boolean[][] hourGrid = org.manager.schedule.ScheduleManager.hourGridForPreset(preset);
+        scheduleManager.setGlobalHourGrid(hourGrid);
         downloadManager.getGlobalSettings().setProperty("scheduler.preset", preset);
-        // A selected preset replaces a previously configured hour grid;
-        // otherwise startup gives the stale grid precedence and silently
-        // loses the user's latest menu choice.
-        downloadManager.getGlobalSettings().setProperty("scheduler.grid", "");
+        // Presets are shortcuts for the same grid shown in Advanced settings,
+        // so the persisted and running policy always match that visual state.
+        downloadManager.getGlobalSettings().setProperty("scheduler.grid",
+                org.manager.schedule.WeeklySchedule.hourGridToString(hourGrid));
         downloadManager.getGlobalSettings().setProperty("scheduler.enabled", "true");
         downloadManager.getGlobalSettings().save();
         scheduleManager.start().whenComplete((ignored, error) -> {
@@ -1565,6 +1594,15 @@ public class MainWindow {
                 LOGGER.info("Schedule preset applied: " + preset);
             }
         });
+    }
+
+    private void syncScheduleActionState() {
+        org.gnome.gio.SimpleAction action = menuActions.get("schedule");
+        if (action != null) {
+            String preset = downloadManager.getGlobalSettings()
+                    .getProperty("scheduler.preset", "none");
+            action.setState(org.gnome.glib.Variant.string(preset));
+        }
     }
 
     private void setCompletionActions(

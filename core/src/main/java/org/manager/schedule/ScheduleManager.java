@@ -181,25 +181,7 @@ public class ScheduleManager {
      */
     public ScheduleManager setPresetSchedule(String downloadId, String preset) {
         Objects.requireNonNull(downloadId, "Download ID cannot be null");
-        Objects.requireNonNull(preset, "Preset cannot be null");
-
-        ScheduleSettings settings = switch (preset.toLowerCase()) {
-            case "always" ->
-                ScheduleSettings.alwaysActive();
-            case "never" ->
-                ScheduleSettings.neverActive();
-            case "business" ->
-                ScheduleSettings.businessHours();
-            case "night" ->
-                ScheduleSettings.nightHours();
-            case "weekend" ->
-                createWeekendOnlySchedule();
-            case "weekday" ->
-                createWeekdayOnlySchedule();
-            default ->
-                throw new IllegalArgumentException("Unknown preset: " + preset
-                        + ". Available presets: " + String.join(", ", schedulePresets.keySet()));
-        };
+        ScheduleSettings settings = settingsForPreset(preset);
 
         scheduler.setDownloadSchedule(downloadId, settings);
         LOGGER.info("Set preset schedule '" + preset + "' for download " + downloadId);
@@ -214,29 +196,40 @@ public class ScheduleManager {
      * @return This manager for method chaining
      */
     public ScheduleManager setGlobalPresetSchedule(String preset) {
-        Objects.requireNonNull(preset, "Preset cannot be null");
-
-        ScheduleSettings settings = switch (preset.toLowerCase()) {
-            case "always" ->
-                ScheduleSettings.alwaysActive();
-            case "never" ->
-                ScheduleSettings.neverActive();
-            case "business" ->
-                ScheduleSettings.businessHours();
-            case "night" ->
-                ScheduleSettings.nightHours();
-            case "weekend" ->
-                createWeekendOnlySchedule();
-            case "weekday" ->
-                createWeekdayOnlySchedule();
-            default ->
-                throw new IllegalArgumentException("Unknown preset: " + preset
-                        + ". Available presets: " + String.join(", ", schedulePresets.keySet()));
-        };
+        ScheduleSettings settings = settingsForPreset(preset);
 
         scheduler.setGlobalSchedule(settings);
         LOGGER.info("Set global preset schedule: " + preset);
 
+        return this;
+    }
+
+    /** Returns the settings represented by one of the built-in presets. */
+    public static ScheduleSettings settingsForPreset(String preset) {
+        Objects.requireNonNull(preset, "Preset cannot be null");
+        return switch (preset.toLowerCase(java.util.Locale.ROOT)) {
+            case "always" -> ScheduleSettings.alwaysActive();
+            case "never" -> ScheduleSettings.neverActive();
+            case "business" -> ScheduleSettings.businessHours();
+            case "night" -> ScheduleSettings.nightHours();
+            case "weekend" -> createWeekendOnlySchedule();
+            case "weekday" -> createWeekdayOnlySchedule();
+            default -> throw new IllegalArgumentException("Unknown preset: " + preset
+                    + ". Available presets: always, never, business, night, weekend, weekday");
+        };
+    }
+
+    /** Returns the 7x24 Advanced-settings grid represented by a preset. */
+    public static boolean[][] hourGridForPreset(String preset) {
+        return settingsForPreset(preset).getWeeklySchedule().toHourGrid();
+    }
+
+    /** Applies an edited 7x24 grid as the strict global scheduler policy. */
+    public ScheduleManager setGlobalHourGrid(boolean[][] hourGrid) {
+        ScheduleSettings settings = new ScheduleSettings(
+                WeeklySchedule.fromHourGrid(hourGrid));
+        settings.setPolicy(ScheduleSettings.SchedulePolicy.STRICT);
+        scheduler.setGlobalSchedule(settings);
         return this;
     }
 
@@ -401,7 +394,7 @@ public class ScheduleManager {
     /**
      * Creates a weekend-only schedule.
      */
-    private ScheduleSettings createWeekendOnlySchedule() {
+    private static ScheduleSettings createWeekendOnlySchedule() {
         WeeklySchedule schedule = new WeeklySchedule();
         TimeRange allDay = TimeRange.allDay();
 
@@ -414,7 +407,7 @@ public class ScheduleManager {
     /**
      * Creates a weekday-only schedule.
      */
-    private ScheduleSettings createWeekdayOnlySchedule() {
+    private static ScheduleSettings createWeekdayOnlySchedule() {
         WeeklySchedule schedule = new WeeklySchedule();
         TimeRange allDay = TimeRange.allDay();
 

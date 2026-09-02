@@ -27,10 +27,19 @@ final class FileManagerSupport {
             return false;
         }
         Path normalized = file.toAbsolutePath().normalize();
+        if (!Files.exists(normalized)) {
+            LOGGER.error("Could not open " + normalized + ": path does not exist");
+            return false;
+        }
         try {
-            return AppInfo.launchDefaultForUri(normalized.toUri().toString(), null);
+            boolean launched = AppInfo.launchDefaultForUri(normalized.toUri().toString(), null);
+            if (!launched) {
+                LOGGER.error("Could not open " + normalized
+                        + ": no default application accepted the URI");
+            }
+            return launched;
         } catch (Throwable failure) {
-            LOGGER.warn("Could not open " + normalized, failure);
+            LOGGER.error("Could not open " + normalized, failure);
             return false;
         }
     }

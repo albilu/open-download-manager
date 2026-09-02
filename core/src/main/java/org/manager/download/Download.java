@@ -1,6 +1,7 @@
 package org.manager.download;
 
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -426,6 +427,20 @@ public class Download {
         }
     }
 
+    /** Removes an engine-reported artifact that was later identified as transient. */
+    public void removeOutputPath(Path outputPath) {
+        if (outputPath == null) {
+            return;
+        }
+        synchronized (lock) {
+            Path normalized = outputPath;
+            if (!normalized.isAbsolute() && destination != null) {
+                normalized = destination.resolve(normalized);
+            }
+            outputPaths.remove(normalized.toAbsolutePath().normalize());
+        }
+    }
+
     /**
      * Returns the first engine-reported artifact, falling back to the safe
      * expected path for legacy/in-progress downloads.
@@ -434,7 +449,26 @@ public class Download {
     public Path getPrimaryOutputPath() {
         synchronized (lock) {
             if (!outputPaths.isEmpty()) {
-                return outputPaths.get(0);
+                // Older aria2 state may contain a retired magnet-metadata
+                // placeholder before the real payload. Prefer the first
+                // artifact still present on disk while retaining the first
+                // reported path as the in-progress/nonexistent fallback.
+                Path payloadFallback = null;
+                for (Path outputPath : outputPaths) {
+                    boolean metadataPlaceholder = protocol == Protocol.MAGNET
+                            && outputPath.getFileName() != null
+                            && outputPath.getFileName().toString().startsWith("[METADATA]");
+                    if (metadataPlaceholder) {
+                        continue;
+                    }
+                    if (payloadFallback == null) {
+                        payloadFallback = outputPath;
+                    }
+                    if (Files.exists(outputPath)) {
+                        return outputPath;
+                    }
+                }
+                return payloadFallback != null ? payloadFallback : outputPaths.get(0);
             }
             if (destination == null || name == null || name.isBlank()) {
                 return null;

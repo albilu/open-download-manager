@@ -78,6 +78,35 @@ class Aria2FollowedByDiscoveryTest {
     }
 
     @Test
+    void magnetMetadataArtifactIsReplacedByThePayloadOutput() throws Exception {
+        Aria2DownloadHandler handler = newHandler();
+        try {
+            Download download = new Download(new java.net.URI(
+                    "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+            download.setDestination(tempDir);
+            handler.registerTrackedDownload(download, List.of("metadataGid"));
+            Path metadata = tempDir.resolve("[METADATA]release").toAbsolutePath().normalize();
+            Path payload = tempDir.resolve("release.mkv").toAbsolutePath().normalize();
+            download.recordOutputPath(metadata); // persisted by older ODM versions
+
+            Map<String, Object> metadataComplete = status("complete", 1_000, 1_000);
+            metadataComplete.put("files", List.of(Map.of("path", metadata.toString())));
+            metadataComplete.put("followedBy", List.of("payloadGid"));
+            handler.processProgressUpdate(download.getId(), "metadataGid", metadataComplete);
+
+            Map<String, Object> payloadActive = status("active", 500, 2_000);
+            payloadActive.put("files", List.of(Map.of("path", payload.toString())));
+            handler.processProgressUpdate(download.getId(), "payloadGid", payloadActive);
+
+            assertEquals(List.of(payload), download.getOutputPaths());
+            assertEquals(payload, download.getPrimaryOutputPath());
+            assertEquals("release.mkv", download.getName());
+        } finally {
+            handler.shutdown().join();
+        }
+    }
+
+    @Test
     @DisplayName("A completed metadata GID with followedBy children does not complete the download")
     void followedByChildrenAreTrackedAndGateCompletion() throws Exception {
         Aria2DownloadHandler handler = newHandler();

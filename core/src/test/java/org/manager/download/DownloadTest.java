@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -32,6 +33,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @DisplayName("Download Unit Tests")
 class DownloadTest {
+
+    @TempDir
+    Path temporaryDirectory;
 
     private Download download;
     private URI testUri;
@@ -762,6 +766,21 @@ class DownloadTest {
                     download.getPrimaryOutputPath());
             assertThrows(UnsupportedOperationException.class,
                     () -> download.getOutputPaths().add(Path.of("unexpected")));
+        }
+
+        @Test
+        @DisplayName("Primary output skips a retired magnet metadata artifact")
+        void primaryOutputPrefersAnArtifactThatStillExists() throws Exception {
+            download.setUri(URI.create(
+                    "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+            Path retired = java.nio.file.Files.writeString(
+                    temporaryDirectory.resolve("[METADATA]release"), "metadata");
+            Path payload = java.nio.file.Files.writeString(
+                    temporaryDirectory.resolve("release.mkv"), "payload");
+            download.setOutputPaths(List.of(retired, payload));
+
+            assertEquals(payload.toAbsolutePath().normalize(),
+                    download.getPrimaryOutputPath());
         }
 
         @Test

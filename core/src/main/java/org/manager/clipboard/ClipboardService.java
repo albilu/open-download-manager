@@ -6,6 +6,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
@@ -20,6 +22,11 @@ import org.manager.download.MediaUrlDetector;
  */
 public class ClipboardService implements ClipboardListener {
 
+    private static final long INTERNAL_WRITE_BYPASS_NANOS = TimeUnit.SECONDS.toNanos(5);
+
+    private record ClipboardBypass(String content, long expiresAtNanos) {
+    }
+
     private enum AdmissionSource {
         USER_ACTION,
         BACKGROUND_MONITOR
@@ -30,6 +37,8 @@ public class ClipboardService implements ClipboardListener {
     private final DownloadManager downloadManager;
     private final ClipboardMonitor clipboardMonitor;
     private final List<ClipboardServiceListener> serviceListeners;
+    private final AtomicReference<ClipboardBypass> nextMonitoredContentBypass =
+            new AtomicReference<>();
 
     private ClipboardSettings settings;
     private volatile boolean serviceEnabled = false;
@@ -128,6 +137,24 @@ public class ClipboardService implements ClipboardListener {
     }
 
     /**
+     * Marks an application-originated clipboard write so the background
+     * monitor does not immediately import ODM's own copied URI. The bypass is
+     * exact-match, one-shot and short-lived; explicit manual clipboard imports
+     * remain unaffected.
+     *
+     * @param clipboardContent text ODM is about to place on the clipboard
+     */
+    public void bypassNextMonitoredContent(String clipboardContent) {
+        String normalized = normalizeClipboardContent(clipboardContent);
+        if (normalized.isEmpty()) {
+            nextMonitoredContentBypass.set(null);
+            return;
+        }
+        nextMonitoredContentBypass.set(new ClipboardBypass(normalized,
+                System.nanoTime() + INTERNAL_WRITE_BYPASS_NANOS));
+    }
+
+    /**
      * Manually imports URLs from the current clipboard content.
      *
      * @return A CompletableFuture that completes when the import is done
@@ -179,6 +206,11 @@ public class ClipboardService implements ClipboardListener {
     @Override
     public void onUrlsDetected(List<URI> urls, String clipboardContent) {
         if (!serviceEnabled || urls.isEmpty()) {
+            return;
+        }
+
+        if (consumeMonitoredContentBypass(clipboardContent)) {
+            LOGGER.debug("Ignored application-originated clipboard content");
             return;
         }
 
@@ -258,6 +290,32 @@ public class ClipboardService implements ClipboardListener {
         } else {
             clipboardMonitor.stopMonitoring();
         }
+    }
+
+    private boolean consumeMonitoredContentBypass(String clipboardContent) {
+        String normalized = normalizeClipboardContent(clipboardContent);
+        while (true) {
+            ClipboardBypass bypass = nextMonitoredContentBypass.get();
+            if (bypass == null) {
+                return false;
+            }
+            if (System.nanoTime() > bypass.expiresAtNanos()) {
+                if (nextMonitoredContentBypass.compareAndSet(bypass, null)) {
+                    return false;
+                }
+                continue;
+            }
+            if (!bypass.content().equals(normalized)) {
+                return false;
+            }
+            if (nextMonitoredContentBypass.compareAndSet(bypass, null)) {
+                return true;
+            }
+        }
+    }
+
+    private static String normalizeClipboardContent(String content) {
+        return content == null ? "" : content.strip();
     }
 
     /**

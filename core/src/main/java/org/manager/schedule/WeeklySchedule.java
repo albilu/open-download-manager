@@ -2,6 +2,7 @@ package org.manager.schedule;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
@@ -179,6 +180,25 @@ public class WeeklySchedule {
             int h = nibble % 24;
             for (int bit = 0; bit < 4 && h + bit < 24; bit++) {
                 grid[d][h + bit] = (value & (1 << (3 - bit))) != 0;
+            }
+        }
+        return grid;
+    }
+
+    /**
+     * Projects this schedule onto the 7x24 settings grid. A cell represents a
+     * whole hour, so its midpoint is sampled; the built-in presets all use
+     * hour-aligned boundaries and therefore map without ambiguity.
+     *
+     * @return {@code [7][24]} booleans, row 0 = Monday
+     */
+    public boolean[][] toHourGrid() {
+        boolean[][] grid = new boolean[7][24];
+        LocalDate monday = LocalDate.of(2026, 8, 17);
+        for (int day = 0; day < 7; day++) {
+            for (int hour = 0; hour < 24; hour++) {
+                grid[day][hour] = isActiveAt(
+                        monday.plusDays(day).atTime(hour, 30));
             }
         }
         return grid;

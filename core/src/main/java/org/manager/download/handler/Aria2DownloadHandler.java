@@ -1208,6 +1208,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         if (!(status.get("files") instanceof List<?> files)) {
             return;
         }
+        boolean followedByPayload = status.get("followedBy") instanceof List<?> followedBy
+                && !followedBy.isEmpty();
         for (Object file : files) {
             if (!(file instanceof Map<?, ?> fileMap)
                     || !(fileMap.get("path") instanceof String path)
@@ -1216,6 +1218,18 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
             try {
                 Path artifact = Path.of(path);
+                boolean magnetMetadataPlaceholder =
+                        download.getProtocol() == Download.Protocol.MAGNET
+                        && artifact.getFileName() != null
+                        && artifact.getFileName().toString().startsWith("[METADATA]");
+                if (followedByPayload || magnetMetadataPlaceholder) {
+                    // Magnet metadata is an internal aria2 hand-off artifact,
+                    // not a user download. It can have been observed on an
+                    // earlier poll before followedBy appeared, so discard it
+                    // as well as refusing to add it now.
+                    download.removeOutputPath(artifact);
+                    continue;
+                }
                 download.recordOutputPath(artifact);
                 if (download.getRequestedFileName() == null && files.size() == 1
                         && artifact.getFileName() != null) {

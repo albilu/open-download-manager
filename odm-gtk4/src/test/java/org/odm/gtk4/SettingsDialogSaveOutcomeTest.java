@@ -1,12 +1,14 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.stefanbirkner.systemlambda.SystemLambda;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicReference;
 import org.gnome.glib.MainLoop;
 import org.gnome.gtk.Gtk;
 import org.junit.jupiter.api.AfterAll;
@@ -51,11 +53,20 @@ class SettingsDialogSaveOutcomeTest {
     Path tempDir;
 
     private static DownloadManager newStubManager() {
+        return newStubManager(new AtomicReference<>(new GlobalSettings()));
+    }
+
+    private static DownloadManager newStubManager(
+            AtomicReference<GlobalSettings> settings) {
         return (DownloadManager) java.lang.reflect.Proxy.newProxyInstance(
                 DownloadManager.class.getClassLoader(),
                 new Class<?>[]{DownloadManager.class},
                 (proxy, method, args) -> switch (method.getName()) {
-                    case "getGlobalSettings" -> new GlobalSettings();
+                    case "getGlobalSettings" -> settings.get();
+                    case "setGlobalSettings" -> {
+                        settings.set((GlobalSettings) args[0]);
+                        yield null;
+                    }
                     case "getAllDownloads", "getDownloads" -> java.util.List.of();
                     case "isClipboardMonitoringEnabled", "isTorrentFolderMonitoringEnabled",
                             "isMetaLinkFolderMonitoringEnabled" -> false;
@@ -92,6 +103,67 @@ class SettingsDialogSaveOutcomeTest {
 
         assertEquals("Mon 03:00–03:59 — downloads allowed",
                 dialog.schedulerSelectionText());
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("a preset populates the grid and a manual edit clears the preset")
+    void schedulePresetAndGridStaySynchronized() throws Exception {
+        Path configHome = tempDir.resolve("schedule-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setProperty("scheduler.enabled", "true");
+            initial.setProperty("scheduler.preset", "business");
+            initial.setProperty("scheduler.grid", "");
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            assertFalse(dialog.schedulerCellActive(0, 8));
+            assertTrue(dialog.schedulerCellActive(0, 9));
+            assertTrue(dialog.schedulerCellActive(4, 16));
+            assertFalse(dialog.schedulerCellActive(4, 17));
+            assertFalse(dialog.schedulerCellActive(5, 12));
+
+            dialog.setSchedulerCellActive(0, 8, true);
+            dialog.applySettings();
+
+            assertEquals("none", settings.get().getProperty("scheduler.preset", null));
+            boolean[][] persisted = org.manager.schedule.WeeklySchedule.hourGridFromString(
+                    settings.get().getProperty("scheduler.grid", ""));
+            assertTrue(persisted[0][8]);
+            assertTrue(settings.get().getBooleanProperty("scheduler.enabled", false));
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("the Never preset remains an enabled all-inactive grid")
+    void neverPresetSurvivesSettingsSave() throws Exception {
+        Path configHome = tempDir.resolve("never-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setProperty("scheduler.enabled", "true");
+            initial.setProperty("scheduler.preset", "never");
+            initial.setProperty("scheduler.grid", "");
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            assertFalse(dialog.schedulerCellActive(0, 0));
+            dialog.applySettings();
+
+            assertEquals("never", settings.get().getProperty("scheduler.preset", null));
+            assertTrue(settings.get().getBooleanProperty("scheduler.enabled", false));
+            assertEquals("0".repeat(42),
+                    settings.get().getProperty("scheduler.grid", ""));
+        });
     }
 
     @Test

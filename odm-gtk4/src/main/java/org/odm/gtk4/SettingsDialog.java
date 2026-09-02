@@ -105,6 +105,7 @@ public class SettingsDialog {
     private final ToggleButton[][] schedulerToggles = new ToggleButton[7][24];
     private Label schedulerSelectionLabel;
     private boolean loadingSchedulerGrid;
+    private boolean schedulerGridEdited;
 
     public SettingsDialog(Window parent, DownloadManager downloadManager,
             org.manager.schedule.ScheduleManager scheduleManager) {
@@ -227,6 +228,7 @@ public class SettingsDialog {
                 int selectedHour = hour;
                 toggle.onToggled(() -> {
                     if (!loadingSchedulerGrid) {
+                        schedulerGridEdited = true;
                         showSchedulerSelection(selectedDay, selectedHour, toggle.getActive());
                     }
                 });
@@ -279,6 +281,10 @@ public class SettingsDialog {
         schedulerToggles[day][hour].setActive(active);
     }
 
+    boolean schedulerCellActive(int day, int hour) {
+        return schedulerToggles[day][hour].getActive();
+    }
+
     String schedulerSelectionText() {
         return schedulerSelectionLabel.getLabel();
     }
@@ -301,6 +307,7 @@ public class SettingsDialog {
             }
         } finally {
             loadingSchedulerGrid = false;
+            schedulerGridEdited = false;
         }
     }
 
@@ -318,10 +325,9 @@ public class SettingsDialog {
     /**
      * Applies the scheduling decision to the running scheduler: an enabled
      * grid installs a STRICT global schedule (outside the marked ranges all
-     * downloads are prevented, uGet semantics); disabled or an empty grid
-     * installs alwaysActive so nothing is restricted. Note that "disabled"
-     * must NOT map to neverActive — the enabled flag controls the
-     * scheduler's presence, not inverted ranges.
+     * downloads are prevented, uGet semantics). An enabled, empty grid is
+     * therefore the Never preset; disabling scheduling installs alwaysActive
+     * so no scheduler restriction remains.
      */
     private void applySchedulerRuntime(boolean enabled, boolean[][] hourGrid) {
         if (scheduleManager == null) {
@@ -329,12 +335,8 @@ public class SettingsDialog {
         }
         try {
             if (enabled) {
-                org.manager.schedule.ScheduleSettings settings =
-                        new org.manager.schedule.ScheduleSettings(
-                                org.manager.schedule.WeeklySchedule.fromHourGrid(hourGrid));
-                settings.setPolicy(org.manager.schedule.ScheduleSettings.SchedulePolicy.STRICT);
                 scheduleManager.start();
-                scheduleManager.getScheduler().setGlobalSchedule(settings);
+                scheduleManager.setGlobalHourGrid(hourGrid);
                 LOGGER.info("Applied scheduler hour grid (STRICT)");
             } else {
                 scheduleManager.getScheduler()
@@ -611,7 +613,19 @@ public class SettingsDialog {
         check("enable_scheduling_check").setActive(schedulingEnabled);
         Widgets.require(builder, "scheduler_grid_box", org.gnome.gtk.Box.class)
                 .setSensitive(schedulingEnabled);
-        loadSchedulerGrid(s.getProperty("scheduler.grid", ""));
+        String persistedGrid = s.getProperty("scheduler.grid", "");
+        if (persistedGrid.isBlank()) {
+            String preset = s.getProperty("scheduler.preset", "always");
+            if (!"none".equalsIgnoreCase(preset)) {
+                try {
+                    persistedGrid = org.manager.schedule.WeeklySchedule.hourGridToString(
+                            org.manager.schedule.ScheduleManager.hourGridForPreset(preset));
+                } catch (IllegalArgumentException invalidPreset) {
+                    LOGGER.warn("Ignoring unknown scheduler preset " + preset, invalidPreset);
+                }
+            }
+        }
+        loadSchedulerGrid(persistedGrid);
         entry("proxychains_path_entry").setText(s.getProxychainsPath() != null ? s.getProxychainsPath() : "");
         entry("tor_path_entry").setText(s.getTorPath() != null ? s.getTorPath() : "");
         entry("axel_path_entry").setText(s.getProperty("tools.axelPath", ""));
@@ -763,22 +777,12 @@ public class SettingsDialog {
         // Advanced
         boolean schedulingEnabled = check("enable_scheduling_check").getActive();
         boolean[][] hourGrid = readSchedulerGrid();
-        boolean allInactive = true;
-        outer:
-        for (boolean[] row : hourGrid) {
-            for (boolean cell : row) {
-                if (cell) {
-                    allInactive = false;
-                    break outer;
-                }
-            }
-        }
-        boolean effectiveSchedulingEnabled = schedulingEnabled && !allInactive;
-        s.setProperty("scheduler.enabled", String.valueOf(effectiveSchedulingEnabled));
+        s.setProperty("scheduler.enabled", String.valueOf(schedulingEnabled));
         s.setProperty("scheduler.grid",
-                effectiveSchedulingEnabled
-                        ? org.manager.schedule.WeeklySchedule.hourGridToString(hourGrid)
-                        : "");
+                org.manager.schedule.WeeklySchedule.hourGridToString(hourGrid));
+        if (schedulerGridEdited) {
+            s.setProperty("scheduler.preset", "none");
+        }
         s.setProxychainsPath(entry("proxychains_path_entry").getText().trim());
         s.setTorPath(entry("tor_path_entry").getText().trim());
         s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());
@@ -790,7 +794,7 @@ public class SettingsDialog {
         }
 
         return new SettingsApplication(s, previousStartAtLogin,
-                check("startup_check").getActive(), effectiveSchedulingEnabled,
+                check("startup_check").getActive(), schedulingEnabled,
                 hourGrid, torEnabled, clipboardMonitoring, clipboardSilent,
                 effectiveFolderMonitoring);
     }

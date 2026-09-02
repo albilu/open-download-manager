@@ -28,6 +28,27 @@ class WeeklyScheduleHourGridTest {
     }
 
     @Test
+    void builtInPresetsProjectOntoTheHourGrid() {
+        boolean[][] business = ScheduleManager.hourGridForPreset("business");
+        assertFalse(business[0][8]);
+        assertTrue(business[0][9]);
+        assertTrue(business[4][16]);
+        assertFalse(business[4][17]);
+        assertFalse(business[5][12]);
+
+        boolean[][] night = ScheduleManager.hourGridForPreset("night");
+        assertTrue(night[0][0]);
+        assertTrue(night[0][5]);
+        assertFalse(night[0][6]);
+        assertTrue(night[0][22]);
+
+        boolean[][] never = ScheduleManager.hourGridForPreset("never");
+        for (boolean[] day : never) {
+            assertArrayEquals(new boolean[24], day);
+        }
+    }
+
+    @Test
     void emptyAndNullGridsDecodeToAllInactive() {
         assertArrayEquals(new boolean[7][24], WeeklySchedule.hourGridFromString(null));
         assertArrayEquals(new boolean[7][24], WeeklySchedule.hourGridFromString(""));

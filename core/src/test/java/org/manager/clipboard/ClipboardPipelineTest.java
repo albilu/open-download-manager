@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -230,6 +231,31 @@ class ClipboardPipelineTest {
 
         verify(downloadManager, org.mockito.Mockito.times(2))
                 .createDownload(any(URI.class), any(Path.class));
+    }
+
+    @Test
+    @DisplayName("application clipboard writes bypass background monitoring once")
+    @org.junit.jupiter.api.Timeout(60)
+    void applicationClipboardWriteIsNotReimported() throws Exception {
+        service.updateSettings(new ClipboardSettings()
+                .setMonitoringEnabled(true)
+                .setSilentMode(true));
+        service.startService().get(10, TimeUnit.SECONDS);
+
+        String magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
+        when(downloadManager.createMagnetDownload(any(URI.class), any(Path.class)))
+                .thenAnswer(invocation -> new Download(invocation.getArgument(0)));
+        service.bypassNextMonitoredContent(magnet);
+        service.onUrlsDetected(List.of(URI.create(magnet)), magnet);
+
+        verify(downloadManager, never()).createMagnetDownload(any(URI.class), any(Path.class));
+        verify(downloadManager, never()).queueDownloadFromBackgroundSource(any(Download.class));
+
+        clearInvocations(downloadManager);
+        service.onUrlsDetected(List.of(URI.create(magnet)), magnet);
+
+        verify(downloadManager).createMagnetDownload(any(URI.class), any(Path.class));
+        verify(downloadManager).queueDownloadFromBackgroundSource(any(Download.class));
     }
 
     @Test
