@@ -235,9 +235,16 @@ public class MainWindow {
         this.downloadContextClick = new GestureClick();
         downloadContextClick.setButton(3);
         // TreeView installs its own click gestures. Capture the secondary
-        // press before a child renderer can consume it, then retarget the
-        // selection to the row beneath the pointer.
+        // press before its built-in handler can collapse a multi-selection.
+        // Claiming a valid row press leaves an existing selected group intact;
+        // an unselected row is made the sole context target here instead.
         downloadContextClick.setPropagationPhase(PropagationPhase.CAPTURE);
+        downloadContextClick.onPressed((nPress, x, y) -> {
+            if (selectContextTargetAt(x, y)) {
+                downloadContextClick.setState(
+                        org.gnome.gtk.EventSequenceState.CLAIMED);
+            }
+        });
         // Open only after the secondary-button sequence ends. Opening during
         // the captured press leaves TreeView owning pointer motion, so custom
         // popover rows never receive hover/prelight events.
@@ -686,15 +693,23 @@ public class MainWindow {
     private PopupMenu contextMenu;
 
     private void showContextMenu(double x, double y) {
-        Out<org.gnome.gtk.TreeViewColumn> column = new Out<>();
-        TreePath path = pathAtWidgetPosition(downloadsTreeview, (int) x, (int) y, column);
-        if (path == null) {
+        if (!selectContextTargetAt(x, y)) {
             return;
         }
-        selectContextTarget(downloadsTreeview, path, column.get());
         onDownloadSelectionChanged();
         if (selectedDownload == null) return;
         showContextMenuAt((int) x, (int) y);
+    }
+
+    /** Selects the row under a secondary click without collapsing a selected group. */
+    private boolean selectContextTargetAt(double x, double y) {
+        Out<org.gnome.gtk.TreeViewColumn> column = new Out<>();
+        TreePath path = pathAtWidgetPosition(downloadsTreeview, (int) x, (int) y, column);
+        if (path == null) {
+            return false;
+        }
+        selectContextTarget(downloadsTreeview, path, column.get());
+        return true;
     }
 
     /**
