@@ -26,10 +26,10 @@ public interface AfterCompletionAction {
         ANTIVIRUS_CHECK(2, true, false),
         DOWNLOAD_SUBTITLES(3, true, false),
         EXECUTE_COMMAND(4, true, false),
-        SLEEP_COMPUTER(5, false, true),
-        SHUTDOWN_COMPUTER(6, false, true),
-        MOVE_FILE(7, true, false),
-        EXTRACT_ARCHIVE(8, true, false);
+        MOVE_FILE(5, true, false),//unimplemented
+        EXTRACT_ARCHIVE(6, true, false),//unimplemented
+        SLEEP_COMPUTER(7, false, true),
+        SHUTDOWN_COMPUTER(8, false, true):
 
         private final int priority;
         private final boolean contributesToFinalizingProgress;
