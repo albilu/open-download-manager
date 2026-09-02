@@ -17,6 +17,7 @@ import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.Notebook;
 import org.gnome.gtk.SpinButton;
+import org.gnome.gtk.Spinner;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
 import org.gnome.gtk.TreeIter;
@@ -68,6 +69,7 @@ public class NewDownloadDialog {
     private final Label checksumLabel;
     private final CheckButton verifyChecksumCheck;
     private final Button startButton;
+    private final SpinnerActivity activity;
     /** Reused after a queue rejection so Retry cannot create duplicate rows. */
     private Download pendingDownload;
 
@@ -120,6 +122,8 @@ public class NewDownloadDialog {
         this.checksumLabel = Widgets.require(builder, "checksum_label", Label.class);
         this.verifyChecksumCheck = Widgets.require(builder, "verify_checksum_check", CheckButton.class);
         this.startButton = Widgets.require(builder, "new_download_start_button", Button.class);
+        this.activity = new SpinnerActivity(
+                Widgets.require(builder, "new_download_spinner", Spinner.class));
 
         AccessibilitySupport.label(urlEntry, "Download URL");
         AccessibilitySupport.label(torrentFileButton, "Choose torrent or Metalink descriptor");
@@ -206,6 +210,7 @@ public class NewDownloadDialog {
                 .onClicked(this::closeDialog);
         dialog.onCloseRequest(() -> {
             releaseFilePreviewRows();
+            activity.dispose();
             return false;
         });
         startButton.onClicked(this::onStart);
@@ -217,6 +222,7 @@ public class NewDownloadDialog {
 
     public void present() {
         dialog.present();
+        ClipboardUrlPrefill.populate(dialog, urlEntry, uri -> true);
         urlEntry.grabFocus();
     }
 
@@ -294,7 +300,7 @@ public class NewDownloadDialog {
         detectedChecksum = null;
         String proxy = downloadManager.getGlobalSettings().isGlobalProxyEnabled()
                 ? downloadManager.getGlobalSettings().getGlobalProxyAddress() : null;
-        java.util.concurrent.CompletableFuture
+        java.util.concurrent.CompletableFuture<Void> probe = java.util.concurrent.CompletableFuture
                 .supplyAsync(() -> org.manager.download.ChecksumProbe.probe(uri, proxy)
                         .orElse(null))
                 .thenAccept(found -> UiThread.marshal(() -> {
@@ -313,6 +319,7 @@ public class NewDownloadDialog {
                     LOGGER.debug("Checksum probe failed", e);
                     return null;
                 });
+        activity.track(probe);
     }
 
     private java.net.URI safeCurrentUri() {
@@ -402,7 +409,7 @@ public class NewDownloadDialog {
         if (preview == null) {
             preview = CompletableFuture.completedFuture(java.util.List.of());
         }
-        preview.whenComplete((files, error) -> UiThread.marshal(() -> {
+        activity.track(preview).whenComplete((files, error) -> UiThread.marshal(() -> {
             if (epoch != previewEpoch) {
                 return;
             }
@@ -530,6 +537,7 @@ public class NewDownloadDialog {
 
     private void closeDialog() {
         releaseFilePreviewRows();
+        activity.dispose();
         dialog.close();
     }
 
@@ -556,7 +564,7 @@ public class NewDownloadDialog {
             refreshStartSensitivity();
             AccessibilitySupport.status(diskSpaceLabel, "Adding download to queue…");
             Download submitted = download;
-            downloadManager.queueDownload(download).whenComplete((ignored, error) ->
+            activity.track(downloadManager.queueDownload(download)).whenComplete((ignored, error) ->
                     UiThread.marshal(() -> {
                         if (error == null) {
                             pendingDownload = null;

@@ -15,6 +15,7 @@ import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.SpinButton;
+import org.gnome.gtk.Spinner;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
 import org.gnome.gtk.TreeIter;
@@ -52,9 +53,13 @@ public class ImportSequenceDialog {
     private final ListStore previewStore;
     private final Label diskSpaceLabel;
     private final PathChooserButton destinationChooser;
+    private final Button validateButton;
+    private final SpinnerActivity activity;
 
     private Path destinationFolder;
     private boolean syncingRangeMode;
+    private long previewEpoch;
+    private List<String> currentPreviewUrls = List.of();
 
     public ImportSequenceDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone) {
         this.downloadManager = downloadManager;
@@ -72,6 +77,9 @@ public class ImportSequenceDialog {
         this.charModeCombo = Widgets.require(builder, "char_combo", DropDown.class);
         this.previewStore = Widgets.require(builder, "preview_liststore", ListStore.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
+        this.validateButton = Widgets.require(builder, "validate_button", Button.class);
+        this.activity = new SpinnerActivity(
+                Widgets.require(builder, "import_sequence_spinner", Spinner.class));
 
         AccessibilitySupport.label(uriEntry, "URL sequence pattern");
         AccessibilitySupport.label(numStartSpin, "Sequence start number");
@@ -119,8 +127,13 @@ public class ImportSequenceDialog {
         numModeCombo.onNotify("selected", pspec -> syncRangeMode(numModeCombo, charModeCombo));
         charModeCombo.onNotify("selected", pspec -> syncRangeMode(charModeCombo, numModeCombo));
 
-        Widgets.require(builder, "cancel_button", Button.class).onClicked(dialog::close);
-        Widgets.require(builder, "validate_button", Button.class).onClicked(this::onImport);
+        Widgets.require(builder, "cancel_button", Button.class).onClicked(this::closeDialog);
+        validateButton.onClicked(this::onImport);
+        dialog.onCloseRequest(() -> {
+            previewEpoch++;
+            activity.dispose();
+            return false;
+        });
 
         syncRangeMode(numModeCombo, charModeCombo);
     }
@@ -130,12 +143,20 @@ public class ImportSequenceDialog {
         uriEntry.grabFocus();
     }
 
-    /** Generates the URL list from the pattern + range. */
-    private List<String> generateUrls() {
-        return generateSequence(uriEntry.getText().trim(), numModeCombo.getSelected() == 1,
+    private SequenceInput sequenceInput() {
+        return new SequenceInput(uriEntry.getText().trim(),
+                numModeCombo.getSelected() == 1,
                 (int) numStartSpin.getValue(), (int) numVersSpin.getValue(),
                 charEntry.getText().trim(), charVersEntry.getText().trim(),
                 (int) numCountSpin.getValue());
+    }
+
+    private record SequenceInput(String pattern, boolean characterMode,
+            int start, int end, String charFrom, String charTo, int count) {
+        List<String> generate() {
+            return generateSequence(pattern, characterMode, start, end,
+                    charFrom, charTo, count);
+        }
     }
 
     private void syncRangeMode(DropDown source, DropDown other) {
@@ -194,8 +215,28 @@ public class ImportSequenceDialog {
     }
 
     private void regeneratePreview() {
+        long epoch = ++previewEpoch;
+        SequenceInput input = sequenceInput();
         previewStore.clear();
-        for (String url : generateUrls()) {
+        currentPreviewUrls = List.of();
+        validateButton.setSensitive(false);
+        activity.track(CompletableFuture.supplyAsync(input::generate))
+                .whenComplete((urls, error) -> UiThread.marshal(() -> {
+                    if (epoch != previewEpoch) {
+                        return;
+                    }
+                    if (error != null) {
+                        LOGGER.warn("Could not generate URL sequence preview", error);
+                        return;
+                    }
+                    currentPreviewUrls = List.copyOf(urls);
+                    appendPreview(urls);
+                    validateButton.setSensitive(!urls.isEmpty());
+                }));
+    }
+
+    private void appendPreview(List<String> urls) {
+        for (String url : urls) {
             TreeIter iter = new TreeIter();
             previewStore.append(iter);
             Value v = new Value().init(Types.STRING);
@@ -206,25 +247,31 @@ public class ImportSequenceDialog {
     }
 
     private void onImport() {
-        List<String> urls = generateUrls();
+        List<String> urls = currentPreviewUrls;
         if (urls.isEmpty()) {
             return;
         }
         Path destination = destinationFolder != null ? destinationFolder
                 : Path.of(currentDefaultDirectory());
         ImportOptions options = captureOptions();
-        Widgets.require(builder, "validate_button", Button.class).setSensitive(false);
-        CompletableFuture.supplyAsync(() -> queueUrls(urls, destination, options))
+        validateButton.setSensitive(false);
+        AccessibilitySupport.status(diskSpaceLabel, "Adding URL sequence to queue…");
+        activity.track(CompletableFuture.supplyAsync(
+                () -> queueUrls(urls, destination, options)))
                 .whenComplete((queued, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         LOGGER.warn("URL sequence import failed", error);
-                    } else {
-                        LOGGER.info("Imported " + queued + " downloads from URL sequence");
-                        if (onImportDone != null) {
-                            onImportDone.run();
-                        }
+                        AccessibilitySupport.status(diskSpaceLabel,
+                                "Could not import this URL sequence",
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                        validateButton.setSensitive(!currentPreviewUrls.isEmpty());
+                        return;
                     }
-                    dialog.close();
+                    LOGGER.info("Imported " + queued + " downloads from URL sequence");
+                    if (onImportDone != null) {
+                        onImportDone.run();
+                    }
+                    closeDialog();
                 }));
     }
 
@@ -244,19 +291,31 @@ public class ImportSequenceDialog {
     }
 
     private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
-        int queued = 0;
+        List<CompletableFuture<Boolean>> admissions = new ArrayList<>();
         for (String url : urls.stream().limit(MAX_IMPORT_URLS).toList()) {
             try {
                 Download download = downloadManager.createDownload(
                         org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
                 options.apply(download);
-                downloadManager.queueDownload(download);
-                queued++;
+                admissions.add(downloadManager.queueDownload(download)
+                        .handle((ignored, error) -> {
+                            if (error != null) {
+                                LOGGER.debug("URL-sequence queue admission failed", error);
+                                return false;
+                            }
+                            return true;
+                        }));
             } catch (Exception e) {
                 LOGGER.debug("Skipped an invalid URL-sequence entry", e);
             }
         }
-        return queued;
+        return (int) admissions.stream().filter(CompletableFuture::join).count();
+    }
+
+    private void closeDialog() {
+        previewEpoch++;
+        activity.dispose();
+        dialog.close();
     }
 
     private record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,

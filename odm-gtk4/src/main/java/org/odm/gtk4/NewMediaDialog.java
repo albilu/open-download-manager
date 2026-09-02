@@ -121,6 +121,8 @@ public class NewMediaDialog {
 
     public void present() {
         dialog.present();
+        ClipboardUrlPrefill.populate(dialog, urlEntry,
+                org.manager.download.MediaUrlDetector::isMediaUrl);
         urlEntry.grabFocus();
     }
 

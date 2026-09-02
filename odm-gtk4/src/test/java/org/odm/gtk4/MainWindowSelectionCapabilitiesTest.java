@@ -1,5 +1,6 @@
 package org.odm.gtk4;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -79,6 +80,15 @@ class MainWindowSelectionCapabilitiesTest {
                 Download.Status.DOWNLOADING)) == MainWindow.DownloadActivation.REVEAL_IN_FOLDER);
         assertTrue(MainWindow.activationFor(download("paused.bin",
                 Download.Status.PAUSED)) == MainWindow.DownloadActivation.REVEAL_IN_FOLDER);
+    }
+
+    @Test
+    void informationFolderIsAlwaysTheDisplayedBaseDestination() {
+        Download torrent = download("release", Download.Status.COMPLETED);
+        Path destination = Path.of("/tmp/downloads");
+        torrent.recordOutputPath(destination.resolve("release/subfolder/video.mkv"));
+
+        assertEquals(destination, MainWindow.displayedSaveFolder(torrent));
     }
 
     private static Download download(String name, Download.Status status) {

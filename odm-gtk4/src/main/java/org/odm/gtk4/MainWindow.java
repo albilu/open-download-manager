@@ -83,6 +83,7 @@ public class MainWindow {
     private final Label upSpeedLabel;
     private final Label dhtStatusLabel;
     private final Spinner activitySpinner;
+    private final SpinnerActivity activity;
     private final ProgressBar infoProgressBar;
     private final Label totalSizeValue;
     private final Label addedOnValue;
@@ -108,6 +109,9 @@ public class MainWindow {
     private final java.util.concurrent.atomic.AtomicBoolean refreshInFlight =
             new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean refreshAgain =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    /** Remembers that a coalesced refresh was requested by search/filter UI. */
+    private final java.util.concurrent.atomic.AtomicBoolean refreshActivityRequested =
             new java.util.concurrent.atomic.AtomicBoolean();
 
     // Listeners registered with core services; kept as fields so the window
@@ -165,6 +169,7 @@ public class MainWindow {
         this.upSpeedLabel = Widgets.require(builder, "up_speed_label", Label.class);
         this.dhtStatusLabel = Widgets.require(builder, "dht_status_label", Label.class);
         this.activitySpinner = Widgets.require(builder, "activity_spinner", Spinner.class);
+        this.activity = new SpinnerActivity(activitySpinner);
         this.infoProgressBar = Widgets.require(builder, "info_progress_bar", ProgressBar.class);
         this.totalSizeValue = Widgets.require(builder, "total_size_value", Label.class);
         this.addedOnValue = Widgets.require(builder, "added_on_value", Label.class);
@@ -275,7 +280,7 @@ public class MainWindow {
         Widgets.require(builder, "move_bottom_button", Button.class)
                 .onClicked(() -> { downloadManager.moveDownloadToBottom(selectedDownload); refresh(); });
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
-        folderOpenButton.onClicked(() -> openSelected("folder"));
+        folderOpenButton.onClicked(this::openDisplayedSaveFolder);
         this.searchEntry = Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         searchEntry.onSearchChanged(this::onSearchChanged);
         // tor_switch: wired below
@@ -293,7 +298,7 @@ public class MainWindow {
         AccessibilitySupport.label(torSwitch, "Global Tor routing");
         AccessibilitySupport.label(menuBar, "Application menu");
         AccessibilitySupport.label(infoProgressBar, "Selected download progress");
-        AccessibilitySupport.label(folderOpenButton, "Open selected download folder");
+        AccessibilitySupport.label(folderOpenButton, "Open displayed save folder");
         Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
         Widgets.require(builder, "category_label", Label.class).setMnemonicWidget(categoryTreeview);
 
@@ -398,8 +403,7 @@ public class MainWindow {
                                 () -> UiThread.marshal(MainWindow.this::refresh));
                         dialog.prefillUrl(urls.get(0).toString());
                         if (urls.size() > 1) {
-                            LOGGER.info(urls.size() + " URLs detected; offering the first, "
-                                    + "use Import from Clipboard for all");
+                            LOGGER.info(urls.size() + " URLs detected; offering the first");
                         }
                         dialog.present();
                     });
@@ -461,6 +465,7 @@ public class MainWindow {
             contextMenu = null;
         }
         detailTabsPresenter.shutdown();
+        activity.dispose();
         backgroundExecutor.shutdown();
     }
 
@@ -571,7 +576,7 @@ public class MainWindow {
 
     private void onSearchChanged() {
         listPresenter.setSearchText(searchEntry.getText().strip().toLowerCase());
-        refresh();
+        refreshWithActivity();
     }
 
     private void onPauseClicked() {
@@ -586,11 +591,11 @@ public class MainWindow {
         if (targets.isEmpty()) {
             return;
         }
-        allOf(targets.stream()
+        trackActivity(allOf(targets.stream()
                 .map(download -> download.getStatus() == Download.Status.PAUSED
                         ? downloadManager.resumeDownload(download)
                         : downloadManager.startDownload(download))
-                .toList()).whenComplete((ignored, error) -> UiThread.marshal(() -> {
+                .toList())).whenComplete((ignored, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
                                 "Could not start or resume all selected downloads: "
@@ -618,7 +623,7 @@ public class MainWindow {
         if (targets.isEmpty()) {
             return;
         }
-        allOf(targets.stream().map(operation).toList()).whenComplete((ignored, error) ->
+        trackActivity(allOf(targets.stream().map(operation).toList())).whenComplete((ignored, error) ->
                 UiThread.marshal(() -> {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
@@ -633,6 +638,10 @@ public class MainWindow {
     private static CompletableFuture<Void> allOf(
             List<? extends CompletableFuture<?>> futures) {
         return CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
+    }
+
+    private <T> CompletableFuture<T> trackActivity(CompletableFuture<T> future) {
+        return activity.track(future);
     }
 
     /** Requires an explicit destructive confirmation and captures the target
@@ -667,9 +676,9 @@ public class MainWindow {
             if (response != acceptResponse) {
                 return;
             }
-            allOf(capturedTargets.stream()
+            trackActivity(allOf(capturedTargets.stream()
                     .map(target -> downloadManager.cancelDownload(target, true))
-                    .toList()).whenComplete((ignored, error) ->
+                    .toList())).whenComplete((ignored, error) ->
                     UiThread.marshal(() -> {
                         if (error != null) {
                             AccessibilitySupport.status(infoLabel,
@@ -822,7 +831,7 @@ public class MainWindow {
                             folder.getPath().toString());
                     AccessibilitySupport.status(infoLabel,
                             "Moving “" + targetDownload.getName() + "”…");
-                    downloadManager.relocateDownload(targetDownload, destination)
+                    trackActivity(downloadManager.relocateDownload(targetDownload, destination))
                             .whenComplete((ignored, error) -> UiThread.marshal(() -> {
                                 if (error == null) {
                                     AccessibilitySupport.status(infoLabel,
@@ -921,7 +930,7 @@ public class MainWindow {
             }
         }
         if (!updates.isEmpty()) {
-            allOf(updates).whenComplete((ignored, error) -> UiThread.marshal(() -> {
+            trackActivity(allOf(updates)).whenComplete((ignored, error) -> UiThread.marshal(() -> {
                 if (error == null) {
                     AccessibilitySupport.status(infoLabel,
                             targets.size() == 1
@@ -951,7 +960,6 @@ public class MainWindow {
         file.append("New Media Download", "win.new-media");
         file.append("New Website Scrape", "win.scrape");
         org.gnome.gio.Menu batch = new org.gnome.gio.Menu();
-        batch.append("Import from Clipboard", "win.import-clipboard");
         batch.append("Import URL Sequence", "win.import-sequence");
         batch.append("Import from Text File", "win.import-file");
         batch.append("Import from HTML File", "win.import-html");
@@ -1032,8 +1040,6 @@ public class MainWindow {
         addAction("new-download", this::onAddClicked);
         addAction("new-media", this::onNewMediaClicked);
         addAction("scrape", this::onScraperClicked);
-        addAction("import-clipboard", () -> downloadManager.importFromClipboard()
-                .thenRun(() -> UiThread.marshal(this::refresh)));
         addAction("import-sequence", () -> new ImportSequenceDialog(window, downloadManager,
                 () -> UiThread.marshal(this::refresh)).present());
         addAction("import-file", () -> ImportListDialog.chooseAndPresent(window, downloadManager,
@@ -1102,9 +1108,9 @@ public class MainWindow {
         addAction("open-file", () -> openSelected("file"));
         addAction("open-folder", () -> openSelected("folder"));
         addAction("force-download", this::startSelectedDownloads);
-        addAction("pause-all", () -> downloadManager.pauseAllDownloads()
+        addAction("pause-all", () -> trackActivity(downloadManager.pauseAllDownloads())
                 .thenRun(() -> UiThread.marshal(this::refresh)));
-        addAction("resume-all", () -> downloadManager.resumeAllDownloads()
+        addAction("resume-all", () -> trackActivity(downloadManager.resumeAllDownloads())
                 .thenRun(() -> UiThread.marshal(this::refresh)));
         addAction("delete", this::onDeleteClicked);
         addAction("delete-with-files", () -> {
@@ -1113,7 +1119,8 @@ public class MainWindow {
                 confirmDeleteWithFiles(selectedDownloads);
             }
         });
-        addAction("remove-finished", () -> downloadManager.pruneCompletedDownloads(java.time.Duration.ZERO)
+        addAction("remove-finished", () -> trackActivity(
+                downloadManager.pruneCompletedDownloads(java.time.Duration.ZERO))
                 .thenRun(() -> UiThread.marshal(this::refresh)));
         addAction("properties", this::onPropertiesClicked);
 
@@ -1339,6 +1346,20 @@ public class MainWindow {
         }
     }
 
+    /** Opens exactly the base destination displayed in the Information panel. */
+    private void openDisplayedSaveFolder() {
+        onDownloadSelectionChanged();
+        Path destination = displayedSaveFolder(selectedDownload);
+        if (destination != null) {
+            performFileManagerAction(() -> FileManagerSupport.open(destination),
+                    "Could not open save folder");
+        }
+    }
+
+    static Path displayedSaveFolder(Download download) {
+        return download == null ? null : download.getDestination();
+    }
+
     private Download downloadAt(TreePath path) {
         int[] indices = path == null ? null : path.getIndices();
         return indices == null || indices.length == 0
@@ -1361,7 +1382,7 @@ public class MainWindow {
 
     private void performFileManagerAction(java.util.function.Supplier<Boolean> operation,
             String failureMessage) {
-        CompletableFuture.supplyAsync(operation, backgroundExecutor)
+        trackActivity(CompletableFuture.supplyAsync(operation, backgroundExecutor))
                 .whenComplete((succeeded, error) -> {
                     if (error != null) {
                         LOGGER.error(failureMessage, error);
@@ -1419,9 +1440,9 @@ public class MainWindow {
                 java.nio.file.Path path = java.nio.file.Path.of(file.getPath().toString());
                 // File I/O and regex over arbitrarily large documents run OFF
                 // the GTK main loop; only the result goes back to the UI
-                CompletableFuture.supplyAsync(
+                trackActivity(CompletableFuture.supplyAsync(
                         () -> HtmlImportExport.importHtmlFile(path, downloadManager),
-                        backgroundExecutor).thenAccept(count -> {
+                        backgroundExecutor)).thenAccept(count -> {
                     if (count == null || count < 0) {
                         return;
                     }
@@ -1490,8 +1511,8 @@ public class MainWindow {
             importButton.setSensitive(false);
             sourceEntry.setSensitive(false);
             AccessibilitySupport.status(status, "Fetching page and importing links…");
-            CompletableFuture.supplyAsync(() -> HtmlImportExport.importRemoteHtml(
-                    source, downloadManager, proxy), backgroundExecutor)
+            trackActivity(CompletableFuture.supplyAsync(() -> HtmlImportExport.importRemoteHtml(
+                    source, downloadManager, proxy), backgroundExecutor))
                     .whenComplete((count, error) -> UiThread.marshal(() -> {
                         if (error != null || count == null || count < 0) {
                             importButton.setSensitive(true);
@@ -1522,6 +1543,8 @@ public class MainWindow {
         box.append(buttons);
         prompt.setChild(box);
         prompt.present();
+        ClipboardUrlPrefill.populate(prompt, sourceEntry,
+                ClipboardUrlPrefill::isWebPage);
         sourceEntry.grabFocus();
     }
 
@@ -1540,7 +1563,7 @@ public class MainWindow {
                 // Snapshot the URL list on the GTK thread (model access),
                 // write the file off it
                 String contents = HtmlImportExport.exportText(downloadManager.getAllDownloads());
-                CompletableFuture.runAsync(() -> {
+                trackActivity(CompletableFuture.runAsync(() -> {
                     try {
                         HtmlImportExport.writeText(path, contents);
                         UiThread.marshal(() -> AccessibilitySupport.status(
@@ -1548,7 +1571,7 @@ public class MainWindow {
                     } catch (Exception e) {
                         LOGGER.debug("Export failed", e);
                     }
-                }, backgroundExecutor);
+                }, backgroundExecutor));
             } catch (Exception e) {
                 LOGGER.debug("Export cancelled or failed", e);
             }
@@ -1585,7 +1608,7 @@ public class MainWindow {
                 org.manager.schedule.WeeklySchedule.hourGridToString(hourGrid));
         downloadManager.getGlobalSettings().setProperty("scheduler.enabled", "true");
         downloadManager.getGlobalSettings().save();
-        scheduleManager.start().whenComplete((ignored, error) -> {
+        trackActivity(scheduleManager.start()).whenComplete((ignored, error) -> {
             if (error != null) {
                 LOGGER.warn("Failed to start scheduler for preset " + preset, error);
                 UiThread.marshal(() -> AccessibilitySupport.status(
@@ -1616,7 +1639,7 @@ public class MainWindow {
         long epoch = torToggleEpoch.incrementAndGet();
         torDesiredRunning.set(active);
         if (active) {
-            torService.start().whenComplete((ok, error) -> {
+            trackActivity(torService.start()).whenComplete((ok, error) -> {
                 if (epoch != torToggleEpoch.get() || !torDesiredRunning.get()) {
                     // The user switched Tor off while startup was pending.
                     // A late successful start must not resurrect the proxy.
@@ -1676,7 +1699,7 @@ public class MainWindow {
         if (previous != null) {
             previous.shutdown();
         }
-        checker.performLeakCheck()
+        trackActivity(checker.performLeakCheck())
                 .whenComplete((result, error) -> {
                     try {
                         checker.shutdown();
@@ -1730,11 +1753,11 @@ public class MainWindow {
         }
         org.tor.TorController controller = new org.tor.TorController(
                 "127.0.0.1", controlPort, "", 5000);
-        controller.connect()
+        CompletableFuture<Boolean> identityChange = controller.connect()
                 .thenCompose(connected -> connected
                         ? controller.changeIp()
-                        : CompletableFuture.completedFuture(false))
-                .whenComplete((changed, error) -> {
+                        : CompletableFuture.completedFuture(false));
+        trackActivity(identityChange).whenComplete((changed, error) -> {
                     String message;
                     if (error != null) {
                         message = "New Tor identity failed: " + error.getMessage();
@@ -1829,16 +1852,22 @@ public class MainWindow {
             try {
                 Download download = pendingDownload.get();
                 if (download == null) {
+                    java.net.URI source = org.manager.clipboard.UrlDetector
+                            .requireValidDownloadUrl(url);
+                    if (!ClipboardUrlPrefill.isWebPage(source)) {
+                        throw new IllegalArgumentException(
+                                "Website scraping requires an HTTP(S) URL");
+                    }
                     java.util.Map<String, String> options = new java.util.HashMap<>();
                     options.put("depth", String.valueOf((int) depthSpin.getValue()));
-                    download = downloadManager.createWebsiteDownload(new java.net.URI(url),
+                    download = downloadManager.createWebsiteDownload(source,
                             java.nio.file.Path.of(downloadManager.getGlobalSettings()
                                     .getDefaultDownloadDirectory().toString()), options);
                     pendingDownload.set(download);
                 }
                 startButton.setSensitive(false);
                 AccessibilitySupport.status(statusLabel, "Adding website scrape to queue…");
-                downloadManager.queueDownload(download).whenComplete((ignored, error) ->
+                trackActivity(downloadManager.queueDownload(download)).whenComplete((ignored, error) ->
                         UiThread.marshal(() -> {
                             if (error == null) {
                                 pendingDownload.set(null);
@@ -1871,6 +1900,8 @@ public class MainWindow {
 
         scraper.setChild(box);
         scraper.present();
+        ClipboardUrlPrefill.populate(scraper, urlEntry,
+                ClipboardUrlPrefill::isWebPage);
     }
 
     private static String failureMessage(Throwable failure) {
@@ -1890,7 +1921,7 @@ public class MainWindow {
         }
         selectRow(statusTreeview.getSelection(), (path, index) -> {
             if (listPresenter.selectStatusFilterAt(index)) {
-                refresh();
+                refreshWithActivity();
             }
         });
     }
@@ -1901,7 +1932,7 @@ public class MainWindow {
         }
         selectRow(categoryTreeview.getSelection(), (path, index) -> {
             if (listPresenter.selectCategoryAt(index)) {
-                refresh();
+                refreshWithActivity();
             }
         });
     }
@@ -1960,13 +1991,34 @@ public class MainWindow {
      * repository state. GTK thread only.
      */
     private void refresh() {
+        refresh(false);
+    }
+
+    /** Shows the main activity indicator for an explicit search/filter pass. */
+    private void refreshWithActivity() {
+        refresh(true);
+    }
+
+    private void refresh(boolean indicateActivity) {
         if (!refreshInFlight.compareAndSet(false, true)) {
             refreshAgain.set(true);
+            if (indicateActivity) {
+                refreshActivityRequested.set(true);
+            }
             return;
+        }
+        boolean showActivity = indicateActivity;
+        if (refreshActivityRequested.getAndSet(false)) {
+            showActivity = true;
         }
         String selectedId = selectedDownload != null ? selectedDownload.getId() : null;
         try {
-            CompletableFuture.supplyAsync(() -> loadRefreshSnapshot(selectedId), backgroundExecutor)
+            CompletableFuture<RefreshSnapshot> refreshFuture = CompletableFuture.supplyAsync(
+                    () -> loadRefreshSnapshot(selectedId), backgroundExecutor);
+            if (showActivity) {
+                trackActivity(refreshFuture);
+            }
+            refreshFuture
                 .whenComplete((snapshot, error) -> UiThread.marshal(() -> {
                     try {
                         if (error != null) {
@@ -1977,7 +2029,7 @@ public class MainWindow {
                     } finally {
                         refreshInFlight.set(false);
                         if (refreshAgain.getAndSet(false)) {
-                            refresh();
+                            refresh(refreshActivityRequested.getAndSet(false));
                         }
                     }
                 }));
@@ -2052,7 +2104,6 @@ public class MainWindow {
                 ? DownloadFormats.size(summary.upBytesPerSec()) + "/s" : "—");
         dhtStatusLabel.setLabel(summary.totalSeeders() > 0
                 ? "DHT: " + summary.totalSeeders() + " seed(s)" : "DHT: —");
-        activitySpinner.setSpinning(summary.anyActive());
         updateInfoPanel();
     }
 
@@ -2090,7 +2141,7 @@ public class MainWindow {
                 && download.getGid() != null;
         // The pause/change/resume chain performs aria2 RPC round trips; run
         // it off the GTK thread instead of blocking the main loop on join().
-        CompletableFuture.runAsync(() -> {
+        CompletableFuture<Void> update = CompletableFuture.runAsync(() -> {
             if (wasActive) {
                 downloadManager.pauseDownload(download).join();
             }
@@ -2106,6 +2157,7 @@ public class MainWindow {
                 .thenCompose(v -> wasActive
                         ? downloadManager.resumeDownload(download)
                         : CompletableFuture.completedFuture(null));
+        trackActivity(update);
     }
 
     private void updateInfoPanel() {
@@ -2132,8 +2184,9 @@ public class MainWindow {
         addedOnValue.setLabel(selectedDownload.getCreatedAt() != null
                 ? DownloadFormats.DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
         infoHashValue.setLabel(selectedDownload.getInfoHash() != null ? selectedDownload.getInfoHash() : "—");
-        folderValue.setLabel(selectedDownload.getDestination() != null ? selectedDownload.getDestination().toString() : "—");
-        folderOpenButton.setSensitive(selectedDownload.getDestination() != null);
+        Path saveFolder = displayedSaveFolder(selectedDownload);
+        folderValue.setLabel(saveFolder != null ? saveFolder.toString() : "—");
+        folderOpenButton.setSensitive(saveFolder != null);
         engineIcon.setFromIconName(DownloadEnginePresentation.iconName(selectedDownload.getType()));
         engineValue.setLabel(DownloadEnginePresentation.displayName(selectedDownload.getType()));
         etaValue.setLabel(DownloadFormats.eta(selectedDownload));
