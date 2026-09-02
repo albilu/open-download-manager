@@ -29,7 +29,7 @@ public interface AfterCompletionAction {
         MOVE_FILE(5, true, false),//unimplemented
         EXTRACT_ARCHIVE(6, true, false),//unimplemented
         SLEEP_COMPUTER(7, false, true),
-        SHUTDOWN_COMPUTER(8, false, true):
+        SHUTDOWN_COMPUTER(8, false, true);
 
         private final int priority;
         private final boolean contributesToFinalizingProgress;
