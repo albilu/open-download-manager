@@ -42,15 +42,17 @@
     <property name="step-increment">1</property>
   </object>
 
-  <object class="GtkListStore" id="files_liststore">
+  <object class="GtkTreeStore" id="files_liststore">
     <columns>
-      <column type="gboolean"/>
-      <column type="gchararray"/>
-      <column type="gchararray"/>
-      <column type="gchararray"/>
-      <column type="gint64"/>
-      <column type="gint"/>
+      <column type="gboolean"/><column type="gchararray"/><column type="gchararray"/>
+      <column type="gint"/><column type="gchararray"/><column type="gint"/>
+      <column type="gchararray"/><column type="gint64"/><column type="gdouble"/>
+      <column type="gchararray"/><column type="gboolean"/><column type="gboolean"/>
+      <column type="gint"/><column type="gchararray"/>
     </columns>
+  </object>
+  <object class="GtkListStore" id="file_priority_store">
+    <columns><column type="gchararray"/></columns>
   </object>
 
   <object class="GtkWindow" id="new_download_dialog">
@@ -185,35 +187,81 @@
 
                 <!-- FILES TAB -->
                 <child>
-                  <object class="GtkScrolledWindow">
+                  <object class="GtkBox">
+                    <property name="orientation">vertical</property>
+                    <property name="spacing">6</property>
+                    <property name="margin-start">8</property>
+                    <property name="margin-end">8</property>
+                    <property name="margin-top">8</property>
+                    <property name="margin-bottom">8</property>
                     <child>
-                      <object class="GtkTreeView" id="files_treeview">
-                        <property name="model">files_liststore</property>
+                      <object class="GtkBox">
+                        <property name="orientation">horizontal</property>
+                        <property name="spacing">8</property>
                         <child>
-                          <object class="GtkTreeViewColumn" id="new_files_selected_column">
-                            <property name="sort-column-id">0</property>
-                            <child><object class="GtkCellRendererToggle" id="selected_renderer"/><attributes><attribute name="active">0</attribute></attributes></child>
+                          <object class="GtkLabel" id="files_status_label">
+                            <property name="label">Enter a torrent, magnet, or Metalink source to inspect its files.</property>
+                            <property name="hexpand">true</property>
+                            <property name="xalign">0</property>
+                            <property name="wrap">true</property>
                           </object>
                         </child>
                         <child>
-                          <object class="GtkTreeViewColumn" id="new_files_name_column">
-                            <property name="title">Filename</property>
-                            <property name="sort-column-id">1</property>
-                            <child><object class="GtkCellRendererText" id="file_name"/><attributes><attribute name="text">1</attribute></attributes></child>
+                          <object class="GtkCheckButton" id="select_all_files_check">
+                            <property name="label">Select all</property>
+                            <property name="active">true</property>
+                            <property name="sensitive">false</property>
                           </object>
                         </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkScrolledWindow">
+                        <property name="vexpand">true</property>
                         <child>
-                          <object class="GtkTreeViewColumn" id="new_files_size_column">
-                            <property name="title">Size</property>
-                            <property name="sort-column-id">4</property>
-                            <child><object class="GtkCellRendererText" id="file_size"/><attributes><attribute name="text">2</attribute></attributes></child>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkTreeViewColumn" id="new_files_priority_column">
-                            <property name="title">Priority</property>
-                            <property name="sort-column-id">5</property>
-                            <child><object class="GtkCellRendererText" id="file_priority"/><attributes><attribute name="text">3</attribute></attributes></child>
+                          <object class="GtkTreeView" id="files_treeview">
+                            <property name="model">files_liststore</property>
+                            <property name="enable-tree-lines">true</property>
+                            <child>
+                              <object class="GtkTreeViewColumn" id="new_files_selected_column">
+                                <property name="sort-column-id">0</property>
+                                <child><object class="GtkCellRendererToggle" id="selected_renderer"><property name="activatable">true</property></object><attributes><attribute name="active">0</attribute><attribute name="inconsistent">11</attribute></attributes></child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkTreeViewColumn" id="new_files_name_column">
+                                <property name="title">Filename</property>
+                                <property name="expand">true</property>
+                                <property name="resizable">true</property>
+                                <property name="min-width">180</property>
+                                <property name="max-width">420</property>
+                                <property name="sort-column-id">1</property>
+                                <child><object class="GtkCellRendererPixbuf" id="new_files_icon_renderer"/><attributes><attribute name="icon-name">13</attribute></attributes></child>
+                                <child><object class="GtkCellRendererText" id="file_name"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkTreeViewColumn" id="new_files_size_column">
+                                <property name="title">Size</property>
+                                <property name="sort-column-id">7</property>
+                                <child><object class="GtkCellRendererText" id="file_size"/><attributes><attribute name="text">2</attribute></attributes></child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkTreeViewColumn" id="new_files_priority_column">
+                                <property name="title">Priority</property>
+                                <property name="sort-column-id">12</property>
+                                <child>
+                                  <object class="GtkCellRendererCombo" id="file_priority">
+                                    <property name="model">file_priority_store</property>
+                                    <property name="text-column">0</property>
+                                    <property name="has-entry">false</property>
+                                    <property name="editable">true</property>
+                                  </object>
+                                  <attributes><attribute name="text">4</attribute></attributes>
+                                </child>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>

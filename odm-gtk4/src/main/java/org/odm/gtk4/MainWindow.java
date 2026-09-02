@@ -27,6 +27,7 @@ import org.manager.download.DownloadListener;
 import org.manager.download.DownloadManager;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeSelection;
+import org.gnome.gtk.TreeStore;
 import org.gnome.gtk.TreeView;
 
 /**
@@ -125,7 +126,7 @@ public class MainWindow {
     private volatile boolean trayAvailable;
     private final ListStore trackersStore;
     private final ListStore peersStore;
-    private final ListStore filesStore;
+    private final TreeStore filesStore;
     private final ListStore completionDetailsStore;
     private final ListStore globalProgressStore;
     private final org.tor.TorService torService;
@@ -169,7 +170,7 @@ public class MainWindow {
         this.addedOnValue = Widgets.require(builder, "added_on_value", Label.class);
         this.trackersStore = Widgets.require(builder, "trackers_store", ListStore.class);
         this.peersStore = Widgets.require(builder, "peers_store", ListStore.class);
-        this.filesStore = Widgets.require(builder, "files_store", ListStore.class);
+        this.filesStore = Widgets.require(builder, "files_store", TreeStore.class);
         this.completionDetailsStore = Widgets.require(builder, "completion_details_store", ListStore.class);
         this.globalProgressStore = Widgets.require(builder, "global_progress_store", ListStore.class);
         this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
@@ -186,7 +187,8 @@ public class MainWindow {
                 downloadsStore, globalProgressStore, statusTreeview, categoryTreeview,
                 this::refresh);
         this.detailTabsPresenter = new DetailTabsPresenter(downloadManager, trackersStore,
-                peersStore, filesStore, completionDetailsStore, () -> selectedDownload);
+                peersStore, filesStore, filesTreeview, completionDetailsStore,
+                () -> selectedDownload);
         this.backgroundExecutor = java.util.concurrent.Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "odm-window-fetch");
             t.setDaemon(true);
@@ -223,6 +225,8 @@ public class MainWindow {
         downloadsTreeview.onRowActivated((path, column) ->
                 activateDownload(downloadAt(path)));
         filesTreeview.onRowActivated((path, column) -> revealDetailFile(path));
+        filesTreeview.setExpanderColumn(Widgets.require(builder,
+                "files_name_column", org.gnome.gtk.TreeViewColumn.class));
 
         // Torrent per-file selection: toggle a row -> apply aria2 select-file
         Widgets.require(builder, "files_selected_renderer", org.gnome.gtk.CellRendererToggle.class)
@@ -1347,9 +1351,17 @@ public class MainWindow {
         if (!filesStore.getIter(iter, path)) {
             return;
         }
+        if (TreeStoreCells.getBoolean(filesStore, iter, FileTreeSupport.FOLDER_COLUMN)) {
+            if (filesTreeview.rowExpanded(path)) {
+                filesTreeview.collapseRow(path);
+            } else {
+                filesTreeview.expandRow(path, false);
+            }
+            return;
+        }
         Path file = FileManagerSupport.resolveDetailPath(
                 selectedDownload.getDestination(),
-                ListStoreCells.getString(filesStore, iter,
+                TreeStoreCells.getString(filesStore, iter,
                         DetailTabsPresenter.FILE_PATH_COLUMN));
         if (file != null) {
             CompletableFuture.supplyAsync(() -> FileManagerSupport.reveal(file,
@@ -2004,27 +2016,15 @@ public class MainWindow {
             return;
         }
 
-        // Flip the toggled row
-        TreeIter iter = new TreeIter();
-        if (!filesStore.getIterFromString(iter, pathStr)) {
+        if (!FileTreeSupport.toggleSelection(filesStore, pathStr)) {
             return;
         }
-        boolean newValue = !ListStoreCells.getBoolean(filesStore, iter, 0);
-        ListStoreCells.setBoolean(filesStore, iter, 0, newValue);
 
-        // Collect stable aria2 indexes; the visible row order may be sorted.
-        java.util.List<Integer> selectedIndexes = new java.util.ArrayList<>();
-        TreeIter walk = new TreeIter();
-        if (filesStore.getIterFirst(walk)) {
-            do {
-                if (ListStoreCells.getBoolean(filesStore, walk, 0)) {
-                    selectedIndexes.add(ListStoreCells.getInt(filesStore, walk, 5));
-                }
-            } while (filesStore.iterNext(walk));
-        }
+        // Recursively collect leaf indexes; folder rows carry no aria2 index.
+        java.util.List<Integer> selectedIndexes = FileTreeSupport.selectedIndexes(filesStore);
         if (selectedIndexes.isEmpty()) {
             LOGGER.warn("Refusing to deselect every file of " + download.getName());
-            ListStoreCells.setBoolean(filesStore, iter, 0, true);
+            FileTreeSupport.toggleSelection(filesStore, pathStr);
             return;
         }
 

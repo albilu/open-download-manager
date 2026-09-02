@@ -1177,6 +1177,34 @@ public class DownloadManagerImpl implements DownloadManager {
         return handler != null ? handler.getDownloadFiles(download) : List.of();
     }
 
+    public CompletableFuture<List<DownloadFileInfo>> previewDownloadFiles(URI source) {
+        return previewDownloadFiles(source, null);
+    }
+
+    @Override
+    public CompletableFuture<List<DownloadFileInfo>> previewDownloadFiles(
+            URI source, String proxyAddress) {
+        Download.Protocol protocol = Download.Protocol.fromUri(source);
+        if (protocol != Download.Protocol.TORRENT
+                && protocol != Download.Protocol.MAGNET
+                && protocol != Download.Protocol.METALINK) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        // Metadata inspection always belongs to the registered aria2 engine.
+        // Resolving through getHandler(Download) would route a synthetic
+        // probe through proxychains whenever the global proxy is SOCKS and
+        // consequently hide the inspector even for local descriptors.
+        DownloadHandler candidate = getHandlerFactory().getHandler(Download.Type.ARIA2);
+        org.manager.download.handler.Aria2DownloadHandler handler =
+                candidate instanceof org.manager.download.handler.Aria2DownloadHandler aria2
+                        ? aria2 : null;
+        if (handler == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("aria2 is unavailable for file metadata preview"));
+        }
+        return handler.previewDownloadFiles(source, proxyAddress);
+    }
+
     @Override
     public List<List<String>> getDownloadTrackers(Download download) {
         org.manager.download.handler.Aria2DownloadHandler handler = aria2HandlerFor(download);

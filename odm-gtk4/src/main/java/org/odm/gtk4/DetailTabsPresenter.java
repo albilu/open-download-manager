@@ -16,6 +16,8 @@ import org.gnome.gtk.ListStore;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeRowReference;
+import org.gnome.gtk.TreeStore;
+import org.gnome.gtk.TreeView;
 import org.javagi.interop.MemoryCleaner;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
@@ -34,9 +36,7 @@ import org.manager.download.action.CompletionActionResult;
 final class DetailTabsPresenter {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DetailTabsPresenter.class);
-    private static final int FILE_SIZE_SORT_COLUMN = 7;
-    private static final int FILE_PROGRESS_SORT_COLUMN = 8;
-    static final int FILE_PATH_COLUMN = 9;
+    static final int FILE_PATH_COLUMN = FileTreeSupport.PATH_COLUMN;
 
     /** Immutable snapshot fetched off-thread for the trackers/peers/files tabs. */
     private record DetailTabData(List<List<String>> trackers, List<Map<String, Object>> peers,
@@ -50,11 +50,6 @@ final class DetailTabsPresenter {
             String upSpeed, String state) {
     }
 
-    private record FileRow(boolean selected, String name, String path, long length,
-            int progress, String priority, int index, String progressText,
-            double preciseProgress) {
-    }
-
     private record CompletionRow(String action, String status, String result,
             String started, String finished) {
     }
@@ -62,7 +57,8 @@ final class DetailTabsPresenter {
     private final DownloadManager downloadManager;
     private final ListStore trackersStore;
     private final ListStore peersStore;
-    private final ListStore filesStore;
+    private final TreeStore filesStore;
+    private final TreeView filesView;
     private final ListStore completionDetailsStore;
     private final Supplier<Download> currentSelection;
     private final ExecutorService fetchExecutor;
@@ -81,12 +77,13 @@ final class DetailTabsPresenter {
     private final Map<String, TreeRowReference> completionRows = new java.util.HashMap<>();
 
     DetailTabsPresenter(DownloadManager downloadManager, ListStore trackersStore,
-            ListStore peersStore, ListStore filesStore, ListStore completionDetailsStore,
-            Supplier<Download> currentSelection) {
+            ListStore peersStore, TreeStore filesStore, TreeView filesView,
+            ListStore completionDetailsStore, Supplier<Download> currentSelection) {
         this.downloadManager = downloadManager;
         this.trackersStore = trackersStore;
         this.peersStore = peersStore;
         this.filesStore = filesStore;
+        this.filesView = filesView;
         this.completionDetailsStore = completionDetailsStore;
         this.currentSelection = currentSelection;
         this.fetchExecutor = Executors.newCachedThreadPool(r -> {
@@ -108,7 +105,7 @@ final class DetailTabsPresenter {
             displayedTargetId = null;
             clearStore(trackersStore, trackerRows);
             clearStore(peersStore, peerRows);
-            clearStore(filesStore, fileRows);
+            FileTreeSupport.clear(filesStore, fileRows);
             clearStore(completionDetailsStore, completionRows);
             displayedCompletionTargetId = null;
             return;
@@ -154,10 +151,10 @@ final class DetailTabsPresenter {
         if (!Objects.equals(displayedTargetId, targetId)) {
             clearStore(trackersStore, trackerRows);
             clearStore(peersStore, peerRows);
-            clearStore(filesStore, fileRows);
+            FileTreeSupport.clear(filesStore, fileRows);
             displayedTargetId = targetId;
         }
-        populateDetailStores(data);
+        populateDetailStores(data, selected);
     }
 
     /** Releases the fetch executor; part of the window's teardown path. */
@@ -165,7 +162,7 @@ final class DetailTabsPresenter {
         fetchExecutor.shutdown();
         freeRowReferences(trackerRows);
         freeRowReferences(peerRows);
-        freeRowReferences(fileRows);
+        FileTreeSupport.freeReferences(fileRows);
         freeRowReferences(completionRows);
     }
 
@@ -174,7 +171,7 @@ final class DetailTabsPresenter {
     }
 
     /** Populates the detail tab stores from a fetched snapshot. GTK thread only. */
-    private void populateDetailStores(DetailTabData data) {
+    private void populateDetailStores(DetailTabData data, Download selectedDownload) {
         LinkedHashMap<String, TrackerRow> trackers = new LinkedHashMap<>();
         int tier = 0;
         for (List<String> urls : data.trackers()) {
@@ -216,34 +213,26 @@ final class DetailTabsPresenter {
             ListStoreCells.setString(store, iter, 4, row.state());
         });
 
-        LinkedHashMap<String, FileRow> files = new LinkedHashMap<>();
-        int fallbackIndex = 0;
+        Map<Integer, String> priorities = selectedDownload.getSettings()
+                instanceof org.aria2.Aria2Settings aria2Settings
+                        ? aria2Settings.getFilePriorities() : Map.of();
+        List<FileTreeSupport.Entry> files = new java.util.ArrayList<>();
+        int fallbackIndex = 1;
         for (Map<String, Object> file : data.files()) {
             boolean selected = !"false".equalsIgnoreCase(
                     String.valueOf(file.getOrDefault("selected", "true")));
             long length = parseLong(file.get("length"), 0);
             long completedLength = parseLong(file.get("completedLength"), 0);
-            double progress = progressPercent(completedLength, length);
             int index = (int) parseLong(file.get("index"), fallbackIndex++);
-            String key = uniqueKey(files, Integer.toString(index));
             String path = String.valueOf(file.getOrDefault("path", "—"));
-            files.put(key, new FileRow(selected, fileName(path), path, length,
-                    ProgressPresentation.wholePercentage(progress), "—", index,
-                    ProgressPresentation.percentage(progress), progress));
+            files.add(new FileTreeSupport.Entry(selected, path, length, completedLength,
+                    index, priorities.getOrDefault(index, FileTreeSupport.PRIORITY_NORMAL)));
         }
-        reconcile(filesStore, fileRows, files, (store, iter, row) -> {
-            ListStoreCells.setBoolean(store, iter, 0, row.selected());
-            ListStoreCells.setString(store, iter, 1, row.name());
-            ListStoreCells.setString(store, iter, 2, DownloadFormats.size(row.length()));
-            ListStoreCells.setInt(store, iter, 3, row.progress());
-            ListStoreCells.setString(store, iter, 4, row.priority());
-            ListStoreCells.setInt(store, iter, 5, row.index());
-            ListStoreCells.setString(store, iter, 6, row.progressText());
-            ListStoreCells.setLong(store, iter, FILE_SIZE_SORT_COLUMN, row.length());
-            ListStoreCells.setDouble(store, iter, FILE_PROGRESS_SORT_COLUMN,
-                    row.preciseProgress());
-            ListStoreCells.setString(store, iter, FILE_PATH_COLUMN, row.path());
-        });
+        boolean structureChanged = FileTreeSupport.reconcile(filesStore, fileRows, files,
+                selectedDownload.getDestination());
+        if (structureChanged) {
+            FileTreeSupport.expandTopLevel(filesView, filesStore);
+        }
     }
 
     /** Reconciles persisted completion-action history without an RPC fetch. */

@@ -2,9 +2,12 @@ package org.odm.gtk4;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.CellRendererCombo;
+import org.gnome.gtk.CellRendererToggle;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
@@ -12,10 +15,14 @@ import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
+import org.gnome.gtk.Notebook;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
 import org.gnome.gtk.TreeIter;
+import org.gnome.gtk.TreeRowReference;
+import org.gnome.gtk.TreeStore;
+import org.gnome.gtk.TreeView;
 import org.gnome.gtk.Window;
 import org.manager.download.DescriptorImport;
 import org.manager.download.Download;
@@ -29,13 +36,6 @@ import org.manager.download.DownloadManager;
 public class NewDownloadDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(NewDownloadDialog.class);
-    private static final int FILE_SELECTED_COLUMN = 0;
-    private static final int FILE_NAME_COLUMN = 1;
-    private static final int FILE_SIZE_TEXT_COLUMN = 2;
-    private static final int FILE_PRIORITY_TEXT_COLUMN = 3;
-    private static final int FILE_SIZE_SORT_COLUMN = 4;
-    private static final int FILE_PRIORITY_SORT_COLUMN = 5;
-
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final Runnable onDownloadQueued;
@@ -45,7 +45,12 @@ public class NewDownloadDialog {
     private final PathChooserButton saveFolderChooser;
     private final Label diskSpaceLabel;
     private final Entry filenameEntry;
-    private final ListStore filesListstore;
+    private final TreeStore filesListstore;
+    private final TreeView filesTreeview;
+    private final Label filesStatusLabel;
+    private final CheckButton selectAllFilesCheck;
+    private final Notebook optionsNotebook;
+    private final java.util.Map<String, TreeRowReference> fileRows = new java.util.HashMap<>();
     private final SpinButton maxConnectionsSpin;
     private final SpinButton retryLimitSpin;
     private final SpinButton maxDownloadSpeedSpin;
@@ -70,6 +75,11 @@ public class NewDownloadDialog {
     private Path destinationFolder;
     private boolean updatingFilenameSuggestion;
     private boolean filenameEditedByUser;
+    private boolean updatingSelectAll;
+    private boolean previewLoading;
+    private boolean submissionInFlight;
+    private long previewEpoch;
+    private URI loadedPreviewSource;
 
     /** Checksum detected for the current URL (null while unknown/not probed). */
     private volatile org.manager.download.ChecksumProbe.DetectedChecksum detectedChecksum;
@@ -87,7 +97,12 @@ public class NewDownloadDialog {
         MenuButton saveFolderButton = Widgets.require(builder, "save_folder_chooser", MenuButton.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
         this.filenameEntry = Widgets.require(builder, "filename_entry", Entry.class);
-        this.filesListstore = Widgets.require(builder, "files_liststore", ListStore.class);
+        this.filesListstore = Widgets.require(builder, "files_liststore", TreeStore.class);
+        this.filesTreeview = Widgets.require(builder, "files_treeview", TreeView.class);
+        this.filesStatusLabel = Widgets.require(builder, "files_status_label", Label.class);
+        this.selectAllFilesCheck = Widgets.require(builder,
+                "select_all_files_check", CheckButton.class);
+        this.optionsNotebook = Widgets.require(builder, "options_notebook", Notebook.class);
         this.maxConnectionsSpin = Widgets.require(builder, "max_connections_spin", SpinButton.class);
         this.retryLimitSpin = Widgets.require(builder, "retry_limit_spin", SpinButton.class);
         this.maxDownloadSpeedSpin = Widgets.require(builder, "max_download_speed_spin", SpinButton.class);
@@ -104,11 +119,14 @@ public class NewDownloadDialog {
         this.torSwitch = Widgets.require(builder, "tor_switch", Switch.class);
         this.checksumLabel = Widgets.require(builder, "checksum_label", Label.class);
         this.verifyChecksumCheck = Widgets.require(builder, "verify_checksum_check", CheckButton.class);
+        this.startButton = Widgets.require(builder, "new_download_start_button", Button.class);
 
         AccessibilitySupport.label(urlEntry, "Download URL");
         AccessibilitySupport.label(torrentFileButton, "Choose torrent or Metalink descriptor");
         AccessibilitySupport.label(saveFolderButton, "Download destination folder");
         AccessibilitySupport.label(filenameEntry, "Output filename");
+        AccessibilitySupport.label(filesTreeview, "Files in the torrent or Metalink");
+        AccessibilitySupport.label(selectAllFilesCheck, "Select every descriptor file");
         AccessibilitySupport.label(proxyTypeCombo, "Proxy type");
         AccessibilitySupport.label(proxyHostEntry, "Proxy host");
         AccessibilitySupport.label(proxyPortSpin, "Proxy port");
@@ -133,12 +151,38 @@ public class NewDownloadDialog {
         }
         proxyTypeCombo.setModel(proxyTypes);
 
+        ListStore priorityStore = Widgets.require(builder, "file_priority_store", ListStore.class);
+        for (String priority : new String[]{FileTreeSupport.PRIORITY_HIGH,
+                FileTreeSupport.PRIORITY_NORMAL, FileTreeSupport.PRIORITY_LOW}) {
+            TreeIter iter = new TreeIter();
+            priorityStore.append(iter);
+            ListStoreCells.setString(priorityStore, iter, 0, priority);
+        }
+        filesTreeview.setExpanderColumn(Widgets.require(builder,
+                "new_files_name_column", org.gnome.gtk.TreeViewColumn.class));
+        Widgets.require(builder, "selected_renderer", CellRendererToggle.class)
+                .onToggled(this::onFileSelectionToggled);
+        Widgets.require(builder, "file_priority", CellRendererCombo.class)
+                .onChanged((path, priorityIter) -> {
+                    String priority = ListStoreCells.getString(priorityStore, priorityIter, 0);
+                    FileTreeSupport.setPriority(filesListstore, path, priority);
+                });
+        selectAllFilesCheck.onToggled(this::onSelectAllFilesToggled);
+        optionsNotebook.onSwitchPage((page, pageNumber) -> {
+            if (pageNumber == 1) {
+                requestCurrentFilePreview();
+            }
+        });
+
         loadGlobalDefaults();
 
         Path defaultDestination = Path.of(currentDefaultDirectory());
         this.torrentFileChooser = PathChooserButton.forFile(torrentFileButton, dialog,
                 "Select torrent or metalink file", null, path -> {
                     selectedTorrentFile = path;
+                    if (!urlEntry.getText().isBlank()) {
+                        urlEntry.setText("");
+                    }
                     analyzeTorrentFile();
                 });
         this.saveFolderChooser = PathChooserButton.forFolder(saveFolderButton, dialog,
@@ -158,8 +202,12 @@ public class NewDownloadDialog {
         });
         urlEntry.onChanged(this::analyzeUrl);
 
-        Widgets.require(builder, "new_download_cancel_button", Button.class).onClicked(dialog::close);
-        this.startButton = Widgets.require(builder, "new_download_start_button", Button.class);
+        Widgets.require(builder, "new_download_cancel_button", Button.class)
+                .onClicked(this::closeDialog);
+        dialog.onCloseRequest(() -> {
+            releaseFilePreviewRows();
+            return false;
+        });
         startButton.onClicked(this::onStart);
         torSwitch.onStateSet(state -> {
             // Tor enabled -> route through the local Tor SOCKS proxy
@@ -181,27 +229,28 @@ public class NewDownloadDialog {
     public void prefillUrl(String url) {
         if (url != null && !url.isBlank()) {
             urlEntry.setText(url);
-            analyzeUrl();
         }
     }
 
-    /**
-     * Analyzes the URL as it is typed (mirrors the approved old UI):
-     * auto-fills the filename from the URL path, and for magnet links
-     * extracts the display name / size / info hash into the Files tab.
-     */
+    /** Updates filename/checksum hints and defers descriptor work until the Files tab is used. */
     private void analyzeUrl() {
         String url = urlEntry.getText().trim();
-        filesListstore.clear();
+        invalidateFilePreview();
+        if (!url.isEmpty() && selectedTorrentFile != null) {
+            selectedTorrentFile = null;
+            torrentFileChooser.clear();
+        }
         resetChecksumUi();
         if (url.isEmpty()) {
+            filesStatusLabel.setLabel(
+                    "Enter a torrent, magnet, or Metalink source to inspect its files.");
             return;
         }
         try {
             java.net.URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
-            if (Download.Protocol.fromUri(uri) == Download.Protocol.MAGNET) {
+            Download.Protocol protocol = Download.Protocol.fromUri(uri);
+            if (protocol == Download.Protocol.MAGNET) {
                 analyzeMagnet(url);
-                return;
             }
             String path = uri.getPath();
             if (path != null && !path.isEmpty()) {
@@ -211,9 +260,21 @@ public class NewDownloadDialog {
                             java.nio.charset.StandardCharsets.UTF_8));
                 }
             }
-            probeChecksumAsynchronously(uri);
+            if (protocol == Download.Protocol.TORRENT
+                    || protocol == Download.Protocol.MAGNET
+                    || protocol == Download.Protocol.METALINK) {
+                filesStatusLabel.setLabel(optionsNotebook.getCurrentPage() == 1
+                        ? "Loading file metadata…"
+                        : "Open the Files tab to load selectable file metadata.");
+                if (optionsNotebook.getCurrentPage() == 1) {
+                    requestCurrentFilePreview();
+                }
+            } else {
+                showSingleUrlFile(uri);
+                probeChecksumAsynchronously(uri);
+            }
         } catch (Exception e) {
-            // still typing an invalid URL: nothing to analyze
+            filesStatusLabel.setLabel("Enter a valid download URL or magnet link.");
         }
     }
 
@@ -267,31 +328,9 @@ public class NewDownloadDialog {
         detectedChecksum = null;
     }
 
-    /** Extracts factual magnet metadata (dn, xl, btih) into the Files tab. */
+    /** Uses magnet display metadata for the filename while peers resolve the real file list. */
     private void analyzeMagnet(String magnet) {
         String displayName = magnetParam(magnet, "dn");
-        String hash = magnetParam(magnet, "xt");
-        if (hash != null && hash.toLowerCase().startsWith("urn:btih:")) {
-            hash = hash.substring(8);
-        }
-        long size = 0;
-        try {
-            String xl = magnetParam(magnet, "xl");
-            if (xl != null) {
-                size = Long.parseLong(xl);
-            }
-        } catch (NumberFormatException ignored) {
-            // no valid size in the link
-        }
-
-        String name = displayName != null ? displayName
-                : hash != null ? "Torrent_" + hash.substring(0, Math.min(8, hash.length()))
-                        : "Unknown Torrent";
-        appendFileInfo(true, name, size, "High");
-        if (displayName == null && hash != null) {
-            appendFileInfo(true, "Torrent_" + hash.substring(0, Math.min(8, hash.length())) + ".torrent",
-                    50 * 1024L, "Normal");
-        }
         if (filenameEntry.getText().isBlank() && displayName != null) {
             setFilenameSuggestion(displayName);
         }
@@ -309,24 +348,14 @@ public class NewDownloadDialog {
         }
     }
 
-    /** Lists a selected local .torrent/.meta4 file: its real name and byte size. */
+    /** Starts a real descriptor-content preview after a local file is selected. */
     private void analyzeTorrentFile() {
-        filesListstore.clear();
+        invalidateFilePreview();
         if (selectedTorrentFile == null) {
             return;
         }
-        String name = selectedTorrentFile.getFileName().toString();
-        long size;
-        try {
-            size = java.nio.file.Files.size(selectedTorrentFile);
-        } catch (Exception e) {
-            size = 0;
-        }
-        appendFileInfo(true, name, size, "High");
-        String base = name.replaceAll("\\.(torrent|metalink|meta4)$", "");
-        if (!base.equals(name)) {
-            appendFileInfo(true, base, 0, "Normal"); // content, size known after add
-        }
+        filesStatusLabel.setLabel("Loading file metadata…");
+        requestCurrentFilePreview();
     }
 
     /** Extracts a parameter value from a magnet URI query string. */
@@ -345,36 +374,163 @@ public class NewDownloadDialog {
         return null;
     }
 
-    /** Adds a row to the Files tab liststore (selected, name, size, priority). */
-    private void appendFileInfo(boolean selected, String name, long size, String priority) {
-        appendFileInfo(filesListstore, selected, name, size, priority);
-    }
-
-    static void appendFileInfo(ListStore store, boolean selected, String name, long size,
-            String priority) {
-        TreeIter iter = new TreeIter();
-        store.append(iter);
-        long normalizedSize = Math.max(0, size);
-        ListStoreCells.setBoolean(store, iter, FILE_SELECTED_COLUMN, selected);
-        ListStoreCells.setString(store, iter, FILE_NAME_COLUMN, name);
-        ListStoreCells.setString(store, iter, FILE_SIZE_TEXT_COLUMN,
-                normalizedSize > 0 ? normalizedSize / 1024 + " KB" : "—");
-        ListStoreCells.setString(store, iter, FILE_PRIORITY_TEXT_COLUMN, priority);
-        ListStoreCells.setLong(store, iter, FILE_SIZE_SORT_COLUMN, normalizedSize);
-        ListStoreCells.setInt(store, iter, FILE_PRIORITY_SORT_COLUMN,
-                prioritySortKey(priority));
-    }
-
-    static int prioritySortKey(String priority) {
-        if (priority == null) {
-            return 0;
+    private void requestCurrentFilePreview() {
+        URI source = currentFilePreviewSource();
+        if (source == null) {
+            return;
         }
-        return switch (priority.toLowerCase(java.util.Locale.ROOT)) {
-            case "low" -> 1;
-            case "normal" -> 2;
-            case "high" -> 3;
-            default -> 0;
-        };
+        Download.Protocol protocol = Download.Protocol.fromUri(source);
+        if (protocol != Download.Protocol.TORRENT
+                && protocol != Download.Protocol.MAGNET
+                && protocol != Download.Protocol.METALINK) {
+            return;
+        }
+        if (source.equals(loadedPreviewSource) && !FileTreeSupport.allIndexes(filesListstore).isEmpty()) {
+            return;
+        }
+
+        long epoch = ++previewEpoch;
+        FileTreeSupport.clear(filesListstore, fileRows);
+        updateSelectAll(false, false, false);
+        filesStatusLabel.setLabel(protocol == Download.Protocol.MAGNET
+                ? "Retrieving magnet metadata from peers…"
+                : "Reading descriptor files…");
+        previewLoading = true;
+        refreshStartSensitivity();
+        CompletableFuture<java.util.List<org.manager.download.DownloadFileInfo>> preview =
+                downloadManager.previewDownloadFiles(source, selectedPreviewProxy());
+        if (preview == null) {
+            preview = CompletableFuture.completedFuture(java.util.List.of());
+        }
+        preview.whenComplete((files, error) -> UiThread.marshal(() -> {
+            if (epoch != previewEpoch) {
+                return;
+            }
+            previewLoading = false;
+            if (error != null) {
+                filesStatusLabel.setLabel("Could not load file metadata: " + rootMessage(error)
+                        + ". Starting the download will include all files.");
+                LOGGER.warn("File metadata preview failed for " + source, error);
+                refreshStartSensitivity();
+                return;
+            }
+            showPreviewFiles(source, files);
+        }));
+    }
+
+    private String selectedPreviewProxy() {
+        return DialogOptions.selectedProxyAddress(torSwitch.getActive(),
+                (int) proxyTypeCombo.getSelected(), proxyHostEntry.getText(),
+                (int) proxyPortSpin.getValue(), proxyUsernameEntry.getText(),
+                proxyPasswordEntry.getText());
+    }
+
+    private URI currentFilePreviewSource() {
+        if (selectedTorrentFile != null) {
+            return selectedTorrentFile.toUri();
+        }
+        return safeCurrentUri();
+    }
+
+    private void showPreviewFiles(URI source,
+            java.util.List<org.manager.download.DownloadFileInfo> files) {
+        java.util.List<FileTreeSupport.Entry> rows = new java.util.ArrayList<>();
+        long totalSize = 0;
+        for (org.manager.download.DownloadFileInfo file : files) {
+            rows.add(new FileTreeSupport.Entry(true, file.path(), file.length(), 0,
+                    file.index(), FileTreeSupport.PRIORITY_NORMAL));
+            totalSize += file.length();
+        }
+        boolean changed = FileTreeSupport.reconcile(filesListstore, fileRows, rows, null);
+        if (changed) {
+            FileTreeSupport.expandTopLevel(filesTreeview, filesListstore);
+        }
+        loadedPreviewSource = source;
+        boolean available = !rows.isEmpty();
+        updateSelectAll(available, available, false);
+        filesStatusLabel.setLabel(available
+                ? rows.size() + " file(s), " + DownloadFormats.size(totalSize)
+                        + " — uncheck files you do not want."
+                : "No selectable files were found in this source.");
+        refreshStartSensitivity();
+    }
+
+    private void showSingleUrlFile(URI uri) {
+        String path = uri.getPath();
+        String name = path == null || path.isBlank()
+                ? uri.getHost() : DetailTabsPresenter.fileName(path);
+        showPreviewFiles(uri, java.util.List.of(
+                new org.manager.download.DownloadFileInfo(1, name, 0)));
+        selectAllFilesCheck.setSensitive(false);
+        filesStatusLabel.setLabel("Single-file download");
+    }
+
+    private void onFileSelectionToggled(String path) {
+        if (!FileTreeSupport.toggleSelection(filesListstore, path)) {
+            return;
+        }
+        updateSelectionSummary();
+    }
+
+    private void onSelectAllFilesToggled() {
+        if (updatingSelectAll) {
+            return;
+        }
+        FileTreeSupport.selectAll(filesListstore, selectAllFilesCheck.getActive());
+        updateSelectionSummary();
+    }
+
+    private void updateSelectionSummary() {
+        int selected = FileTreeSupport.selectedIndexes(filesListstore).size();
+        int total = FileTreeSupport.allIndexes(filesListstore).size();
+        updateSelectAll(total > 0 && selected == total, total > 0,
+                selected > 0 && selected < total);
+        filesStatusLabel.setLabel(selected == 0 && total > 0
+                ? "Select at least one file to start the download."
+                : selected + " of " + total + " file(s) selected");
+        refreshStartSensitivity();
+    }
+
+    private void updateSelectAll(boolean active, boolean sensitive, boolean inconsistent) {
+        updatingSelectAll = true;
+        try {
+            selectAllFilesCheck.setActive(active);
+            selectAllFilesCheck.setInconsistent(inconsistent);
+            selectAllFilesCheck.setSensitive(sensitive);
+        } finally {
+            updatingSelectAll = false;
+        }
+    }
+
+    private void invalidateFilePreview() {
+        previewEpoch++;
+        previewLoading = false;
+        loadedPreviewSource = null;
+        FileTreeSupport.clear(filesListstore, fileRows);
+        updateSelectAll(false, false, false);
+        // A superseded asynchronous preview will deliberately ignore its
+        // completion callback. Restore the button here so editing the source
+        // cannot leave Start disabled forever.
+        refreshStartSensitivity();
+    }
+
+    /** Keeps Start unavailable while work is active or a descriptor selects no files. */
+    private void refreshStartSensitivity() {
+        boolean hasPreviewFiles = loadedPreviewSource != null
+                && !FileTreeSupport.allIndexes(filesListstore).isEmpty();
+        boolean hasValidSelection = !hasPreviewFiles
+                || !FileTreeSupport.selectedIndexes(filesListstore).isEmpty();
+        startButton.setSensitive(!previewLoading && !submissionInFlight && hasValidSelection);
+    }
+
+    private void releaseFilePreviewRows() {
+        previewEpoch++;
+        FileTreeSupport.freeReferences(fileRows);
+    }
+
+    private void closeDialog() {
+        releaseFilePreviewRows();
+        dialog.close();
     }
 
     private void updateDiskSpace(String dir) {
@@ -396,16 +552,19 @@ public class NewDownloadDialog {
                 registerChecksumVerification(download);
             }
             pendingDownload = download;
-            startButton.setSensitive(false);
+            submissionInFlight = true;
+            refreshStartSensitivity();
             AccessibilitySupport.status(diskSpaceLabel, "Adding download to queue…");
             Download submitted = download;
             downloadManager.queueDownload(download).whenComplete((ignored, error) ->
                     UiThread.marshal(() -> {
                         if (error == null) {
                             pendingDownload = null;
+                            submissionInFlight = false;
                             finishSubmission(submitted);
                         } else {
-                            startButton.setSensitive(true);
+                            submissionInFlight = false;
+                            refreshStartSensitivity();
                             AccessibilitySupport.status(diskSpaceLabel,
                                     "Could not add to queue: " + rootMessage(error)
                                             + ". Press Start to retry.",
@@ -414,6 +573,8 @@ public class NewDownloadDialog {
                         }
                     }));
         } catch (IllegalArgumentException e) {
+            submissionInFlight = false;
+            refreshStartSensitivity();
             LOGGER.warn("New download rejected: " + e.getMessage());
             urlEntry.getStyleContext().addClass("error");
             AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + e.getMessage(),
@@ -529,6 +690,42 @@ public class NewDownloadDialog {
                 (int) retryLimitSpin.getValue(),
                 (int) retryAfterSpin.getValue(),
                 referrerEntry.getText(), userAgentEntry.getText(), cookieEntry.getText());
+
+        applyFileChoices(download);
+    }
+
+    /** Applies the checked descriptor indexes and persists the displayed priorities. */
+    private void applyFileChoices(Download download) {
+        if (!(download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings)
+                || !java.util.Objects.equals(currentFilePreviewSource(), loadedPreviewSource)) {
+            return;
+        }
+        Download.Protocol protocol = download.getProtocol();
+        if (protocol != Download.Protocol.TORRENT
+                && protocol != Download.Protocol.MAGNET
+                && protocol != Download.Protocol.METALINK) {
+            return;
+        }
+        java.util.List<Integer> all = FileTreeSupport.allIndexes(filesListstore);
+        java.util.List<Integer> selected = FileTreeSupport.selectedIndexes(filesListstore);
+        if (all.isEmpty()) {
+            return;
+        }
+        if (selected.isEmpty()) {
+            throw new IllegalArgumentException("Select at least one file to download.");
+        }
+        if (selected.size() == all.size()) {
+            aria2Settings.setSelectedFiles(null);
+        } else {
+            aria2Settings.setSelectedFiles(encodeFileSelection(selected));
+        }
+        aria2Settings.setFilePriorities(FileTreeSupport.priorities(filesListstore));
+    }
+
+    static String encodeFileSelection(java.util.List<Integer> indexes) {
+        return indexes.stream().filter(index -> index != null && index > 0)
+                .distinct().sorted().map(String::valueOf)
+                .collect(java.util.stream.Collectors.joining(","));
     }
 
     private String currentDefaultDirectory() {

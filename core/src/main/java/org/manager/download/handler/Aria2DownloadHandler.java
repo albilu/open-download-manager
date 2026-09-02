@@ -31,6 +31,8 @@ import org.aria2.Aria2NotificationListener;
 import org.aria2.Aria2Settings;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
+import org.manager.download.DescriptorFileInspector;
+import org.manager.download.DownloadFileInfo;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.tools.ToolManagerFactory;
 import org.manager.util.DescriptorStaging;
@@ -1815,6 +1817,141 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
         }
         return files;
+    }
+
+    /**
+     * Resolves descriptor contents without registering an ODM download. Local
+     * and remote descriptors are parsed directly. A magnet has no file list
+     * until its metadata arrives, so aria2 downloads metadata only into an
+     * owned temporary directory; the temporary RPC result and files are
+     * removed in all outcomes.
+     */
+    public CompletableFuture<List<DownloadFileInfo>> previewDownloadFiles(URI source) {
+        return previewDownloadFiles(source, null);
+    }
+
+    public CompletableFuture<List<DownloadFileInfo>> previewDownloadFiles(
+            URI source, String proxyAddress) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String effectiveProxy = proxyAddress != null && !proxyAddress.isBlank()
+                        ? proxyAddress
+                        : globalSettings.isGlobalProxyEnabled()
+                                ? globalSettings.getGlobalProxyAddress() : null;
+                Download.Protocol protocol = Download.Protocol.fromUri(source);
+                return switch (protocol) {
+                    case TORRENT, METALINK -> DescriptorFileInspector.inspect(
+                            readPreviewDescriptor(source, effectiveProxy), protocol);
+                    case MAGNET -> {
+                        if (DownloadHandlerFactory.isSocksProxyAddress(effectiveProxy)) {
+                            throw new IOException("Magnet metadata preview cannot use the selected "
+                                    + "SOCKS/Tor route without starting its proxychains transfer");
+                        }
+                        ensureInitialized();
+                        yield previewMagnetFiles(source, effectiveProxy);
+                    }
+                    default -> List.of();
+                };
+            } catch (Exception e) {
+                throw new java.util.concurrent.CompletionException(
+                        "Could not inspect download files: " + e.getMessage(), e);
+            }
+        }, executor);
+    }
+
+    private byte[] readPreviewDescriptor(URI source, String proxyAddress) throws IOException {
+        String scheme = source.getScheme();
+        if ("file".equalsIgnoreCase(scheme)) {
+            return readLocalFile(Paths.get(source), "Descriptor");
+        }
+        if ("torrent".equalsIgnoreCase(scheme) || "metalink".equalsIgnoreCase(scheme)) {
+            return readLocalFile(Paths.get(source.getSchemeSpecificPart()), "Descriptor");
+        }
+        if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+            return org.manager.tools.BoundedHttpFetcher.fetch(source,
+                    DescriptorFileInspector.MAX_DESCRIPTOR_BYTES,
+                    Duration.ofSeconds(30), Duration.ofSeconds(60), proxyAddress);
+        }
+        throw new IOException("Unsupported descriptor source URI: " + source);
+    }
+
+    private List<DownloadFileInfo> previewMagnetFiles(URI source, String proxyAddress)
+            throws Exception {
+        Path previewDirectory = Files.createTempDirectory("odm-magnet-preview-");
+        String gid = null;
+        try {
+            Map<String, Object> options = new HashMap<>();
+            options.put("dir", previewDirectory.toString());
+            options.put("bt-metadata-only", "true");
+            options.put("bt-save-metadata", "true");
+            options.put("file-allocation", "none");
+            options.put("seed-time", "0");
+            if (proxyAddress != null && !proxyAddress.isBlank()) {
+                options.put("all-proxy", proxyAddress);
+            }
+            gid = aria2Client.addUriRpc(source.toString(), options);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+            while (System.nanoTime() < deadline) {
+                Path descriptor = firstTorrentDescriptor(previewDirectory);
+                if (descriptor != null) {
+                    return DescriptorFileInspector.inspect(
+                            readLocalFile(descriptor, "Magnet metadata"),
+                            Download.Protocol.TORRENT);
+                }
+
+                String statusJson = aria2Client.tellStatus(gid,
+                        new String[]{"status", "errorCode", "errorMessage"});
+                @SuppressWarnings("unchecked")
+                Map<String, Object> status = objectMapper.readValue(statusJson, Map.class);
+                if ("error".equals(status.get("status"))) {
+                    throw new IOException(String.valueOf(status.getOrDefault("errorMessage",
+                            "aria2 could not retrieve magnet metadata")));
+                }
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Magnet metadata preview was interrupted");
+                }
+                Thread.sleep(250);
+            }
+            throw new IOException("Timed out waiting for magnet metadata");
+        } finally {
+            cleanupPreviewResult(gid);
+            deletePreviewDirectory(previewDirectory);
+        }
+    }
+
+    private static Path firstTorrentDescriptor(Path directory) throws IOException {
+        try (java.util.stream.Stream<Path> paths = Files.list(directory)) {
+            return paths.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString()
+                            .toLowerCase(java.util.Locale.ROOT).endsWith(".torrent"))
+                    .findFirst().orElse(null);
+        }
+    }
+
+    private void cleanupPreviewResult(String gid) {
+        if (gid == null) {
+            return;
+        }
+        try {
+            aria2Client.forceRemove(gid);
+        } catch (Exception e) {
+            LOGGER.debug("Metadata preview GID was already stopped: " + gid, e);
+        }
+        try {
+            aria2Client.removeDownloadResult(gid);
+        } catch (Exception e) {
+            LOGGER.debug("Could not remove metadata preview result: " + gid, e);
+        }
+    }
+
+    private void deletePreviewDirectory(Path directory) {
+        try (java.util.stream.Stream<Path> paths = Files.walk(directory)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Could not remove magnet metadata preview directory " + directory, e);
+        }
     }
 
     /**

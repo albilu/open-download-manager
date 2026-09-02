@@ -76,6 +76,8 @@ class DescriptorImportTest {
                 Path destination) { throw unsupported(); }
         @Override public List<Map<String, Object>> getDownloadPeers(Download download) { throw unsupported(); }
         @Override public List<Map<String, Object>> getDownloadFiles(Download download) { throw unsupported(); }
+        @Override public CompletableFuture<List<DownloadFileInfo>> previewDownloadFiles(
+                URI source, String proxyAddress) { throw unsupported(); }
         @Override public List<List<String>> getDownloadTrackers(Download download) { throw unsupported(); }
         @Override public void setDownloadGate(java.util.function.Predicate<String> gate) { throw unsupported(); }
 

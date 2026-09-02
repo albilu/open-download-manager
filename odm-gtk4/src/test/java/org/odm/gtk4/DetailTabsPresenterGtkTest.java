@@ -19,6 +19,8 @@ import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeRowReference;
 import org.gnome.gtk.TreeSortable;
+import org.gnome.gtk.TreeStore;
+import org.gnome.gtk.TreeView;
 import org.javagi.interop.MemoryCleaner;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -54,12 +56,12 @@ class DetailTabsPresenterGtkTest {
     private DownloadManager manager;
     private ListStore trackersStore;
     private ListStore peersStore;
-    private ListStore filesStore;
+    private TreeStore filesStore;
     private ListStore completionDetailsStore;
     private final AtomicReference<Download> selection = new AtomicReference<>();
     private DetailTabsPresenter presenter;
 
-    private record PresenterFixture(ListStore trackers, ListStore peers, ListStore files,
+    private record PresenterFixture(ListStore trackers, ListStore peers, TreeStore files,
             ListStore completionDetails, DetailTabsPresenter presenter) {
     }
 
@@ -93,11 +95,12 @@ class DetailTabsPresenterGtkTest {
             GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
             ListStore trackers = Widgets.require(builder, "trackers_store", ListStore.class);
             ListStore peers = Widgets.require(builder, "peers_store", ListStore.class);
-            ListStore files = Widgets.require(builder, "files_store", ListStore.class);
+            TreeStore files = Widgets.require(builder, "files_store", TreeStore.class);
+            TreeView filesView = Widgets.require(builder, "files_view", TreeView.class);
             ListStore completionDetails = Widgets.require(builder,
                     "completion_details_store", ListStore.class);
             return new PresenterFixture(trackers, peers, files, completionDetails,
-                    new DetailTabsPresenter(manager, trackers, peers, files,
+                    new DetailTabsPresenter(manager, trackers, peers, files, filesView,
                             completionDetails, selection::get));
         });
         trackersStore = fixture.trackers();
@@ -226,7 +229,11 @@ class DetailTabsPresenterGtkTest {
         });
         awaitTrue(() -> {
             try {
-                return onLoop(() -> filesStore.iterNChildren(null)) == 2;
+                return onLoop(() -> {
+                    TreeIter folder = new TreeIter();
+                    return filesStore.getIterFirst(folder)
+                            && filesStore.iterNChildren(folder) == 2;
+                });
             } catch (Exception e) {
                 return false;
             }
@@ -234,16 +241,16 @@ class DetailTabsPresenterGtkTest {
 
         assertEquals("nine-kib.bin", onLoop(() -> {
             ((TreeSortable) filesStore).setSortColumnId(7, SortType.ASCENDING);
-            return firstValue(filesStore, 1);
+            return firstChildValue(filesStore, 1);
         }), "9 KiB must sort before 10 KiB by raw byte length");
 
         assertEquals("nine-kib.bin", onLoop(() -> {
             ((TreeSortable) filesStore).setSortColumnId(8, SortType.DESCENDING);
-            return firstValue(filesStore, 1);
+            return firstChildValue(filesStore, 1);
         }), "97.66% must sort above 10.00% by precise progress");
 
         assertEquals("season/nine-kib.bin",
-                onLoop(() -> firstValue(filesStore,
+                onLoop(() -> firstChildValue(filesStore,
                         DetailTabsPresenter.FILE_PATH_COLUMN)),
                 "the hidden path must remain available for reveal-in-folder actions");
     }
@@ -265,7 +272,7 @@ class DetailTabsPresenterGtkTest {
         });
         awaitTrue(() -> {
             try {
-                return "10.00%".equals(onLoop(() -> firstValue(filesStore, 6)));
+                return "10.00%".equals(onLoop(() -> firstTreeValue(filesStore, 6)));
             } catch (Exception e) {
                 return false;
             }
@@ -283,7 +290,7 @@ class DetailTabsPresenterGtkTest {
             onLoop(presenter::load);
             awaitTrue(() -> {
                 try {
-                    return "50.00%".equals(onLoop(() -> firstValue(filesStore, 6)));
+                    return "50.00%".equals(onLoop(() -> firstTreeValue(filesStore, 6)));
                 } catch (Exception e) {
                     return false;
                 }
@@ -417,6 +424,18 @@ class DetailTabsPresenterGtkTest {
     private static String firstValue(ListStore store, int column) {
         TreeIter iter = new TreeIter();
         return store.getIterFirst(iter) ? ListStoreCells.getString(store, iter, column) : null;
+    }
+
+    private static String firstTreeValue(TreeStore store, int column) {
+        TreeIter iter = new TreeIter();
+        return store.getIterFirst(iter) ? TreeStoreCells.getString(store, iter, column) : null;
+    }
+
+    private static String firstChildValue(TreeStore store, int column) {
+        TreeIter parent = new TreeIter();
+        TreeIter child = new TreeIter();
+        return store.getIterFirst(parent) && store.iterChildren(child, parent)
+                ? TreeStoreCells.getString(store, child, column) : null;
     }
 
     private void awaitStoreEquals(List<String> expected, String message) throws Exception {

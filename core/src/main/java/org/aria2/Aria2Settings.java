@@ -34,6 +34,34 @@ public class Aria2Settings extends DownloadSettings {
     private int btRequestPeerSpeedLimit = 50; // KB/s
     private boolean seedRatio = false;
     private double seedTime = 0.0; // minutes
+    /** UI-level per-file priority metadata keyed by aria2's stable file index. */
+    private Map<Integer, String> filePriorities = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Returns a detached snapshot of the per-file priorities. */
+    public Map<Integer, String> getFilePriorities() {
+        return Map.copyOf(filePriorities);
+    }
+
+    /** Restores or replaces the per-file priorities persisted with this download. */
+    public void setFilePriorities(Map<Integer, String> priorities) {
+        filePriorities.clear();
+        if (priorities != null) {
+            priorities.forEach((index, priority) -> {
+                if (index != null && index > 0 && priority != null && !priority.isBlank()) {
+                    filePriorities.put(index, priority);
+                }
+            });
+        }
+    }
+
+    /** Sets aria2's selected file indexes, or restores the all-files default. */
+    public void setSelectedFiles(String indexes) {
+        if (indexes == null || indexes.isBlank()) {
+            clearOption("select-file");
+        } else {
+            setOption("select-file", indexes);
+        }
+    }
 
     /**
      * Gets the maximum number of connections per server.
@@ -704,6 +732,7 @@ public class Aria2Settings extends DownloadSettings {
         copy.btRequestPeerSpeedLimit = this.btRequestPeerSpeedLimit;
         copy.seedRatio = this.seedRatio;
         copy.seedTime = this.seedTime;
+        copy.filePriorities.putAll(this.filePriorities);
 
         return copy;
     }

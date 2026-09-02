@@ -89,6 +89,8 @@ class SqliteDownloadStateStoreTest {
         settings.setUseProxy(true);
         settings.setProxyAddress("socks5://127.0.0.1:9050");
         settings.setConnections(12);
+        settings.setSelectedFiles("1,3");
+        settings.setFilePriorities(Map.of(1, "High", 3, "Low"));
 
         try (SqliteDownloadStateStore store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
             store.save(List.of(original), Set.of());
@@ -124,6 +126,9 @@ class SqliteDownloadStateStoreTest {
             assertEquals("Cookie: session=1", restoredSettings.getOption("header"));
             assertEquals("socks5://127.0.0.1:9050", restoredSettings.getProxyAddress());
             assertEquals(12, restoredSettings.getConnections());
+            assertEquals("1,3", restoredSettings.getOption("select-file"));
+            assertEquals(Map.of(1, "High", 3, "Low"),
+                    restoredSettings.getFilePriorities());
         }
     }
 

@@ -172,6 +172,18 @@ public interface DownloadOperations {
     List<Map<String, Object>> getDownloadFiles(Download download);
 
     /**
+     * Resolves descriptor files using the proxy selected in a creation
+     * dialog. Implementations must not add a visible download or leave a
+     * transfer running after the preview completes.
+     *
+     * @param source descriptor or magnet URI
+     * @param proxyAddress explicit proxy URI, or {@code null} for manager defaults
+     * @return asynchronously discovered file metadata
+     */
+    CompletableFuture<List<DownloadFileInfo>> previewDownloadFiles(
+            URI source, String proxyAddress);
+
+    /**
      * Fetches the tracker announce tiers of a BitTorrent download.
      *
      * @param download the download

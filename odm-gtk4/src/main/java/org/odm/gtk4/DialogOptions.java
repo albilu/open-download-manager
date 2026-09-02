@@ -86,6 +86,13 @@ final class DialogOptions {
         }
     }
 
+    /** Returns the proxy route represented by the dialog controls. */
+    static String selectedProxyAddress(boolean torActive, int typeIndex,
+            String host, int port, String user, String password) {
+        return torActive ? "socks5h://127.0.0.1:9050"
+                : buildProxyAddress(typeIndex, host, port, user, password);
+    }
+
     /**
      * Applies the proxy selection to a download: Tor SOCKS wins over the
      * explicit proxy fields; an empty host clears proxying.
@@ -100,18 +107,7 @@ final class DialogOptions {
      */
     static void applyProxy(Download download, boolean torActive, int typeIndex,
             String host, int port, String user, String password) {
-        if (torActive) {
-            download.setUseProxy(true);
-            download.setProxyAddress("socks5h://127.0.0.1:9050");
-            return;
-        }
-        if (typeIndex <= 0 || typeIndex >= PROXY_TYPES.length
-                || host == null || host.isBlank()) {
-            download.setUseProxy(false);
-            download.setProxyAddress(null);
-            return;
-        }
-        String proxy = buildProxyAddress(typeIndex, host, port, user, password);
+        String proxy = selectedProxyAddress(torActive, typeIndex, host, port, user, password);
         if (proxy != null) {
             download.setUseProxy(true);
             download.setProxyAddress(proxy);

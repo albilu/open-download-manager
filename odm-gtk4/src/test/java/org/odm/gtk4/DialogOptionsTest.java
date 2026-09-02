@@ -9,6 +9,18 @@ import org.junit.jupiter.api.Test;
 class DialogOptionsTest {
 
     @Test
+    void previewProxyUsesTorOrTheExplicitDialogProxy() {
+        assertEquals("socks5h://127.0.0.1:9050",
+                DialogOptions.selectedProxyAddress(true, 1,
+                        "proxy.example", 8080, "", ""));
+        assertEquals("http://user:secret@proxy.example:8080",
+                DialogOptions.selectedProxyAddress(false, 1,
+                        "proxy.example", 8080, "user", "secret"));
+        assertNull(DialogOptions.selectedProxyAddress(false, 0,
+                "proxy.example", 8080, "", ""));
+    }
+
+    @Test
     void appliesOnlyCapabilitiesTheEngineActuallySupports() {
         CurlSettings settings = new CurlSettings();
 

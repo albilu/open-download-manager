@@ -434,6 +434,25 @@ class Aria2SettingsTest {
     }
 
     @Test
+    @DisplayName("File selection reaches aria2 while UI priorities remain persisted metadata")
+    void fileSelectionAndPriorityMetadata() {
+        settings.setSelectedFiles("1,3");
+        settings.setFilePriorities(Map.of(1, "High", 2, "Low", 0, "ignored"));
+
+        assertEquals("1,3", settings.toRpcOptions().get("select-file"));
+        assertEquals(Map.of(1, "High", 2, "Low"), settings.getFilePriorities());
+        assertFalse(settings.toRpcOptions().containsKey("file-priorities"));
+
+        Aria2Settings copy = (Aria2Settings) settings.copy();
+        assertEquals(settings.getFilePriorities(), copy.getFilePriorities());
+        copy.setFilePriorities(Map.of(3, "Normal"));
+        assertEquals(Map.of(1, "High", 2, "Low"), settings.getFilePriorities());
+
+        settings.setSelectedFiles(null);
+        assertFalse(settings.toRpcOptions().containsKey("select-file"));
+    }
+
+    @Test
     @DisplayName("Should inherit from DownloadSettings")
     void shouldInheritFromDownloadSettings() {
         assertTrue(settings instanceof DownloadSettings);

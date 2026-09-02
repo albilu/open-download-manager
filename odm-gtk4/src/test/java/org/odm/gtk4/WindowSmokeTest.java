@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BooleanSupplier;
 import org.gnome.gdk.Rectangle;
 import org.gnome.glib.MainContext;
@@ -49,6 +50,7 @@ import org.gnome.gtk.TreeViewColumnSizing;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeSortable;
+import org.gnome.gtk.TreeStore;
 import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
 import org.javagi.base.Out;
@@ -109,10 +111,11 @@ class WindowSmokeTest {
         assertFalse(enabledContextItem.hasCssClass("odm-context-menu-item-hover"));
         // stores
         for (String id : new String[]{"status_store", "category_store", "download_store",
-                "files_store", "completion_details_store", "global_progress_store",
+                "completion_details_store", "global_progress_store",
                 "peers_store", "trackers_store"}) {
             Widgets.require(builder, id, ListStore.class);
         }
+        Widgets.require(builder, "files_store", TreeStore.class);
         // side panel treeviews + columns
         ScrolledWindow statusScrolled = Widgets.require(builder,
                 "status_scrolled_window", ScrolledWindow.class);
@@ -277,16 +280,16 @@ class WindowSmokeTest {
         Widgets.require(builder, "trackers_view", TreeView.class);
         Widgets.require(builder, "peers_view", TreeView.class);
         Widgets.require(builder, "files_view", TreeView.class);
-        ListStore detailFilesStore = Widgets.require(builder, "files_store", ListStore.class);
-        assertEquals(10, detailFilesStore.getNColumns(),
-                "detail files need raw sort keys and a hidden full path");
+        TreeStore detailFilesStore = Widgets.require(builder, "files_store", TreeStore.class);
+        assertEquals(FileTreeSupport.COLUMN_COUNT, detailFilesStore.getNColumns(),
+                "detail files need hierarchy, aggregate state, sort keys, and full paths");
         TreeViewColumn filesNameColumn = Widgets.require(builder,
                 "files_name_column", TreeViewColumn.class);
         assertEquals(420, filesNameColumn.getMaxWidth(),
                 "the detail file name column must not grow without bound");
         String[] detailFileColumnIds = {"files_selected_column", "files_name_column",
                 "files_size_column", "files_progress_column", "files_priority_column"};
-        int[] detailFileSortIds = {0, 1, 7, 8, 4};
+        int[] detailFileSortIds = {0, 1, 7, 8, 12};
         for (int index = 0; index < detailFileColumnIds.length; index++) {
             assertEquals(detailFileSortIds[index], Widgets.require(builder,
                     detailFileColumnIds[index], TreeViewColumn.class).getSortColumnId(),
@@ -423,12 +426,14 @@ class WindowSmokeTest {
         Widgets.require(builder, "disk_space_label", Label.class);
         Widgets.require(builder, "filename_entry", Entry.class);
         Widgets.require(builder, "files_treeview", TreeView.class);
-        ListStore filesStore = Widgets.require(builder, "files_liststore", ListStore.class);
-        assertEquals(6, filesStore.getNColumns(),
-                "new-download files need raw size and priority sort keys");
+        Widgets.require(builder, "files_status_label", Label.class);
+        Widgets.require(builder, "select_all_files_check", CheckButton.class);
+        TreeStore filesStore = Widgets.require(builder, "files_liststore", TreeStore.class);
+        assertEquals(FileTreeSupport.COLUMN_COUNT, filesStore.getNColumns(),
+                "new-download files need the shared hierarchical file schema");
         String[] fileColumnIds = {"new_files_selected_column", "new_files_name_column",
                 "new_files_size_column", "new_files_priority_column"};
-        int[] fileSortIds = {0, 1, 4, 5};
+        int[] fileSortIds = {0, 1, 7, 12};
         for (int index = 0; index < fileColumnIds.length; index++) {
             assertEquals(fileSortIds[index], Widgets.require(builder,
                     fileColumnIds[index], TreeViewColumn.class).getSortColumnId(),
@@ -777,21 +782,73 @@ class WindowSmokeTest {
         assertEquals("mp4", ListStoreCells.getString(importStore, first, 2));
 
         GtkBuilder downloadBuilder = UiLoader.load("/ui/new-download.ui");
-        ListStore filesStore = Widgets.require(downloadBuilder, "files_liststore", ListStore.class);
-        NewDownloadDialog.appendFileInfo(filesStore, true,
-                "ten-kib.bin", 10 * 1024L, "Normal");
-        NewDownloadDialog.appendFileInfo(filesStore, true,
-                "nine-kib.bin", 9 * 1024L, "High");
+        TreeStore filesStore = Widgets.require(downloadBuilder,
+                "files_liststore", TreeStore.class);
+        java.util.Map<String, org.gnome.gtk.TreeRowReference> rows = new java.util.HashMap<>();
+        FileTreeSupport.reconcile(filesStore, rows, List.of(
+                new FileTreeSupport.Entry(true, "ten-kib.bin", 10 * 1024L, 0, 1, "Normal"),
+                new FileTreeSupport.Entry(true, "nine-kib.bin", 9 * 1024L, 0, 2, "High")), null);
 
-        ((TreeSortable) filesStore).setSortColumnId(4, SortType.ASCENDING);
+        ((TreeSortable) filesStore).setSortColumnId(7, SortType.ASCENDING);
         assertTrue(filesStore.getIterFirst(first));
-        assertEquals("nine-kib.bin", ListStoreCells.getString(filesStore, first, 1),
+        assertEquals("nine-kib.bin", TreeStoreCells.getString(filesStore, first, 1),
                 "numeric size sorting must not use the rendered size text");
 
-        ((TreeSortable) filesStore).setSortColumnId(5, SortType.DESCENDING);
+        ((TreeSortable) filesStore).setSortColumnId(12, SortType.DESCENDING);
         assertTrue(filesStore.getIterFirst(first));
-        assertEquals("nine-kib.bin", ListStoreCells.getString(filesStore, first, 1),
+        assertEquals("nine-kib.bin", TreeStoreCells.getString(filesStore, first, 1),
                 "High priority must sort above Normal priority");
+        FileTreeSupport.freeReferences(rows);
+    }
+
+    @Test
+    @DisplayName("shared file trees build folders and propagate selection and priority")
+    void hierarchicalFileTreeInteractions() {
+        GtkBuilder builder = UiLoader.load("/ui/new-download.ui");
+        TreeStore store = Widgets.require(builder, "files_liststore", TreeStore.class);
+        java.util.Map<String, org.gnome.gtk.TreeRowReference> rows = new java.util.HashMap<>();
+        try {
+            FileTreeSupport.reconcile(store, rows, List.of(
+                    new FileTreeSupport.Entry(true,
+                            "/downloads/Show/Season 1/one.mkv", 100, 25, 1, "Normal"),
+                    new FileTreeSupport.Entry(false,
+                            "/downloads/Show/Season 1/two.mkv", 200, 50, 2, "Low"),
+                    new FileTreeSupport.Entry(true,
+                            "/downloads/Show/readme.txt", 10, 10, 3, "Normal")),
+                    java.nio.file.Path.of("/downloads"));
+
+            TreeIter root = new TreeIter();
+            assertTrue(store.getIterFirst(root));
+            assertEquals("Show", TreeStoreCells.getString(store, root,
+                    FileTreeSupport.NAME_COLUMN));
+            assertTrue(TreeStoreCells.getBoolean(store, root,
+                    FileTreeSupport.FOLDER_COLUMN));
+            assertTrue(TreeStoreCells.getBoolean(store, root,
+                    FileTreeSupport.INCONSISTENT_COLUMN));
+            assertEquals(310L, TreeStoreCells.getLong(store, root,
+                    FileTreeSupport.SIZE_SORT_COLUMN));
+
+            assertTrue(FileTreeSupport.toggleSelection(store, "0:0"));
+            assertEquals(List.of(1, 2, 3), FileTreeSupport.selectedIndexes(store));
+            assertFalse(TreeStoreCells.getBoolean(store, root,
+                    FileTreeSupport.INCONSISTENT_COLUMN));
+
+            FileTreeSupport.setPriority(store, "0", "High");
+            assertEquals(Map.of(1, "High", 2, "High", 3, "High"),
+                    FileTreeSupport.priorities(store));
+
+            FileTreeSupport.selectAll(store, false);
+            assertEquals(List.of(), FileTreeSupport.selectedIndexes(store));
+            assertTrue(FileTreeSupport.toggleSelection(store, "0:0:0"));
+            assertEquals(List.of(1), FileTreeSupport.selectedIndexes(store));
+            assertTrue(TreeStoreCells.getBoolean(store, root,
+                    FileTreeSupport.INCONSISTENT_COLUMN));
+
+            assertEquals("2,3,7", NewDownloadDialog.encodeFileSelection(
+                    List.of(7, 3, 2, 3)));
+        } finally {
+            FileTreeSupport.freeReferences(rows);
+        }
     }
 
     @Test
