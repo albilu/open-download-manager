@@ -32,7 +32,6 @@ class ClipboardSettingsTest {
             assertFalse(settings.isMonitoringEnabled(), "Monitoring should be disabled by default");
             assertFalse(settings.isSilentMode(), "Silent mode should be disabled by default");
             assertEquals(500, settings.getMonitoringIntervalMs(), "Default monitoring interval should be 500ms");
-            assertFalse(settings.isAutoDownloadDetectedUrls(), "Auto download should be disabled by default");
             assertTrue(settings.isFilterVideoUrls(), "Video URL filtering should be enabled by default");
             assertTrue(settings.isFilterTorrentUrls(), "Torrent URL filtering should be enabled by default");
             assertTrue(settings.isFilterDirectDownloads(), "Direct download filtering should be enabled by default");
@@ -79,15 +78,6 @@ class ClipboardSettingsTest {
             assertThrows(IllegalArgumentException.class,
                     () -> settings.setMonitoringIntervalMs(interval),
                     "Should throw exception for interval: " + interval);
-        }
-
-        @Test
-        @DisplayName("Should set auto download correctly")
-        void testSetAutoDownloadDetectedUrls() {
-            ClipboardSettings result = settings.setAutoDownloadDetectedUrls(true);
-
-            assertTrue(settings.isAutoDownloadDetectedUrls(), "Auto download should be enabled");
-            assertSame(settings, result, "Should return same instance for chaining");
         }
 
         @Test
@@ -156,7 +146,6 @@ class ClipboardSettingsTest {
                     .setMonitoringEnabled(true)
                     .setSilentMode(true)
                     .setMonitoringIntervalMs(1000)
-                    .setAutoDownloadDetectedUrls(true)
                     .setFilterVideoUrls(false)
                     .setFilterTorrentUrls(false)
                     .setFilterDirectDownloads(false)
@@ -167,7 +156,6 @@ class ClipboardSettingsTest {
             assertTrue(settings.isMonitoringEnabled());
             assertTrue(settings.isSilentMode());
             assertEquals(1000, settings.getMonitoringIntervalMs());
-            assertTrue(settings.isAutoDownloadDetectedUrls());
             assertFalse(settings.isFilterVideoUrls());
             assertFalse(settings.isFilterTorrentUrls());
             assertFalse(settings.isFilterDirectDownloads());
@@ -187,7 +175,6 @@ class ClipboardSettingsTest {
             settings.setMonitoringEnabled(true)
                     .setSilentMode(true)
                     .setMonitoringIntervalMs(1000)
-                    .setAutoDownloadDetectedUrls(true)
                     .setMaxUrlsPerClipboard(5);
 
             ClipboardSettings copy = new ClipboardSettings(settings);
@@ -195,7 +182,6 @@ class ClipboardSettingsTest {
             assertEquals(settings.isMonitoringEnabled(), copy.isMonitoringEnabled());
             assertEquals(settings.isSilentMode(), copy.isSilentMode());
             assertEquals(settings.getMonitoringIntervalMs(), copy.getMonitoringIntervalMs());
-            assertEquals(settings.isAutoDownloadDetectedUrls(), copy.isAutoDownloadDetectedUrls());
             assertEquals(settings.getMaxUrlsPerClipboard(), copy.getMaxUrlsPerClipboard());
 
             // Should be different instances
@@ -292,7 +278,6 @@ class ClipboardSettingsTest {
             settings.setMonitoringEnabled(true)
                     .setSilentMode(true)
                     .setMonitoringIntervalMs(1000)
-                    .setAutoDownloadDetectedUrls(true)
                     .setFilterVideoUrls(false)
                     .setFilterTorrentUrls(false)
                     .setFilterDirectDownloads(false)
@@ -305,7 +290,6 @@ class ClipboardSettingsTest {
             assertFalse(settings.isMonitoringEnabled());
             assertFalse(settings.isSilentMode());
             assertEquals(500, settings.getMonitoringIntervalMs());
-            assertFalse(settings.isAutoDownloadDetectedUrls());
             assertTrue(settings.isFilterVideoUrls());
             assertTrue(settings.isFilterTorrentUrls());
             assertTrue(settings.isFilterDirectDownloads());

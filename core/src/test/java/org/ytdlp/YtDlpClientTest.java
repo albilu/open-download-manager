@@ -294,6 +294,23 @@ class YtDlpClientTest {
 
         assertFalse(command.contains("--external-downloader"));
         assertFalse(command.contains("--external-downloader-args"));
+        assertFalse(command.contains("-f"), "automatic format must not be overridden");
+        assertFalse(command.contains("--fragment-retries"),
+                "zero should retain yt-dlp's native fragment retry policy");
+        assertFalse(command.contains("--ignore-errors"));
+    }
+
+    @Test
+    @DisplayName("Configured shared retry policy reaches whole and fragment downloads")
+    void testSharedRetryPolicyIncludesFragments() {
+        YtDlpSettings settings = new YtDlpSettings();
+        settings.setMaxRetries(6);
+        settings.setFragmentRetries(6);
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        assertCommandValue(command, "--retries", "6");
+        assertCommandValue(command, "--fragment-retries", "6");
     }
 
     @Test

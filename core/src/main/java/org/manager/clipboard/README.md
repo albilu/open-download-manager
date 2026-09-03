@@ -57,9 +57,7 @@ downloadManager.setClipboardMonitoringEnabled(true);
 // Configure settings
 ClipboardSettings settings = new ClipboardSettings()
     .setMonitoringEnabled(true)
-    .setSilentMode(false)
-    .setAutoDownloadDetectedUrls(false)
-    .setShowConfirmationDialog(true);
+    .setSilentMode(false);
 
 downloadManager.updateClipboardSettings(settings);
 ```
@@ -88,12 +86,6 @@ ClipboardSettings settings = new ClipboardSettings()
 
     // Monitoring frequency (milliseconds)
     .setMonitoringIntervalMs(500)
-
-    // Auto-download detected URLs
-    .setAutoDownloadDetectedUrls(false)
-
-    // Show confirmation dialogs
-    .setShowConfirmationDialog(true)
 
     // URL type filtering
     .setFilterVideoUrls(true)
@@ -376,10 +368,9 @@ All clipboard monitoring components are designed to be thread-safe:
     // Start with conservative settings
     ClipboardSettings settings = ClipboardFactory.createDefaultSettings();
 
-    // Adjust based on user preferences
-    if (userWantsAutoDownload) {
-        settings.setAutoDownloadDetectedUrls(true);
-    }
+    // Silent mode controls whether detected URLs bypass confirmation.
+    // The global background admission policy controls whether admitted
+    // clipboard downloads start immediately or remain queued.
     ```
 
 4. **Performance**

@@ -16,7 +16,7 @@ class SettingsAntivirusDiscoveryTest {
     Path tempDir;
 
     @Test
-    void dropdownChoicesContainOnlyValidatedScannersPlusCustom() throws Exception {
+    void dropdownChoicesContainAutomaticValidatedScannersAndCustom() throws Exception {
         GlobalSettings settings = new GlobalSettings();
         ToolManagerFactory factory = new ToolManagerFactory(settings, tempDir);
         try {
@@ -37,7 +37,7 @@ class SettingsAntivirusDiscoveryTest {
             }
 
             var choices = SettingsDialog.discoverAvailableAntiviruses(factory).join();
-            assertEquals(java.util.List.of("clamav", "custom"),
+            assertEquals(java.util.List.of("auto", "clamav", "custom"),
                     choices.stream().map(SettingsDialog.AntivirusChoice::key).toList());
         } finally {
             factory.cleanup();

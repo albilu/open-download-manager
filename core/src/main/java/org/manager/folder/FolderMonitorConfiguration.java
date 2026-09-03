@@ -249,9 +249,8 @@ public class FolderMonitorConfiguration {
         config.setEnabled(true);
         config.setAutoStartDefault(true);
 
-        // Add default Downloads folder configuration
-        String userHome = System.getProperty("user.home");
-        Path downloadsFolder = Paths.get(userHome, "Downloads");
+        // Add the desktop-configured Downloads folder.
+        Path downloadsFolder = org.manager.util.OdmPaths.downloadDirectory();
 
         FolderConfig defaultFolderConfig = new FolderConfig();
         defaultFolderConfig.setEnabled(true);

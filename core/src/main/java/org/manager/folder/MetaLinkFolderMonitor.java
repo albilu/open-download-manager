@@ -336,9 +336,7 @@ public class MetaLinkFolderMonitor implements FolderMonitorListener {
      * @return A future that completes when monitoring starts
      */
     public CompletableFuture<Void> startDefaultMetaLinkMonitoring() {
-        String userHome = System.getProperty("user.home");
-        Path downloadsFolder = Paths.get(userHome, "Downloads");
-        return startMetaLinkMonitoring(downloadsFolder);
+        return startMetaLinkMonitoring(org.manager.util.OdmPaths.downloadDirectory());
     }
 
     /**

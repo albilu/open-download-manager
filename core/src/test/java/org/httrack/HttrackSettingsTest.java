@@ -54,9 +54,8 @@ class HttrackSettingsTest {
         assertFalse(settings.isIncludeArchives(), "Should not include archives by default");
         assertEquals(0, settings.getMaxRate(), "Default max rate should be 0 (no limit)");
         assertEquals(8, settings.getConnections(), "Default connections should be 8");
-        assertEquals(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                settings.getUserAgent(), "Should have default user agent");
+        assertNull(settings.getUserAgent(),
+                "A blank setting should preserve HTTrack's native identity");
         assertFalse(settings.isUseProxy(), "Should not use proxy by default");
         assertNull(settings.getProxyAddress(), "Proxy address should be null by default");
         assertNull(settings.getProxyUsername(), "Proxy username should be null by default");
@@ -396,6 +395,10 @@ class HttrackSettingsTest {
         assertFalse(commandLine.isEmpty(), "Command line should not be empty");
         assertTrue(commandLine.contains("https://example.com"), "Command line should contain URL");
         assertTrue(commandLine.contains("-r5"), "Command line should contain default depth");
+        assertFalse(commandLine.contains("-F"),
+                "Default settings should preserve HTTrack's native identity");
+        assertFalse(commandLine.stream().anyMatch(arg -> arg.startsWith("+*.")),
+                "Default type handling must not broaden HTTrack's native crawl scope");
     }
 
     @Test
@@ -494,11 +497,11 @@ class HttrackSettingsTest {
     void testUserAgentValidation() {
         // Test null user agent
         settings.setUserAgent(null);
-        assertNotNull(settings.getUserAgent(), "User agent should not be null");
+        assertNull(settings.getUserAgent(), "Null should use HTTrack's native identity");
 
         // Test empty user agent
         settings.setUserAgent("");
-        assertNotNull(settings.getUserAgent(), "User agent should not be null for empty string");
+        assertNull(settings.getUserAgent(), "Blank should use HTTrack's native identity");
     }
 
     @Test

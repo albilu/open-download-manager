@@ -65,22 +65,34 @@ final class CompletionActionPolicy {
 
     /**
      * Builds the antivirus completion action from persisted settings:
-     * {@code antivirus.scanner} (clamav|chkrootkit|rkhunter|custom, default
-     * clamav), {@code antivirus.command} for the custom scanner, and
+     * {@code antivirus.scanner} (auto|clamav|chkrootkit|rkhunter|custom,
+     * default auto), {@code antivirus.command} for the custom scanner, and
      * {@code antivirus.timeout} seconds (default 600, 0 = no timeout).
      */
     static AntivirusCheckAction buildAntivirusAction(GlobalSettings settings) {
-        String scanner = settings.getProperty("antivirus.scanner", "clamav");
+        String scanner = settings.getProperty("antivirus.scanner", "auto");
         int timeout = settings.getIntProperty("antivirus.timeout", 600);
+        if ("auto".equalsIgnoreCase(scanner)) {
+            return automaticAntivirusAction(timeout);
+        }
         AntivirusCheckAction.AntivirusType type = switch (scanner.toLowerCase()) {
+            case "clamav" -> AntivirusCheckAction.AntivirusType.CLAMAV;
             case "chkrootkit" -> AntivirusCheckAction.AntivirusType.CHKROOTKIT;
             case "rkhunter" -> AntivirusCheckAction.AntivirusType.RKHUNTER;
             case "custom" -> AntivirusCheckAction.AntivirusType.CUSTOM;
-            default -> AntivirusCheckAction.AntivirusType.CLAMAV;
+            default -> null;
         };
+        if (type == null) {
+            LOGGER.warn("No usable antivirus scanner is configured");
+            return null;
+        }
         if (type == AntivirusCheckAction.AntivirusType.CUSTOM) {
-            return new AntivirusCheckAction(
-                    settings.getProperty("antivirus.command", "clamscan --no-summary {file}"), timeout);
+            String command = settings.getProperty("antivirus.command", "");
+            if (command.isBlank()) {
+                LOGGER.warn("The custom antivirus command is empty");
+                return null;
+            }
+            return new AntivirusCheckAction(command, timeout);
         }
         String executable = switch (type) {
             case CLAMAV -> ToolPaths.resolve("antivirus-clamav", "clamscan");
@@ -89,6 +101,45 @@ final class CompletionActionPolicy {
             case CUSTOM -> throw new IllegalStateException("Handled above");
         };
         return new AntivirusCheckAction(type, executable, timeout);
+    }
+
+    private static AntivirusCheckAction automaticAntivirusAction(int timeout) {
+        try {
+            return automaticAntivirusAction(
+                    org.manager.ApplicationContext.getToolManagerFactory(), timeout);
+        } catch (RuntimeException unavailableContext) {
+            LOGGER.warn("Antivirus scanner discovery is unavailable", unavailableContext);
+            return null;
+        }
+    }
+
+    static AntivirusCheckAction automaticAntivirusAction(
+            org.manager.tools.ToolManagerFactory factory, int timeout) {
+        if (factory == null) {
+            return null;
+        }
+        for (org.antivirus.AntivirusToolManager manager
+                : factory.getAntivirusManagers()) {
+            try {
+                manager.validateTool();
+                String executable = manager.getToolPath();
+                if (executable == null || executable.isBlank()) {
+                    continue;
+                }
+                AntivirusCheckAction.AntivirusType type = switch (manager.getScanner()) {
+                    case CLAMAV -> AntivirusCheckAction.AntivirusType.CLAMAV;
+                    case CHKROOTKIT -> AntivirusCheckAction.AntivirusType.CHKROOTKIT;
+                    case RKHUNTER -> AntivirusCheckAction.AntivirusType.RKHUNTER;
+                };
+                return new AntivirusCheckAction(type, executable, timeout);
+            } catch (org.manager.tools.ToolManager.ToolException
+                    | RuntimeException validationFailure) {
+                LOGGER.debug("Antivirus scanner did not pass validation: "
+                        + manager.getScanner().label(), validationFailure);
+            }
+        }
+        LOGGER.warn("No validated antivirus scanner is available");
+        return null;
     }
 
     /** Subtitle action using the shared yt-dlp language preference. */

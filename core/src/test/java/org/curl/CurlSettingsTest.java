@@ -59,8 +59,8 @@ class CurlSettingsTest {
         assertFalse(settings.isInsecureMode());
         assertNull(settings.getUserAgent());
         assertNull(settings.getReferer());
-        assertEquals(1000, settings.getLowSpeedLimit());
-        assertEquals(10, settings.getLowSpeedTime());
+        assertEquals(0, settings.getLowSpeedLimit());
+        assertEquals(0, settings.getLowSpeedTime());
         assertEquals(50, settings.getMaxRedirects());
     }
 
@@ -218,8 +218,8 @@ class CurlSettingsTest {
         assertEquals("", map.get("curl.create-dirs")); // Create dirs enabled
         assertEquals("-", map.get("curl.continue-at")); // Resume enabled
         assertEquals("", map.get("curl.progress-bar")); // Progress enabled
-        assertEquals("1000", map.get("curl.speed-limit"));
-        assertEquals("10", map.get("curl.speed-time"));
+        assertFalse(map.containsKey("curl.speed-limit"));
+        assertFalse(map.containsKey("curl.speed-time"));
         assertEquals("50", map.get("curl.max-redirs"));
 
         // These should not be present with default settings

@@ -112,7 +112,6 @@ public class ClipboardFactory {
                 .setMonitoringEnabled(false) // User must explicitly enable
                 .setSilentMode(false)
                 .setMonitoringIntervalMs(500)
-                .setAutoDownloadDetectedUrls(false)
                 .setFilterVideoUrls(true)
                 .setFilterTorrentUrls(true)
                 .setFilterDirectDownloads(true)
@@ -131,7 +130,6 @@ public class ClipboardFactory {
                 .setMonitoringEnabled(true)
                 .setSilentMode(true) // Less interruptions
                 .setMonitoringIntervalMs(300) // More responsive
-                .setAutoDownloadDetectedUrls(true) // Auto-download
                 .setFilterVideoUrls(true)
                 .setFilterTorrentUrls(true)
                 .setFilterDirectDownloads(true)
@@ -150,7 +148,6 @@ public class ClipboardFactory {
                 .setMonitoringEnabled(true)
                 .setSilentMode(true)
                 .setMonitoringIntervalMs(2000) // Less frequent checks
-                .setAutoDownloadDetectedUrls(false)
                 .setFilterVideoUrls(false) // Only basic URLs
                 .setFilterTorrentUrls(false)
                 .setFilterDirectDownloads(true)
@@ -169,7 +166,6 @@ public class ClipboardFactory {
                 .setMonitoringEnabled(true)
                 .setSilentMode(false)
                 .setMonitoringIntervalMs(200) // Very responsive for testing
-                .setAutoDownloadDetectedUrls(false) // Manual control during testing
                 .setFilterVideoUrls(true)
                 .setFilterTorrentUrls(true)
                 .setFilterDirectDownloads(true)

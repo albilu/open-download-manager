@@ -390,11 +390,14 @@ public class CurlClient {
             command.add(settings.getCookieHeader().replaceFirst("(?i)^Cookie:\\s*", ""));
         }
 
-        // Add low speed limit options
-        command.add("--speed-limit");
-        command.add(String.valueOf(settings.getLowSpeedLimit()));
-        command.add("--speed-time");
-        command.add(String.valueOf(settings.getLowSpeedTime()));
+        // Opt-in only: a hidden low-speed abort must not terminate legitimate
+        // slow transfers in the base profile.
+        if (settings.getLowSpeedLimit() > 0 && settings.getLowSpeedTime() > 0) {
+            command.add("--speed-limit");
+            command.add(String.valueOf(settings.getLowSpeedLimit()));
+            command.add("--speed-time");
+            command.add(String.valueOf(settings.getLowSpeedTime()));
+        }
 
         // Add max redirects if following redirects
         if (settings.isFollowRedirects()) {

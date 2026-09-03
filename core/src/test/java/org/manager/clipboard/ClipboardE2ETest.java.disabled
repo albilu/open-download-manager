@@ -57,7 +57,6 @@ class ClipboardE2ETest {
                 .setMonitoringEnabled(true)
                 .setMonitoringIntervalMs(200) // Faster for testing
                 .setSilentMode(true)
-                .setAutoDownloadDetectedUrls(false) // Manual control for testing
                 .setFilterVideoUrls(true)
                 .setFilterTorrentUrls(true)
                 .setFilterDirectDownloads(true)
@@ -201,11 +200,6 @@ class ClipboardE2ETest {
             TestClipboardServiceListener listener = new TestClipboardServiceListener();
             clipboardService.addServiceListener(listener);
 
-            // Update settings to enable auto-download
-            ClipboardSettings settings = clipboardService.getSettings();
-            settings.setAutoDownloadDetectedUrls(true);
-            clipboardService.updateSettings(settings);
-
             clipboardService.startService().get(5, TimeUnit.SECONDS);
 
             String testUrl = "https://httpbin.org/bytes/1024"; // Real URL for testing
@@ -237,8 +231,7 @@ class ClipboardE2ETest {
             clipboardService.addServiceListener(listener);
 
             ClipboardSettings settings = clipboardService.getSettings();
-            settings.setAutoDownloadDetectedUrls(true)
-                    .setFilterVideoUrls(true);
+            settings.setFilterVideoUrls(true);
             clipboardService.updateSettings(settings);
 
             clipboardService.startService().get(5, TimeUnit.SECONDS);
@@ -271,8 +264,7 @@ class ClipboardE2ETest {
             clipboardService.addServiceListener(listener);
 
             ClipboardSettings settings = clipboardService.getSettings();
-            settings.setAutoDownloadDetectedUrls(true)
-                    .setFilterTorrentUrls(true);
+            settings.setFilterTorrentUrls(true);
             clipboardService.updateSettings(settings);
 
             clipboardService.startService().get(5, TimeUnit.SECONDS);
@@ -310,8 +302,7 @@ class ClipboardE2ETest {
             clipboardService.addServiceListener(listener);
 
             ClipboardSettings settings = clipboardService.getSettings();
-            settings.setFilterVideoUrls(false) // Disable video URL filtering
-                    .setAutoDownloadDetectedUrls(true);
+            settings.setFilterVideoUrls(false); // Disable video URL filtering
             clipboardService.updateSettings(settings);
 
             clipboardService.startService().get(5, TimeUnit.SECONDS);
@@ -341,8 +332,7 @@ class ClipboardE2ETest {
             clipboardService.addServiceListener(listener);
 
             ClipboardSettings settings = clipboardService.getSettings();
-            settings.setMaxUrlsPerClipboard(2)
-                    .setAutoDownloadDetectedUrls(true);
+            settings.setMaxUrlsPerClipboard(2);
             clipboardService.updateSettings(settings);
 
             clipboardService.startService().get(5, TimeUnit.SECONDS);

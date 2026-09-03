@@ -20,7 +20,7 @@ public interface ClipboardServiceListener {
 
     /**
      * Called when URL detection requires user confirmation.
-     * This typically happens when auto-download is disabled and confirmation dialogs are enabled.
+     * This happens when clipboard Silent mode is disabled.
      *
      * @param urls The URLs that require confirmation
      * @param clipboardContent The clipboard content containing the URLs

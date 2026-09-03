@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.manager.clipboard.ClipboardSettings;
+import org.manager.util.OdmPaths;
 
 /**
  * Global settings that apply to the entire download manager. These settings are
@@ -51,7 +52,7 @@ public class GlobalSettings {
     /** Free-form bag for engine/UI keys ({@code aria2.*}, {@code ui.*}, ...). */
     private final CustomProperties custom = new CustomProperties();
 
-    private volatile Path defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
+    private volatile Path defaultDownloadDirectory = OdmPaths.downloadDirectory();
     private volatile boolean retainCompletedAndCanceledHistory = true;
 
     // Clipboard monitoring settings

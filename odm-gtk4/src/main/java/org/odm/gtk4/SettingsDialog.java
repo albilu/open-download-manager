@@ -133,7 +133,7 @@ public class SettingsDialog {
             Map.entry("browse_ytdlp_button",
                     "Choose the yt-dlp executable used by ODM."),
             Map.entry("video_format_entry",
-                    "yt-dlp format selector, for example bestvideo+bestaudio/best; leave empty to use best."),
+                    "yt-dlp format selector, for example bestvideo+bestaudio/best; leave empty for yt-dlp's automatic best-quality selection."),
             Map.entry("subtitle_language_entry",
                     "Comma-separated language codes used by yt-dlp and the Download Subtitles completion action."),
             Map.entry("write_thumbnail_check",
@@ -155,7 +155,7 @@ public class SettingsDialog {
             Map.entry("depth_spin",
                     "Maximum number of link levels HTTrack crawls, from 1 to 20."),
             Map.entry("include_entry",
-                    "Whitespace-separated HTTrack wildcard patterns to include; when empty, ODM includes common page assets."),
+                    "Whitespace-separated HTTrack wildcard patterns to include; leave empty to preserve HTTrack's native crawl scope."),
             Map.entry("exclude_entry",
                     "Whitespace-separated HTTrack wildcard patterns to exclude from the website mirror."),
             Map.entry("include_archives_check",
@@ -199,7 +199,7 @@ public class SettingsDialog {
             Map.entry("browse_subliminal_button",
                     "Choose the Subliminal executable used by completion actions."),
             Map.entry("antivirus_type_combo",
-                    "Scanner used by Antivirus Scan completion actions; ODM lists validated installed scanners plus Custom command."),
+                    "Scanner used by Antivirus Scan completion actions; Automatic chooses the first validated installed scanner."),
             Map.entry("antivirus_command_entry",
                     "Command used when Antivirus type is Custom; include {file} where the downloaded file path belongs."),
             Map.entry("antivirus_timeout_spin",
@@ -257,7 +257,8 @@ public class SettingsDialog {
     private final java.util.concurrent.atomic.AtomicBoolean closed =
             new java.util.concurrent.atomic.AtomicBoolean();
     private java.util.List<AntivirusChoice> antivirusChoices = java.util.List.of();
-    private String requestedAntivirusKey = "clamav";
+    private static final String ANTIVIRUS_AUTO = "auto";
+    private String requestedAntivirusKey = ANTIVIRUS_AUTO;
 
     private record SettingsApplication(GlobalSettings settings,
             boolean previousStartAtLogin, boolean requestedStartAtLogin,
@@ -660,13 +661,14 @@ public class SettingsDialog {
 
     /**
      * Discovers and performs each scanner's real basic validation away from
-     * the GTK thread. The custom-command option is always retained.
+     * the GTK thread. Automatic selection and the custom-command option are
+     * always retained.
      */
     static java.util.concurrent.CompletableFuture<java.util.List<AntivirusChoice>>
             discoverAvailableAntiviruses(ToolManagerFactory factory) {
         if (factory == null) {
             return java.util.concurrent.CompletableFuture.completedFuture(
-                    java.util.List.of(new AntivirusChoice("custom", "Custom command")));
+                    antivirusChoicesWithAutomatic(java.util.List.of()));
         }
         java.util.List<java.util.concurrent.CompletableFuture<AntivirusChoice>> checks =
                 factory.getAntivirusManagers().stream()
@@ -696,13 +698,26 @@ public class SettingsDialog {
         return java.util.concurrent.CompletableFuture
                 .allOf(checks.toArray(java.util.concurrent.CompletableFuture[]::new))
                 .thenApply(ignored -> {
-                    java.util.List<AntivirusChoice> choices = new java.util.ArrayList<>();
+                    java.util.List<AntivirusChoice> validated = new java.util.ArrayList<>();
                     checks.stream().map(java.util.concurrent.CompletableFuture::join)
                             .filter(java.util.Objects::nonNull)
-                            .forEach(choices::add);
-                    choices.add(new AntivirusChoice("custom", "Custom command"));
-                    return java.util.List.copyOf(choices);
+                            .forEach(validated::add);
+                    return antivirusChoicesWithAutomatic(validated);
                 });
+    }
+
+    private static java.util.List<AntivirusChoice> antivirusChoicesWithAutomatic(
+            java.util.List<AntivirusChoice> validated) {
+        java.util.List<AntivirusChoice> choices = new java.util.ArrayList<>();
+        boolean available = validated != null && !validated.isEmpty();
+        choices.add(new AntivirusChoice(ANTIVIRUS_AUTO,
+                available ? "Automatic (first available)"
+                        : "Automatic (no scanner available)"));
+        if (available) {
+            choices.addAll(validated);
+        }
+        choices.add(new AntivirusChoice("custom", "Custom command"));
+        return java.util.List.copyOf(choices);
     }
 
     private void discoverAvailableAntiviruses() {
@@ -711,8 +726,7 @@ public class SettingsDialog {
             factory = org.manager.ApplicationContext.getToolManagerFactory();
         } catch (Exception e) {
             LOGGER.warn("Could not access antivirus tool managers", e);
-            applyAntivirusChoices(java.util.List.of(
-                    new AntivirusChoice("custom", "Custom command")), true);
+            applyAntivirusChoices(antivirusChoicesWithAutomatic(java.util.List.of()), true);
             return;
         }
         discoverAvailableAntiviruses(factory).whenComplete((choices, error) ->
@@ -722,8 +736,8 @@ public class SettingsDialog {
                     }
                     if (error != null) {
                         LOGGER.warn("Could not discover antivirus scanners", error);
-                        applyAntivirusChoices(java.util.List.of(
-                                new AntivirusChoice("custom", "Custom command")), true);
+                        applyAntivirusChoices(
+                                antivirusChoicesWithAutomatic(java.util.List.of()), true);
                     } else {
                         applyAntivirusChoices(choices, false);
                     }
@@ -733,7 +747,7 @@ public class SettingsDialog {
     private void applyAntivirusChoices(java.util.List<AntivirusChoice> choices,
             boolean discoveryFailed) {
         antivirusChoices = choices == null || choices.isEmpty()
-                ? java.util.List.of(new AntivirusChoice("custom", "Custom command"))
+                ? antivirusChoicesWithAutomatic(java.util.List.of())
                 : java.util.List.copyOf(choices);
         StringList model = new StringList(new String[0]);
         antivirusChoices.forEach(choice -> model.append(choice.label()));
@@ -751,7 +765,8 @@ public class SettingsDialog {
         dropdown.setSelected(requestedIndex >= 0 ? requestedIndex : 0);
         updateAntivirusControlSensitivity();
         long validatedCount = antivirusChoices.stream()
-                .filter(choice -> !"custom".equals(choice.key())).count();
+                .filter(choice -> !"custom".equals(choice.key())
+                        && !ANTIVIRUS_AUTO.equals(choice.key())).count();
         String message = discoveryFailed
                 ? "Scanner discovery failed; custom command remains available."
                 : validatedCount == 0
@@ -860,7 +875,8 @@ public class SettingsDialog {
     private void load(GlobalSettings s, boolean useRuntimeMonitoringState) {
         // General
         Path dir = s.getDefaultDownloadDirectory();
-        setDefaultDir(dir != null ? dir.toString() : System.getProperty("user.home") + "/Downloads");
+        setDefaultDir(dir != null ? dir.toString()
+                : org.manager.util.OdmPaths.downloadDirectory().toString());
         spin("max_concurrent_downloads_spin").setValue(s.getMaxConcurrentDownloads());
         check("retain_completed_canceled_history_check").setActive(
                 s.isRetainCompletedAndCanceledHistory());
@@ -896,8 +912,10 @@ public class SettingsDialog {
         entry("aria2_path_entry").setText(s.getAria2Path() != null ? s.getAria2Path() : "");
         spin("min_split_size_spin1").setValue(s.getIntProperty("aria2.minSplitSizeMb",
                 org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB));
-        spin("max_peers_spin").setValue(s.getIntProperty("aria2.maxPeers", 100));
-        spin("peer_speed_limit_spin").setValue(s.getIntProperty("aria2.peerSpeedLimitKb", 0));
+        spin("max_peers_spin").setValue(s.getIntProperty("aria2.maxPeers",
+                org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_MAX_PEERS));
+        spin("peer_speed_limit_spin").setValue(s.getIntProperty("aria2.peerSpeedLimitKb",
+                org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB));
         spin("seed_time_spin").setValue(s.getIntProperty("aria2.seedTimeMin",
                 org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_SEED_TIME_MIN));
         check("continue_download_check").setActive(s.getBooleanProperty("aria2.continueDownload", true));
@@ -918,9 +936,9 @@ public class SettingsDialog {
                 s.getProperty("ytdlp.subtitleLanguages", "en"));
         check("write_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.writeThumbnail", false));
         check("write_subtitles_check").setActive(s.getBooleanProperty("ytdlp.writeSubtitles", false));
-        check("embed_metadata_check").setActive(s.getBooleanProperty("ytdlp.embedMetadata", true));
+        check("embed_metadata_check").setActive(s.getBooleanProperty("ytdlp.embedMetadata", false));
         check("extract_audio_check").setActive(s.getBooleanProperty("ytdlp.extractAudio", false));
-        check("use_aria2_external_check").setActive(s.getBooleanProperty("ytdlp.useAria2External", true));
+        check("use_aria2_external_check").setActive(s.getBooleanProperty("ytdlp.useAria2External", false));
         // HTTrack
         entry("httrack_path_entry").setText(s.getHttrackPath() != null ? s.getHttrackPath() : "");
         spin("depth_spin").setValue(s.getIntProperty("httrack.depth",
@@ -961,10 +979,10 @@ public class SettingsDialog {
         entry("subliminal_path_entry").setText(
                 s.getSubliminalPath() != null ? s.getSubliminalPath() : "");
         entry("antivirus_command_entry").setText(
-                s.getProperty("antivirus.command", "clamscan --no-summary {file}"));
+                s.getProperty("antivirus.command", ""));
         spin("antivirus_timeout_spin").setValue(
                 Math.max(0, s.getIntProperty("antivirus.timeout", 600)));
-        requestedAntivirusKey = s.getProperty("antivirus.scanner", "clamav")
+        requestedAntivirusKey = s.getProperty("antivirus.scanner", ANTIVIRUS_AUTO)
                 .toLowerCase(java.util.Locale.ROOT);
         if (!antivirusChoices.isEmpty()) {
             applyAntivirusChoices(antivirusChoices, false);

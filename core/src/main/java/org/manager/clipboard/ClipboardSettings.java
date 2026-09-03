@@ -14,7 +14,6 @@ public class ClipboardSettings {
     private boolean monitoringEnabled = false;
     private boolean silentMode = false;
     private long monitoringIntervalMs = 500;
-    private boolean autoDownloadDetectedUrls = false;
     private boolean filterVideoUrls = true;
     private boolean filterTorrentUrls = true;
     private boolean filterDirectDownloads = true;
@@ -38,7 +37,6 @@ public class ClipboardSettings {
             this.monitoringEnabled = other.monitoringEnabled;
             this.silentMode = other.silentMode;
             this.monitoringIntervalMs = other.monitoringIntervalMs;
-            this.autoDownloadDetectedUrls = other.autoDownloadDetectedUrls;
             this.filterVideoUrls = other.filterVideoUrls;
             this.filterTorrentUrls = other.filterTorrentUrls;
             this.filterDirectDownloads = other.filterDirectDownloads;
@@ -110,28 +108,6 @@ public class ClipboardSettings {
             throw new IllegalArgumentException("Monitoring interval must be at least 100ms");
         }
         this.monitoringIntervalMs = monitoringIntervalMs;
-        return this;
-    }
-
-    /**
-     * Checks if auto-download is enabled for detected URLs.
-     *
-     * @return true if auto-download is enabled, false otherwise
-     */
-    public boolean isAutoDownloadDetectedUrls() {
-        return autoDownloadDetectedUrls;
-    }
-
-    /**
-     * Sets whether to automatically download detected URLs. When enabled,
-     * detected URLs are automatically added to the download queue.
-     *
-     * @param autoDownloadDetectedUrls true to enable auto-download, false
-     *                                 otherwise
-     * @return this instance for method chaining
-     */
-    public ClipboardSettings setAutoDownloadDetectedUrls(boolean autoDownloadDetectedUrls) {
-        this.autoDownloadDetectedUrls = autoDownloadDetectedUrls;
         return this;
     }
 
@@ -277,7 +253,6 @@ public class ClipboardSettings {
         this.monitoringEnabled = false;
         this.silentMode = false;
         this.monitoringIntervalMs = 500;
-        this.autoDownloadDetectedUrls = false;
         this.filterVideoUrls = true;
         this.filterTorrentUrls = true;
         this.filterDirectDownloads = true;
@@ -298,7 +273,6 @@ public class ClipboardSettings {
         return monitoringEnabled == that.monitoringEnabled
                 && silentMode == that.silentMode
                 && monitoringIntervalMs == that.monitoringIntervalMs
-                && autoDownloadDetectedUrls == that.autoDownloadDetectedUrls
                 && filterVideoUrls == that.filterVideoUrls
                 && filterTorrentUrls == that.filterTorrentUrls
                 && filterDirectDownloads == that.filterDirectDownloads
@@ -309,8 +283,8 @@ public class ClipboardSettings {
     @Override
     public int hashCode() {
         return Objects.hash(monitoringEnabled, silentMode, monitoringIntervalMs,
-                autoDownloadDetectedUrls, filterVideoUrls,
-                filterTorrentUrls, filterDirectDownloads, maxUrlsPerClipboard,
+                filterVideoUrls, filterTorrentUrls, filterDirectDownloads,
+                maxUrlsPerClipboard,
                 logClipboardActivity);
     }
 
@@ -320,7 +294,6 @@ public class ClipboardSettings {
                 "monitoringEnabled=" + monitoringEnabled +
                 ", silentMode=" + silentMode +
                 ", monitoringIntervalMs=" + monitoringIntervalMs +
-                ", autoDownloadDetectedUrls=" + autoDownloadDetectedUrls +
                 ", filterVideoUrls=" + filterVideoUrls +
                 ", filterTorrentUrls=" + filterTorrentUrls +
                 ", filterDirectDownloads=" + filterDirectDownloads +

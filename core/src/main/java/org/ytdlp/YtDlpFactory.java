@@ -167,8 +167,7 @@ public class YtDlpFactory {
         YtDlpSettings settings = (YtDlpSettings) new org.manager.download.DownloadSettingsFactory(
                 globalSettings).createSettings(org.manager.download.Download.Type.YOUTUBE);
 
-        settings.setFragmentRetries(3)
-                .setGeoBypass(true)
+        settings.setGeoBypass(true)
                 .setIgnoreErrors(false)
                 .setSkipUnavailableFragments(true);
 
@@ -482,9 +481,7 @@ public class YtDlpFactory {
             return downloadDir.resolve("ytdlp");
         }
 
-        // Fallback to user home Downloads directory
-        String userHome = System.getProperty("user.home");
-        return Paths.get(userHome, "Downloads", "ytdlp");
+        return org.manager.util.OdmPaths.downloadDirectory().resolve("ytdlp");
     }
 
     /**

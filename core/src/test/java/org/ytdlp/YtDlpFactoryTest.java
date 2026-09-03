@@ -204,16 +204,18 @@ class YtDlpFactoryTest {
         YtDlpSettings settings = factory.createDefaultSettings();
 
         assertNotNull(settings);
-        assertEquals("best", settings.getFormat());
+        assertEquals("", settings.getFormat());
         assertFalse(settings.isEmbedThumbnail());
-        assertTrue(settings.isEmbedMetadata());
-        assertEquals(3, settings.getFragmentRetries());
+        assertFalse(settings.isEmbedMetadata());
+        assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_RETRIES,
+                settings.getFragmentRetries());
         assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS,
                 settings.getMaxConnections());
         assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_RETRIES,
                 settings.getMaxRetries());
         assertTrue(settings.isGeoBypass());
         assertFalse(settings.isIgnoreErrors());
+        assertFalse(settings.isUseAria2c());
         assertTrue(settings.isSkipUnavailableFragments());
     }
 

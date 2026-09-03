@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.manager.download.DownloadManager;
 import org.manager.download.DownloadManagerFactory;
 import org.manager.tools.ToolManagerFactory;
+import org.manager.util.OdmPaths;
 
 /**
  * Optimized application factory focusing on performance and memory efficiency.
@@ -427,7 +428,7 @@ public class ApplicationFactory {
      * with sensible defaults.
      */
     public void initialize() {
-        Path defaultDownloadDir = Paths.get(System.getProperty("user.home"), "Downloads");
+        Path defaultDownloadDir = OdmPaths.downloadDirectory();
         LOGGER.debug("Using default initialization settings");
         initialize(defaultDownloadDir, 3, 0);
     }
@@ -616,22 +617,9 @@ public class ApplicationFactory {
     private GlobalSettings createDefaultGlobalSettings() {
         GlobalSettings settings = new GlobalSettings();
 
-        // Set sensible defaults
-        settings.setDefaultDownloadDirectory(Paths.get(System.getProperty("user.home"), "Downloads"));
-        settings.setMaxConcurrentDownloads(3);
-        settings.setGlobalSpeedLimit(0); // Unlimited
-        settings.setRetainCompletedAndCanceledHistory(true);
-        settings.setAutomaticCleanupEnabled(false);
-
-        // Memory management defaults
-        settings.setMaxDownloadsInMemory(1000);
-        settings.setMaxCompletedDownloadsToKeep(500);
-        settings.setCleanupIntervalHours(24);
-        settings.setCompletedDownloadRetentionDays(30);
-        settings.setErrorDownloadRetentionDays(7);
-
-        // Apply persisted user settings over the defaults; load() is a no-op
-        // when the settings file does not exist yet.
+        // GlobalSettings is the single base profile used both on first run and
+        // by Preferences > Reset. Persisted values are layered over it; load()
+        // is a no-op when the settings file does not exist yet.
         settings.load();
 
         return settings;

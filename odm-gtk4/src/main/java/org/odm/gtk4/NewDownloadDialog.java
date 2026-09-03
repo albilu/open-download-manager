@@ -740,6 +740,7 @@ public class NewDownloadDialog {
 
     private String currentDefaultDirectory() {
         Path dir = downloadManager.getGlobalSettings().getDefaultDownloadDirectory();
-        return dir != null ? dir.toString() : System.getProperty("user.home") + "/Downloads";
+        return dir != null ? dir.toString()
+                : org.manager.util.OdmPaths.downloadDirectory().toString();
     }
 }

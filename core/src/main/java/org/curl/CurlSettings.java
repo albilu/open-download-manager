@@ -36,8 +36,8 @@ public class CurlSettings extends DownloadSettings {
     private boolean failOnHttpError = true; // Fail on HTTP error status codes (4xx, 5xx)
     private String userAgent = null;
     private String referer = null;
-    private int lowSpeedLimit = 1000; // bytes per second
-    private int lowSpeedTime = 10; // seconds
+    private int lowSpeedLimit = 0; // disabled unless explicitly configured
+    private int lowSpeedTime = 0; // disabled unless explicitly configured
     private int maxRedirects = 50;
 
     /**
@@ -320,7 +320,7 @@ public class CurlSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public CurlSettings setLowSpeedLimit(int lowSpeedLimit) {
-        this.lowSpeedLimit = lowSpeedLimit;
+        this.lowSpeedLimit = Math.max(0, lowSpeedLimit);
         return this;
     }
 
@@ -342,7 +342,7 @@ public class CurlSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public CurlSettings setLowSpeedTime(int lowSpeedTime) {
-        this.lowSpeedTime = lowSpeedTime;
+        this.lowSpeedTime = Math.max(0, lowSpeedTime);
         return this;
     }
 
@@ -416,8 +416,10 @@ public class CurlSettings extends DownloadSettings {
             map.put("curl.referer", referer);
         }
 
-        map.put("curl.speed-limit", String.valueOf(lowSpeedLimit));
-        map.put("curl.speed-time", String.valueOf(lowSpeedTime));
+        if (lowSpeedLimit > 0 && lowSpeedTime > 0) {
+            map.put("curl.speed-limit", String.valueOf(lowSpeedLimit));
+            map.put("curl.speed-time", String.valueOf(lowSpeedTime));
+        }
         map.put("curl.max-redirs", String.valueOf(maxRedirects));
 
         return map;

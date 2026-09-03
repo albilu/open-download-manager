@@ -24,10 +24,11 @@ public class YtDlpSettings extends DownloadSettings {
         };
     }
 
-    private String format = "bestvideo+bestaudio/best";
+    /** Empty means yt-dlp's automatic, protocol-aware best-quality choice. */
+    private String format = "";
     private String outputTemplate;
     private boolean embedThumbnail = false;
-    private boolean embedMetadata = true;
+    private boolean embedMetadata = false;
     private boolean embedSubs = false;
     private boolean writeAutoSubs = false;
     private boolean writeSubtitles = false;
@@ -35,11 +36,12 @@ public class YtDlpSettings extends DownloadSettings {
     private boolean extractAudio = false;
     private String audioFormat = "mp3";
     private String audioQuality = "192";
-    private int fragmentRetries = 10;
+    /** Zero means yt-dlp's native retry policy. */
+    private int fragmentRetries = 0;
     private boolean limitRate = false;
     private int rateLimit = 0; // KB/s, 0 means no limit
     private boolean skipUnavailableFragments = true;
-    private boolean ignoreErrors = true;
+    private boolean ignoreErrors = false;
     private boolean noPlaylist = false;
     private boolean playlistEnd = false;
     private int playlistItems = 0;
@@ -829,7 +831,9 @@ public class YtDlpSettings extends DownloadSettings {
     public Map<String, String> toMap() {
         Map<String, String> map = super.toMap();
 
-        map.put("ytdlp.format", format);
+        if (format != null && !format.isBlank()) {
+            map.put("ytdlp.format", format);
+        }
         if (outputTemplate != null) {
             map.put("ytdlp.output-template", outputTemplate);
         }
@@ -864,7 +868,9 @@ public class YtDlpSettings extends DownloadSettings {
             map.put("ytdlp.audio-quality", audioQuality);
         }
 
-        map.put("ytdlp.fragment-retries", String.valueOf(fragmentRetries));
+        if (fragmentRetries > 0) {
+            map.put("ytdlp.fragment-retries", String.valueOf(fragmentRetries));
+        }
 
         if (limitRate && rateLimit > 0) {
             map.put("ytdlp.limit-rate", rateLimit + "K");

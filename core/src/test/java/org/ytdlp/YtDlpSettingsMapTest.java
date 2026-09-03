@@ -19,13 +19,15 @@ class YtDlpSettingsMapTest {
         YtDlpSettings settings = new YtDlpSettings();
         Map<String, String> map = settings.toMap();
 
-        assertEquals("bestvideo+bestaudio/best", map.get("ytdlp.format"), "default format");
+        assertFalse(map.containsKey("ytdlp.format"),
+                "automatic format selection should emit no override");
         assertFalse(map.containsKey("ytdlp.output-template"), "no template set by default");
         assertFalse(map.containsKey("ytdlp.embed-thumbnail"), "thumbnail embedding off by default");
-        assertEquals("true", map.get("ytdlp.embed-metadata"), "metadata embedding on by default");
-        assertEquals("10", map.get("ytdlp.fragment-retries"), "default fragment retries");
+        assertFalse(map.containsKey("ytdlp.embed-metadata"), "metadata embedding off by default");
+        assertFalse(map.containsKey("ytdlp.fragment-retries"),
+                "zero leaves yt-dlp's fragment retry policy intact");
         assertEquals("true", map.get("ytdlp.skip-unavailable-fragments"));
-        assertEquals("true", map.get("ytdlp.ignore-errors"));
+        assertFalse(map.containsKey("ytdlp.ignore-errors"));
     }
 
     @Test

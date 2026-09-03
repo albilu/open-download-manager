@@ -192,8 +192,7 @@ class ClipboardPipelineTest {
     void silentModeQueuesWithoutConfirmation() throws Exception {
         ClipboardSettings settings = new ClipboardSettings()
                 .setMonitoringEnabled(true)
-                .setSilentMode(true)
-                .setAutoDownloadDetectedUrls(false);
+                .setSilentMode(true);
         service.updateSettings(settings);
         service.startService().get(10, TimeUnit.SECONDS);
 
@@ -216,21 +215,28 @@ class ClipboardPipelineTest {
     }
 
     @Test
-    @DisplayName("auto-download mode creates a download for every detected URL")
+    @DisplayName("non-silent mode requests confirmation without admitting downloads")
     @org.junit.jupiter.api.Timeout(60)
-    void autoDownloadCreatesAll() throws Exception {
+    void nonSilentModeRequiresConfirmation() throws Exception {
         ClipboardSettings settings = new ClipboardSettings()
-                .setMonitoringEnabled(true)
-                .setAutoDownloadDetectedUrls(true);
+                .setMonitoringEnabled(true);
         service.updateSettings(settings);
         service.startService().get(10, TimeUnit.SECONDS);
+
+        AtomicInteger confirmations = new AtomicInteger();
+        service.addServiceListener(new ClipboardServiceListener() {
+            @Override public void onUrlsDetected(List<URI> urls, String content) { }
+            @Override public void onConfirmationRequired(List<URI> urls, String content) {
+                confirmations.incrementAndGet();
+            }
+        });
 
         service.onUrlsDetected(List.of(
                 URI.create("https://example.test/one.zip"),
                 URI.create("https://example.test/two.zip")), "content");
 
-        verify(downloadManager, org.mockito.Mockito.times(2))
-                .createDownload(any(URI.class), any(Path.class));
+        assertEquals(1, confirmations.get());
+        verify(downloadManager, never()).createDownload(any(URI.class), any(Path.class));
     }
 
     @Test

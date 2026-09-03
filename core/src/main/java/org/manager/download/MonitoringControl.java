@@ -124,8 +124,7 @@ public interface MonitoringControl {
     boolean isTorrentFolderMonitoringEnabled();
 
     /**
-     * Starts monitoring the default Downloads folder for torrent files. This is
-     * a convenience method that monitors ~/Downloads with default settings.
+     * Starts monitoring the user's XDG Downloads folder for torrent files.
      *
      * @return A future that completes when monitoring starts
      */

@@ -6,7 +6,7 @@
     <property name="lower">1</property><property name="upper">20</property><property name="value">3</property><property name="step-increment">1</property>
   </object>
   <object class="GtkAdjustment" id="max_connections_adjustment">
-    <property name="lower">1</property><property name="upper">16</property><property name="value">8</property><property name="step-increment">1</property>
+    <property name="lower">1</property><property name="upper">16</property><property name="value">4</property><property name="step-increment">1</property>
   </object>
   <object class="GtkAdjustment" id="retry_limit_adjustment">
     <property name="lower">0</property><property name="upper">50</property><property name="value">5</property><property name="step-increment">1</property>
@@ -24,10 +24,10 @@
     <property name="lower">1</property><property name="upper">100</property><property name="value">10</property><property name="step-increment">1</property>
   </object>
   <object class="GtkAdjustment" id="max_peers_adjustment">
-    <property name="lower">0</property><property name="upper">500</property><property name="value">100</property><property name="step-increment">10</property>
+    <property name="lower">0</property><property name="upper">500</property><property name="value">55</property><property name="step-increment">5</property>
   </object>
   <object class="GtkAdjustment" id="peer_speed_limit_adjustment">
-    <property name="lower">0</property><property name="upper">1048576</property><property name="value">0</property><property name="step-increment">100</property>
+    <property name="lower">0</property><property name="upper">1048576</property><property name="value">50</property><property name="step-increment">10</property>
   </object>
   <object class="GtkAdjustment" id="seed_time_adjustment">
     <property name="lower">0</property><property name="upper">10080</property><property name="value">60</property><property name="step-increment">10</property>
@@ -273,7 +273,7 @@
                     <child><object class="GtkLabel"><property name="label">yt-dlp path:</property><property name="xalign">0</property><property name="halign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="ytdlp_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout><child><object class="GtkEntry" id="ytdlp_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_ytdlp_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel"><property name="label">Video format:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkEntry" id="video_format_entry"><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkEntry" id="video_format_entry"><property name="placeholder-text">Automatic (yt-dlp default)</property><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
                     <child><object class="GtkLabel"><property name="label">Subtitle languages:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkEntry" id="subtitle_language_entry"><property name="placeholder-text">en,fr,it</property><property name="tooltip-text">Used by yt-dlp downloads and the Download Subtitles completion action</property><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
                     <child><object class="GtkCheckButton" id="write_thumbnail_check"><property name="label">Download thumbnails</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>

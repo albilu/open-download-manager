@@ -63,11 +63,11 @@ class GlobalSettingsJsonRoundTripTest {
         new GlobalSettings().save(target);
 
         Map<String, String> saved = readJson(target);
-        // defaultDownloadDirectory is user.home-dependent: normalize both sides
+        // The base profile follows the desktop's XDG Downloads directory, so
+        // keep the static fixture focused on stable persisted keys.
         String savedDir = saved.remove("defaultDownloadDirectory");
-        String expectedDir = expected.remove("defaultDownloadDirectory")
-                .replace("/home/developer", System.getProperty("user.home"));
-        assertEquals(Path.of(expectedDir).toString(), Path.of(savedDir).toString());
+        expected.remove("defaultDownloadDirectory");
+        assertEquals(org.manager.util.OdmPaths.downloadDirectory(), Path.of(savedDir));
 
         assertEquals(sorted(expected), sorted(saved));
     }

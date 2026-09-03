@@ -31,7 +31,8 @@ public class HttrackSettings extends DownloadSettings {
     private boolean includeArchives = false;//
     private int maxRate = 0; // 0 means no limit, in KB/s
     private int connections = 8;
-    private String userAgent = DEFAULT_USER_AGENT;
+    /** Null means HTTrack's native identity and robots policy. */
+    private String userAgent = null;
     private boolean useProxy = false;
     private String proxyAddress = null;
     private String proxyUsername = null;
@@ -39,10 +40,6 @@ public class HttrackSettings extends DownloadSettings {
     private List<String> excludePatterns = new ArrayList<>();//
     private List<String> includePatterns = new ArrayList<>();//
     private boolean mirrorMode = true;
-
-    private static final String DEFAULT_USER_AGENT =
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-            + "Chrome/91.0.4472.124 Safari/537.36";
 
     /**
      * Creates new httrack settings with default values.
@@ -336,7 +333,8 @@ public class HttrackSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public HttrackSettings setUserAgent(String userAgent) {
-        this.userAgent = userAgent == null || userAgent.isEmpty() ? DEFAULT_USER_AGENT : userAgent;
+        this.userAgent = userAgent == null || userAgent.isBlank()
+                ? null : userAgent.trim();
         return this;
     }
 
@@ -587,32 +585,22 @@ public class HttrackSettings extends DownloadSettings {
             args.add("-g");
         }
 
-        // File type filters: enabled types get include filters, explicitly
-        // disabled types get exclude filters (one httrack token per
-        // extension)
-        if (includeImages) {
-            addTypeFilters(args, "+", "png", "jpg", "jpeg", "gif", "webp", "svg");
-        } else {
+        // Native scope is authoritative. Positive extension filters broaden
+        // HTTrack's crawl scope, so enabled types add no filter; only explicit
+        // exclusions are emitted.
+        if (!includeImages) {
             addTypeFilters(args, "-", "png", "jpg", "jpeg", "gif", "webp", "svg");
         }
-        if (includeVideos) {
-            addTypeFilters(args, "+", "mp4", "webm", "avi", "mov", "mkv");
-        } else {
+        if (!includeVideos) {
             addTypeFilters(args, "-", "mp4", "webm", "avi", "mov", "mkv");
         }
-        if (includeAudio) {
-            addTypeFilters(args, "+", "mp3", "ogg", "wav", "flac");
-        } else {
+        if (!includeAudio) {
             addTypeFilters(args, "-", "mp3", "ogg", "wav", "flac");
         }
-        if (includeDocuments) {
-            addTypeFilters(args, "+", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt");
-        } else {
+        if (!includeDocuments) {
             addTypeFilters(args, "-", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt");
         }
-        if (includeArchives) {
-            addTypeFilters(args, "+", "zip", "rar", "tar", "gz");
-        } else {
+        if (!includeArchives) {
             addTypeFilters(args, "-", "zip", "rar", "tar", "gz");
         }
 

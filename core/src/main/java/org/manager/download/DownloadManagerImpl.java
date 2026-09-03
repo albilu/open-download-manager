@@ -194,7 +194,7 @@ public class DownloadManagerImpl implements DownloadManager {
         // Use the download directory from global settings if empty use default
         if (getGlobalSettings().getDefaultDownloadDirectory() == null
                 || getGlobalSettings().getDefaultDownloadDirectory().toString().isEmpty()) {
-            this.defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
+            this.defaultDownloadDirectory = org.manager.util.OdmPaths.downloadDirectory();
         } else {
             this.defaultDownloadDirectory = Paths.get(getGlobalSettings().getDefaultDownloadDirectory().toString());
         }
@@ -2219,7 +2219,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Initialize default download directory if not set
             if (defaultDownloadDirectory == null) {
-                defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
+                defaultDownloadDirectory = org.manager.util.OdmPaths.downloadDirectory();
             }
 
             // Create downloads directory if it doesn't exist

@@ -41,8 +41,12 @@ class YtDlpSimpleTest {
 
         assertNotNull(settings);
         assertFalse(settings.isEmbedThumbnail());
+        assertFalse(settings.isEmbedMetadata());
         assertFalse(settings.isExtractAudio());
-        assertEquals(10, settings.getFragmentRetries());
+        assertEquals("", settings.getFormat());
+        assertEquals(0, settings.getFragmentRetries());
+        assertFalse(settings.isIgnoreErrors());
+        assertFalse(settings.isUseAria2c());
     }
 
     @Test

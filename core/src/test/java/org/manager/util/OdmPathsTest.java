@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.stefanbirkner.systemlambda.SystemLambda;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -48,5 +49,27 @@ class OdmPathsTest {
         String resolved = SystemLambda.withEnvironmentVariable("XDG_STATE_HOME", "   ")
                 .execute(() -> OdmPaths.stateDirectory().toString());
         assertEquals(Path.of(home, ".local", "state", "odm").toString(), resolved);
+    }
+
+    @Test
+    @DisplayName("the desktop's XDG Downloads directory is used by the base profile")
+    void honorsConfiguredDownloadDirectory() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path config = tempDir.resolve("user-dirs.dirs");
+        Files.writeString(config, "XDG_DOWNLOAD_DIR=\"$HOME/Téléchargements\"\n");
+
+        assertEquals(home.resolve("Téléchargements"),
+                OdmPaths.downloadDirectory(home, config));
+    }
+
+    @Test
+    @DisplayName("an invalid XDG Downloads value uses the conventional fallback")
+    void invalidDownloadDirectoryFallsBack() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path config = tempDir.resolve("user-dirs.dirs");
+        Files.writeString(config, "XDG_DOWNLOAD_DIR=\"relative/downloads\"\n");
+
+        assertEquals(home.resolve("Downloads"),
+                OdmPaths.downloadDirectory(home, config));
     }
 }

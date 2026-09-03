@@ -936,8 +936,10 @@ public class YtDlpClient {
         }
 
         // Network settings
-        command.add("--fragment-retries");
-        command.add(String.valueOf(settings.getFragmentRetries()));
+        if (settings.getFragmentRetries() > 0) {
+            command.add("--fragment-retries");
+            command.add(String.valueOf(settings.getFragmentRetries()));
+        }
         if (settings.getMaxRetries() > 0) {
             command.add("--retries");
             command.add(String.valueOf(settings.getMaxRetries()));

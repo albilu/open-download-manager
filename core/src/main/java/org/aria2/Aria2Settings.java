@@ -98,6 +98,7 @@ public class Aria2Settings extends DownloadSettings {
         int normalized = Math.max(1, connections);
         super.setConnections(normalized);
         setMaxConnectionPerServer(normalized);
+        setOption("split", String.valueOf(normalized));
         return this;
     }
 
@@ -613,6 +614,7 @@ public class Aria2Settings extends DownloadSettings {
 
         // Add aria2-specific settings
         map.put("max-connection-per-server", String.valueOf(maxConnectionPerServer));
+        map.put("split", String.valueOf(getConnections()));
         map.put("continue", String.valueOf(continueDownload));
         map.put("min-split-size", minSplitSize + "M");
         map.put("file-allocation", fileAllocation);
@@ -670,6 +672,7 @@ public class Aria2Settings extends DownloadSettings {
 
         // Add basic settings
         options.put("max-connection-per-server", String.valueOf(maxConnectionPerServer));
+        options.put("split", String.valueOf(getConnections()));
         options.put("continue", String.valueOf(continueDownload));
         options.put("min-split-size", minSplitSize + "M");
         options.put("file-allocation", fileAllocation);

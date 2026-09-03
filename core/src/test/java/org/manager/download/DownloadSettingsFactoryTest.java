@@ -35,6 +35,13 @@ class DownloadSettingsFactoryTest {
                 "a zero Network retry delay must preserve aria2's native default");
         assertEquals("0", settings.getOption("seed-time"),
                 "disabled seeding must explicitly finish a completed torrent");
+        assertEquals(String.valueOf(DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS),
+                settings.toRpcOptions().get("split"),
+                "the shared connection policy must align aria2 split count");
+        assertEquals(DownloadSettingsFactory.DEFAULT_ARIA2_MAX_PEERS,
+                settings.getBtMaxPeers());
+        assertEquals(DownloadSettingsFactory.DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB,
+                settings.getBtRequestPeerSpeedLimit());
     }
 
     @Test
@@ -46,6 +53,21 @@ class DownloadSettingsFactoryTest {
         Aria2Settings settings = new DownloadSettingsFactory(global).createAria2Settings();
 
         assertEquals("45", settings.getOption("seed-time"));
+    }
+
+    @Test
+    @DisplayName("yt-dlp defaults preserve automatic selection and shared retry policy")
+    void ytdlpDefaults() {
+        YtDlpSettings settings = new DownloadSettingsFactory(new GlobalSettings())
+                .createYtDlpSettings();
+
+        assertEquals("", settings.getFormat());
+        assertFalse(settings.isEmbedMetadata());
+        assertFalse(settings.isUseAria2c());
+        assertFalse(settings.isIgnoreErrors());
+        assertEquals(DownloadSettingsFactory.DEFAULT_NETWORK_MAX_RETRIES,
+                settings.getMaxRetries());
+        assertEquals(settings.getMaxRetries(), settings.getFragmentRetries());
     }
 
     @Test
@@ -163,6 +185,8 @@ class DownloadSettingsFactoryTest {
             if (settings instanceof Aria2Settings aria2) {
                 assertEquals(12, aria2.getConnections(),
                         prefix + "Download connection view");
+                assertEquals("12", aria2.toRpcOptions().get("split"),
+                        prefix + "aria2 split count");
             }
         }
     }
@@ -184,6 +208,20 @@ class DownloadSettingsFactoryTest {
         assertEquals(java.util.List.of("*/logout/*", "*/private/*"),
                 settings.getExcludePatterns());
         assertTrue(settings.isIncludeArchives());
+    }
+
+    @Test
+    @DisplayName("blank HTTrack filters and identity preserve native behavior")
+    void httrackDefaultsPreserveNativeScopeAndIdentity() {
+        HttrackSettings settings = new DownloadSettingsFactory(new GlobalSettings())
+                .createHttrackSettings();
+        settings.setUrl("https://example.test/");
+
+        assertTrue(settings.getIncludePatterns().isEmpty());
+        assertNull(settings.getUserAgent());
+        assertTrue(settings.isIncludeVideos(),
+                "video handling must not be changed by an unexposed factory default");
+        assertFalse(settings.buildCommandLine().stream().anyMatch(arg -> arg.startsWith("+*.")));
     }
 
     @Test

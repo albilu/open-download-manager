@@ -5,7 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.manager.GlobalSettings;
 import org.manager.download.action.AfterCompletionAction;
 import org.manager.download.action.AntivirusCheckAction;
@@ -13,11 +16,15 @@ import org.manager.download.action.ExecuteCommandAction;
 import org.manager.download.action.PlayNotificationAction;
 import org.manager.download.action.ShutdownComputerAction;
 import org.manager.download.action.SubtitleDownloadAction;
+import org.manager.tools.ToolManagerFactory;
 
 /**
  * Plain unit tests for the completion-action radio-choice policy.
  */
 class CompletionActionPolicyTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void noneAndUnknownChoicesMapToNoAction() {
@@ -31,6 +38,7 @@ class CompletionActionPolicyTest {
     void knownChoicesMapToTheirActions() {
         GlobalSettings settings = new GlobalSettings();
         settings.setProperty("ytdlp.subtitleLanguages", "fr,it");
+        settings.setProperty("antivirus.scanner", "clamav");
 
         assertInstanceOf(PlayNotificationAction.class,
                 CompletionActionPolicy.forChoice("notify", settings));
@@ -49,6 +57,7 @@ class CompletionActionPolicyTest {
     void multipleChoicesAreBuiltInActionTypePriorityOrder() {
         GlobalSettings settings = new GlobalSettings();
         settings.setProperty("ui.completionCommand", "echo {file_path}");
+        settings.setProperty("antivirus.scanner", "clamav");
 
         var actions = CompletionActionPolicy.forChoices(
                 java.util.List.of("shutdown", "custom", "notify", "antivirus"), settings);
@@ -90,9 +99,24 @@ class CompletionActionPolicyTest {
     }
 
     @Test
-    void antivirusDefaultsToClamav() {
-        AntivirusCheckAction action = CompletionActionPolicy.buildAntivirusAction(new GlobalSettings());
+    void automaticAntivirusUsesTheFirstValidatedScanner() throws Exception {
+        GlobalSettings settings = new GlobalSettings();
+        ToolManagerFactory factory = new ToolManagerFactory(settings, tempDir);
+        try {
+            Path valid = tempDir.resolve("clamscan");
+            Files.writeString(valid, "#!/bin/sh\necho 'ClamAV 1.4.2'\nexit 0\n");
+            Files.setPosixFilePermissions(valid,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+            factory.getAntivirusManager("clamav").setToolPath(valid.toString());
 
-        assertEquals(AntivirusCheckAction.AntivirusType.CLAMAV, action.getAntivirusType());
+            AntivirusCheckAction action = CompletionActionPolicy
+                    .automaticAntivirusAction(factory, 42);
+
+            assertEquals(AntivirusCheckAction.AntivirusType.CLAMAV,
+                    action.getAntivirusType());
+            assertEquals(42, action.getTimeoutSeconds());
+        } finally {
+            factory.cleanup();
+        }
     }
 }

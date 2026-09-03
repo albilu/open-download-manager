@@ -17,9 +17,11 @@ import org.ytdlp.YtDlpSettings;
 public class DownloadSettingsFactory {
 
     /** Defaults shared by core creation paths and every GTK download dialog. */
-    public static final int DEFAULT_NETWORK_MAX_CONNECTIONS = 8;
+    public static final int DEFAULT_NETWORK_MAX_CONNECTIONS = 4;
     public static final int DEFAULT_NETWORK_MAX_RETRIES = 5;
     public static final int DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB = 10;
+    public static final int DEFAULT_ARIA2_MAX_PEERS = 55;
+    public static final int DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB = 50;
     public static final int DEFAULT_ARIA2_SEED_TIME_MIN = 60;
     public static final int DEFAULT_HTTRACK_DEPTH = 3;
 
@@ -74,8 +76,8 @@ public class DownloadSettingsFactory {
 
     /** Reads the canonical yt-dlp format preference used by Preferences. */
     public static String configuredYtDlpFormat(GlobalSettings settings) {
-        String value = settings.getProperty("ytdlp.videoFormat", "best");
-        return value == null || value.isBlank() ? "best" : value;
+        String value = settings.getProperty("ytdlp.videoFormat", "");
+        return value == null ? "" : value.trim();
     }
 
     /**
@@ -223,9 +225,11 @@ public class DownloadSettingsFactory {
         settings.setFileAllocation(g.getProperty("aria2.fileAllocation", "prealloc"));
         settings.setAutoFileRenaming(true);
         settings.setCheckIntegrity(g.getBooleanProperty("aria2.checkIntegrity", false));
-        settings.setBtMaxPeers(Math.max(0, g.getIntProperty("aria2.maxPeers", 100)));
+        settings.setBtMaxPeers(Math.max(0, g.getIntProperty("aria2.maxPeers",
+                DEFAULT_ARIA2_MAX_PEERS)));
         settings.setBtRequestPeerSpeedLimit(
-                Math.max(0, g.getIntProperty("aria2.peerSpeedLimitKb", 0)));
+                Math.max(0, g.getIntProperty("aria2.peerSpeedLimitKb",
+                        DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB)));
 
         int seedTimeMin = g.getIntProperty("aria2.seedTimeMin",
                 DEFAULT_ARIA2_SEED_TIME_MIN);
@@ -276,9 +280,9 @@ public class DownloadSettingsFactory {
         settings.setFormat(configuredYtDlpFormat(g));
         settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.writeThumbnail", false));
         settings.setWriteSubtitles(g.getBooleanProperty("ytdlp.writeSubtitles", false));
-        settings.setEmbedMetadata(g.getBooleanProperty("ytdlp.embedMetadata", true));
+        settings.setEmbedMetadata(g.getBooleanProperty("ytdlp.embedMetadata", false));
         settings.setExtractAudio(g.getBooleanProperty("ytdlp.extractAudio", false));
-        settings.setUseAria2c(g.getBooleanProperty("ytdlp.useAria2External", true));
+        settings.setUseAria2c(g.getBooleanProperty("ytdlp.useAria2External", false));
         String aria2cPath = g.getAria2Path();
         settings.setAria2cPath(aria2cPath == null || aria2cPath.isBlank()
                 ? "aria2c" : aria2cPath);
@@ -288,8 +292,11 @@ public class DownloadSettingsFactory {
         } else {
             settings.setSubtitleLanguages(Arrays.asList("en"));
         }
-        settings.setFragmentRetries(3);
         applyNetworkPreferences(g, settings);
+        // One Retry limit governs both whole-download and fragment failures.
+        // Zero retains yt-dlp's native defaults because the client omits both
+        // options in that case.
+        settings.setFragmentRetries(settings.getMaxRetries());
 
         return settings;
     }
@@ -304,15 +311,12 @@ public class DownloadSettingsFactory {
         GlobalSettings g = getGlobalSettings();
 
         // Defaults, overridable from the Settings dialog (httrack.* properties)
-        settings.setConnections(5);
         // Depth must be >= 1; clamp persisted/absent values defensively
         settings.setDepth(Math.max(1, g.getIntProperty("httrack.depth",
                 DEFAULT_HTTRACK_DEPTH)));
         settings.setFollowExternalLinks(false);
-        settings.setIncludeImages(true);
-        settings.setIncludeVideos(false);
-        // maxRate stays at the field default (0 = no limit flag emitted);
-        // setMaxRate now rejects non-positive values
+        // maxRate stays at 0: ODM emits no rate flag and leaves HTTrack's
+        // engine-default safety policy intact.
         settings.setIncludeArchives(g.getBooleanProperty("httrack.includeArchives", false));
         String include = g.getProperty("httrack.include", "");
         if (!include.isEmpty()) {
@@ -321,12 +325,6 @@ public class DownloadSettingsFactory {
                     settings.addIncludePattern(pattern);
                 }
             }
-        } else {
-            settings.addIncludePattern("*.png");
-            settings.addIncludePattern("*.gif");
-            settings.addIncludePattern("*.jpg");
-            settings.addIncludePattern("*.css");
-            settings.addIncludePattern("*.js");
         }
         String exclude = g.getProperty("httrack.exclude", "");
         if (!exclude.isEmpty()) {

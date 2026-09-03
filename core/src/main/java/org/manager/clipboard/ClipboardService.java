@@ -236,14 +236,10 @@ public class ClipboardService implements ClipboardListener {
         // Notify service listeners
         notifyServiceListeners(listener -> listener.onUrlsDetected(finalFilteredUrls, clipboardContent));
 
-        // Handle based on settings
-        if (settings.isAutoDownloadDetectedUrls()) {
-            // Queue without confirmation. Background admission still follows
-            // the global automatic-start policy.
-            List<Download> downloads = createDownloadsFromUrls(
-                    finalFilteredUrls, AdmissionSource.BACKGROUND_MONITOR);
-            LOGGER.info("Queued " + downloads.size() + " auto-detected URL(s)");
-        } else if (settings.isSilentMode()) {
+        // Silent mode alone decides whether clipboard detection needs user
+        // confirmation. Once admitted, the global background policy alone
+        // decides whether the new records start or remain queued.
+        if (settings.isSilentMode()) {
             // Silent controls confirmation only. Background admission still
             // follows the global automatic-start policy.
             List<Download> downloads = createDownloadsFromUrls(
@@ -467,14 +463,12 @@ public class ClipboardService implements ClipboardListener {
                   Service Enabled: %s
                   Monitoring Enabled: %s
                   Silent Mode: %s
-                  Auto Download: %s
                   Service Listeners: %d
                   Monitor Statistics:
                 %s""".formatted(
                 serviceEnabled,
                 settings.isMonitoringEnabled(),
                 settings.isSilentMode(),
-                settings.isAutoDownloadDetectedUrls(),
                 serviceListeners.size(),
                 clipboardMonitor instanceof ClipboardMonitorImpl
                         ? ((ClipboardMonitorImpl) clipboardMonitor).getStatistics()

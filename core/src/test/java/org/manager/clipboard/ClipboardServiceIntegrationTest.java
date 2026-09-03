@@ -181,7 +181,7 @@ class ClipboardServiceIntegrationTest {
         void testUrlDetectionAndDownloadCreation() throws Exception {
             // Given
             settings.setMonitoringEnabled(true)
-                   .setAutoDownloadDetectedUrls(true);
+                   .setSilentMode(true);
             clipboardService.updateSettings(settings);
             clipboardService.startService().get(3, TimeUnit.SECONDS);
 
@@ -204,8 +204,7 @@ class ClipboardServiceIntegrationTest {
         @Timeout(value = 5, unit = TimeUnit.SECONDS)
         void testSilentModeUsesGlobalQueuePolicy() throws Exception {
             settings.setMonitoringEnabled(true)
-                    .setSilentMode(true)
-                    .setAutoDownloadDetectedUrls(false);
+                    .setSilentMode(true);
             clipboardService.updateSettings(settings);
             clipboardService.startService().get(3, TimeUnit.SECONDS);
 
@@ -224,7 +223,7 @@ class ClipboardServiceIntegrationTest {
         void testUrlFiltering() throws Exception {
             // Given - disable video URL filtering
             settings.setMonitoringEnabled(true)
-                   .setAutoDownloadDetectedUrls(true)
+                   .setSilentMode(true)
                    .setFilterVideoUrls(false);
             clipboardService.updateSettings(settings);
             clipboardService.startService().get(3, TimeUnit.SECONDS);
@@ -251,7 +250,7 @@ class ClipboardServiceIntegrationTest {
         @Timeout(value = 5, unit = TimeUnit.SECONDS)
         void testCanonicalMediaRouting() throws Exception {
             settings.setMonitoringEnabled(true)
-                   .setAutoDownloadDetectedUrls(true);
+                   .setSilentMode(true);
             clipboardService.updateSettings(settings);
             clipboardService.startService().get(3, TimeUnit.SECONDS);
 
@@ -274,7 +273,7 @@ class ClipboardServiceIntegrationTest {
         void testUrlLimiting() throws Exception {
             // Given
             settings.setMonitoringEnabled(true)
-                   .setAutoDownloadDetectedUrls(true)
+                   .setSilentMode(true)
                    .setMaxUrlsPerClipboard(2);
             clipboardService.updateSettings(settings);
             clipboardService.startService().get(3, TimeUnit.SECONDS);
@@ -301,7 +300,7 @@ class ClipboardServiceIntegrationTest {
         void testDifferentUrlTypes() throws Exception {
             // Given
             settings.setMonitoringEnabled(true)
-                   .setAutoDownloadDetectedUrls(true);
+                   .setSilentMode(true);
             clipboardService.updateSettings(settings);
             clipboardService.startService().get(3, TimeUnit.SECONDS);
 
@@ -539,7 +538,7 @@ class ClipboardServiceIntegrationTest {
                 .thenThrow(new RuntimeException("Download creation failed"));
 
             settings.setMonitoringEnabled(true)
-                   .setAutoDownloadDetectedUrls(true);
+                   .setSilentMode(true);
             clipboardService.updateSettings(settings);
             clipboardService.startService().get(3, TimeUnit.SECONDS);
 
