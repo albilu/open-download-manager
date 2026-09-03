@@ -23,6 +23,7 @@ import org.gnome.gtk.CellRendererProgress;
 import org.gnome.gtk.CellRendererCombo;
 import org.gnome.gtk.CellRendererText;
 import org.gnome.gtk.CheckButton;
+import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.EventControllerMotion;
 import org.gnome.gtk.Frame;
@@ -365,12 +366,13 @@ class WindowSmokeTest {
         }
         for (String id : new String[]{"aria2_path_entry", "ytdlp_path_entry", "httrack_path_entry",
                 "referer_entry", "cookie_entry", "user_agent_entry", "proxy_host_entry",
-                "proxy_username_entry", "proxy_password_entry", "video_format_entry",
+                "proxy_username_entry", "proxy_password_entry",
                 "subtitle_language_entry", "include_entry", "exclude_entry",
                 "proxychains_path_entry", "tor_path_entry", "curl_path_entry",
                 "subliminal_path_entry", "antivirus_command_entry"}) {
             Widgets.require(builder, id, Entry.class);
         }
+        Widgets.require(builder, "video_format_entry", DropDown.class);
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "antivirus_type_combo", org.gnome.gtk.DropDown.class);
@@ -418,7 +420,7 @@ class WindowSmokeTest {
         assertEquals(1, gridColumn(Widgets.require(builder, "aria2_layout_grid", Grid.class),
                 Widgets.require(builder, "min_split_size_spin1", SpinButton.class)));
         assertEquals(1, gridColumn(Widgets.require(builder, "ytdlp_layout_grid", Grid.class),
-                Widgets.require(builder, "video_format_entry", Entry.class)));
+                Widgets.require(builder, "video_format_entry", DropDown.class)));
         assertEquals(1, gridColumn(Widgets.require(builder, "httrack_layout_grid", Grid.class),
                 Widgets.require(builder, "depth_spin", SpinButton.class)));
         assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
@@ -637,6 +639,7 @@ class WindowSmokeTest {
         // Constructing is the test: every Widgets.require in the constructor
         // must resolve. (Null app: the window is a standalone toplevel here.)
         assertEquals(org.gnome.gtk.SelectionMode.MULTIPLE, window.downloadSelectionMode());
+        assertTrue(window.downloadNameTooltipEnabled());
         assertEquals(PropagationPhase.CAPTURE, window.downloadContextClickPhase(),
                 "right-click handling must run before TreeView child gestures consume it");
         assertEquals(List.of("#", "Status", "Name", "Completed", "Size", "Progress",
@@ -654,6 +657,25 @@ class WindowSmokeTest {
         assertFalse(window.menuActionEnabled("open-file"));
         assertFalse(window.menuActionEnabled("open-folder"));
         window.dispose();
+    }
+
+    @Test
+    @DisplayName("download name tooltip uses the complete model value only for the Name cell")
+    void downloadNameTooltipUsesFullName() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ListStore store = Widgets.require(builder, "download_store", ListStore.class);
+        TreeIter row = new TreeIter();
+        store.append(row);
+        String fullName = "A very long download record name that is visually ellipsized.mkv";
+        ListStoreCells.setString(store, row, 1, fullName);
+        TreePath path = TreePath.first();
+        TreeViewColumn name = Widgets.require(builder, "name_column", TreeViewColumn.class);
+        TreeViewColumn size = Widgets.require(builder, "size_column", TreeViewColumn.class);
+
+        assertEquals(fullName,
+                MainWindow.downloadNameTooltip(store, path, name, name));
+        assertNull(MainWindow.downloadNameTooltip(store, path, size, name),
+                "other columns must not display the download-name tooltip");
     }
 
     @Test

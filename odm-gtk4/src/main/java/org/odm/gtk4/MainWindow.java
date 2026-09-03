@@ -341,6 +341,7 @@ public class MainWindow {
         AccessibilitySupport.label(statusTreeview, "Download status filters");
         AccessibilitySupport.label(categoryTreeview, "Download category filters");
         AccessibilitySupport.label(downloadsTreeview, "Downloads");
+        installDownloadNameTooltip(builder);
         AccessibilitySupport.label(searchEntry, "Search downloads");
         AccessibilitySupport.label(torSwitch, "Global Tor routing");
         AccessibilitySupport.label(menuBar, "Application menu");
@@ -794,6 +795,62 @@ public class MainWindow {
             return null;
         }
         return path.get();
+    }
+
+    /** Shows the complete, unellipsized download name only over the Name cell. */
+    private void installDownloadNameTooltip(GtkBuilder builder) {
+        org.gnome.gtk.TreeViewColumn nameColumn = Widgets.require(
+                builder, "name_column", org.gnome.gtk.TreeViewColumn.class);
+        org.gnome.gtk.CellRenderer nameRenderer = Widgets.require(
+                builder, "name_renderer", org.gnome.gtk.CellRenderer.class);
+        downloadsTreeview.setHasTooltip(true);
+        downloadsTreeview.onQueryTooltip((x, y, keyboardMode, tooltip) -> {
+            if (tooltip == null) {
+                return false;
+            }
+            Out<TreePath> cursorPath = new Out<>();
+            Out<org.gnome.gtk.TreeViewColumn> hoveredColumn = new Out<>();
+            TreePath path;
+            if (keyboardMode) {
+                downloadsTreeview.getCursor(cursorPath, hoveredColumn);
+                path = cursorPath.get();
+            } else {
+                path = pathAtWidgetPosition(downloadsTreeview, x, y, hoveredColumn);
+            }
+            if (path == null) {
+                return false;
+            }
+            try {
+                // A keyboard tooltip describes the selected record's name even
+                // when its current cursor column is not the Name column.
+                org.gnome.gtk.TreeViewColumn tooltipColumn = keyboardMode
+                        ? nameColumn : hoveredColumn.get();
+                String fullName = downloadNameTooltip(
+                        downloadsStore, path, tooltipColumn, nameColumn);
+                if (fullName == null || fullName.isBlank()) {
+                    return false;
+                }
+                tooltip.setText(fullName);
+                downloadsTreeview.setTooltipCell(
+                        tooltip, path, nameColumn, nameRenderer);
+                return true;
+            } finally {
+                org.javagi.interop.MemoryCleaner.free(path.handle());
+            }
+        });
+    }
+
+    static String downloadNameTooltip(ListStore store, TreePath path,
+            org.gnome.gtk.TreeViewColumn hoveredColumn,
+            org.gnome.gtk.TreeViewColumn nameColumn) {
+        if (store == null || path == null || hoveredColumn == null || nameColumn == null
+                || !hoveredColumn.handle().equals(nameColumn.handle())) {
+            return null;
+        }
+        TreeIter iter = new TreeIter();
+        return store.getIter(iter, path)
+                ? ListStoreCells.getString(store, iter, 1)
+                : null;
     }
 
     private void showContextMenuForSelection() {
@@ -2055,6 +2112,10 @@ public class MainWindow {
 
     SelectionMode downloadSelectionMode() {
         return downloadsTreeview.getSelection().getMode();
+    }
+
+    boolean downloadNameTooltipEnabled() {
+        return downloadsTreeview.getHasTooltip();
     }
 
     PropagationPhase downloadContextClickPhase() {

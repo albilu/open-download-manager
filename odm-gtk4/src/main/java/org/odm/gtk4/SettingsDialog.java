@@ -1,6 +1,8 @@
 package org.odm.gtk4;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +44,21 @@ public class SettingsDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SettingsDialog.class);
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
+    private record VideoFormatChoice(String label, String selector) {
+    }
+    private static final List<VideoFormatChoice> COMMON_VIDEO_FORMATS = List.of(
+            new VideoFormatChoice("Automatic (yt-dlp default)", ""),
+            new VideoFormatChoice("Up to 2160p (4K)",
+                    "bestvideo*[height<=?2160]+bestaudio/best[height<=?2160]"),
+            new VideoFormatChoice("Up to 1440p (2K)",
+                    "bestvideo*[height<=?1440]+bestaudio/best[height<=?1440]"),
+            new VideoFormatChoice("Up to 1080p (Full HD)",
+                    "bestvideo*[height<=?1080]+bestaudio/best[height<=?1080]"),
+            new VideoFormatChoice("Up to 720p (HD)",
+                    "bestvideo*[height<=?720]+bestaudio/best[height<=?720]"),
+            new VideoFormatChoice("Up to 480p (SD)",
+                    "bestvideo*[height<=?480]+bestaudio/best[height<=?480]"),
+            new VideoFormatChoice("Best single-file video (no merge)", "best"));
     private static final Map<String, String> SETTING_TOOLTIPS = Map.ofEntries(
             // General
             Map.entry("default_download_folder_chooser",
@@ -133,7 +150,7 @@ public class SettingsDialog {
             Map.entry("browse_ytdlp_button",
                     "Choose the yt-dlp executable used by ODM."),
             Map.entry("video_format_entry",
-                    "yt-dlp format selector, for example bestvideo+bestaudio/best; leave empty for yt-dlp's automatic best-quality selection."),
+                    "Common yt-dlp quality policy for new media downloads. Automatic lets yt-dlp choose the best format supported by each site."),
             Map.entry("subtitle_language_entry",
                     "Comma-separated language codes used by yt-dlp and the Download Subtitles completion action."),
             Map.entry("write_thumbnail_check",
@@ -259,6 +276,7 @@ public class SettingsDialog {
     private java.util.List<AntivirusChoice> antivirusChoices = java.util.List.of();
     private static final String ANTIVIRUS_AUTO = "auto";
     private String requestedAntivirusKey = ANTIVIRUS_AUTO;
+    private List<VideoFormatChoice> videoFormatChoices = COMMON_VIDEO_FORMATS;
 
     private record SettingsApplication(GlobalSettings settings,
             boolean previousStartAtLogin, boolean requestedStartAtLogin,
@@ -544,6 +562,26 @@ public class SettingsDialog {
         entry("user_agent_entry").setText(network.userAgent());
     }
 
+    int videoFormatChoiceCount() {
+        return videoFormatChoices.size();
+    }
+
+    String videoFormatChoiceLabel(int index) {
+        return videoFormatChoices.get(index).label();
+    }
+
+    void selectVideoFormatChoice(int index) {
+        Widgets.require(builder, "video_format_entry", DropDown.class).setSelected(index);
+    }
+
+    String selectedVideoFormat() {
+        long selected = Widgets.require(builder, "video_format_entry", DropDown.class)
+                .getSelected();
+        return selected >= 0 && selected < videoFormatChoices.size()
+                ? videoFormatChoices.get((int) selected).selector()
+                : "";
+    }
+
     DownloadSettingsFactory.NetworkDefaults networkDefaultsFromControls() {
         return new DownloadSettingsFactory.NetworkDefaults(
                 (int) spin("max_connections_spin").getValue(),
@@ -641,6 +679,32 @@ public class SettingsDialog {
             list.append(item);
         }
         Widgets.require(builder, id, DropDown.class).setModel(list);
+    }
+
+    /** Selects a common policy while retaining an existing custom selector. */
+    private void loadVideoFormat(String configuredSelector) {
+        String selector = configuredSelector == null ? "" : configuredSelector.trim();
+        List<VideoFormatChoice> choices = new ArrayList<>(COMMON_VIDEO_FORMATS);
+        int selected = -1;
+        for (int index = 0; index < choices.size(); index++) {
+            if (choices.get(index).selector().equals(selector)) {
+                selected = index;
+                break;
+            }
+        }
+        if (selected < 0) {
+            choices.add(new VideoFormatChoice("Custom — " + selector, selector));
+            selected = choices.size() - 1;
+        }
+        videoFormatChoices = List.copyOf(choices);
+
+        StringList model = new StringList(new String[0]);
+        for (VideoFormatChoice choice : videoFormatChoices) {
+            model.append(choice.label());
+        }
+        DropDown dropdown = Widgets.require(builder, "video_format_entry", DropDown.class);
+        dropdown.setModel(model);
+        dropdown.setSelected(selected);
     }
 
     private void configureSettingTooltips() {
@@ -930,7 +994,7 @@ public class SettingsDialog {
         spin("tracker_refresh_spin").setValue(s.getIntProperty("tracker.refreshInterval", 0));
         // Yt-dlp
         entry("ytdlp_path_entry").setText(s.getYtDlpPath() != null ? s.getYtDlpPath() : "");
-        entry("video_format_entry").setText(
+        loadVideoFormat(
                 org.manager.download.DownloadSettingsFactory.configuredYtDlpFormat(s));
         entry("subtitle_language_entry").setText(
                 s.getProperty("ytdlp.subtitleLanguages", "en"));
@@ -1111,7 +1175,7 @@ public class SettingsDialog {
                 String.valueOf((int) spin("tracker_refresh_spin").getValue()));
         // Yt-dlp
         s.setYtDlpPath(entry("ytdlp_path_entry").getText().trim());
-        s.setProperty("ytdlp.videoFormat", entry("video_format_entry").getText().trim());
+        s.setProperty("ytdlp.videoFormat", selectedVideoFormat());
         s.setProperty("ytdlp.subtitleLanguages", subtitleLanguages);
         s.setProperty("ytdlp.writeThumbnail", String.valueOf(check("write_thumbnail_check").getActive()));
         s.setProperty("ytdlp.writeSubtitles", String.valueOf(check("write_subtitles_check").getActive()));

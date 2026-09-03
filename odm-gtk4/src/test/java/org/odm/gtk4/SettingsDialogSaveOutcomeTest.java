@@ -311,6 +311,60 @@ class SettingsDialogSaveOutcomeTest {
 
     @Test
     @Timeout(60)
+    @DisplayName("yt-dlp video format offers common policies with Automatic selected by default")
+    void ytDlpVideoFormatUsesCommonDropdownChoices() throws Exception {
+        Path configHome = tempDir.resolve("ytdlp-format-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            assertEquals(7, dialog.videoFormatChoiceCount());
+            assertEquals("Automatic (yt-dlp default)", dialog.videoFormatChoiceLabel(0));
+            assertEquals("", dialog.selectedVideoFormat());
+
+            dialog.selectVideoFormatChoice(3);
+            String selected = dialog.selectedVideoFormat();
+            assertTrue(selected.contains("height<=?1080"));
+            dialog.applySettings();
+
+            assertEquals(selected,
+                    settings.get().getProperty("ytdlp.videoFormat", null));
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("an existing custom yt-dlp selector survives opening and applying Settings")
+    void customYtDlpVideoFormatIsPreserved() throws Exception {
+        Path configHome = tempDir.resolve("ytdlp-custom-format-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            String custom = "bestvideo[ext=webm]+bestaudio[ext=webm]/best";
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setProperty("ytdlp.videoFormat", custom);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            assertEquals(8, dialog.videoFormatChoiceCount());
+            assertTrue(dialog.videoFormatChoiceLabel(7).startsWith("Custom"));
+            assertEquals(custom, dialog.selectedVideoFormat());
+            dialog.applySettings();
+
+            assertEquals(custom,
+                    settings.get().getProperty("ytdlp.videoFormat", null));
+        });
+    }
+
+    @Test
+    @Timeout(60)
     @DisplayName("Network controls persist one engine-neutral preference set")
     void networkControlsPersistCanonicalDefaults() throws Exception {
         Path configHome = tempDir.resolve("network-config");
