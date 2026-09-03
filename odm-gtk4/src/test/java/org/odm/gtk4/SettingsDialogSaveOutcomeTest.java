@@ -3,6 +3,8 @@ package org.odm.gtk4;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.github.stefanbirkner.systemlambda.SystemLambda;
@@ -59,8 +61,9 @@ class SettingsDialogSaveOutcomeTest {
             "max_completed_records_spin", "completed_retention_spin", "error_retention_spin",
             "max_import_urls_spin", "max_import_source_size_spin", "proxychains_path_entry",
             "browse_proxychains_button", "tor_path_entry", "browse_tor_button",
-            "axel_path_entry", "browse_axel_button", "subliminal_path_entry",
-            "browse_subliminal_button", "antivirus_type_combo");
+            "curl_path_entry", "browse_curl_button", "subliminal_path_entry",
+            "browse_subliminal_button", "antivirus_type_combo",
+            "antivirus_command_entry", "antivirus_timeout_spin");
 
     private static MainLoop loop;
     private static java.util.concurrent.ExecutorService loopThread;
@@ -276,6 +279,97 @@ class SettingsDialogSaveOutcomeTest {
 
     @Test
     @Timeout(60)
+    @DisplayName("Reset loads defaults but does not commit until Apply")
+    void resetUsesRealDefaultsAndKeepsApplyAsCommitPoint() throws Exception {
+        Path configHome = tempDir.resolve("reset-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setMaxConcurrentDownloads(17);
+            initial.setAutomaticCleanupEnabled(true);
+            new org.manager.download.DownloadSettingsFactory.NetworkDefaults(
+                    16, 5, 0, 0, 0, "", "", "").saveTo(initial);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            dialog.resetToDefaults();
+            assertSame(initial, settings.get(),
+                    "Reset alone must not mutate the live settings");
+
+            dialog.applySettings();
+            GlobalSettings reset = settings.get();
+            assertEquals(3, reset.getMaxConcurrentDownloads());
+            assertFalse(reset.isAutomaticCleanupEnabled());
+            assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS,
+                    org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(reset)
+                            .maxConnections());
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("Network controls persist one engine-neutral preference set")
+    void networkControlsPersistCanonicalDefaults() throws Exception {
+        Path configHome = tempDir.resolve("network-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            AtomicReference<GlobalSettings> settings =
+                    new AtomicReference<>(new GlobalSettings());
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+            org.manager.download.DownloadSettingsFactory.NetworkDefaults expected =
+                    new org.manager.download.DownloadSettingsFactory.NetworkDefaults(
+                            11, 7, 640, 96, 4,
+                            "https://referrer.test/", "ODM test", "session=abc");
+
+            dialog.setNetworkDefaults(expected);
+            dialog.applySettings();
+
+            GlobalSettings saved = settings.get();
+            assertEquals(expected,
+                    org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(saved));
+            assertNull(saved.getProperty("aria2.maxConnections", null));
+            assertNull(saved.getProperty("aria2.maxTries", null));
+            assertNull(saved.getProperty("ytdlp.format", null));
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("Tor keeps the user's explicit proxy separate from its active loopback route")
+    void torDoesNotOverwriteManualProxyFields() throws Exception {
+        Path configHome = tempDir.resolve("tor-proxy-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setProperty("tor.enabled", "true");
+            initial.setGlobalProxyEnabled(true);
+            initial.setGlobalProxyAddress("socks5h://127.0.0.1:9050");
+            DialogOptions.rememberManualProxy(initial,
+                    "http://user:secret@proxy.example:8080");
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+            dialog.applySettings();
+
+            GlobalSettings saved = settings.get();
+            assertEquals("socks5h://127.0.0.1:9050",
+                    saved.getGlobalProxyAddress(), "Tor remains the active route");
+            assertEquals("http://user:secret@proxy.example:8080",
+                    DialogOptions.manualProxyAddress(saved),
+                    "the Preferences proxy must survive a save while Tor is enabled");
+        });
+    }
+
+    @Test
+    @Timeout(60)
     @DisplayName("an unwritable settings path shows an error in the status label")
     void unwritableSettingsPathShowsError() throws Exception {
         // Block the config directory with a regular file so save() cannot
@@ -292,6 +386,31 @@ class SettingsDialogSaveOutcomeTest {
             String status = dialog.statusText();
             assertTrue(status.toLowerCase().contains("failed"),
                     "the dialog must report the save failure, got: " + status);
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("a failed save does not apply the unsaved snapshot to live services")
+    void failedSaveDoesNotApplyRuntimeSettings() throws Exception {
+        Path blocker = tempDir.resolve("runtime-config-blocker");
+        Files.writeString(blocker, "not a directory");
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", blocker.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            java.util.concurrent.atomic.AtomicInteger liveCallbacks =
+                    new java.util.concurrent.atomic.AtomicInteger();
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null,
+                    active -> liveCallbacks.incrementAndGet());
+
+            dialog.applySettings();
+
+            assertSame(initial, settings.get(),
+                    "setGlobalSettings must not receive a snapshot that was not saved");
+            assertEquals(0, liveCallbacks.get(),
+                    "Tor and other post-save services must remain unchanged");
         });
     }
 

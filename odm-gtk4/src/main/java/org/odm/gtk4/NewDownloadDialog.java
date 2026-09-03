@@ -659,14 +659,16 @@ public class NewDownloadDialog {
 
     private void loadGlobalDefaults() {
         org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
-        maxConnectionsSpin.setValue(settings.getIntProperty("aria2.maxConnections", 8));
-        retryLimitSpin.setValue(settings.getIntProperty("aria2.maxTries", 5));
-        maxDownloadSpeedSpin.setValue(settings.getIntProperty("aria2.maxDownloadSpeedKb", 0));
-        maxUploadSpeedSpin.setValue(settings.getIntProperty("aria2.maxUploadSpeedKb", 0));
-        retryAfterSpin.setValue(settings.getIntProperty("aria2.retryWait", 0));
-        referrerEntry.setText(settings.getProperty("aria2.referer", ""));
-        cookieEntry.setText(settings.getProperty("aria2.cookie", ""));
-        userAgentEntry.setText(settings.getProperty("aria2.userAgent", ""));
+        org.manager.download.DownloadSettingsFactory.NetworkDefaults network =
+                org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(settings);
+        maxConnectionsSpin.setValue(network.maxConnections());
+        retryLimitSpin.setValue(network.maxRetries());
+        maxDownloadSpeedSpin.setValue(network.downloadLimitKb());
+        maxUploadSpeedSpin.setValue(network.uploadLimitKb());
+        retryAfterSpin.setValue(network.retryDelaySeconds());
+        referrerEntry.setText(network.referer());
+        cookieEntry.setText(network.cookie());
+        userAgentEntry.setText(network.userAgent());
         torSwitch.setActive(settings.getBooleanProperty("tor.enabled", false));
 
         DialogOptions.ProxyFields proxy = settings.isGlobalProxyEnabled()

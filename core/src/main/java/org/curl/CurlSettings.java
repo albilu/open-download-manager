@@ -276,7 +276,8 @@ public class CurlSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public CurlSettings setUserAgent(String userAgent) {
-        this.userAgent = userAgent;
+        this.userAgent = userAgent == null || userAgent.isBlank()
+                ? null : userAgent.trim();
         return this;
     }
 
@@ -296,7 +297,8 @@ public class CurlSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public CurlSettings setReferer(String referer) {
-        this.referer = referer;
+        this.referer = referer == null || referer.isBlank()
+                ? null : referer.trim();
         return this;
     }
 

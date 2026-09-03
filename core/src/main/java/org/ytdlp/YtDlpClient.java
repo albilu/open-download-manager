@@ -998,7 +998,9 @@ public class YtDlpClient {
         // never populated, so the external downloader never engaged.
         if (settings.isUseAria2c()) {
             command.add("--external-downloader");
-            command.add("aria2c");
+            String aria2cPath = settings.getAria2cPath();
+            command.add(aria2cPath == null || aria2cPath.isBlank()
+                    ? org.manager.tools.ToolPaths.aria2c() : aria2cPath);
 
             String aria2cArgs = settings.buildAria2cArgs();
             if (aria2cArgs != null && !aria2cArgs.isEmpty()) {

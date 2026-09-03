@@ -62,6 +62,18 @@ class YtDlpFactoryTest {
         when(mockGlobalSettings.isGlobalProxyEnabled()).thenReturn(false);
         when(mockGlobalSettings.getGlobalSpeedLimit()).thenReturn(0);
         when(mockGlobalSettings.getDefaultDownloadDirectory()).thenReturn(tempDownloadDir);
+        when(mockGlobalSettings.getProperty(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+        when(mockGlobalSettings.getIntProperty(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+        when(mockGlobalSettings.getBooleanProperty(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
 
         // Clear any existing singleton instance
         YtDlpFactory.clearInstance();
@@ -192,10 +204,14 @@ class YtDlpFactoryTest {
         YtDlpSettings settings = factory.createDefaultSettings();
 
         assertNotNull(settings);
-        assertEquals("bestvideo+bestaudio/best", settings.getFormat());
-        assertTrue(settings.isEmbedThumbnail());
+        assertEquals("best", settings.getFormat());
+        assertFalse(settings.isEmbedThumbnail());
         assertTrue(settings.isEmbedMetadata());
         assertEquals(3, settings.getFragmentRetries());
+        assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS,
+                settings.getMaxConnections());
+        assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_RETRIES,
+                settings.getMaxRetries());
         assertTrue(settings.isGeoBypass());
         assertFalse(settings.isIgnoreErrors());
         assertTrue(settings.isSkipUnavailableFragments());

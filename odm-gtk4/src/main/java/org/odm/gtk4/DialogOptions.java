@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import java.net.URI;
+import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.ExternalToolSettings;
 
@@ -15,6 +16,8 @@ final class DialogOptions {
 
     /** Proxy type labels, index-aligned with the proxy_type_combo rows. */
     static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
+    /** The user's non-Tor proxy, retained while the active route is Tor. */
+    static final String MANUAL_PROXY_ADDRESS_KEY = "network.manualProxyAddress";
 
     private DialogOptions() {
     }
@@ -83,6 +86,65 @@ final class DialogOptions {
             return new URI(scheme, userInfo, host.trim(), port, null, null, null).toASCIIString();
         } catch (Exception invalidProxy) {
             return null;
+        }
+    }
+
+    /**
+     * Returns the proxy chosen in Preferences independently of the temporary
+     * Tor route. Older settings files have no dedicated key, so migrate their
+     * active non-Tor proxy in memory on first use.
+     */
+    static String manualProxyAddress(GlobalSettings settings) {
+        if (settings == null) {
+            return null;
+        }
+        String remembered = settings.getProperty(MANUAL_PROXY_ADDRESS_KEY, null);
+        if (remembered != null) {
+            return remembered.isBlank() ? null : remembered;
+        }
+        String active = settings.isGlobalProxyEnabled()
+                ? settings.getGlobalProxyAddress() : null;
+        return isManagedTorProxy(active) ? null : active;
+    }
+
+    /** Stores the Preferences proxy without changing the currently active route. */
+    static void rememberManualProxy(GlobalSettings settings, String address) {
+        if (settings != null) {
+            settings.setProperty(MANUAL_PROXY_ADDRESS_KEY,
+                    address == null || address.isBlank() ? "" : address);
+        }
+    }
+
+    /** Saves a currently active explicit proxy before Tor temporarily replaces it. */
+    static void rememberActiveManualProxy(GlobalSettings settings) {
+        if (settings == null || !settings.isGlobalProxyEnabled()) {
+            return;
+        }
+        String active = settings.getGlobalProxyAddress();
+        if (!isManagedTorProxy(active)) {
+            rememberManualProxy(settings, active);
+        }
+    }
+
+    /** Restores the explicit proxy (or direct networking) when Tor is disabled. */
+    static void restoreManualProxy(GlobalSettings settings) {
+        String address = manualProxyAddress(settings);
+        settings.setGlobalProxyEnabled(address != null);
+        settings.setGlobalProxyAddress(address);
+    }
+
+    private static boolean isManagedTorProxy(String address) {
+        if (address == null || address.isBlank()) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(address);
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            return scheme != null && scheme.toLowerCase().startsWith("socks5")
+                    && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host));
+        } catch (RuntimeException invalidAddress) {
+            return false;
         }
     }
 
@@ -169,8 +231,10 @@ final class DialogOptions {
         }
         if (enabledCapabilities.contains(ExternalToolSettings.Capability.COOKIE)
                 && settings.supports(ExternalToolSettings.Capability.COOKIE)) {
-            settings.setCookieHeader(cookie == null || cookie.isBlank()
-                    ? null : "Cookie: " + cookie.trim());
+            String value = cookie == null ? "" : cookie.trim();
+            settings.setCookieHeader(value.isEmpty() ? null
+                    : value.regionMatches(true, 0, "Cookie:", 0, 7)
+                            ? value : "Cookie: " + value);
         }
     }
 }

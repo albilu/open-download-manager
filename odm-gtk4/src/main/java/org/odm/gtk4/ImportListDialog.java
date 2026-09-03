@@ -340,7 +340,13 @@ public class ImportListDialog {
                 Widgets.require(builder, "proxy_username_entry", Entry.class).getText(),
                 Widgets.require(builder, "proxy_password_entry", Entry.class).getText(),
                 (int) Widgets.require(builder, "max_connections_spin", SpinButton.class).getValue(),
-                (int) Widgets.require(builder, "max_download_speed_spin", SpinButton.class).getValue());
+                (int) Widgets.require(builder, "max_download_speed_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "max_upload_speed_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "retry_limit_spin", SpinButton.class).getValue(),
+                (int) Widgets.require(builder, "retry_after", SpinButton.class).getValue(),
+                Widgets.require(builder, "referrer", Entry.class).getText(),
+                Widgets.require(builder, "user_agent", Entry.class).getText(),
+                Widgets.require(builder, "cookie", Entry.class).getText());
     }
 
     private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
@@ -359,22 +365,38 @@ public class ImportListDialog {
         return queued;
     }
 
-    private record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,
-            String proxyUser, String proxyPassword, int connections, int downloadLimitKb) {
+    record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,
+            String proxyUser, String proxyPassword, int connections, int downloadLimitKb,
+            int uploadLimitKb, int retries, int retryDelay, String referer,
+            String userAgent, String cookie) {
         void apply(Download download) {
             DialogOptions.applyProxy(download, tor, proxyType, proxyHost, proxyPort,
                     proxyUser, proxyPassword);
             DialogOptions.applyCommon(download.getSettings(), connections, downloadLimitKb,
-                    0, 0, 0, null, null, null);
+                    uploadLimitKb, retries, retryDelay, referer, userAgent, cookie);
         }
     }
 
     private void loadGlobalDefaults() {
         org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
+        org.manager.download.DownloadSettingsFactory.NetworkDefaults network =
+                org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(settings);
         Widgets.require(builder, "max_connections_spin", SpinButton.class)
-                .setValue(settings.getIntProperty("aria2.maxConnections", 8));
+                .setValue(network.maxConnections());
         Widgets.require(builder, "max_download_speed_spin", SpinButton.class)
-                .setValue(settings.getIntProperty("aria2.maxDownloadSpeedKb", 0));
+                .setValue(network.downloadLimitKb());
+        Widgets.require(builder, "max_upload_speed_spin", SpinButton.class)
+                .setValue(network.uploadLimitKb());
+        Widgets.require(builder, "retry_limit_spin", SpinButton.class)
+                .setValue(network.maxRetries());
+        Widgets.require(builder, "retry_after", SpinButton.class)
+                .setValue(network.retryDelaySeconds());
+        Widgets.require(builder, "referrer", Entry.class)
+                .setText(network.referer());
+        Widgets.require(builder, "cookie", Entry.class)
+                .setText(network.cookie());
+        Widgets.require(builder, "user_agent", Entry.class)
+                .setText(network.userAgent());
         Widgets.require(builder, "tor_switch", Switch.class)
                 .setActive(settings.getBooleanProperty("tor.enabled", false));
 

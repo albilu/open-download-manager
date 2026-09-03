@@ -165,10 +165,10 @@ class CurlClientTest {
     }
 
     @Test
-    @DisplayName("Should handle download error for invalid URL")
+    @DisplayName("Should handle an HTTP download error")
     @Timeout(30)
     void shouldHandleDownloadError() throws Exception {
-        String invalidUrl = "https://invalid-domain-that-does-not-exist-12345.com/file.txt";
+        String invalidUrl = TestUtils.getMockErrorUrl(404);
 
         Download download = createTestDownload(URI.create(invalidUrl));
         download.setDestination(tempDir);

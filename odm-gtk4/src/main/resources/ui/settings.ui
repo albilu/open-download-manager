@@ -36,7 +36,7 @@
     <property name="lower">0</property><property name="upper">1440</property><property name="value">0</property><property name="step-increment">30</property>
   </object>
   <object class="GtkAdjustment" id="depth_adjustment">
-    <property name="lower">0</property><property name="upper">20</property><property name="value">3</property><property name="step-increment">1</property>
+    <property name="lower">1</property><property name="upper">20</property><property name="value">3</property><property name="step-increment">1</property>
   </object>
   <object class="GtkAdjustment" id="proxy_port_adjustment">
     <property name="lower">0</property><property name="upper">65535</property><property name="value">8080</property><property name="step-increment">1</property>
@@ -61,6 +61,9 @@
   </object>
   <object class="GtkAdjustment" id="max_import_source_size_adjustment">
     <property name="lower">1</property><property name="upper">64</property><property name="value">8</property><property name="step-increment">1</property><property name="page-increment">8</property>
+  </object>
+  <object class="GtkAdjustment" id="antivirus_timeout_adjustment">
+    <property name="lower">0</property><property name="upper">86400</property><property name="value">600</property><property name="step-increment">30</property><property name="page-increment">300</property>
   </object>
 
   <object class="GtkWindow" id="settings_dialog">
@@ -146,7 +149,7 @@
                       <object class="GtkBox" id="options_left_column">
                         <property name="orientation">vertical</property><property name="spacing">10</property><property name="hexpand">true</property>
                         <layout><property name="row">0</property><property name="column">0</property></layout>
-                        <child><object class="GtkLabel" id="download_settings_heading"><property name="label">&lt;b&gt;Download Settings&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property></object></child>
+                        <child><object class="GtkLabel" id="download_settings_heading"><property name="label">&lt;b&gt;Transfer Defaults&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property></object></child>
                         <child>
                           <object class="GtkGrid" id="settings_grid">
                             <property name="hexpand">true</property><property name="column-homogeneous">true</property><property name="row-spacing">8</property><property name="column-spacing">12</property>
@@ -162,7 +165,7 @@
                             <child><object class="GtkSpinButton" id="max_upload_speed_spin"><property name="adjustment">upload_speed_adjustment</property><property name="hexpand">true</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
                           </object>
                         </child>
-                        <child><object class="GtkLabel" id="http_connection_heading"><property name="label">&lt;b&gt;HTTP Connection&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property><property name="margin-top">4</property></object></child>
+                        <child><object class="GtkLabel" id="http_connection_heading"><property name="label">&lt;b&gt;HTTP Defaults&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property><property name="margin-top">4</property></object></child>
                         <child>
                           <object class="GtkGrid" id="http_connection_grid">
                             <property name="hexpand">true</property><property name="column-homogeneous">true</property><property name="row-spacing">8</property><property name="column-spacing">12</property>
@@ -387,14 +390,18 @@
                     <child><object class="GtkBox" id="proxychains_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">7</property><property name="column">1</property></layout><child><object class="GtkEntry" id="proxychains_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_proxychains_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel"><property name="label">Tor:</property><property name="xalign">0</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="tor_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">8</property><property name="column">1</property></layout><child><object class="GtkEntry" id="tor_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_tor_button"><property name="label">Browse</property></object></child></object></child>
-                    <child><object class="GtkLabel"><property name="label">Axel:</property><property name="xalign">0</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkBox" id="axel_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">9</property><property name="column">1</property></layout><child><object class="GtkEntry" id="axel_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_axel_button"><property name="label">Browse</property></object></child></object></child>
+                    <child><object class="GtkLabel"><property name="label">curl:</property><property name="xalign">0</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkBox" id="curl_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">9</property><property name="column">1</property></layout><child><object class="GtkEntry" id="curl_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_curl_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel"><property name="label">Subliminal:</property><property name="xalign">0</property><layout><property name="row">10</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="subliminal_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">10</property><property name="column">1</property></layout><child><object class="GtkEntry" id="subliminal_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_subliminal_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel" id="completion_tools_heading"><property name="label">&lt;b&gt;Completion Actions&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property><property name="margin-top">6</property><layout><property name="row">11</property><property name="column">0</property><property name="column-span">2</property></layout></object></child>
                     <child><object class="GtkLabel"><property name="label">Antivirus type:</property><property name="xalign">0</property><layout><property name="row">12</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkDropDown" id="antivirus_type_combo"><property name="hexpand">true</property><layout><property name="row">12</property><property name="column">1</property></layout></object></child>
                     <child><object class="GtkLabel" id="antivirus_detection_label"><property name="xalign">0</property><property name="wrap">true</property><property name="css-classes">['dim-label']</property><layout><property name="row">13</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Custom antivirus command:</property><property name="xalign">0</property><layout><property name="row">14</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkEntry" id="antivirus_command_entry"><property name="hexpand">true</property><property name="placeholder-text">scanner --options {file}</property><layout><property name="row">14</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Antivirus timeout (seconds):</property><property name="xalign">0</property><layout><property name="row">15</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="antivirus_timeout_spin"><property name="adjustment">antivirus_timeout_adjustment</property><property name="hexpand">true</property><layout><property name="row">15</property><property name="column">1</property></layout></object></child>
                       </object>
                     </child>
                   </object>

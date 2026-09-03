@@ -980,6 +980,24 @@ public class GlobalSettings {
         proxy.syncTo(custom);
         cleanup.syncTo(custom);
         toolPaths.syncTo(custom);
+        // Axel has never been a download engine in the current application.
+        // Older Preferences builds exposed a dead tools.axelPath field; drop
+        // that orphaned key now that the UI correctly configures curl instead.
+        custom.remove("tools.axelPath");
+        // Development builds briefly stored engine-neutral Network controls
+        // under aria2-specific names and treated ytdlp.format as a global
+        // preference. Keep one canonical schema; per-download YtDlpSettings
+        // may still use ytdlp.format in its own serialized option map.
+        custom.remove("aria2.maxConnections");
+        custom.remove("aria2.maxConnectionsPerServer");
+        custom.remove("aria2.maxTries");
+        custom.remove("aria2.maxDownloadSpeedKb");
+        custom.remove("aria2.maxUploadSpeedKb");
+        custom.remove("aria2.retryWait");
+        custom.remove("aria2.referer");
+        custom.remove("aria2.cookie");
+        custom.remove("aria2.userAgent");
+        custom.remove("ytdlp.format");
 
         custom.set("history.retainCompletedAndCanceled",
                 String.valueOf(retainCompletedAndCanceledHistory));
@@ -1074,7 +1092,9 @@ public class GlobalSettings {
             }
             if (bag.containsKey("globalSpeedLimit")) {
                 try {
-                    globalSpeedLimit = Integer.parseInt(bag.get("globalSpeedLimit", null));
+                    // Keep hand-edited JSON on the same non-negative contract
+                    // as callers using setGlobalSpeedLimit().
+                    setGlobalSpeedLimit(Integer.parseInt(bag.get("globalSpeedLimit", null)));
                 } catch (NumberFormatException e) {
                     LOGGER.warn("Invalid globalSpeedLimit in settings file: "
                             + bag.get("globalSpeedLimit", null));

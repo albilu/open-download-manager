@@ -106,10 +106,8 @@ class ExternalToolSettingsTest {
 
         s.setDownloadLimitKB(0).setReferer(null).setUserAgent("");
         assertEquals(0, s.getDownloadLimitKB());
-        assertTrue(s.getReferer() == null || s.getReferer().isBlank(),
-                "cleared referer must be null or blank, never junk");
-        assertTrue(s.getUserAgent() == null || s.getUserAgent().isBlank(),
-                "cleared user agent must be null or blank, never junk");
+        assertNull(s.getReferer(), "a blank referer must preserve curl's native default");
+        assertNull(s.getUserAgent(), "a blank user agent must preserve curl's native default");
     }
 
     @Test

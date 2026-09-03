@@ -24,10 +24,11 @@ import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
 import org.manager.GlobalSettings;
 import org.manager.download.DownloadManager;
+import org.manager.download.DownloadSettingsFactory;
 import org.manager.tools.ToolManagerFactory;
 
 /**
- * Settings dialog — 1:1 GTK4 port of settings.glade (7 tabs: General, Network,
+ * Settings dialog — 1:1 GTK4 port of settings.glade (6 tabs: General, Network,
  * Aria2, Yt-dlp, HTTrack, Advanced; Cancel/Reset/Apply/OK). Every control is
  * real: core values persist via GlobalSettings.save(); engine defaults are
  * stored as GlobalSettings properties and applied by DownloadSettingsFactory
@@ -72,21 +73,21 @@ public class SettingsDialog {
 
             // Network
             Map.entry("max_connections_spin",
-                    "Default maximum connections per server for new aria2 downloads."),
+                    "Default maximum connections for new downloads when supported by the selected engine."),
             Map.entry("retry_limit_spin",
-                    "Maximum attempts for new aria2 downloads; 0 uses ODM's engine default."),
+                    "Maximum attempts for new downloads when supported; 0 uses the selected engine's default."),
             Map.entry("retry_after",
-                    "Seconds between retry attempts for new aria2 downloads; 0 uses ODM's engine default."),
+                    "Seconds between retry attempts when supported; 0 uses the selected engine's default."),
             Map.entry("max_download_speed_spin",
-                    "Default download speed limit for new aria2 downloads; 0 means unlimited."),
+                    "Default download speed limit for supporting engines; 0 means unlimited."),
             Map.entry("max_upload_speed_spin",
-                    "Default upload speed limit for new aria2 downloads; 0 means unlimited."),
+                    "Default upload speed limit for supporting bidirectional engines; 0 means unlimited."),
             Map.entry("referer_entry",
-                    "HTTP Referer header sent by new aria2 HTTP(S) downloads; leave empty to omit it."),
+                    "HTTP Referer header sent by new downloads when supported; leave empty to use the engine default."),
             Map.entry("cookie_entry",
-                    "HTTP Cookie header sent by new aria2 HTTP(S) downloads; leave empty to omit it."),
+                    "HTTP Cookie header sent by new downloads when supported; leave empty to omit it."),
             Map.entry("user_agent_entry",
-                    "User-Agent header used by new aria2 HTTP(S) downloads; leave empty for the engine default."),
+                    "User-Agent used by new downloads when supported; leave empty for the engine default."),
             Map.entry("proxy_type_combo",
                     "Global proxy protocol used by new downloads; select None to disable the global proxy."),
             Map.entry("proxy_host_entry",
@@ -102,9 +103,9 @@ public class SettingsDialog {
 
             // aria2
             Map.entry("aria2_path_entry",
-                    "Path to the aria2c executable; leave empty to discover it automatically."),
+                    "Path to the aria2c executable; leave empty to discover it automatically. A running ODM aria2 daemon changes on restart."),
             Map.entry("browse_aria2_button",
-                    "Choose the aria2c executable used by ODM."),
+                    "Choose the aria2c executable used when ODM next starts its aria2 daemon."),
             Map.entry("min_split_size_spin1",
                     "Smallest file segment aria2 creates when splitting a download across connections."),
             Map.entry("file_allocation_combo",
@@ -148,11 +149,11 @@ public class SettingsDialog {
 
             // HTTrack
             Map.entry("httrack_path_entry",
-                    "Path to the HTTrack executable; leave empty to discover it automatically."),
+                    "Path to the HTTrack executable; leave empty to discover it automatically. Changes take effect after restarting ODM."),
             Map.entry("browse_httrack_button",
-                    "Choose the HTTrack executable used by ODM."),
+                    "Choose the HTTrack executable used by ODM after it restarts."),
             Map.entry("depth_spin",
-                    "Maximum number of link levels to crawl; ODM treats 0 as depth 1."),
+                    "Maximum number of link levels HTTrack crawls, from 1 to 20."),
             Map.entry("include_entry",
                     "Whitespace-separated HTTrack wildcard patterns to include; when empty, ODM includes common page assets."),
             Map.entry("exclude_entry",
@@ -182,23 +183,27 @@ public class SettingsDialog {
             Map.entry("max_import_source_size_spin",
                     "Maximum size of a local URL list or local/remote HTML source parsed in memory."),
             Map.entry("proxychains_path_entry",
-                    "Path to the proxychains executable used for SOCKS and Tor-routed downloads; leave empty to discover it automatically."),
+                    "Path to the proxychains executable used for SOCKS and Tor-routed downloads; changes take effect after restarting ODM."),
             Map.entry("browse_proxychains_button",
-                    "Choose the proxychains executable used by ODM."),
+                    "Choose the proxychains executable used by ODM after it restarts."),
             Map.entry("tor_path_entry",
-                    "Path to the Tor executable managed by ODM; leave empty to discover it automatically."),
+                    "Path to the Tor executable managed by ODM; changes take effect after restarting ODM."),
             Map.entry("browse_tor_button",
-                    "Choose the Tor executable managed by ODM."),
-            Map.entry("axel_path_entry",
-                    "Reserved Axel executable path. ODM does not currently route downloads through Axel."),
-            Map.entry("browse_axel_button",
-                    "Choose the reserved Axel executable path; Axel downloads are not currently enabled."),
+                    "Choose the Tor executable managed by ODM after it restarts."),
+            Map.entry("curl_path_entry",
+                    "Path to the curl executable used by fallback downloads; changes take effect after restarting ODM."),
+            Map.entry("browse_curl_button",
+                    "Choose the curl executable used by fallback downloads after ODM restarts."),
             Map.entry("subliminal_path_entry",
                     "Path to the Subliminal executable used by the Download Subtitles completion action; leave empty to discover it automatically."),
             Map.entry("browse_subliminal_button",
                     "Choose the Subliminal executable used by completion actions."),
             Map.entry("antivirus_type_combo",
-                    "Scanner used by Antivirus Scan completion actions; ODM lists validated installed scanners plus Custom command."));
+                    "Scanner used by Antivirus Scan completion actions; ODM lists validated installed scanners plus Custom command."),
+            Map.entry("antivirus_command_entry",
+                    "Command used when Antivirus type is Custom; include {file} where the downloaded file path belongs."),
+            Map.entry("antivirus_timeout_spin",
+                    "Maximum antivirus scan duration in seconds; 0 waits without a timeout."));
 
     record AntivirusChoice(String key, String label) {
     }
@@ -311,6 +316,10 @@ public class SettingsDialog {
         AccessibilitySupport.label(entry("proxy_password_entry"), "Global proxy password");
         AccessibilitySupport.label(entry("subtitle_language_entry"),
                 "Preferred subtitle languages, comma separated");
+        AccessibilitySupport.label(entry("antivirus_command_entry"),
+                "Custom antivirus command including file placeholder");
+        AccessibilitySupport.label(spin("antivirus_timeout_spin"),
+                "Antivirus scan timeout in seconds, zero for no timeout");
 
         dialog.setTransientFor(parent);
 
@@ -342,7 +351,7 @@ public class SettingsDialog {
         onPickFile("browse_httrack_button", "Select httrack binary", e -> setText("httrack_path_entry", e));
         onPickFile("browse_proxychains_button", "Select proxychains binary", e -> setText("proxychains_path_entry", e));
         onPickFile("browse_tor_button", "Select tor binary", e -> setText("tor_path_entry", e));
-        onPickFile("browse_axel_button", "Select axel binary", e -> setText("axel_path_entry", e));
+        onPickFile("browse_curl_button", "Select curl binary", e -> setText("curl_path_entry", e));
         onPickFile("browse_subliminal_button", "Select Subliminal binary",
                 e -> setText("subliminal_path_entry", e));
 
@@ -351,6 +360,7 @@ public class SettingsDialog {
         discoverAvailableAntiviruses();
         bindFolderMonitoringChildren();
         bindHistoryCleanupControls();
+        bindAntivirusControls();
 
         dialog.onCloseRequest(() -> {
             closed.set(true);
@@ -358,7 +368,8 @@ public class SettingsDialog {
         });
 
         Widgets.require(builder, "settings_cancel_button", Button.class).onClicked(dialog::close);
-        Widgets.require(builder, "settings_reset_button", Button.class).onClicked(this::load);
+        Widgets.require(builder, "settings_reset_button", Button.class)
+                .onClicked(this::resetToDefaults);
         Widgets.require(builder, "settings_apply_button", Button.class)
                 .onClicked(() -> onApply(false));
         Widgets.require(builder, "settings_ok_button", Button.class)
@@ -519,6 +530,29 @@ public class SettingsDialog {
     void setImportLimits(int maximumUrls, int maximumSourceSizeMiB) {
         spin("max_import_urls_spin").setValue(maximumUrls);
         spin("max_import_source_size_spin").setValue(maximumSourceSizeMiB);
+    }
+
+    void setNetworkDefaults(DownloadSettingsFactory.NetworkDefaults network) {
+        spin("max_connections_spin").setValue(network.maxConnections());
+        spin("retry_limit_spin").setValue(network.maxRetries());
+        spin("max_download_speed_spin").setValue(network.downloadLimitKb());
+        spin("max_upload_speed_spin").setValue(network.uploadLimitKb());
+        spin("retry_after").setValue(network.retryDelaySeconds());
+        entry("referer_entry").setText(network.referer());
+        entry("cookie_entry").setText(network.cookie());
+        entry("user_agent_entry").setText(network.userAgent());
+    }
+
+    DownloadSettingsFactory.NetworkDefaults networkDefaultsFromControls() {
+        return new DownloadSettingsFactory.NetworkDefaults(
+                (int) spin("max_connections_spin").getValue(),
+                (int) spin("retry_limit_spin").getValue(),
+                (int) spin("max_download_speed_spin").getValue(),
+                (int) spin("max_upload_speed_spin").getValue(),
+                (int) spin("retry_after").getValue(),
+                entry("referer_entry").getText(),
+                entry("user_agent_entry").getText(),
+                entry("cookie_entry").getText());
     }
 
     // ---- widget helpers ----
@@ -715,6 +749,7 @@ public class SettingsDialog {
             }
         }
         dropdown.setSelected(requestedIndex >= 0 ? requestedIndex : 0);
+        updateAntivirusControlSensitivity();
         long validatedCount = antivirusChoices.stream()
                 .filter(choice -> !"custom".equals(choice.key())).count();
         String message = discoveryFailed
@@ -769,6 +804,20 @@ public class SettingsDialog {
         updateSensitivity.run();
     }
 
+    private void bindAntivirusControls() {
+        Widgets.require(builder, "antivirus_type_combo", DropDown.class)
+                .onNotify("selected", ignored -> updateAntivirusControlSensitivity());
+        updateAntivirusControlSensitivity();
+    }
+
+    private void updateAntivirusControlSensitivity() {
+        long selected = Widgets.require(builder, "antivirus_type_combo", DropDown.class)
+                .getSelected();
+        boolean customSelected = selected >= 0 && selected < antivirusChoices.size()
+                && "custom".equals(antivirusChoices.get((int) selected).key());
+        entry("antivirus_command_entry").setSensitive(customSelected);
+    }
+
     // ---- load / apply ----
 
     private void setDefaultDir(String dir) {
@@ -798,16 +847,31 @@ public class SettingsDialog {
     }
 
     private void load() {
-        GlobalSettings s = downloadManager.getGlobalSettings();
+        load(downloadManager.getGlobalSettings(), true);
+    }
+
+    /** Loads defaults into the controls; Apply/OK remains the commit point. */
+    void resetToDefaults() {
+        load(new GlobalSettings(), false);
+        AccessibilitySupport.status(statusLabel,
+                "Default values loaded. Press Apply or OK to save them.");
+    }
+
+    private void load(GlobalSettings s, boolean useRuntimeMonitoringState) {
         // General
         Path dir = s.getDefaultDownloadDirectory();
         setDefaultDir(dir != null ? dir.toString() : System.getProperty("user.home") + "/Downloads");
         spin("max_concurrent_downloads_spin").setValue(s.getMaxConcurrentDownloads());
         check("retain_completed_canceled_history_check").setActive(
                 s.isRetainCompletedAndCanceledHistory());
-        check("clipboard_monitor_check").setActive(downloadManager.isClipboardMonitoringEnabled());
-        check("folder_monitoring_check").setActive(downloadManager.isTorrentFolderMonitoringEnabled()
-                || downloadManager.isMetaLinkFolderMonitoringEnabled());
+        check("clipboard_monitor_check").setActive(useRuntimeMonitoringState
+                ? downloadManager.isClipboardMonitoringEnabled()
+                : s.getClipboardSettings() != null
+                        && s.getClipboardSettings().isMonitoringEnabled());
+        check("folder_monitoring_check").setActive(useRuntimeMonitoringState
+                ? downloadManager.isTorrentFolderMonitoringEnabled()
+                        || downloadManager.isMetaLinkFolderMonitoringEnabled()
+                : s.getBooleanProperty("folder.monitorEnabled", false));
         check("system_tray_check").setActive(s.getBooleanProperty("ui.systemTray", false));
         check("start_automatically_check").setActive(s.getBooleanProperty("ui.startAutomatically", true));
         check("move_torrent_check").setActive(s.getBooleanProperty("ui.moveTorrent", false));
@@ -818,19 +882,11 @@ public class SettingsDialog {
         // Restore the persisted monitored folder (empty until first configured)
         String monitoredDir = s.getProperty("folder.monitorPath", "");
         setMonitoredDir(monitoredDir);
-        // Network (aria2 defaults + proxy)
+        // Engine-neutral Network defaults + proxy
         torSwitchSet(s.getBooleanProperty("tor.enabled", false));
-        spin("max_connections_spin").setValue(s.getIntProperty("aria2.maxConnections", 8));
-        spin("retry_limit_spin").setValue(s.getIntProperty("aria2.maxTries", 5));
-        spin("max_download_speed_spin").setValue(s.getIntProperty("aria2.maxDownloadSpeedKb", 0));
-        spin("max_upload_speed_spin").setValue(s.getIntProperty("aria2.maxUploadSpeedKb", 0));
-        spin("retry_after").setValue(s.getIntProperty("aria2.retryWait", 0));
-        entry("referer_entry").setText(s.getProperty("aria2.referer", ""));
-        entry("cookie_entry").setText(s.getProperty("aria2.cookie", ""));
-        entry("user_agent_entry").setText(s.getProperty("aria2.userAgent", ""));
-        DialogOptions.ProxyFields proxy = s.isGlobalProxyEnabled()
-                ? DialogOptions.parseProxy(s.getGlobalProxyAddress())
-                : DialogOptions.ProxyFields.none();
+        setNetworkDefaults(DownloadSettingsFactory.NetworkDefaults.from(s));
+        DialogOptions.ProxyFields proxy = DialogOptions.parseProxy(
+                DialogOptions.manualProxyAddress(s));
         Widgets.require(builder, "proxy_type_combo", DropDown.class).setSelected(proxy.typeIndex());
         entry("proxy_host_entry").setText(proxy.host());
         spin("proxy_port_spin").setValue(proxy.port());
@@ -838,10 +894,12 @@ public class SettingsDialog {
         entry("proxy_password_entry").setText(proxy.password());
         // Aria2
         entry("aria2_path_entry").setText(s.getAria2Path() != null ? s.getAria2Path() : "");
-        spin("min_split_size_spin1").setValue(s.getIntProperty("aria2.minSplitSizeMb", 10));
+        spin("min_split_size_spin1").setValue(s.getIntProperty("aria2.minSplitSizeMb",
+                org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB));
         spin("max_peers_spin").setValue(s.getIntProperty("aria2.maxPeers", 100));
         spin("peer_speed_limit_spin").setValue(s.getIntProperty("aria2.peerSpeedLimitKb", 0));
-        spin("seed_time_spin").setValue(s.getIntProperty("aria2.seedTimeMin", 60));
+        spin("seed_time_spin").setValue(s.getIntProperty("aria2.seedTimeMin",
+                org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_SEED_TIME_MIN));
         check("continue_download_check").setActive(s.getBooleanProperty("aria2.continueDownload", true));
         check("check_integrity_check").setActive(s.getBooleanProperty("aria2.checkIntegrity", false));
         String fileAllocation = s.getProperty("aria2.fileAllocation", "prealloc");
@@ -854,7 +912,8 @@ public class SettingsDialog {
         spin("tracker_refresh_spin").setValue(s.getIntProperty("tracker.refreshInterval", 0));
         // Yt-dlp
         entry("ytdlp_path_entry").setText(s.getYtDlpPath() != null ? s.getYtDlpPath() : "");
-        entry("video_format_entry").setText(s.getProperty("ytdlp.videoFormat", ""));
+        entry("video_format_entry").setText(
+                org.manager.download.DownloadSettingsFactory.configuredYtDlpFormat(s));
         entry("subtitle_language_entry").setText(
                 s.getProperty("ytdlp.subtitleLanguages", "en"));
         check("write_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.writeThumbnail", false));
@@ -864,7 +923,8 @@ public class SettingsDialog {
         check("use_aria2_external_check").setActive(s.getBooleanProperty("ytdlp.useAria2External", true));
         // HTTrack
         entry("httrack_path_entry").setText(s.getHttrackPath() != null ? s.getHttrackPath() : "");
-        spin("depth_spin").setValue(s.getIntProperty("httrack.depth", 3));
+        spin("depth_spin").setValue(s.getIntProperty("httrack.depth",
+                org.manager.download.DownloadSettingsFactory.DEFAULT_HTTRACK_DEPTH));
         entry("include_entry").setText(s.getProperty("httrack.include", ""));
         entry("exclude_entry").setText(s.getProperty("httrack.exclude", ""));
         check("include_archives_check").setActive(s.getBooleanProperty("httrack.includeArchives", false));
@@ -897,9 +957,13 @@ public class SettingsDialog {
         loadSchedulerGrid(persistedGrid);
         entry("proxychains_path_entry").setText(s.getProxychainsPath() != null ? s.getProxychainsPath() : "");
         entry("tor_path_entry").setText(s.getTorPath() != null ? s.getTorPath() : "");
-        entry("axel_path_entry").setText(s.getProperty("tools.axelPath", ""));
+        entry("curl_path_entry").setText(s.getCurlPath() != null ? s.getCurlPath() : "");
         entry("subliminal_path_entry").setText(
                 s.getSubliminalPath() != null ? s.getSubliminalPath() : "");
+        entry("antivirus_command_entry").setText(
+                s.getProperty("antivirus.command", "clamscan --no-summary {file}"));
+        spin("antivirus_timeout_spin").setValue(
+                Math.max(0, s.getIntProperty("antivirus.timeout", 600)));
         requestedAntivirusKey = s.getProperty("antivirus.scanner", "clamav")
                 .toLowerCase(java.util.Locale.ROOT);
         if (!antivirusChoices.isEmpty()) {
@@ -929,7 +993,9 @@ public class SettingsDialog {
                     saveInProgress.set(false);
                     setSaveButtonsSensitive(true);
                     boolean succeeded = error == null && Boolean.TRUE.equals(saved);
-                    applyTorPreference(application);
+                    if (succeeded) {
+                        applyTorPreference(application);
+                    }
                     reportSaveOutcome(succeeded);
                     if (succeeded && closeAfterSave) {
                         dialog.close();
@@ -947,7 +1013,9 @@ public class SettingsDialog {
     void applySettings() {
         SettingsApplication application = collectSettings();
         boolean saved = persistSettings(application);
-        applyTorPreference(application);
+        if (saved) {
+            applyTorPreference(application);
+        }
         reportSaveOutcome(saved);
     }
 
@@ -993,23 +1061,17 @@ public class SettingsDialog {
         s.setProperty("folder.monitorEnabled", String.valueOf(folderMonitoring && hasMonitoredDir));
         boolean effectiveFolderMonitoring = folderMonitoring && hasMonitoredDir;
         // Network
-        s.setProperty("aria2.maxConnections", String.valueOf((int) spin("max_connections_spin").getValue()));
-        s.setProperty("aria2.maxTries", String.valueOf((int) spin("retry_limit_spin").getValue()));
-        s.setProperty("aria2.maxDownloadSpeedKb", String.valueOf((int) spin("max_download_speed_spin").getValue()));
-        s.setProperty("aria2.maxUploadSpeedKb", String.valueOf((int) spin("max_upload_speed_spin").getValue()));
-        s.setProperty("aria2.retryWait", String.valueOf((int) spin("retry_after").getValue()));
-        s.setProperty("aria2.referer", entry("referer_entry").getText().trim());
-        s.setProperty("aria2.cookie", entry("cookie_entry").getText().trim());
-        s.setProperty("aria2.userAgent", entry("user_agent_entry").getText().trim());
+        networkDefaultsFromControls().saveTo(s);
         boolean torEnabled = torSwitchGet();
+        String manualProxyAddress = DialogOptions.buildProxyAddress(
+                (int) Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected(),
+                entry("proxy_host_entry").getText(),
+                (int) spin("proxy_port_spin").getValue(),
+                entry("proxy_username_entry").getText(),
+                entry("proxy_password_entry").getText());
+        DialogOptions.rememberManualProxy(s, manualProxyAddress);
         String proxyAddress = torEnabled
-                ? "socks5h://127.0.0.1:9050"
-                : DialogOptions.buildProxyAddress(
-                        (int) Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected(),
-                        entry("proxy_host_entry").getText(),
-                        (int) spin("proxy_port_spin").getValue(),
-                        entry("proxy_username_entry").getText(),
-                        entry("proxy_password_entry").getText());
+                ? "socks5h://127.0.0.1:9050" : manualProxyAddress;
         s.setGlobalProxyEnabled(proxyAddress != null);
         s.setGlobalProxyAddress(proxyAddress);
         // Aria2
@@ -1063,12 +1125,27 @@ public class SettingsDialog {
         }
         s.setProxychainsPath(entry("proxychains_path_entry").getText().trim());
         s.setTorPath(entry("tor_path_entry").getText().trim());
-        s.setProperty("tools.axelPath", entry("axel_path_entry").getText().trim());
+        s.setCurlPath(entry("curl_path_entry").getText().trim());
         s.setSubliminalPath(entry("subliminal_path_entry").getText().trim());
         long antivirusIndex = Widgets.require(builder, "antivirus_type_combo", DropDown.class)
                 .getSelected();
         if (antivirusIndex >= 0 && antivirusIndex < antivirusChoices.size()) {
-            s.setProperty("antivirus.scanner", antivirusChoices.get((int) antivirusIndex).key());
+            String scanner = antivirusChoices.get((int) antivirusIndex).key();
+            String customCommand = entry("antivirus_command_entry").getText().trim();
+            if ("custom".equals(scanner)) {
+                if (customCommand.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "Enter a command for the Custom antivirus scanner");
+                }
+                if (!customCommand.contains("{file}")) {
+                    throw new IllegalArgumentException(
+                            "The Custom antivirus command must include {file}");
+                }
+            }
+            s.setProperty("antivirus.scanner", scanner);
+            s.setProperty("antivirus.command", customCommand);
+            s.setProperty("antivirus.timeout",
+                    String.valueOf((int) spin("antivirus_timeout_spin").getValue()));
         }
 
         return new SettingsApplication(s, previousStartAtLogin,
@@ -1080,34 +1157,35 @@ public class SettingsDialog {
     /** Performs filesystem and core/service work away from the GTK thread. */
     private boolean persistSettings(SettingsApplication application) {
         GlobalSettings s = application.settings();
-        applySchedulerRuntime(application.schedulingEnabled(), application.hourGrid());
-        boolean autostartApplied = true;
-        try {
-            AutostartManager.setEnabled(application.requestedStartAtLogin());
-        } catch (java.io.IOException e) {
-            autostartApplied = false;
-            // Keep persisted settings consistent with the desktop entry that
-            // is still on disk when the external operation fails.
-            s.setProperty("ui.startAtLogin",
-                    String.valueOf(application.previousStartAtLogin()));
-            LOGGER.warn("Failed to update the login autostart entry", e);
+        boolean autostartChanged = application.requestedStartAtLogin()
+                != application.previousStartAtLogin();
+        if (autostartChanged) {
+            try {
+                AutostartManager.setEnabled(application.requestedStartAtLogin());
+            } catch (java.io.IOException e) {
+                LOGGER.warn("Failed to update the login autostart entry", e);
+                return false;
+            }
         }
         boolean settingsSaved = s.save();
-        if (!settingsSaved && autostartApplied
-                && application.requestedStartAtLogin()
-                        != application.previousStartAtLogin()) {
+        if (!settingsSaved && autostartChanged) {
             try {
                 AutostartManager.setEnabled(application.previousStartAtLogin());
-                s.setProperty("ui.startAtLogin",
-                        String.valueOf(application.previousStartAtLogin()));
             } catch (java.io.IOException rollbackFailure) {
                 LOGGER.warn("Failed to roll back the login autostart entry", rollbackFailure);
             }
         }
-        boolean saved = settingsSaved && autostartApplied;
+        if (!settingsSaved) {
+            return false;
+        }
+
+        // Only a durably saved snapshot may change live services. Previously
+        // a failed write still changed manager, scheduler, monitoring and Tor
+        // state until restart while the dialog correctly reported failure.
         downloadManager.setGlobalSettings(s);
+        applySchedulerRuntime(application.schedulingEnabled(), application.hourGrid());
         applyMonitoringPreferences(application);
-        return saved;
+        return true;
     }
 
     /** Applies monitoring only after the manager sees the newly collected

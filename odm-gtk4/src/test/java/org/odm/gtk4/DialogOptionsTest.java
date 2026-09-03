@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import org.curl.CurlSettings;
 import org.junit.jupiter.api.Test;
+import org.manager.GlobalSettings;
 
 class DialogOptionsTest {
 
@@ -18,6 +19,38 @@ class DialogOptionsTest {
                         "proxy.example", 8080, "user", "secret"));
         assertNull(DialogOptions.selectedProxyAddress(false, 0,
                 "proxy.example", 8080, "", ""));
+    }
+
+    @Test
+    void torRouteDoesNotOverwriteTheRememberedManualProxy() {
+        GlobalSettings settings = new GlobalSettings()
+                .setGlobalProxyEnabled(true)
+                .setGlobalProxyAddress("http://proxy.example:8080");
+
+        DialogOptions.rememberActiveManualProxy(settings);
+        settings.setGlobalProxyAddress("socks5h://127.0.0.1:9050");
+        settings.setProperty("tor.enabled", "true");
+
+        assertEquals("http://proxy.example:8080",
+                DialogOptions.manualProxyAddress(settings));
+
+        DialogOptions.restoreManualProxy(settings);
+        assertEquals("http://proxy.example:8080", settings.getGlobalProxyAddress());
+        assertEquals(true, settings.isGlobalProxyEnabled());
+    }
+
+    @Test
+    void disablingTorRestoresDirectNetworkingWhenNoManualProxyWasChosen() {
+        GlobalSettings settings = new GlobalSettings()
+                .setGlobalProxyEnabled(true)
+                .setGlobalProxyAddress("socks5h://127.0.0.1:9050");
+        settings.setProperty("tor.enabled", "true");
+        DialogOptions.rememberManualProxy(settings, null);
+
+        DialogOptions.restoreManualProxy(settings);
+
+        assertNull(settings.getGlobalProxyAddress());
+        assertEquals(false, settings.isGlobalProxyEnabled());
     }
 
     @Test

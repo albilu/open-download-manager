@@ -161,29 +161,13 @@ public class YtDlpFactory {
      * @return A configured YtDlpSettings instance
      */
     public YtDlpSettings createDefaultSettings() {
-        YtDlpSettings settings = new YtDlpSettings();
+        // Use the same Preferences-backed path as DownloadManager. Keeping a
+        // second hard-coded set here previously bypassed the Network and
+        // yt-dlp panels whenever a handler had to create fallback settings.
+        YtDlpSettings settings = (YtDlpSettings) new org.manager.download.DownloadSettingsFactory(
+                globalSettings).createSettings(org.manager.download.Download.Type.YOUTUBE);
 
-        // Apply global proxy settings if enabled
-        if (globalSettings.isGlobalProxyEnabled()) {
-            String proxyAddress = globalSettings.getGlobalProxyAddress();
-            if (proxyAddress != null) {
-                settings.setUseProxy(true);
-                settings.setProxyAddress(proxyAddress);
-            }
-        }
-
-        // Apply global speed limit if set
-        int globalSpeedLimit = globalSettings.getGlobalSpeedLimit();
-        if (globalSpeedLimit > 0) {
-            settings.setLimitRate(true);
-            settings.setRateLimit(globalSpeedLimit);
-        }
-
-        // Set reasonable defaults
-        settings.setFormat("bestvideo+bestaudio/best")
-                .setEmbedThumbnail(true)
-                .setEmbedMetadata(true)
-                .setFragmentRetries(3)
+        settings.setFragmentRetries(3)
                 .setGeoBypass(true)
                 .setIgnoreErrors(false)
                 .setSkipUnavailableFragments(true);

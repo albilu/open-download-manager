@@ -133,6 +133,8 @@ public class MainWindow {
     private org.manager.clipboard.ClipboardServiceListener windowClipboardListener;
     /** Optional app-provided exit sequence (graceful shutdown UI). */
     private Runnable finalCloseDelegate;
+    /** App-owned StatusNotifier lifecycle; null in isolated window tests. */
+    private java.util.function.Consumer<Boolean> trayPreferenceHandler;
     private Download selectedDownload;
     private List<Download> selectedDownloads = List.of();
     /** Guard so menu actions register on the window only once. */
@@ -264,10 +266,17 @@ public class MainWindow {
             filePriorityStore.append(iter);
             ListStoreCells.setString(filePriorityStore, iter, 0, priority);
         }
-        Widgets.require(builder, "files_priority_renderer",
-                org.gnome.gtk.CellRendererCombo.class)
-                .onChanged((path, priorityIter) -> onFilePriorityChanged(path,
-                        ListStoreCells.getString(filePriorityStore, priorityIter, 0)));
+        org.gnome.gtk.CellRendererCombo filePriorityRenderer = Widgets.require(builder,
+                "files_priority_renderer", org.gnome.gtk.CellRendererCombo.class);
+        filePriorityRenderer.onEditingStarted((editable, path) -> {
+            detailTabsPresenter.setFilePriorityEditing(true);
+            editable.onEditingDone(() -> detailTabsPresenter.setFilePriorityEditing(false));
+            editable.onRemoveWidget(() -> detailTabsPresenter.setFilePriorityEditing(false));
+        });
+        filePriorityRenderer.onEditingCanceled(() ->
+                detailTabsPresenter.setFilePriorityEditing(false));
+        filePriorityRenderer.onChanged((path, priorityIter) -> onFilePriorityChanged(path,
+                ListStoreCells.getString(filePriorityStore, priorityIter, 0)));
 
         this.downloadContextClick = new GestureClick();
         downloadContextClick.setButton(3);
@@ -476,6 +485,11 @@ public class MainWindow {
         this.trayAvailable = available;
     }
 
+    /** Lets the application create or retire its tray export after Settings is saved. */
+    public void setTrayPreferenceHandler(java.util.function.Consumer<Boolean> handler) {
+        this.trayPreferenceHandler = handler;
+    }
+
     /** Really destroys the window (bypasses the close-request handler). */
     public void dispose() {
         shutdownBackgroundWork();
@@ -584,6 +598,10 @@ public class MainWindow {
     private void onSettingsClicked() {
         new SettingsDialog(window, downloadManager, scheduleManager, active -> {
             applyTorPreference(active);
+            if (trayPreferenceHandler != null) {
+                trayPreferenceHandler.accept(downloadManager.getGlobalSettings()
+                        .getBooleanProperty("ui.systemTray", false));
+            }
             syncScheduleActionState();
             // Rebuild settings-backed actions (subtitles, antivirus, custom)
             // so changes apply without requiring a restart or re-selection.
@@ -1691,6 +1709,10 @@ public class MainWindow {
         long epoch = torToggleEpoch.incrementAndGet();
         torDesiredRunning.set(active);
         if (active) {
+            // Tor temporarily owns the active global route. Preserve any
+            // explicit proxy so switching Tor off restores it instead of
+            // silently forcing direct networking.
+            DialogOptions.rememberActiveManualProxy(downloadManager.getGlobalSettings());
             trackActivity(torService.start()).whenComplete((ok, error) -> {
                 if (epoch != torToggleEpoch.get() || !torDesiredRunning.get()) {
                     // The user switched Tor off while startup was pending.
@@ -1727,10 +1749,11 @@ public class MainWindow {
             });
         } else {
             shutdownTorLeakChecker();
-            downloadManager.getGlobalSettings().setGlobalProxyEnabled(false);
+            DialogOptions.restoreManualProxy(downloadManager.getGlobalSettings());
             downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
             downloadManager.getGlobalSettings().save();
-            // Clear the proxy from running downloads
+            // Restore the user's explicit proxy (or direct route) on running
+            // downloads now that the managed Tor route is gone.
             downloadManager.applyGlobalSettingsToActiveDownloads();
             torService.stop();
             LOGGER.info("Tor stopped");
@@ -1882,8 +1905,8 @@ public class MainWindow {
 
         org.gnome.gtk.Entry urlEntry = new org.gnome.gtk.Entry();
         urlEntry.setPlaceholderText("https://example.com/site");
-        org.gnome.gtk.SpinButton depthSpin = org.gnome.gtk.SpinButton.withRange(0, 20, 1);
-        depthSpin.setValue(3);
+        org.gnome.gtk.SpinButton depthSpin = org.gnome.gtk.SpinButton.withRange(1, 20, 1);
+        depthSpin.setValue(org.manager.download.DownloadSettingsFactory.DEFAULT_HTTRACK_DEPTH);
 
         org.gnome.gtk.Label statusLabel = new org.gnome.gtk.Label("");
 
@@ -1910,11 +1933,12 @@ public class MainWindow {
                         throw new IllegalArgumentException(
                                 "Website scraping requires an HTTP(S) URL");
                     }
-                    java.util.Map<String, String> options = new java.util.HashMap<>();
-                    options.put("depth", String.valueOf((int) depthSpin.getValue()));
                     download = downloadManager.createWebsiteDownload(source,
                             java.nio.file.Path.of(downloadManager.getGlobalSettings()
-                                    .getDefaultDownloadDirectory().toString()), options);
+                                    .getDefaultDownloadDirectory().toString()), null);
+                    if (download.getSettings() instanceof org.httrack.HttrackSettings settings) {
+                        settings.setDepth(Math.max(1, (int) depthSpin.getValue()));
+                    }
                     pendingDownload.set(download);
                 }
                 startButton.setSensitive(false);

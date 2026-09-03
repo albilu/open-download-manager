@@ -10,8 +10,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import org.aria2.Aria2Settings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.manager.download.Download;
 
 class ImportListDialogTest {
 
@@ -72,5 +74,25 @@ class ImportListDialogTest {
                 () -> ImportListDialog.readImportLines(
                         tooLarge, new ImportLimits(10, 1)));
         assertTrue(sizeFailure.getMessage().contains("1 MiB"));
+    }
+
+    @Test
+    void everyVisibleTransferOptionIsAppliedToImportedDownloads() throws Exception {
+        Download download = new Download(new java.net.URI("https://example.test/file.iso"));
+        download.setSettings(new Aria2Settings());
+
+        new ImportListDialog.ImportOptions(false, 0, "", 0, "", "",
+                12, 256, 64, 9, 4, "https://referrer.test/",
+                "ODM import", "session=abc").apply(download);
+
+        Aria2Settings settings = (Aria2Settings) download.getSettings();
+        assertEquals(12, settings.getMaxConnections());
+        assertEquals(256, settings.getDownloadLimitKB());
+        assertEquals(64, settings.getUploadLimitKB());
+        assertEquals(9, settings.getMaxRetries());
+        assertEquals(4, settings.getRetryDelaySeconds());
+        assertEquals("https://referrer.test/", settings.getReferer());
+        assertEquals("ODM import", settings.getUserAgent());
+        assertEquals("Cookie: session=abc", settings.getCookieHeader());
     }
 }

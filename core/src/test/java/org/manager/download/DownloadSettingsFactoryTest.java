@@ -22,11 +22,17 @@ class DownloadSettingsFactoryTest {
         DownloadSettingsFactory factory = new DownloadSettingsFactory(new GlobalSettings());
         Aria2Settings settings = factory.createAria2Settings();
 
-        assertEquals(5, settings.getMaxConnections(), "default connection count is 5");
+        assertEquals(DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS,
+                settings.getMaxConnections());
+        assertEquals(DownloadSettingsFactory.DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB,
+                settings.getMinSplitSize());
         assertTrue(settings.isContinueDownload(), "resume is on by default");
         assertFalse(settings.isCheckIntegrity(), "integrity check off by default");
         assertNull(settings.getOption("max-download-limit"), "no speed cap by default");
-        assertNull(settings.getOption("max-tries"), "unlimited retries by default");
+        assertEquals(String.valueOf(DownloadSettingsFactory.DEFAULT_NETWORK_MAX_RETRIES),
+                settings.getOption("max-tries"));
+        assertEquals("0", settings.toRpcOptions().get("retry-wait"),
+                "a zero Network retry delay must preserve aria2's native default");
         assertEquals("0", settings.getOption("seed-time"),
                 "disabled seeding must explicitly finish a completed torrent");
     }
@@ -43,33 +49,158 @@ class DownloadSettingsFactoryTest {
     }
 
     @Test
-    @DisplayName("aria2 properties flow from GlobalSettings into the engine settings")
-    void aria2PropertyMapping() {
+    void enabledSeedingUsesTheSharedDefaultWhenNoDurationWasPersisted() {
         GlobalSettings global = new GlobalSettings();
-        global.setProperty("aria2.maxConnections", "16");
-        global.setProperty("aria2.maxTries", "7");
-        global.setProperty("aria2.maxDownloadSpeedKb", "512");
-        global.setProperty("aria2.userAgent", "ODM-test-agent");
-        global.setProperty("aria2.referer", "https://referrer.example.test");
-        DownloadSettingsFactory factory = new DownloadSettingsFactory(global);
-        Aria2Settings settings = factory.createAria2Settings();
+        global.setProperty("aria2.enableSeeding", "true");
 
-        assertEquals(16, settings.getMaxConnections());
-        assertEquals(7, settings.getMaxRetries(), "max-tries option must parse back as the retry count");
-        assertEquals(512, settings.getDownloadLimitKB());
-        assertEquals("ODM-test-agent", settings.getUserAgent());
-        assertEquals("https://referrer.example.test", settings.getReferer());
+        Aria2Settings settings = new DownloadSettingsFactory(global).createAria2Settings();
+
+        assertEquals(String.valueOf(DownloadSettingsFactory.DEFAULT_ARIA2_SEED_TIME_MIN),
+                settings.getOption("seed-time"));
     }
 
     @Test
-    @DisplayName("the global speed limit overrides the aria2-specific one")
+    @DisplayName("aria2-only properties flow into aria2 settings")
+    void aria2PropertyMapping() {
+        GlobalSettings global = new GlobalSettings();
+        global.setProperty("aria2.minSplitSizeMb", "12");
+        global.setProperty("aria2.fileAllocation", "falloc");
+        global.setProperty("aria2.maxPeers", "220");
+        global.setProperty("aria2.peerSpeedLimitKb", "64");
+        global.setProperty("aria2.continueDownload", "false");
+        global.setProperty("aria2.checkIntegrity", "true");
+        global.setProperty("aria2.enableSeeding", "true");
+        global.setProperty("aria2.seedTimeMin", "33");
+        DownloadSettingsFactory factory = new DownloadSettingsFactory(global);
+        Aria2Settings settings = factory.createAria2Settings();
+
+        assertEquals(12, settings.getMinSplitSize());
+        assertEquals("falloc", settings.getFileAllocation());
+        assertEquals(220, settings.getBtMaxPeers());
+        assertEquals(64, settings.getBtRequestPeerSpeedLimit());
+        assertFalse(settings.isContinueDownload());
+        assertTrue(settings.isCheckIntegrity());
+        assertEquals("33", settings.toRpcOptions().get("seed-time"));
+    }
+
+    @Test
+    @DisplayName("yt-dlp preference fields flow into new media downloads")
+    void ytdlpPropertyMapping() {
+        GlobalSettings global = new GlobalSettings();
+        global.setProperty("ytdlp.videoFormat", "bestvideo+bestaudio/best");
+        global.setProperty("ytdlp.subtitleLanguages", "fr, de");
+        global.setProperty("ytdlp.writeThumbnail", "true");
+        global.setProperty("ytdlp.writeSubtitles", "true");
+        global.setProperty("ytdlp.embedMetadata", "false");
+        global.setProperty("ytdlp.extractAudio", "true");
+        global.setProperty("ytdlp.useAria2External", "false");
+        global.setAria2Path("/opt/odm-tools/aria2c");
+
+        YtDlpSettings settings = new DownloadSettingsFactory(global).createYtDlpSettings();
+
+        assertEquals("bestvideo+bestaudio/best", settings.getFormat());
+        assertEquals(java.util.List.of("fr", "de"), settings.getSubtitleLanguages());
+        assertTrue(settings.isEmbedThumbnail());
+        assertTrue(settings.isWriteSubtitles());
+        assertFalse(settings.isEmbedMetadata());
+        assertTrue(settings.isExtractAudio());
+        assertFalse(settings.isUseAria2c());
+        assertEquals("/opt/odm-tools/aria2c", settings.getAria2cPath());
+    }
+
+    @Test
+    @DisplayName("Network defaults reach every engine that advertises support")
+    void networkDefaultsFollowEngineCapabilities() {
+        GlobalSettings global = new GlobalSettings();
+        new DownloadSettingsFactory.NetworkDefaults(12, 7, 512, 128, 9,
+                "https://referrer.example.test", "ODM-test-agent", "session=abc")
+                .saveTo(global);
+
+        DownloadSettingsFactory factory = new DownloadSettingsFactory(global);
+        for (Download.Type type : Download.Type.values()) {
+            ExternalToolSettings settings = factory.createSettings(type);
+            String prefix = type + ": ";
+            if (settings.supports(ExternalToolSettings.Capability.CONNECTIONS)) {
+                assertEquals(12, settings.getMaxConnections(), prefix + "connections");
+            }
+            if (settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
+                assertEquals(512, settings.getDownloadLimitKB(), prefix + "download limit");
+            }
+            if (settings.supports(ExternalToolSettings.Capability.UPLOAD_LIMIT)) {
+                assertEquals(128, settings.getUploadLimitKB(), prefix + "upload limit");
+            }
+            if (settings.supports(ExternalToolSettings.Capability.MAX_RETRIES)) {
+                assertEquals(7, settings.getMaxRetries(), prefix + "retry limit");
+            }
+            if (settings.supports(ExternalToolSettings.Capability.RETRY_DELAY)) {
+                assertEquals(9, settings.getRetryDelaySeconds(), prefix + "retry delay");
+            }
+            if (settings.supports(ExternalToolSettings.Capability.REFERER)) {
+                assertEquals("https://referrer.example.test", settings.getReferer(),
+                        prefix + "referer");
+            }
+            if (settings.supports(ExternalToolSettings.Capability.USER_AGENT)) {
+                assertEquals("ODM-test-agent", settings.getUserAgent(), prefix + "user agent");
+            }
+            if (settings.supports(ExternalToolSettings.Capability.COOKIE)) {
+                assertEquals("Cookie: session=abc", settings.getCookieHeader(),
+                        prefix + "cookie");
+            }
+            if (settings instanceof YtDlpSettings ytDlp) {
+                assertEquals(12, ytDlp.getAria2cConnections(),
+                        "yt-dlp external aria2c connections");
+                assertEquals(12, ytDlp.getAria2cSplitConnections(),
+                        "yt-dlp external aria2c splits");
+                assertEquals(7, ytDlp.getAria2cMaxTries(),
+                        "yt-dlp external aria2c retries");
+                assertEquals(9, ytDlp.getAria2cRetryWait(),
+                        "yt-dlp external aria2c retry delay");
+                assertEquals("ODM-test-agent", ytDlp.getAria2cUserAgent(),
+                        "yt-dlp external aria2c user agent");
+                assertTrue(ytDlp.buildAria2cArgs().contains("--max-download-limit=512K"),
+                        "yt-dlp external aria2c download limit");
+            }
+            if (settings instanceof Aria2Settings aria2) {
+                assertEquals(12, aria2.getConnections(),
+                        prefix + "Download connection view");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("HTTrack preference fields flow into new website downloads")
+    void httrackPropertyMapping() {
+        GlobalSettings global = new GlobalSettings();
+        global.setProperty("httrack.depth", "7");
+        global.setProperty("httrack.include", "example.test/* *.css");
+        global.setProperty("httrack.exclude", "*/logout/* */private/*");
+        global.setProperty("httrack.includeArchives", "true");
+
+        HttrackSettings settings = new DownloadSettingsFactory(global).createHttrackSettings();
+
+        assertEquals(7, settings.getDepth());
+        assertEquals(java.util.List.of("example.test/*", "*.css"),
+                settings.getIncludePatterns());
+        assertEquals(java.util.List.of("*/logout/*", "*/private/*"),
+                settings.getExcludePatterns());
+        assertTrue(settings.isIncludeArchives());
+    }
+
+    @Test
+    @DisplayName("the typed global speed limit overrides the Network default for every supporting engine")
     void globalSpeedLimitWins() {
         GlobalSettings global = new GlobalSettings().setGlobalSpeedLimit(128);
-        global.setProperty("aria2.maxDownloadSpeedKb", "512");
-        Aria2Settings settings = new DownloadSettingsFactory(global).createAria2Settings();
+        new DownloadSettingsFactory.NetworkDefaults(8, 5, 512, 0, 0,
+                "", "", "").saveTo(global);
+        DownloadSettingsFactory factory = new DownloadSettingsFactory(global);
 
-        assertEquals("128K", settings.getOption("max-download-limit"),
-                "the user-facing global limit must win over the tool default");
+        for (Download.Type type : Download.Type.values()) {
+            ExternalToolSettings settings = factory.createSettings(type);
+            if (settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
+                assertEquals(128, settings.getDownloadLimitKB(),
+                        type + " must honor the stronger global limit");
+            }
+        }
     }
 
     @Test
@@ -80,6 +211,8 @@ class DownloadSettingsFactoryTest {
         assertEquals(CurlSettings.class, factory.createSettings(Download.Type.CURL).getClass());
         assertEquals(YtDlpSettings.class, factory.createSettings(Download.Type.YOUTUBE).getClass());
         assertEquals(HttrackSettings.class, factory.createSettings(Download.Type.WEBSITE_SCRAPING).getClass());
+        assertEquals(DownloadSettingsFactory.DEFAULT_HTTRACK_DEPTH,
+                factory.createHttrackSettings().getDepth());
     }
 
     @Test
@@ -114,6 +247,6 @@ class DownloadSettingsFactoryTest {
         DownloadSettingsFactory factory = new DownloadSettingsFactory();
         factory.setGlobalSettings(new GlobalSettings().setGlobalSpeedLimit(64));
         Aria2Settings settings = factory.createAria2Settings();
-        assertEquals("64K", settings.getOption("max-download-limit"));
+        assertEquals(64, settings.getDownloadLimitKB());
     }
 }

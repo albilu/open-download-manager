@@ -344,6 +344,54 @@ class DetailTabsPresenterGtkTest {
 
     @Test
     @Timeout(60)
+    @DisplayName("file refresh waits until priority cell editing finishes")
+    void fileRefreshWaitsForPriorityEditing() throws Exception {
+        Download download = download("editing-files");
+        Mockito.when(manager.getDownloadTrackers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadPeers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadFiles(download)).thenReturn(
+                List.of(file("editing.bin", 100, 10, 1)),
+                List.of(file("editing.bin", 100, 50, 1)));
+
+        onLoop(() -> {
+            selection.set(download);
+            presenter.load();
+        });
+        awaitTrue(() -> {
+            try {
+                return "10.00%".equals(onLoop(() -> firstTreeValue(filesStore, 6)));
+            } catch (Exception e) {
+                return false;
+            }
+        }, "initial file progress must be populated");
+
+        onLoop(() -> {
+            presenter.setFilePriorityEditing(true);
+            presenter.load();
+        });
+        awaitTrue(() -> {
+            try {
+                Mockito.verify(manager, Mockito.atLeast(2)).getDownloadFiles(download);
+                return true;
+            } catch (AssertionError e) {
+                return false;
+            }
+        }, "the background refresh must still be fetched while editing");
+        assertEquals("10.00%", onLoop(() -> firstTreeValue(filesStore, 6)),
+                "the active combo editor's row must not be rewritten");
+
+        onLoop(() -> presenter.setFilePriorityEditing(false));
+        awaitTrue(() -> {
+            try {
+                return "50.00%".equals(onLoop(() -> firstTreeValue(filesStore, 6)));
+            } catch (Exception e) {
+                return false;
+            }
+        }, "fresh file state must appear immediately after editing");
+    }
+
+    @Test
+    @Timeout(60)
     @DisplayName("shutdown stops the fetch executor; later loads fetch nothing")
     void shutdownStopsExecutorAndFurtherFetches() throws Exception {
         Download a = download("a");

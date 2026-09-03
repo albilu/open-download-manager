@@ -375,7 +375,8 @@ class CurlSettingsTest {
         String unicodeString = "Test with unicode: 中文 العربية";
 
         settings.setUserAgent(emptyString);
-        assertEquals(emptyString, settings.getUserAgent());
+        assertNull(settings.getUserAgent(),
+                "an empty value must omit curl's User-Agent override");
 
         settings.setUserAgent(specialChars);
         assertEquals(specialChars, settings.getUserAgent());

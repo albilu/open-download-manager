@@ -36,7 +36,7 @@ class Aria2SettingsTest {
         assertTrue(settings.isEnableRpc());
         assertEquals(6800, settings.getRpcPort());
         assertFalse(settings.isCheckIntegrity());
-        assertEquals(5, settings.getRetryWait());
+        assertEquals(0, settings.getRetryWait());
         assertEquals(5, settings.getMaxTries());
         assertEquals(60, settings.getTimeout());
         assertFalse(settings.isAllowOverwrite());

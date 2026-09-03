@@ -18,10 +18,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * Pins the settings.json format against fixtures captured from the
- * pre-refactoring implementation: the flat key-value layout must never drift
- * silently, existing installs must load unchanged, and a load/save cycle must
- * be stable at the JSON-map level.
+ * Pins the current settings.json flat key-value format and verifies that a
+ * load/save cycle is stable at the JSON-map level.
  */
 @DisplayName("GlobalSettings settings.json format round-trip")
 class GlobalSettingsJsonRoundTripTest {
@@ -103,8 +101,15 @@ class GlobalSettingsJsonRoundTripTest {
         assertEquals(14, settings.getErrorDownloadRetentionDays());
         // custom bag keys survive verbatim
         assertEquals("true", settings.getProperty("ui.systemTray", null));
-        assertEquals("7", settings.getProperty("aria2.maxConnectionsPerServer", null));
-        assertEquals("bestvideo+bestaudio", settings.getProperty("ytdlp.format", null));
+        assertEquals("7", settings.getProperty("network.maxConnections", null));
+        assertEquals("6", settings.getProperty("network.maxRetries", null));
+        assertEquals("512", settings.getProperty("network.downloadLimitKb", null));
+        assertEquals("64", settings.getProperty("network.uploadLimitKb", null));
+        assertEquals("4", settings.getProperty("network.retryDelaySeconds", null));
+        assertEquals("https://referrer.test/", settings.getProperty("network.referer", null));
+        assertEquals("ODM fixture", settings.getProperty("network.userAgent", null));
+        assertEquals("session=fixture", settings.getProperty("network.cookie", null));
+        assertEquals("bestvideo+bestaudio", settings.getProperty("ytdlp.videoFormat", null));
         assertEquals("night", settings.getProperty("scheduler.preset", null));
         assertEquals("15", settings.getProperty("tracker.refreshInterval", null));
         assertEquals(300, settings.getIntProperty("antivirus.timeout", 0));
@@ -181,6 +186,49 @@ class GlobalSettingsJsonRoundTripTest {
         assertEquals("true", settings.getProperty("odm.autoSave", null));
         assertEquals("false", settings.getProperty("aria2.autoSave", null),
                 "migration must not destructively rewrite an existing settings file");
+    }
+
+    @Test
+    @DisplayName("the obsolete Axel UI key is removed on the next save")
+    void obsoleteAxelPathIsRemoved() throws Exception {
+        Path file = tempDir.resolve("obsolete-tool-setting.json");
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty("tools.axelPath", "/usr/bin/axel");
+
+        settings.save(file);
+
+        assertFalse(readJson(file).containsKey("tools.axelPath"));
+    }
+
+    @Test
+    @DisplayName("obsolete development aliases are not retained as compatibility settings")
+    void obsoleteEnginePreferenceAliasesAreRemoved() throws Exception {
+        Path file = tempDir.resolve("obsolete-engine-settings.json");
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty("aria2.maxConnectionsPerServer", "7");
+        settings.setProperty("aria2.maxConnections", "8");
+        settings.setProperty("aria2.maxTries", "5");
+        settings.setProperty("ytdlp.format", "best");
+
+        settings.save(file);
+
+        Map<String, String> saved = readJson(file);
+        assertFalse(saved.containsKey("aria2.maxConnectionsPerServer"));
+        assertFalse(saved.containsKey("aria2.maxConnections"));
+        assertFalse(saved.containsKey("aria2.maxTries"));
+        assertFalse(saved.containsKey("ytdlp.format"));
+    }
+
+    @Test
+    @DisplayName("hand-edited negative speed limits are clamped like API values")
+    void negativeGlobalSpeedLimitIsClampedOnLoad() throws Exception {
+        Path file = tempDir.resolve("negative-speed-setting.json");
+        Files.writeString(file, "{\"globalSpeedLimit\":\"-25\"}");
+
+        GlobalSettings settings = new GlobalSettings();
+        settings.load(file);
+
+        assertEquals(0, settings.getGlobalSpeedLimit());
     }
 
     private static Map<String, String> sorted(Map<String, String> map) {

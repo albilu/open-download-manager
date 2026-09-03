@@ -43,6 +43,8 @@ public final class OdmApplication {
         // core/scheduler/tray/window pipelines.
         final java.util.concurrent.atomic.AtomicReference<StatusNotifierTray> trayHolder =
                 new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicLong trayPreferenceEpoch =
+                new java.util.concurrent.atomic.AtomicLong();
         final java.util.concurrent.atomic.AtomicBoolean appShuttingDown =
                 new java.util.concurrent.atomic.AtomicBoolean();
         // Holder so the window publisher can reach the gate it is defined in
@@ -67,36 +69,14 @@ public final class OdmApplication {
                             coreShutdown, trayHolder, appShuttingDown);
                     LOGGER.info("onActivate: MainWindow constructed");
 
-                    // Tray (best-effort: no-op when the session bus is unavailable)
-                    final MainWindow raised = mainWindow;
                     mainWindow.setTrayAvailable(false);
-                    CompletableFuture.supplyAsync(
-                            () -> new StatusNotifierTray(
-                                    () -> UiThread.marshal(raised::present)),
-                            org.manager.util.ExecutorServiceManager.getInstance().getIoExecutor())
-                            .whenComplete((tray, error) -> {
-                                if (error != null || tray == null) {
-                                    LOGGER.warn("StatusNotifier tray initialization failed: "
-                                            + (error != null ? error.getMessage() : "no tray"));
-                                    return;
-                                }
-                                if (appShuttingDown.get()) {
-                                    UiThread.marshal(tray::unregister);
-                                    return;
-                                }
-                                UiThread.marshal(() -> {
-                                    if (appShuttingDown.get()) {
-                                        tray.unregister();
-                                        return;
-                                    }
-                                    StatusNotifierTray replaced = trayHolder.getAndSet(tray);
-                                    if (replaced != null) {
-                                        replaced.unregister();
-                                    }
-                                    mainWindow.setTrayAvailable(tray.isAvailable());
-                                    LOGGER.info("onActivate: tray constructed");
-                                });
-                            });
+                    mainWindow.setTrayPreferenceHandler(enabled -> applyTrayPreference(
+                            enabled, mainWindow, trayHolder, appShuttingDown,
+                            trayPreferenceEpoch));
+                    applyTrayPreference(refs.manager().getGlobalSettings()
+                                    .getBooleanProperty("ui.systemTray", false),
+                            mainWindow, trayHolder, appShuttingDown,
+                            trayPreferenceEpoch);
 
                     mainWindow.present();
                     progress.close();
@@ -368,6 +348,64 @@ public final class OdmApplication {
         // disabled the global schedule stays alwaysActive, so all starts pass
         manager.setDownloadGate(id -> scheduleManager.getScheduler().shouldDownloadBeActive(id));
         return schedulingEnabled;
+    }
+
+    /**
+     * Applies the visible "Enable system tray icon" setting to the actual
+     * StatusNotifier export. Construction is asynchronous because connecting
+     * to D-Bus can block; an epoch prevents a late enable from resurrecting
+     * the icon after the user has switched it off again.
+     */
+    static void applyTrayPreference(boolean enabled, MainWindow mainWindow,
+            java.util.concurrent.atomic.AtomicReference<StatusNotifierTray> trayHolder,
+            java.util.concurrent.atomic.AtomicBoolean appShuttingDown,
+            java.util.concurrent.atomic.AtomicLong epoch) {
+        long requestedEpoch = epoch.incrementAndGet();
+        if (!enabled || appShuttingDown.get()) {
+            mainWindow.setTrayAvailable(false);
+            StatusNotifierTray tray = trayHolder.getAndSet(null);
+            if (tray != null) {
+                tray.unregister();
+            }
+            LOGGER.info(enabled ? "System tray suppressed during shutdown"
+                    : "System tray disabled by settings");
+            return;
+        }
+
+        StatusNotifierTray current = trayHolder.get();
+        if (current != null && current.isAvailable()) {
+            mainWindow.setTrayAvailable(true);
+            return;
+        }
+        if (current != null && trayHolder.compareAndSet(current, null)) {
+            current.unregister();
+        }
+        mainWindow.setTrayAvailable(false);
+        CompletableFuture.supplyAsync(
+                () -> new StatusNotifierTray(() -> UiThread.marshal(mainWindow::present)),
+                org.manager.util.ExecutorServiceManager.getInstance().getIoExecutor())
+                .whenComplete((tray, error) -> UiThread.marshal(() -> {
+                    boolean stale = requestedEpoch != epoch.get()
+                            || appShuttingDown.get();
+                    if (error != null || tray == null || stale || !tray.isAvailable()) {
+                        if (tray != null) {
+                            tray.unregister();
+                        }
+                        if (error != null) {
+                            LOGGER.warn("StatusNotifier tray initialization failed: "
+                                    + error.getMessage());
+                        } else if (!stale) {
+                            LOGGER.warn("StatusNotifier tray is unavailable in this desktop session");
+                        }
+                        return;
+                    }
+                    StatusNotifierTray replaced = trayHolder.getAndSet(tray);
+                    if (replaced != null && replaced != tray) {
+                        replaced.unregister();
+                    }
+                    mainWindow.setTrayAvailable(true);
+                    LOGGER.info("System tray enabled by settings");
+                }));
     }
 
     /**

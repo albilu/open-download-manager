@@ -206,7 +206,8 @@ public class YtDlpSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public YtDlpSettings setSubtitleLanguages(List<String> subtitleLanguages) {
-        this.subtitleLanguages = subtitleLanguages;
+        this.subtitleLanguages = subtitleLanguages == null
+                ? new ArrayList<>() : new ArrayList<>(subtitleLanguages);
         return this;
     }
 
@@ -217,7 +218,10 @@ public class YtDlpSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public YtDlpSettings addSubtitleLanguage(String language) {
-        this.subtitleLanguages.add(language);
+        if (language != null && !language.isBlank()
+                && !this.subtitleLanguages.contains(language)) {
+            this.subtitleLanguages.add(language);
+        }
         return this;
     }
 
@@ -346,6 +350,33 @@ public class YtDlpSettings extends DownloadSettings {
     // ===== ExternalToolSettings bridge =====
 
     @Override
+    public YtDlpSettings setConnections(int connections) {
+        int normalized = Math.max(1, connections);
+        super.setConnections(normalized);
+        // Keep the optional external aria2c path aligned with the same
+        // Network control used for yt-dlp concurrent fragments.
+        setAria2cConnections(normalized);
+        setAria2cSplitConnections(normalized);
+        return this;
+    }
+
+    @Override
+    public YtDlpSettings setMaxRetries(int maxRetries) {
+        int normalized = Math.max(0, maxRetries);
+        super.setMaxRetries(normalized);
+        setAria2cMaxTries(normalized);
+        return this;
+    }
+
+    @Override
+    public YtDlpSettings setRetryDelaySeconds(int seconds) {
+        int normalized = Math.max(0, seconds);
+        super.setRetryDelaySeconds(normalized);
+        setAria2cRetryWait(normalized);
+        return this;
+    }
+
+    @Override
     public int getDownloadLimitKB() {
         return isLimitRate() ? getRateLimit() : 0;
     }
@@ -373,8 +404,10 @@ public class YtDlpSettings extends DownloadSettings {
     public YtDlpSettings setUserAgent(String userAgent) {
         if (userAgent != null && !userAgent.isBlank()) {
             setOption("user-agent", userAgent.trim());
+            setAria2cUserAgent(userAgent.trim());
         } else {
             clearOption("user-agent");
+            setAria2cUserAgent(null);
         }
         return this;
     }
@@ -773,8 +806,17 @@ public class YtDlpSettings extends DownloadSettings {
         }
 
         args.append(" --timeout=").append(aria2cTimeout);
-        args.append(" --retry-wait=").append(aria2cRetryWait);
-        args.append(" --max-tries=").append(aria2cMaxTries);
+        if (aria2cRetryWait > 0) {
+            args.append(" --retry-wait=").append(aria2cRetryWait);
+        }
+        if (aria2cMaxTries > 0) {
+            args.append(" --max-tries=").append(aria2cMaxTries);
+        }
+        int downloadLimitKb = getDownloadLimitKB();
+        if (downloadLimitKb > 0) {
+            args.append(" --max-download-limit=")
+                    .append(downloadLimitKb).append('K');
+        }
 
         if (aria2cUserAgent != null && !aria2cUserAgent.isEmpty()) {
             args.append(" --user-agent=\"").append(aria2cUserAgent).append("\"");

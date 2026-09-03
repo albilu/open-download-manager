@@ -16,6 +16,22 @@ import org.ytdlp.YtDlpSettings;
  */
 public class DownloadSettingsFactory {
 
+    /** Defaults shared by core creation paths and every GTK download dialog. */
+    public static final int DEFAULT_NETWORK_MAX_CONNECTIONS = 8;
+    public static final int DEFAULT_NETWORK_MAX_RETRIES = 5;
+    public static final int DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB = 10;
+    public static final int DEFAULT_ARIA2_SEED_TIME_MIN = 60;
+    public static final int DEFAULT_HTTRACK_DEPTH = 3;
+
+    private static final String NETWORK_MAX_CONNECTIONS = "network.maxConnections";
+    private static final String NETWORK_MAX_RETRIES = "network.maxRetries";
+    private static final String NETWORK_DOWNLOAD_LIMIT_KB = "network.downloadLimitKb";
+    private static final String NETWORK_UPLOAD_LIMIT_KB = "network.uploadLimitKb";
+    private static final String NETWORK_RETRY_DELAY_SECONDS = "network.retryDelaySeconds";
+    private static final String NETWORK_REFERER = "network.referer";
+    private static final String NETWORK_USER_AGENT = "network.userAgent";
+    private static final String NETWORK_COOKIE = "network.cookie";
+
     private volatile GlobalSettings globalSettings;
 
     /**
@@ -56,6 +72,106 @@ public class DownloadSettingsFactory {
         return globalSettings;
     }
 
+    /** Reads the canonical yt-dlp format preference used by Preferences. */
+    public static String configuredYtDlpFormat(GlobalSettings settings) {
+        String value = settings.getProperty("ytdlp.videoFormat", "best");
+        return value == null || value.isBlank() ? "best" : value;
+    }
+
+    /**
+     * Engine-neutral defaults edited by the Network preferences panel. Each
+     * value is submitted only when an engine advertises the corresponding
+     * {@link ExternalToolSettings.Capability}.
+     */
+    public record NetworkDefaults(int maxConnections, int maxRetries,
+            int downloadLimitKb, int uploadLimitKb, int retryDelaySeconds,
+            String referer, String userAgent, String cookie) {
+
+        public NetworkDefaults {
+            maxConnections = Math.max(1, maxConnections);
+            maxRetries = Math.max(0, maxRetries);
+            downloadLimitKb = Math.max(0, downloadLimitKb);
+            uploadLimitKb = Math.max(0, uploadLimitKb);
+            retryDelaySeconds = Math.max(0, retryDelaySeconds);
+            referer = normalizedText(referer);
+            userAgent = normalizedText(userAgent);
+            cookie = normalizedText(cookie);
+        }
+
+        /** Reads the single canonical {@code network.*} preference set. */
+        public static NetworkDefaults from(GlobalSettings settings) {
+            return new NetworkDefaults(
+                    settings.getIntProperty(NETWORK_MAX_CONNECTIONS,
+                            DEFAULT_NETWORK_MAX_CONNECTIONS),
+                    settings.getIntProperty(NETWORK_MAX_RETRIES,
+                            DEFAULT_NETWORK_MAX_RETRIES),
+                    settings.getIntProperty(NETWORK_DOWNLOAD_LIMIT_KB, 0),
+                    settings.getIntProperty(NETWORK_UPLOAD_LIMIT_KB, 0),
+                    settings.getIntProperty(NETWORK_RETRY_DELAY_SECONDS, 0),
+                    settings.getProperty(NETWORK_REFERER, ""),
+                    settings.getProperty(NETWORK_USER_AGENT, ""),
+                    settings.getProperty(NETWORK_COOKIE, ""));
+        }
+
+        /** Persists values under their canonical engine-neutral names. */
+        public void saveTo(GlobalSettings settings) {
+            settings.setProperty(NETWORK_MAX_CONNECTIONS, String.valueOf(maxConnections));
+            settings.setProperty(NETWORK_MAX_RETRIES, String.valueOf(maxRetries));
+            settings.setProperty(NETWORK_DOWNLOAD_LIMIT_KB, String.valueOf(downloadLimitKb));
+            settings.setProperty(NETWORK_UPLOAD_LIMIT_KB, String.valueOf(uploadLimitKb));
+            settings.setProperty(NETWORK_RETRY_DELAY_SECONDS, String.valueOf(retryDelaySeconds));
+            settings.setProperty(NETWORK_REFERER, referer);
+            settings.setProperty(NETWORK_USER_AGENT, userAgent);
+            settings.setProperty(NETWORK_COOKIE, cookie);
+        }
+
+        /** Applies every supported field to an engine-native settings object. */
+        public void applyTo(ExternalToolSettings settings) {
+            if (settings.supports(ExternalToolSettings.Capability.CONNECTIONS)) {
+                settings.setMaxConnections(maxConnections);
+            }
+            if (settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
+                settings.setDownloadLimitKB(downloadLimitKb);
+            }
+            if (settings.supports(ExternalToolSettings.Capability.UPLOAD_LIMIT)) {
+                settings.setUploadLimitKB(uploadLimitKb);
+            }
+            if (settings.supports(ExternalToolSettings.Capability.MAX_RETRIES)) {
+                settings.setMaxRetries(maxRetries);
+            }
+            if (settings.supports(ExternalToolSettings.Capability.RETRY_DELAY)) {
+                settings.setRetryDelaySeconds(retryDelaySeconds);
+            }
+            if (settings.supports(ExternalToolSettings.Capability.REFERER)) {
+                settings.setReferer(referer);
+            }
+            if (settings.supports(ExternalToolSettings.Capability.USER_AGENT)) {
+                settings.setUserAgent(userAgent);
+            }
+            if (settings.supports(ExternalToolSettings.Capability.COOKIE)) {
+                settings.setCookieHeader(cookie.isEmpty() ? null
+                        : cookie.regionMatches(true, 0, "Cookie:", 0, 7)
+                                ? cookie : "Cookie: " + cookie);
+            }
+        }
+
+        private static String normalizedText(String value) {
+            return value == null ? "" : value.trim();
+        }
+    }
+
+    private static void applyNetworkPreferences(GlobalSettings global,
+            ExternalToolSettings settings) {
+        NetworkDefaults.from(global).applyTo(settings);
+        // This older typed setting is a stronger application-wide limiter.
+        // Preserve its precedence, but do so for every supporting engine.
+        int globalLimit = global.getGlobalSpeedLimit();
+        if (globalLimit > 0
+                && settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
+            settings.setDownloadLimitKB(globalLimit);
+        }
+    }
+
     /**
      * Creates a settings object appropriate for the given download type.
      *
@@ -79,10 +195,12 @@ public class DownloadSettingsFactory {
 
         // Apply global proxy settings if enabled
         GlobalSettings currentSettings = getGlobalSettings();
-        if (currentSettings.isGlobalProxyEnabled()
-                && currentSettings.getGlobalProxyAddress() != null) {
-            settings.setUseProxy(true);
-            settings.setProxyAddress(currentSettings.getGlobalProxyAddress());
+        if (currentSettings.isGlobalProxyEnabled()) {
+            String globalProxyAddress = currentSettings.getGlobalProxyAddress();
+            if (globalProxyAddress != null) {
+                settings.setUseProxy(true);
+                settings.setProxyAddress(globalProxyAddress);
+            }
         }
 
         return settings;
@@ -97,12 +215,11 @@ public class DownloadSettingsFactory {
         Aria2Settings settings = new Aria2Settings();
         GlobalSettings g = getGlobalSettings();
 
-        // Defaults, overridable from the Settings dialog (persisted as
-        // aria2.* properties in GlobalSettings)
-        settings.setConnections(g.getIntProperty("aria2.maxConnections", 5));
-        settings.setMaxConnectionPerServer(g.getIntProperty("aria2.maxConnections", 5));
+        // aria2-only defaults. Shared transfer/header defaults are applied
+        // through NetworkDefaults below.
         settings.setContinueDownload(g.getBooleanProperty("aria2.continueDownload", true));
-        settings.setMinSplitSize(g.getIntProperty("aria2.minSplitSizeMb", 20));
+        settings.setMinSplitSize(g.getIntProperty("aria2.minSplitSizeMb",
+                DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB));
         settings.setFileAllocation(g.getProperty("aria2.fileAllocation", "prealloc"));
         settings.setAutoFileRenaming(true);
         settings.setCheckIntegrity(g.getBooleanProperty("aria2.checkIntegrity", false));
@@ -110,23 +227,8 @@ public class DownloadSettingsFactory {
         settings.setBtRequestPeerSpeedLimit(
                 Math.max(0, g.getIntProperty("aria2.peerSpeedLimitKb", 0)));
 
-        int maxTries = g.getIntProperty("aria2.maxTries", 0);
-        if (maxTries > 0) {
-            settings.setOption("max-tries", String.valueOf(maxTries));
-        }
-        int downKb = g.getIntProperty("aria2.maxDownloadSpeedKb", 0);
-        if (downKb > 0) {
-            settings.setOption("max-download-limit", String.valueOf(downKb * 1024L));
-        }
-        int upKb = g.getIntProperty("aria2.maxUploadSpeedKb", 0);
-        if (upKb > 0) {
-            settings.setOption("max-upload-limit", String.valueOf(upKb * 1024L));
-        }
-        int retryWait = g.getIntProperty("aria2.retryWait", 0);
-        if (retryWait > 0) {
-            settings.setOption("retry-wait", String.valueOf(retryWait));
-        }
-        int seedTimeMin = g.getIntProperty("aria2.seedTimeMin", 0);
+        int seedTimeMin = g.getIntProperty("aria2.seedTimeMin",
+                DEFAULT_ARIA2_SEED_TIME_MIN);
         if (g.getBooleanProperty("aria2.enableSeeding", false) && seedTimeMin > 0) {
             settings.setOption("seed-time", String.valueOf(seedTimeMin));
         } else if (!g.getBooleanProperty("aria2.enableSeeding", false)) {
@@ -134,24 +236,7 @@ public class DownloadSettingsFactory {
             // explicit zero is the documented way to finish immediately.
             settings.setOption("seed-time", "0");
         }
-        String referer = g.getProperty("aria2.referer", "");
-        if (!referer.isEmpty()) {
-            settings.setOption("referer", referer);
-        }
-        String cookie = g.getProperty("aria2.cookie", "");
-        if (!cookie.isEmpty()) {
-            settings.setOption("header", "Cookie: " + cookie);
-        }
-        String userAgent = g.getProperty("aria2.userAgent", "");
-        if (!userAgent.isEmpty()) {
-            settings.setOption("user-agent", userAgent);
-        }
-
-        // Global speed limit (takes precedence over the aria2 default)
-        int globalSpeedLimit = g.getGlobalSpeedLimit();
-        if (globalSpeedLimit > 0) {
-            settings.setOption("max-download-limit", globalSpeedLimit + "K");
-        }
+        applyNetworkPreferences(g, settings);
 
         return settings;
     }
@@ -170,11 +255,7 @@ public class DownloadSettingsFactory {
         settings.setResumeDownloads(true);
         settings.setShowProgress(true);
         settings.setConnectTimeout(30);
-        settings.setRetryCount(3);
-
-        // Set user agent to mimic a browser
-        settings.setUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                + "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+        applyNetworkPreferences(getGlobalSettings(), settings);
 
         return settings;
     }
@@ -192,20 +273,23 @@ public class DownloadSettingsFactory {
         // connections maps to yt-dlp's --concurrent-fragments; 1 (yt-dlp's
         // own default) means the flag is omitted.
         settings.setConnections(1);
-        settings.setFormat(g.getProperty("ytdlp.videoFormat", "best").isEmpty()
-                ? "best" : g.getProperty("ytdlp.videoFormat", "best"));
+        settings.setFormat(configuredYtDlpFormat(g));
         settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.writeThumbnail", false));
         settings.setWriteSubtitles(g.getBooleanProperty("ytdlp.writeSubtitles", false));
         settings.setEmbedMetadata(g.getBooleanProperty("ytdlp.embedMetadata", true));
         settings.setExtractAudio(g.getBooleanProperty("ytdlp.extractAudio", false));
         settings.setUseAria2c(g.getBooleanProperty("ytdlp.useAria2External", true));
+        String aria2cPath = g.getAria2Path();
+        settings.setAria2cPath(aria2cPath == null || aria2cPath.isBlank()
+                ? "aria2c" : aria2cPath);
         String subLangs = g.getProperty("ytdlp.subtitleLanguages", "");
-        if (!subLangs.isEmpty()) {
+        if (subLangs != null && !subLangs.isBlank()) {
             settings.setSubtitleLanguages(Arrays.asList(subLangs.split("\\s*,\\s*")));
         } else {
             settings.setSubtitleLanguages(Arrays.asList("en"));
         }
         settings.setFragmentRetries(3);
+        applyNetworkPreferences(g, settings);
 
         return settings;
     }
@@ -222,7 +306,8 @@ public class DownloadSettingsFactory {
         // Defaults, overridable from the Settings dialog (httrack.* properties)
         settings.setConnections(5);
         // Depth must be >= 1; clamp persisted/absent values defensively
-        settings.setDepth(Math.max(1, g.getIntProperty("httrack.depth", 2)));
+        settings.setDepth(Math.max(1, g.getIntProperty("httrack.depth",
+                DEFAULT_HTTRACK_DEPTH)));
         settings.setFollowExternalLinks(false);
         settings.setIncludeImages(true);
         settings.setIncludeVideos(false);
@@ -252,6 +337,8 @@ public class DownloadSettingsFactory {
             }
         }
 
+        applyNetworkPreferences(g, settings);
+
         return settings;
     }
 
@@ -268,6 +355,7 @@ public class DownloadSettingsFactory {
         settings.setQuiet(true);
         settings.setRandomChain(1);
         settings.setStrictChain(false);
+        applyNetworkPreferences(getGlobalSettings(), settings);
 
         return settings;
     }
@@ -284,8 +372,6 @@ public class DownloadSettingsFactory {
         settings.setUseProxy(true);
         settings.setProxyAddress("socks5h://127.0.0.1:9050");
         settings.setOption("http-accept-gzip", "true");
-        settings.setOption("retry-wait", "5");
-        settings.setOption("max-tries", "5");
         settings.setTimeout(60);
 
         return settings;

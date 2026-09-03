@@ -22,7 +22,7 @@ public class Aria2Settings extends DownloadSettings {
     private boolean enableRpc = true;
     private int rpcPort = 6800;
     private boolean checkIntegrity = false;
-    private int retryWait = 5; // seconds
+    private int retryWait = 0; // seconds; aria2's native default
     private int maxTries = 5;
     private int timeout = 60; // seconds
     private boolean allowOverwrite = false;
@@ -94,8 +94,16 @@ public class Aria2Settings extends DownloadSettings {
     }
 
     @Override
+    public Aria2Settings setConnections(int connections) {
+        int normalized = Math.max(1, connections);
+        super.setConnections(normalized);
+        setMaxConnectionPerServer(normalized);
+        return this;
+    }
+
+    @Override
     public Aria2Settings setMaxConnections(int maxConnections) {
-        return setMaxConnectionPerServer(Math.max(1, maxConnections));
+        return setConnections(maxConnections);
     }
 
     @Override
@@ -114,7 +122,11 @@ public class Aria2Settings extends DownloadSettings {
 
     @Override
     public Aria2Settings setDownloadLimitKB(int kibPerSecond) {
-        setOption("max-download-limit", kibPerSecond > 0 ? String.valueOf(kibPerSecond * 1024L) : "0");
+        if (kibPerSecond > 0) {
+            setOption("max-download-limit", String.valueOf(kibPerSecond * 1024L));
+        } else {
+            clearOption("max-download-limit");
+        }
         return this;
     }
 

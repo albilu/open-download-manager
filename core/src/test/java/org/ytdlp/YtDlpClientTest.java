@@ -262,6 +262,7 @@ class YtDlpClientTest {
     void testUseAria2cFlagEngagesExternalDownloader() {
         YtDlpSettings settings = new YtDlpSettings()
                 .setUseAria2c(true)
+                .setAria2cPath("/opt/odm-tools/aria2c")
                 .setAria2cConnections(8)
                 .setAria2cSplitConnections(4);
 
@@ -269,7 +270,8 @@ class YtDlpClientTest {
 
         int downloaderIndex = command.indexOf("--external-downloader");
         assertTrue(downloaderIndex >= 0, "--external-downloader must be present");
-        assertEquals("aria2c", command.get(downloaderIndex + 1));
+        assertEquals("/opt/odm-tools/aria2c", command.get(downloaderIndex + 1),
+                "the configured aria2 tool path must reach yt-dlp");
 
         int argsIndex = command.indexOf("--external-downloader-args");
         assertTrue(argsIndex >= 0, "--external-downloader-args must be present");

@@ -326,7 +326,7 @@ class WindowSmokeTest {
     }
 
     @Test
-    @DisplayName("settings.ui parses with 1:1 original ids (7 tabs)")
+    @DisplayName("settings.ui parses with 1:1 original ids (6 tabs)")
     void settings() {
         GtkBuilder builder = UiLoader.load("/ui/settings.ui");
         Widgets.require(builder, "settings_dialog", Window.class);
@@ -336,7 +336,7 @@ class WindowSmokeTest {
             Widgets.require(builder, id, SpinButton.class);
         }
         for (String id : new String[]{"browse_aria2_button", "browse_ytdlp_button", "browse_httrack_button",
-                "browse_proxychains_button", "browse_tor_button", "browse_axel_button",
+                "browse_proxychains_button", "browse_tor_button", "browse_curl_button",
                 "browse_subliminal_button",
                 "settings_cancel_button", "settings_reset_button", "settings_apply_button", "settings_ok_button"}) {
             Widgets.require(builder, id, Button.class);
@@ -359,15 +359,16 @@ class WindowSmokeTest {
                 "max_peers_spin", "peer_speed_limit_spin", "seed_time_spin", "depth_spin", "proxy_port_spin",
                 "cleanup_interval_spin", "max_history_records_spin", "max_completed_records_spin",
                 "completed_retention_spin", "error_retention_spin",
-                "max_import_urls_spin", "max_import_source_size_spin"}) {
+                "max_import_urls_spin", "max_import_source_size_spin",
+                "antivirus_timeout_spin"}) {
             Widgets.require(builder, id, SpinButton.class);
         }
         for (String id : new String[]{"aria2_path_entry", "ytdlp_path_entry", "httrack_path_entry",
                 "referer_entry", "cookie_entry", "user_agent_entry", "proxy_host_entry",
                 "proxy_username_entry", "proxy_password_entry", "video_format_entry",
                 "subtitle_language_entry", "include_entry", "exclude_entry",
-                "proxychains_path_entry", "tor_path_entry", "axel_path_entry",
-                "subliminal_path_entry"}) {
+                "proxychains_path_entry", "tor_path_entry", "curl_path_entry",
+                "subliminal_path_entry", "antivirus_command_entry"}) {
             Widgets.require(builder, id, Entry.class);
         }
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);

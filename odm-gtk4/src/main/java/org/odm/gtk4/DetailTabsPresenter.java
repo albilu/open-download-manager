@@ -78,6 +78,12 @@ final class DetailTabsPresenter {
     /** Id currently represented by the three stores; GTK-thread confined. */
     private String displayedTargetId;
     private String displayedCompletionTargetId;
+    /**
+     * GTK removes a {@code GtkCellRendererCombo} editor when its model row is
+     * changed. Progress polling normally reconciles file rows every second, so
+     * hold only the file-store update while the priority editor is open.
+     */
+    private boolean filePriorityEditing;
     private final Map<String, TreeRowReference> trackerRows = new java.util.HashMap<>();
     private final Map<String, TreeRowReference> peerRows = new java.util.HashMap<>();
     private final Map<String, TreeRowReference> fileRows = new java.util.HashMap<>();
@@ -177,6 +183,15 @@ final class DetailTabsPresenter {
         return fetchExecutor.isShutdown();
     }
 
+    /** GTK-thread hook used by the Files-tab priority cell editor. */
+    void setFilePriorityEditing(boolean editing) {
+        boolean refreshAfterEdit = filePriorityEditing && !editing;
+        filePriorityEditing = editing;
+        if (refreshAfterEdit) {
+            load();
+        }
+    }
+
     /** Populates the detail tab stores from a fetched snapshot. GTK thread only. */
     private void populateDetailStores(DetailTabData data, Download selectedDownload) {
         LinkedHashMap<String, TrackerRow> trackers = new LinkedHashMap<>();
@@ -219,6 +234,14 @@ final class DetailTabsPresenter {
             ListStoreCells.setString(store, iter, 3, row.upSpeed());
             ListStoreCells.setString(store, iter, 4, row.state());
         });
+
+        // Updating even a stable TreeStore row dismisses GTK's in-cell combo
+        // editor. Keep the current snapshot visible until the user commits or
+        // cancels the edit, then setFilePriorityEditing(false) fetches fresh
+        // engine state immediately.
+        if (filePriorityEditing) {
+            return;
+        }
 
         Map<Integer, String> priorities = selectedDownload.getSettings()
                 instanceof org.aria2.Aria2Settings aria2Settings
