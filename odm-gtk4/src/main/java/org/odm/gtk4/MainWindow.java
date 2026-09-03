@@ -109,6 +109,7 @@ public class MainWindow {
     private final org.gnome.gtk.Widget leftPanelWidget;
     private final org.gnome.gtk.Widget infoPanelWidget;
     private final DownloadManager downloadManager;
+    private final org.manager.download.OfflineModeController offlineModeController;
 
     private final DownloadListPresenter listPresenter;
     final DetailTabsPresenter detailTabsPresenter;
@@ -218,6 +219,8 @@ public class MainWindow {
             t.setDaemon(true);
             return t;
         });
+        this.offlineModeController = new org.manager.download.OfflineModeController(
+                downloadManager, backgroundExecutor);
         if (app != null) {
             window.setApplication(app);
         }
@@ -332,6 +335,9 @@ public class MainWindow {
         this.leftPanelWidget = Widgets.require(builder, "left_panel", org.gnome.gtk.Widget.class);
         this.infoPanelWidget = Widgets.require(builder, "info_panel_box", org.gnome.gtk.Widget.class);
         menuBar.setMenuModel(buildMainMenu());
+        if (app != null) {
+            app.setAccelsForAction("win.select-all", new String[]{"<Primary>a"});
+        }
         AccessibilitySupport.label(statusTreeview, "Download status filters");
         AccessibilitySupport.label(categoryTreeview, "Download category filters");
         AccessibilitySupport.label(downloadsTreeview, "Downloads");
@@ -1016,6 +1022,7 @@ public class MainWindow {
 
         // Edit
         org.gnome.gio.Menu edit = new org.gnome.gio.Menu();
+        edit.append("Select All", "win.select-all");
         edit.append("Clipboard Monitoring", "win.clipboard-monitoring");
         edit.append("Silent Mode", "win.clipboard-silent");
         org.gnome.gio.Menu completion = new org.gnome.gio.Menu();
@@ -1093,16 +1100,8 @@ public class MainWindow {
         addAction("export-file", this::onExportList);
         addStatefulAction("offline",
                 downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false),
-                active -> {
-                    downloadManager.getGlobalSettings().setProperty("ui.offline", String.valueOf(active));
-                    downloadManager.getGlobalSettings().save();
-                    if (active) {
-                        downloadManager.pauseAllDownloads();
-                    } else {
-                        downloadManager.resumeAllDownloads();
-                    }
-                    UiThread.marshal(this::refresh);
-                });
+                active -> trackActivity(offlineModeController.setOffline(active))
+                        .whenComplete((ignored, failure) -> UiThread.marshal(this::refresh)));
         // File -> Exit performs a normal exit (destroy() bypasses the
         // close-request handler), so geometry must be saved explicitly first.
         addAction("quit", () -> {
@@ -1117,6 +1116,7 @@ public class MainWindow {
         });
 
         // Edit
+        addAction("select-all", this::selectAllDownloads);
         addStatefulAction("clipboard-monitoring", downloadManager.isClipboardMonitoringEnabled(),
                 downloadManager::setClipboardMonitoringEnabled);
         addStatefulAction("clipboard-silent",
@@ -2026,7 +2026,31 @@ public class MainWindow {
         selectedDownload = selectedDownloads.isEmpty()
                 ? null : selectedDownloads.getFirst();
         updateSelectionActionSensitivity();
+        updateDownloadListStatus();
         updateInfoPanel();
+    }
+
+    private void selectAllDownloads() {
+        downloadsTreeview.getSelection().selectAll();
+        // GtkTreeSelection normally emits changed synchronously, but updating
+        // explicitly also keeps programmatic/action activation deterministic.
+        onDownloadSelectionChanged();
+    }
+
+    private void updateDownloadListStatus() {
+        infoLabel.setLabel(downloadListStatusText(
+                selectedDownloads.size(), loadedHistoryCount, knownDownloadCount));
+    }
+
+    static String downloadListStatusText(int selectedCount, int loadedCount, int totalCount) {
+        if (selectedCount > 0) {
+            return selectedCount == 1
+                    ? "1 download selected"
+                    : selectedCount + " downloads selected";
+        }
+        return loadedCount < totalCount
+                ? loadedCount + " of " + totalCount + " download(s) loaded"
+                : totalCount + " download(s)";
     }
 
     SelectionMode downloadSelectionMode() {
@@ -2179,9 +2203,7 @@ public class MainWindow {
         // Status changes are normally in-place row updates, so selection
         // signals do not fire. Re-evaluate Download-menu actions explicitly.
         updateSelectionActionSensitivity();
-        infoLabel.setLabel(loadedHistoryCount < summary.totalCount()
-                ? loadedHistoryCount + " of " + summary.totalCount() + " download(s) loaded"
-                : summary.totalCount() + " download(s)");
+        updateDownloadListStatus();
         downSpeedLabel.setLabel(DownloadFormats.rate(summary.downBytesPerSec()));
         upSpeedLabel.setLabel(DownloadFormats.rate(summary.upBytesPerSec()));
         dhtStatusLabel.setLabel(summary.totalSeeders() > 0

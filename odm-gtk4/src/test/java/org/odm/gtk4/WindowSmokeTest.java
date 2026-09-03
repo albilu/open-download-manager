@@ -650,6 +650,7 @@ class WindowSmokeTest {
         }
         assertEquals("s", window.menuActionParameterType("schedule"));
         assertTrue(window.menuActionEnabled("schedule"));
+        assertTrue(window.menuActionEnabled("select-all"));
         assertFalse(window.menuActionEnabled("open-file"));
         assertFalse(window.menuActionEnabled("open-folder"));
         window.dispose();

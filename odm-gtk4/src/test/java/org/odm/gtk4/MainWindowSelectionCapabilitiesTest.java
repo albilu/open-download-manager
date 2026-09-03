@@ -153,6 +153,18 @@ class MainWindowSelectionCapabilitiesTest {
                 "an under-filled viewport should immediately fetch another page");
     }
 
+    @Test
+    void downloadListStatusPrioritizesTheSelectionCount() {
+        assertEquals("1 download selected",
+                MainWindow.downloadListStatusText(1, 500, 1_200));
+        assertEquals("3 downloads selected",
+                MainWindow.downloadListStatusText(3, 500, 1_200));
+        assertEquals("500 of 1200 download(s) loaded",
+                MainWindow.downloadListStatusText(0, 500, 1_200));
+        assertEquals("12 download(s)",
+                MainWindow.downloadListStatusText(0, 12, 12));
+    }
+
     private static Download download(String name, Download.Status status) {
         Download download = new Download(URI.create("https://example.com/" + name));
         download.setName(name);
