@@ -179,8 +179,10 @@ public class Download {
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
     private volatile String expectedChecksum; // detected expected hash in hex
     private volatile ScheduleSettings scheduleSettings;
-    /** Persisted execution history shown in the download's Details tab. */
+    /** Persisted after-completion execution history shown in the Details tab. */
     private final List<CompletionActionResult> completionActionResults;
+    /** Persisted manual-operation history shown in the Details tab. */
+    private final List<DownloadOperationResult> operationResults;
     private volatile long attemptGeneration; // per-start operation token, never persisted
 
     /**
@@ -203,6 +205,7 @@ public class Download {
         this.mirrors = new ArrayList<>();
         this.outputPaths = new ArrayList<>();
         this.completionActionResults = new ArrayList<>();
+        this.operationResults = new ArrayList<>();
         this.status = Status.CREATED;
         this.createdAt = createdAt;
 
@@ -941,6 +944,63 @@ public class Download {
             }
             return false;
         }
+    }
+
+    /** Returns an immutable snapshot of recorded manual operations. */
+    public List<DownloadOperationResult> getOperationResults() {
+        synchronized (lock) {
+            return List.copyOf(operationResults);
+        }
+    }
+
+    /** Restores manual-operation history from persisted state. */
+    public void setOperationResults(List<DownloadOperationResult> results) {
+        synchronized (lock) {
+            operationResults.clear();
+            if (results != null) {
+                operationResults.addAll(results);
+            }
+        }
+    }
+
+    /** Starts and records one manual operation, returning its execution id. */
+    public String beginOperation(DownloadOperationResult.OperationType operationType) {
+        DownloadOperationResult result = DownloadOperationResult.running(operationType);
+        synchronized (lock) {
+            operationResults.add(result);
+        }
+        return result.id();
+    }
+
+    /** Atomically replaces a running manual-operation result with its outcome. */
+    public boolean finishOperation(String resultId,
+            DownloadOperationResult.Status status, String message) {
+        synchronized (lock) {
+            for (int i = 0; i < operationResults.size(); i++) {
+                DownloadOperationResult current = operationResults.get(i);
+                if (current.id().equals(resultId) && current.isRunning()) {
+                    operationResults.set(i, current.finished(status, message));
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /** Marks manual operations left running by an earlier process as interrupted. */
+    public boolean interruptRunningOperations(String message) {
+        boolean changed = false;
+        synchronized (lock) {
+            for (int i = 0; i < operationResults.size(); i++) {
+                DownloadOperationResult current = operationResults.get(i);
+                if (current.isRunning()) {
+                    operationResults.set(i, current.finished(
+                            DownloadOperationResult.Status.INTERRUPTED, message));
+                    changed = true;
+                }
+            }
+        }
+        return changed;
     }
 
     /** Marks actions left running by an earlier process as interrupted. */

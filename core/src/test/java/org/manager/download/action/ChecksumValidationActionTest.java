@@ -136,6 +136,33 @@ class ChecksumValidationActionTest {
     }
 
     @Test
+    void shouldRejectMultiFileDownloads() throws IOException {
+        Path secondFile = tempDir.resolve("second-file.txt");
+        Files.writeString(secondFile, "second payload");
+        testDownload.recordOutputPath(testFile);
+        testDownload.recordOutputPath(secondFile);
+        ChecksumValidationAction action = new ChecksumValidationAction(
+                ChecksumValidationAction.ChecksumAlgorithm.MD5, "dummy-checksum");
+
+        assertFalse(action.execute(testDownload),
+                "one whole-file checksum must not validate only part of a multi-file download");
+        assertNull(action.getValidatedFile());
+        assertNull(action.getActualChecksum());
+    }
+
+    @Test
+    void shouldRejectDirectoryOutputs() {
+        Download directoryDownload = createTestDownload("directory", tempDir, "ignored");
+        directoryDownload.recordOutputPath(tempDir);
+        ChecksumValidationAction action = new ChecksumValidationAction(
+                ChecksumValidationAction.ChecksumAlgorithm.MD5, "dummy-checksum");
+
+        assertFalse(action.execute(directoryDownload));
+        assertEquals(tempDir, action.getValidatedFile());
+        assertNull(action.getActualChecksum());
+    }
+
+    @Test
     void shouldSupportCancellation() throws Exception {
         // Create a larger file for testing cancellation
         Path largeFile = tempDir.resolve("large-file.txt");

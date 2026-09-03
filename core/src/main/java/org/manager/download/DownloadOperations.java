@@ -135,14 +135,14 @@ public interface DownloadOperations {
     CompletableFuture<Void> changeSettings(Download download);
 
     /**
-     * Requests an immediate integrity verification from the download's live
-     * engine task. This is a one-shot operation and must fail when the engine
-     * no longer owns a task rather than silently changing future defaults.
+     * Requests an immediate data recheck from a live aria2 task. This is a
+     * one-shot operation and must fail for other engines or when aria2 no
+     * longer owns the task rather than silently changing future defaults.
      *
-     * @param download The live download to verify
+     * @param download The live aria2 download to recheck
      * @return A future that completes after the engine accepts the request
      */
-    CompletableFuture<Void> verifyData(Download download);
+    CompletableFuture<Void> recheckData(Download download);
 
     /**
      * Moves a download's payload to another directory. Active transfers are

@@ -71,6 +71,12 @@ class ManagerOperationFailureSurfacingTest {
         }
 
         @Override
+        public CompletableFuture<Void> recheckData(Download download) {
+            return fail ? CompletableFuture.failedFuture(new RuntimeException("recheck backend down"))
+                    : CompletableFuture.completedFuture(null);
+        }
+
+        @Override
         public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
             if (fail) {
                 return CompletableFuture.failedFuture(new RuntimeException("cancel backend down"));
@@ -151,6 +157,39 @@ class ManagerOperationFailureSurfacingTest {
         manager.queueDownload(download).join();
 
         assertFails(manager.changeSettings(download), "settings change");
+    }
+
+    @Test
+    @DisplayName("A successful data recheck is recorded on its download")
+    void successfulRecheckIsRecorded() throws Exception {
+        setUp();
+        Download download = newDownload("recheck-ok");
+        handler.fail = false;
+
+        manager.recheckData(download).join();
+
+        assertEquals(1, download.getOperationResults().size());
+        DownloadOperationResult result = download.getOperationResults().getFirst();
+        assertEquals(DownloadOperationResult.OperationType.RECHECK_DATA,
+                result.operationType());
+        assertEquals(DownloadOperationResult.Status.ACCEPTED, result.status());
+        assertTrue(result.message().contains("accepted the integrity recheck request"));
+        assertTrue(result.finishedAt() != null);
+    }
+
+    @Test
+    @DisplayName("A failed data recheck is recorded and remains exceptional")
+    void failedRecheckIsRecorded() throws Exception {
+        setUp();
+        Download download = newDownload("recheck-failed");
+
+        assertFails(manager.recheckData(download), "recheck");
+
+        assertEquals(1, download.getOperationResults().size());
+        DownloadOperationResult result = download.getOperationResults().getFirst();
+        assertEquals(DownloadOperationResult.Status.FAILED, result.status());
+        assertEquals("recheck backend down", result.message());
+        assertTrue(result.finishedAt() != null);
     }
 
     @Test

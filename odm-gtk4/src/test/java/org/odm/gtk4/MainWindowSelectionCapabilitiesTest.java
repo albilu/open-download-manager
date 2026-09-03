@@ -93,28 +93,51 @@ class MainWindowSelectionCapabilitiesTest {
     }
 
     @Test
-    void verifyDataRequiresLiveAria2TaskAndIntegrityMetadata() {
+    void recheckDataRequiresLiveDirectAria2TaskAndIntegrityMetadata() {
         Download magnet = download("payload", Download.Status.DOWNLOADING);
         magnet.setUri(URI.create(
                 "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
         magnet.setGid("live-magnet");
         magnet.setSettings(new Aria2Settings());
-        assertTrue(MainWindow.canVerifyData(magnet));
+        assertTrue(MainWindow.canRecheckData(magnet));
 
         magnet.setStatus(Download.Status.COMPLETED);
-        assertFalse(MainWindow.canVerifyData(magnet),
+        assertFalse(MainWindow.canRecheckData(magnet),
                 "a completed aria2 GID has already been retired");
 
         Download http = download("archive.iso", Download.Status.DOWNLOADING);
         http.setGid("live-http");
         http.setSettings(new Aria2Settings());
-        assertFalse(MainWindow.canVerifyData(http),
+        assertFalse(MainWindow.canRecheckData(http),
                 "ordinary HTTP data has nothing authoritative to verify against");
+        http.setChecksumAlgorithm("sha256");
         http.setExpectedChecksum("00".repeat(32));
-        assertTrue(MainWindow.canVerifyData(http));
+        assertTrue(MainWindow.canRecheckData(http));
 
         http.setGid(null);
-        assertFalse(MainWindow.canVerifyData(http));
+        assertFalse(MainWindow.canRecheckData(http));
+    }
+
+    @Test
+    void recheckDataExcludesProxychainsAndUnsupportedEngines() {
+        Download routed = download("payload", Download.Status.DOWNLOADING);
+        routed.setUri(URI.create(
+                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+        routed.setGid("proxychains-process-id");
+        routed.setSettings(new Aria2Settings());
+        routed.setType(Download.Type.PROXYCHAINS);
+
+        assertFalse(MainWindow.canRecheckData(routed),
+                "proxychains owns a separate aria2 CLI process, not an RPC GID");
+
+        for (Download.Type type : Download.Type.values()) {
+            if (type == Download.Type.ARIA2) {
+                continue;
+            }
+            routed.setType(type);
+            assertFalse(MainWindow.canRecheckData(routed),
+                    () -> type + " must not expose the aria2-only command");
+        }
     }
 
     @Test

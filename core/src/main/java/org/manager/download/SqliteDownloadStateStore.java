@@ -78,6 +78,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 manual_start_required INTEGER NOT NULL DEFAULT 0,
                 active_elapsed_millis INTEGER NOT NULL DEFAULT 0,
                 completion_action_results TEXT,
+                operation_results TEXT,
                 active_before_exit INTEGER NOT NULL DEFAULT 0
             )
             """;
@@ -90,8 +91,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 seeders, info_hash, queue_position, created_at, started_at,
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, manual_start_required,
-                active_elapsed_millis, completion_action_results, active_before_exit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                active_elapsed_millis, completion_action_results, operation_results,
+                active_before_exit
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -232,6 +234,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             ensureColumn("manual_start_required", "INTEGER NOT NULL DEFAULT 0");
             ensureColumn("active_elapsed_millis", "INTEGER NOT NULL DEFAULT 0");
             ensureColumn("completion_action_results", "TEXT");
+            ensureColumn("operation_results", "TEXT");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
@@ -397,6 +400,11 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 new TypeReference<List<CompletionActionResult>>() {
                 });
         download.setCompletionActionResults(completionResults);
+        List<DownloadOperationResult> operationResults = readJson(rs,
+                "operation_results",
+                new TypeReference<List<DownloadOperationResult>>() {
+                });
+        download.setOperationResults(operationResults);
         try {
             DownloadSettings settings = mapper.readValue(rs.getString("settings"), DownloadSettings.class);
             if (settings != null) {
@@ -475,7 +483,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setLong(30, download.getActiveElapsedMillis());
         insert.setString(31, download.getCompletionActionResults().isEmpty()
                 ? null : mapper.writeValueAsString(download.getCompletionActionResults()));
-        insert.setInt(32, activeBeforeExit ? 1 : 0);
+        insert.setString(32, download.getOperationResults().isEmpty()
+                ? null : mapper.writeValueAsString(download.getOperationResults()));
+        insert.setInt(33, activeBeforeExit ? 1 : 0);
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

@@ -72,7 +72,7 @@ class DescriptorImportTest {
         @Override public CompletableFuture<Void> pauseDownload(Download download) { throw unsupported(); }
         @Override public CompletableFuture<Void> resumeDownload(Download download) { throw unsupported(); }
         @Override public CompletableFuture<Void> changeSettings(Download download) { throw unsupported(); }
-        @Override public CompletableFuture<Void> verifyData(Download download) { throw unsupported(); }
+        @Override public CompletableFuture<Void> recheckData(Download download) { throw unsupported(); }
         @Override public CompletableFuture<Void> relocateDownload(Download download,
                 Path destination) { throw unsupported(); }
         @Override public List<Map<String, Object>> getDownloadPeers(Download download) { throw unsupported(); }

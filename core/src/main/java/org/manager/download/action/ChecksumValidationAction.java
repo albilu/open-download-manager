@@ -14,7 +14,9 @@ import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 
 /**
- * After completion action that validates the checksum of downloaded files.
+ * After completion action that validates the checksum of one primary output
+ * file. Multi-file downloads and directory outputs are deliberately rejected
+ * because one whole-file digest cannot validate a collection of artifacts.
  * Supports MD5, SHA1, SHA-256, SHA-384, and SHA-512 algorithms.
  */
 public class ChecksumValidationAction implements AfterCompletionAction {
@@ -89,6 +91,13 @@ public class ChecksumValidationAction implements AfterCompletionAction {
             return false;
         }
 
+        int outputCount = download.getOutputPaths().size();
+        if (outputCount > 1) {
+            LOGGER.warn("Cannot validate one checksum against a multi-file download: "
+                    + outputCount + " outputs");
+            return false;
+        }
+
         validatedFile = download.getPrimaryOutputPath();
         if (validatedFile == null) {
             LOGGER.warn("Cannot validate checksum: output path is unknown");
@@ -98,6 +107,11 @@ public class ChecksumValidationAction implements AfterCompletionAction {
         // Check if file exists
         if (!Files.exists(validatedFile)) {
             LOGGER.warn("Cannot validate checksum: file does not exist: " + validatedFile);
+            return false;
+        }
+
+        if (!Files.isRegularFile(validatedFile)) {
+            LOGGER.warn("Cannot validate checksum: output is not a regular file: " + validatedFile);
             return false;
         }
 

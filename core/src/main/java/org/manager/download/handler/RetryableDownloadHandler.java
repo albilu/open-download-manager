@@ -665,8 +665,8 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
     }
 
     @Override
-    public CompletableFuture<Void> verifyData(Download download) {
-        return delegate.verifyData(download);
+    public CompletableFuture<Void> recheckData(Download download) {
+        return delegate.recheckData(download);
     }
 
     @Override

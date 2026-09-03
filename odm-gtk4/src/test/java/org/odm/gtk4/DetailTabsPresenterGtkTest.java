@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
+import org.manager.download.DownloadOperationResult;
 import org.manager.download.action.AfterCompletionAction;
 import org.manager.download.action.CompletionActionResult;
 import org.manager.schedule.ScheduleManager;
@@ -209,6 +210,36 @@ class DetailTabsPresenterGtkTest {
         assertEquals("Failed (high)",
                 onLoop(() -> firstValue(completionDetailsStore, 1)));
         assertEquals("Scanner executable was not found",
+                onLoop(() -> firstValue(completionDetailsStore, 2)));
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("manual Recheck Data results are rendered in the Details store")
+    void recheckDataResultsPopulateDetailsStore() throws Exception {
+        Download download = download("rechecked");
+        download.setOperationResults(List.of(new DownloadOperationResult(
+                "recheck-1",
+                DownloadOperationResult.OperationType.RECHECK_DATA,
+                "Recheck Data",
+                DownloadOperationResult.Status.ACCEPTED,
+                "aria2 accepted the integrity recheck request",
+                Instant.parse("2026-09-02T10:00:00Z"),
+                Instant.parse("2026-09-02T10:00:01Z"))));
+        Mockito.when(manager.getDownloadTrackers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadPeers(download)).thenReturn(List.of());
+        Mockito.when(manager.getDownloadFiles(download)).thenReturn(List.of());
+
+        onLoop(() -> {
+            selection.set(download);
+            presenter.load();
+        });
+
+        assertEquals("Recheck Data",
+                onLoop(() -> firstValue(completionDetailsStore, 0)));
+        assertEquals("Accepted",
+                onLoop(() -> firstValue(completionDetailsStore, 1)));
+        assertEquals("aria2 accepted the integrity recheck request",
                 onLoop(() -> firstValue(completionDetailsStore, 2)));
     }
 

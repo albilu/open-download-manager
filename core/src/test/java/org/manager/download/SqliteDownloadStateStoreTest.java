@@ -83,6 +83,15 @@ class SqliteDownloadStateStoreTest {
                 Instant.parse("2026-08-19T11:00:01Z"),
                 Instant.parse("2026-08-19T11:00:09Z"));
         original.setCompletionActionResults(List.of(completionResult));
+        DownloadOperationResult operationResult = new DownloadOperationResult(
+                "operation-result-1",
+                DownloadOperationResult.OperationType.RECHECK_DATA,
+                "Recheck Data",
+                DownloadOperationResult.Status.ACCEPTED,
+                "aria2 accepted the integrity recheck request",
+                Instant.parse("2026-08-19T11:01:00Z"),
+                Instant.parse("2026-08-19T11:01:01Z"));
+        original.setOperationResults(List.of(operationResult));
 
         org.aria2.Aria2Settings settings = (org.aria2.Aria2Settings) original.getSettings();
         settings.setOption("header", "Cookie: session=1");
@@ -119,6 +128,7 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getOutputPaths(), restored.getOutputPaths());
             assertEquals(original.getOutputPaths().get(0), restored.getPrimaryOutputPath());
             assertEquals(List.of(completionResult), restored.getCompletionActionResults());
+            assertEquals(List.of(operationResult), restored.getOperationResults());
             assertFalse(restored.hasRunningCompletionActions());
             assertEquals(12, restored.getConnections());
 
@@ -404,6 +414,7 @@ class SqliteDownloadStateStoreTest {
             assertNull(restored.getErrorMessage());
             assertNull(restored.getRequestedFileName());
             assertTrue(restored.getOutputPaths().isEmpty());
+            assertTrue(restored.getOperationResults().isEmpty());
             assertEquals(0, restored.getActiveElapsedMillis());
             assertEquals(Download.Status.QUEUED, restored.getStatus());
             assertEquals(Download.Protocol.HTTPS, restored.getProtocol());

@@ -966,11 +966,17 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     @Override
-    public CompletableFuture<Void> verifyData(Download download) {
-        return CompletableFuture.runAsync(() -> {
-            if (download == null) {
-                throw new CompletionException(
-                        new IllegalArgumentException("Download cannot be null"));
+    public CompletableFuture<Void> recheckData(Download download) {
+        if (download == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("Download cannot be null"));
+        }
+        String resultId = download.beginOperation(
+                DownloadOperationResult.OperationType.RECHECK_DATA);
+        CompletableFuture<Void> operation = CompletableFuture.runAsync(() -> {
+            if (download.getType() != Download.Type.ARIA2) {
+                throw new CompletionException(new UnsupportedOperationException(
+                        "Data recheck is supported only for aria2 downloads"));
             }
             DownloadHandler handler = handlerFor(download);
             if (handler == null) {
@@ -978,12 +984,33 @@ public class DownloadManagerImpl implements DownloadManager {
                         "No handler found for download type: " + download.getType()));
             }
             try {
-                handler.verifyData(download).join();
+                handler.recheckData(download).join();
             } catch (Exception e) {
-                throw new CompletionException("Failed to verify data for: "
-                        + download.getName(), e);
+                throw new CompletionException("Failed to recheck data for "
+                        + download.getName() + ": " + deepestFailureMessage(e), e);
             }
         }, executorManager.getGeneralExecutor());
+        return operation.whenComplete((ignored, failure) -> {
+            if (failure == null) {
+                download.finishOperation(resultId,
+                        DownloadOperationResult.Status.ACCEPTED,
+                        "aria2 accepted the integrity recheck request; damaged data will be downloaded again");
+            } else {
+                download.finishOperation(resultId,
+                        DownloadOperationResult.Status.FAILED,
+                        deepestFailureMessage(failure));
+            }
+        });
+    }
+
+    private static String deepestFailureMessage(Throwable failure) {
+        Throwable cause = failure;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message == null || message.isBlank()
+                ? cause.getClass().getSimpleName() : message;
     }
 
     @Override
@@ -1766,6 +1793,8 @@ public class DownloadManagerImpl implements DownloadManager {
                         }
 
                         download.interruptRunningCompletionActions(
+                                "Interrupted when ODM previously stopped");
+                        download.interruptRunningOperations(
                                 "Interrupted when ODM previously stopped");
 
                         // Handler/process identifiers belong to the daemon or

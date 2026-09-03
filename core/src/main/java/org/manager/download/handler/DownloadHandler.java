@@ -76,15 +76,15 @@ public interface DownloadHandler {
     CompletableFuture<Void> changeSettings(Download download);
 
     /**
-     * Requests a one-shot integrity verification for a live engine task.
-     * Implementations that cannot verify data fail explicitly.
+     * Requests a one-shot data recheck for a live engine task.
+     * Implementations that cannot recheck data fail explicitly.
      *
-     * @param download the live download to verify
+     * @param download the live download to recheck
      * @return a future completing after the request is accepted
      */
-    default CompletableFuture<Void> verifyData(Download download) {
+    default CompletableFuture<Void> recheckData(Download download) {
         return CompletableFuture.failedFuture(
-                new UnsupportedOperationException("Integrity verification is not supported"));
+                new UnsupportedOperationException("Data recheck is not supported"));
     }
 
     /**

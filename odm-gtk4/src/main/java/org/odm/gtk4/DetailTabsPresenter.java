@@ -1,5 +1,8 @@
 package org.odm.gtk4;
 
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +24,7 @@ import org.gnome.gtk.TreeView;
 import org.javagi.interop.MemoryCleaner;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
+import org.manager.download.DownloadOperationResult;
 import org.manager.download.action.CompletionActionResult;
 
 /**
@@ -50,8 +54,8 @@ final class DetailTabsPresenter {
             String upSpeed, String state) {
     }
 
-    private record CompletionRow(String action, String status, String result,
-            String started, String finished) {
+    private record DetailRow(String id, String action, String status, String result,
+            String started, String finished, Instant startedAt) {
     }
 
     private final DownloadManager downloadManager;
@@ -241,15 +245,34 @@ final class DetailTabsPresenter {
             clearStore(completionDetailsStore, completionRows);
             displayedCompletionTargetId = download.getId();
         }
-        LinkedHashMap<String, CompletionRow> rows = new LinkedHashMap<>();
+        List<DetailRow> history = new ArrayList<>();
         for (CompletionActionResult result : download.getCompletionActionResults()) {
-            rows.put(result.id(), new CompletionRow(
+            history.add(new DetailRow(
+                    result.id(),
                     result.description(),
                     completionStatus(result),
                     result.message().isBlank() ? "—" : result.message(),
                     DownloadFormats.DATE_FORMAT.format(result.startedAt()),
                     result.finishedAt() == null
-                            ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt())));
+                            ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt()),
+                    result.startedAt()));
+        }
+        for (DownloadOperationResult result : download.getOperationResults()) {
+            history.add(new DetailRow(
+                    result.id(),
+                    result.description(),
+                    operationStatus(result),
+                    result.message().isBlank() ? "—" : result.message(),
+                    DownloadFormats.DATE_FORMAT.format(result.startedAt()),
+                    result.finishedAt() == null
+                            ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt()),
+                    result.startedAt()));
+        }
+        history.sort(Comparator.comparing(DetailRow::startedAt)
+                .thenComparing(DetailRow::id));
+        LinkedHashMap<String, DetailRow> rows = new LinkedHashMap<>();
+        for (DetailRow row : history) {
+            rows.put(row.id(), row);
         }
         reconcile(completionDetailsStore, completionRows, rows, (store, iter, row) -> {
             ListStoreCells.setString(store, iter, 0, row.action());
@@ -265,6 +288,15 @@ final class DetailTabsPresenter {
             case RUNNING -> "Running";
             case SUCCEEDED -> "Succeeded";
             case FAILED -> "Failed (" + result.severity().name().toLowerCase() + ")";
+            case INTERRUPTED -> "Interrupted";
+        };
+    }
+
+    private static String operationStatus(DownloadOperationResult result) {
+        return switch (result.status()) {
+            case RUNNING -> "Running";
+            case ACCEPTED -> "Accepted";
+            case FAILED -> "Failed";
             case INTERRUPTED -> "Interrupted";
         };
     }

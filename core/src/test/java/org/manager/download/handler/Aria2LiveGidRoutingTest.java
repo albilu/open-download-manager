@@ -91,6 +91,7 @@ class Aria2LiveGidRoutingTest {
         private final Path outputPath;
         private final List<String> optionGids = new CopyOnWriteArrayList<>();
         private final List<Map<String, Object>> optionValues = new CopyOnWriteArrayList<>();
+        private final List<Map<String, Object>> addUriOptions = new CopyOnWriteArrayList<>();
         private final List<String> peerGids = new CopyOnWriteArrayList<>();
         private final List<String> fileGids = new CopyOnWriteArrayList<>();
         private final List<String> statusGids = new CopyOnWriteArrayList<>();
@@ -107,6 +108,12 @@ class Aria2LiveGidRoutingTest {
             optionGids.add(gid);
             optionValues.add(Map.copyOf(options));
             return "OK";
+        }
+
+        @Override
+        public String addUriRpc(String[] uris, Map<String, Object> options) {
+            addUriOptions.add(Map.copyOf(options));
+            return "uri-gid";
         }
 
         @Override
@@ -153,6 +160,7 @@ class Aria2LiveGidRoutingTest {
         void clearRecordings() {
             optionGids.clear();
             optionValues.clear();
+            addUriOptions.clear();
             peerGids.clear();
             fileGids.clear();
             statusGids.clear();
@@ -273,15 +281,16 @@ class Aria2LiveGidRoutingTest {
     }
 
     @Test
-    @DisplayName("Verify Data reaches every live GID without changing persistent options")
-    void verifyDataIsAOneShotLiveRequest() {
+    @DisplayName("Recheck Data reaches every owned live GID without changing persistent options")
+    void recheckDataIsAOneShotLiveRequest() {
         Download download = new Download(URI.create(
                 "magnet:?xt=urn:btih:dddddddddddddddddddddddddddddddddddddddd"));
         download.initSettings(new DownloadSettingsFactory(globalSettings));
         handler.registerTrackedDownload(download, List.of("verify-b", "verify-a"));
+        download.setStatus(Download.Status.DOWNLOADING);
         client.clearRecordings();
 
-        handler.verifyData(download).join();
+        handler.recheckData(download).join();
 
         assertEquals(Set.of("verify-a", "verify-b"), Set.copyOf(client.optionGids));
         assertEquals(List.of(Map.of("check-integrity", "true"),
@@ -291,18 +300,54 @@ class Aria2LiveGidRoutingTest {
     }
 
     @Test
-    @DisplayName("Verify Data reports a retired task instead of claiming success")
-    void verifyDataFailsWhenNoLiveGidExists() {
+    @DisplayName("Recheck Data reports a retired task instead of claiming success")
+    void recheckDataFailsWhenNoLiveGidExists() {
         Download download = new Download(URI.create(
                 "magnet:?xt=urn:btih:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"));
+        download.initSettings(new DownloadSettingsFactory(globalSettings));
         download.setGid("persisted-stale-gid");
+        download.setStatus(Download.Status.DOWNLOADING);
 
         RuntimeException failure = assertThrows(RuntimeException.class,
-                () -> handler.verifyData(download).join());
+                () -> handler.recheckData(download).join());
 
-        assertTrue(failure.getCause().getMessage().contains("integrity verification"));
+        assertTrue(failure.getCause().getMessage().contains("data recheck"));
         assertTrue(client.optionGids.isEmpty(),
                 "a persisted or retired GID must never receive an aria2 RPC");
+    }
+
+    @Test
+    @DisplayName("HTTP recheck supplies both the expected checksum and check-integrity")
+    void httpRecheckSuppliesExpectedChecksum() {
+        Download download = new Download(URI.create("https://example.test/archive.iso"));
+        download.setDestination(tempDir);
+        download.setStatus(Download.Status.DOWNLOADING);
+        download.initSettings(new DownloadSettingsFactory(globalSettings));
+        download.setChecksumAlgorithm("SHA256");
+        download.setExpectedChecksum("AB".repeat(32));
+        handler.registerTrackedDownload(download, List.of("http-gid"));
+        client.clearRecordings();
+
+        handler.recheckData(download).join();
+
+        assertEquals(List.of(Map.of(
+                "check-integrity", "true",
+                "checksum", "sha-256=" + "ab".repeat(32))), client.optionValues);
+    }
+
+    @Test
+    @DisplayName("HTTP downloads give aria2 a detected checksum when the task starts")
+    void httpStartSuppliesExpectedChecksum() {
+        Download download = new Download(URI.create("https://example.test/archive.iso"));
+        download.setDestination(tempDir);
+        download.initSettings(new DownloadSettingsFactory(globalSettings));
+        download.setChecksumAlgorithm("sha256");
+        download.setExpectedChecksum("cd".repeat(32));
+
+        handler.startDownload(download).join();
+
+        assertEquals("sha-256=" + "cd".repeat(32),
+                client.addUriOptions.getFirst().get("checksum"));
     }
 
     @Test

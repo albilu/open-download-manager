@@ -65,7 +65,7 @@ public class MainWindow {
     record DownloadSelectionCapabilities(boolean any, boolean single,
             boolean openFile, boolean openFolder, boolean pause, boolean resume,
             boolean start, boolean copyMagnet, boolean changeDestination,
-            boolean verifyData, boolean delete, boolean deleteWithFiles,
+            boolean recheckData, boolean delete, boolean deleteWithFiles,
             boolean properties) {
     }
 
@@ -348,7 +348,7 @@ public class MainWindow {
                         runningCompletionDownloads.add(d.getId());
                         ensureCompletionPulseTimer();
                     }
-                    refreshCompletionPresentation(d);
+                    refreshDetailHistoryPresentation(d);
                 });
             }
 
@@ -367,10 +367,10 @@ public class MainWindow {
                             AccessibilitySupport.status(infoLabel,
                                     "Antivirus scan completed for " + d.getName());
                         }
-                        refreshCompletionPresentation(d);
+                        refreshDetailHistoryPresentation(d);
                     });
                 } else {
-                    UiThread.marshal(() -> refreshCompletionPresentation(d));
+                    UiThread.marshal(() -> refreshDetailHistoryPresentation(d));
                 }
             }
 
@@ -379,7 +379,7 @@ public class MainWindow {
                     String errorMessage, org.manager.download.action.AfterCompletionAction.Severity severity) {
                 LOGGER.warn(
                         "Completion action failed for " + d.getName() + ": " + errorMessage);
-                UiThread.marshal(() -> refreshCompletionPresentation(d));
+                UiThread.marshal(() -> refreshDetailHistoryPresentation(d));
             }
 
             @Override
@@ -391,7 +391,7 @@ public class MainWindow {
                     if (runningCompletionDownloads.isEmpty()) {
                         stopCompletionPulseTimer();
                     }
-                    refreshCompletionPresentation(d);
+                    refreshDetailHistoryPresentation(d);
                 });
             }
         };
@@ -507,7 +507,7 @@ public class MainWindow {
         }
     }
 
-    private void refreshCompletionPresentation(Download download) {
+    private void refreshDetailHistoryPresentation(Download download) {
         listPresenter.scheduleRefresh();
         if (selectedDownload != null
                 && selectedDownload.getId().equals(download.getId())) {
@@ -801,7 +801,7 @@ public class MainWindow {
                 .separator()
                 .add("Copy Magnet URI", capabilities.copyMagnet(), this::copyMagnetUri)
                 .add("Change Destination…", capabilities.changeDestination(), this::changeDestination)
-                .add("Verify Data", capabilities.verifyData(), this::verifyData)
+                .add("Recheck Data", capabilities.recheckData(), this::recheckData)
                 .add("Properties", capabilities.properties(), this::onPropertiesClicked)
                 .separator()
                 .add("Delete", capabilities.delete(), this::onDeleteClicked)
@@ -889,7 +889,7 @@ public class MainWindow {
                 allSelectedMatch(downloads, MainWindow::canStart),
                 single && magnetUri(only) != null,
                 single && canChangeDestination(only),
-                allSelectedMatch(downloads, MainWindow::canVerifyData),
+                allSelectedMatch(downloads, MainWindow::canRecheckData),
                 any,
                 any,
                 any);
@@ -919,25 +919,8 @@ public class MainWindow {
         };
     }
 
-    static boolean canVerifyData(Download download) {
-        if (download == null || download.getGid() == null || download.getGid().isBlank()
-                || !(download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings)) {
-            return false;
-        }
-        boolean liveStatus = switch (download.getStatus()) {
-            case QUEUED, STARTING, CONNECTING, DOWNLOADING, SEEDING, PAUSED -> true;
-            default -> false;
-        };
-        if (!liveStatus) {
-            return false;
-        }
-        return switch (download.getProtocol()) {
-            case TORRENT, MAGNET, METALINK -> true;
-            case HTTP, HTTPS, FTP -> download.getExpectedChecksum() != null
-                    || aria2Settings.getOption("checksum") != null;
-            case SFTP -> false;
-            case null -> false;
-        };
+    static boolean canRecheckData(Download download) {
+        return org.manager.download.handler.Aria2DownloadHandler.canRecheckData(download);
     }
 
     private static String magnetUri(Download download) {
@@ -951,32 +934,34 @@ public class MainWindow {
                 ? null : "magnet:?xt=urn:btih:" + download.getInfoHash();
     }
 
-    /** Requests an immediate one-shot integrity re-check from each live aria2 task. */
-    private void verifyData() {
-        List<Download> targets = selectedDownloads;
+    /** Requests an immediate one-shot data recheck from each selected aria2 item. */
+    private void recheckData() {
+        onDownloadSelectionChanged();
+        List<Download> targets = selectedDownloads.stream()
+                .filter(MainWindow::canRecheckData)
+                .toList();
         if (targets.isEmpty()) {
             return;
         }
         java.util.List<CompletableFuture<Void>> updates = new java.util.ArrayList<>();
         for (Download target : targets) {
-            if (canVerifyData(target)) {
-                updates.add(downloadManager.verifyData(target));
-            }
-        }
-        if (!updates.isEmpty()) {
-            trackActivity(allOf(updates)).whenComplete((ignored, error) -> UiThread.marshal(() -> {
+            CompletableFuture<Void> update = downloadManager.recheckData(target);
+            refreshDetailHistoryPresentation(target);
+            updates.add(update.whenComplete((ignored, error) -> UiThread.marshal(() -> {
+                refreshDetailHistoryPresentation(target);
                 if (error == null) {
                     AccessibilitySupport.status(infoLabel,
-                            targets.size() == 1
-                                    ? "Integrity check requested"
-                                    : "Integrity checks requested for " + targets.size() + " downloads");
+                            "Recheck Data requested for " + target.getName()
+                                    + "; aria2 will verify and repair damaged data");
                 } else {
                     AccessibilitySupport.status(infoLabel,
-                            "Could not request all integrity checks: " + failureMessage(error),
+                            "Recheck Data failed for " + target.getName() + ": "
+                                    + failureMessage(error),
                             org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                 }
-            }));
+            })));
         }
+        trackActivity(allOf(updates));
     }
 
     /**

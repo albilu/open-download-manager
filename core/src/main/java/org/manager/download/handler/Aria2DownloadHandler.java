@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -439,6 +440,111 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 .filter(gid -> download.getId().equals(gidToIdMap.get(gid)))
                 .sorted()
                 .toList();
+    }
+
+    /**
+     * Whether the context-menu data recheck can reach a live aria2 task with
+     * authoritative integrity metadata. The engine type check deliberately
+     * excludes proxychains-routed aria2 processes: those are separate CLI
+     * children and are not owned by this handler's RPC daemon.
+     */
+    public static boolean canRecheckData(Download download) {
+        if (download == null || download.getType() != Download.Type.ARIA2
+                || download.getGid() == null || download.getGid().isBlank()
+                || !(download.getSettings() instanceof Aria2Settings)) {
+            return false;
+        }
+        boolean liveStatus = switch (download.getStatus()) {
+            case QUEUED, STARTING, CONNECTING, DOWNLOADING, SEEDING, PAUSED -> true;
+            default -> false;
+        };
+        if (!liveStatus) {
+            return false;
+        }
+        return switch (download.getProtocol()) {
+            case TORRENT, MAGNET, METALINK -> true;
+            case HTTP, HTTPS, FTP -> checksumOptionFor(download) != null;
+            case SFTP -> false;
+            case null -> false;
+        };
+    }
+
+    /** Returns a validated aria2 {@code TYPE=DIGEST} checksum option. */
+    static String checksumOptionFor(Download download) {
+        if (download == null) {
+            return null;
+        }
+        if (download.getSettings() instanceof Aria2Settings aria2Settings) {
+            String configured = normalizeChecksumOption(aria2Settings.getOption("checksum"));
+            if (configured != null) {
+                return configured;
+            }
+        }
+        return normalizeChecksum(download.getChecksumAlgorithm(),
+                download.getExpectedChecksum());
+    }
+
+    private static String normalizeChecksumOption(String option) {
+        if (option == null) {
+            return null;
+        }
+        int separator = option.indexOf('=');
+        if (separator <= 0 || separator == option.length() - 1) {
+            return null;
+        }
+        return normalizeChecksum(option.substring(0, separator),
+                option.substring(separator + 1));
+    }
+
+    private static String normalizeChecksum(String algorithm, String digest) {
+        if (algorithm == null || digest == null) {
+            return null;
+        }
+        String key = algorithm.strip().toLowerCase(Locale.ROOT)
+                .replace("-", "").replace("_", "").replace(" ", "");
+        String ariaName;
+        int expectedLength;
+        switch (key) {
+            case "md5" -> {
+                ariaName = "md5";
+                expectedLength = 32;
+            }
+            case "sha1" -> {
+                ariaName = "sha-1";
+                expectedLength = 40;
+            }
+            case "sha224" -> {
+                ariaName = "sha-224";
+                expectedLength = 56;
+            }
+            case "sha256" -> {
+                ariaName = "sha-256";
+                expectedLength = 64;
+            }
+            case "sha384" -> {
+                ariaName = "sha-384";
+                expectedLength = 96;
+            }
+            case "sha512" -> {
+                ariaName = "sha-512";
+                expectedLength = 128;
+            }
+            case "adler32" -> {
+                ariaName = "adler32";
+                expectedLength = 8;
+            }
+            default -> {
+                return null;
+            }
+        }
+        String normalizedDigest = digest.strip().toLowerCase(Locale.ROOT);
+        if (normalizedDigest.length() != expectedLength
+                || !normalizedDigest.chars().allMatch(character ->
+                    (character >= '0' && character <= '9')
+                    || (character >= 'a' && character <= 'f'))) {
+            return null;
+        }
+        return ariaName + "=" + normalizedDigest;
     }
 
     /**
@@ -1479,6 +1585,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
         }
 
+        // aria2 cannot validate an ordinary HTTP(S)/FTP file from
+        // check-integrity alone; it also needs the authoritative digest.
+        String checksum = checksumOptionFor(download);
+        if (checksum != null) {
+            options.put("checksum", checksum);
+        }
+
         // Add mirrors if available: aria2 treats all URIs of a single addUri
         // call as mirrors of one download with automatic failover.
         List<String> uris = new ArrayList<>();
@@ -2049,29 +2162,47 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
-     * Requests aria2's one-shot integrity check on every currently owned GID.
-     * Unlike changeSettings, this operation is deliberately not persisted: a
-     * context-menu verification must either reach a live task or fail.
+     * Requests aria2's one-shot data recheck on every GID owned by this
+     * selected download.
+     * Unlike changeSettings, the temporary aria2 options are deliberately not
+     * persisted: a context-menu recheck must either reach a live task or fail.
+     * The manager separately persists the request outcome for the Details tab.
      */
     @Override
-    public CompletableFuture<Void> verifyData(Download download) {
+    public CompletableFuture<Void> recheckData(Download download) {
         return CompletableFuture.runAsync(() -> {
             try {
                 ensureInitialized();
+                if (!canRecheckData(download)) {
+                    throw new UnsupportedOperationException(
+                            "Data recheck is unavailable for this download");
+                }
                 List<String> gids = liveTrackedGidsSnapshot(download);
                 if (gids.isEmpty()) {
                     throw new IllegalStateException(
-                            "The aria2 task is no longer active; no data was verified");
+                            "The aria2 task is no longer active; no data was rechecked");
                 }
-                applyToEveryGid(gids, "verify data",
-                        gid -> aria2Client.changeOption(gid,
-                                Map.of("check-integrity", "true")));
-                LOGGER.info("Requested integrity verification for " + download.getName()
+                Map<String, Object> options = new HashMap<>();
+                options.put("check-integrity", "true");
+                if (download.getProtocol() == Download.Protocol.HTTP
+                        || download.getProtocol() == Download.Protocol.HTTPS
+                        || download.getProtocol() == Download.Protocol.FTP) {
+                    String checksum = checksumOptionFor(download);
+                    if (checksum == null) {
+                        throw new IllegalStateException(
+                                "HTTP/FTP data recheck requires a valid expected checksum");
+                    }
+                    options.put("checksum", checksum);
+                }
+                Map<String, Object> recheckOptions = Map.copyOf(options);
+                applyToEveryGid(gids, "recheck data",
+                        gid -> aria2Client.changeOption(gid, recheckOptions));
+                LOGGER.info("Requested data recheck for " + download.getName()
                         + " on GIDs " + gids);
             } catch (Exception e) {
-                LOGGER.error("Failed to request integrity verification for: "
-                        + download.getName(), e);
-                throw new RuntimeException("Failed to request integrity verification", e);
+                LOGGER.error("Failed to request data recheck for: "
+                        + (download == null ? "<null>" : download.getName()), e);
+                throw new RuntimeException("Failed to request data recheck", e);
             }
         }, executor);
     }
