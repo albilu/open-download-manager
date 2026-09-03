@@ -20,6 +20,7 @@ import org.gnome.gtk.ApplicationWindow;
 import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CellRendererProgress;
+import org.gnome.gtk.CellRendererCombo;
 import org.gnome.gtk.CellRendererText;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.Entry;
@@ -213,9 +214,11 @@ class WindowSmokeTest {
                     id + " must expose a typed sort key");
         }
         assertEquals(28, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
-        assertEquals(5, Widgets.require(builder,
+        assertEquals(7, Widgets.require(builder,
                 "completion_details_store", ListStore.class).getNColumns());
         Widgets.require(builder, "completion_details_view", TreeView.class);
+        assertEquals("Actions", Widgets.require(builder,
+                "actions_tab_label", Label.class).getLabel());
         TreeViewColumn statusIconColumn = Widgets.require(builder,
                 "status_icon_column", TreeViewColumn.class);
         TreeViewColumn typeIconColumn = Widgets.require(builder,
@@ -295,6 +298,10 @@ class WindowSmokeTest {
                     detailFileColumnIds[index], TreeViewColumn.class).getSortColumnId(),
                     detailFileColumnIds[index] + " must be sortable");
         }
+        Widgets.require(builder, "files_priority_store", ListStore.class);
+        CellRendererCombo filePriority = Widgets.require(builder,
+                "files_priority_renderer", CellRendererCombo.class);
+        assertEquals(true, filePriority.getProperty("editable"));
         // status bar
         Widgets.require(builder, "statusbar", org.gnome.gtk.Box.class);
         for (String id : new String[]{"info_label", "up_speed_label", "down_speed_label",
@@ -716,6 +723,35 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("upload rate is visible in download rows and aggregate totals")
+    void uploadRatePopulatesRowAndSummary() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ListStore downloadStore = Widgets.require(builder, "download_store", ListStore.class);
+        DownloadListPresenter presenter = new DownloadListPresenter(
+                Widgets.require(builder, "status_store", ListStore.class),
+                Widgets.require(builder, "category_store", ListStore.class),
+                downloadStore,
+                Widgets.require(builder, "global_progress_store", ListStore.class),
+                Widgets.require(builder, "status_treeview", TreeView.class),
+                Widgets.require(builder, "category_treeview", TreeView.class), () -> { });
+        org.manager.download.Download download = new org.manager.download.Download(
+                URI.create("magnet:?xt=urn:btih:abababababababababababababababababababab"));
+        download.setStatus(org.manager.download.Download.Status.DOWNLOADING);
+        download.setUploadSpeed(2_048);
+
+        DownloadListPresenter.RefreshSummary summary = presenter.refresh(List.of(download));
+
+        TreeIter row = new TreeIter();
+        assertTrue(downloadStore.getIterFirst(row));
+        assertEquals("2 KB/s", ListStoreCells.getString(downloadStore, row, 7));
+        assertEquals(2_048, summary.upBytesPerSec());
+        download.setUploadSpeed(0);
+        presenter.refresh(List.of(download));
+        assertEquals("0 B/s", ListStoreCells.getString(downloadStore, row, 7),
+                "zero upload must remain visible instead of becoming an ambiguous dash");
+    }
+
+    @Test
     @DisplayName("running completion actions pulse a completed row at 100 percent")
     void completionActionUsesIndeterminateRowProgress() {
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
@@ -858,6 +894,30 @@ class WindowSmokeTest {
 
             assertEquals("2,3,7", NewDownloadDialog.encodeFileSelection(
                     List.of(7, 3, 2, 3)));
+        } finally {
+            FileTreeSupport.freeReferences(rows);
+        }
+    }
+
+    @Test
+    @DisplayName("download-record file priority edits update persisted aria2 metadata")
+    void downloadRecordFilePriorityIsEditable() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        TreeStore store = Widgets.require(builder, "files_store", TreeStore.class);
+        java.util.Map<String, org.gnome.gtk.TreeRowReference> rows = new java.util.HashMap<>();
+        try {
+            FileTreeSupport.reconcile(store, rows, List.of(
+                    new FileTreeSupport.Entry(true, "Show/one.mkv", 100, 50, 1, "Normal"),
+                    new FileTreeSupport.Entry(true, "Show/two.mkv", 100, 25, 2, "Low")), null);
+            org.manager.download.Download download = new org.manager.download.Download(
+                    URI.create("magnet:?xt=urn:btih:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"));
+
+            assertTrue(MainWindow.applyFilePriority(store, download, "0", "High"));
+
+            org.aria2.Aria2Settings settings = assertInstanceOf(
+                    org.aria2.Aria2Settings.class, download.getSettings());
+            assertEquals(Map.of(1, "High", 2, "High"), settings.getFilePriorities());
+            assertFalse(MainWindow.applyFilePriority(store, download, "9", "Low"));
         } finally {
             FileTreeSupport.freeReferences(rows);
         }

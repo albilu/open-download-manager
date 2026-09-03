@@ -7,7 +7,7 @@ import java.util.UUID;
 
 /**
  * Immutable, persistable history entry for a user-requested download
- * operation shown in the Details tab.
+ * operation shown in the Actions tab.
  *
  * <p>This is deliberately separate from after-completion action history:
  * Recheck Data is a manual aria2 operation, not a checksum completion action.</p>

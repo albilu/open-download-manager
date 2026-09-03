@@ -41,6 +41,8 @@ final class DetailTabsPresenter {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DetailTabsPresenter.class);
     static final int FILE_PATH_COLUMN = FileTreeSupport.PATH_COLUMN;
+    static final int ACTION_OUTPUT_COLUMN = 5;
+    static final int ACTION_EXPOSES_OUTPUT_COLUMN = 6;
 
     /** Immutable snapshot fetched off-thread for the trackers/peers/files tabs. */
     private record DetailTabData(List<List<String>> trackers, List<Map<String, Object>> peers,
@@ -55,7 +57,8 @@ final class DetailTabsPresenter {
     }
 
     private record DetailRow(String id, String action, String status, String result,
-            String started, String finished, Instant startedAt) {
+            String started, String finished, String output, boolean exposesOutput,
+            Instant startedAt) {
     }
 
     private final DownloadManager downloadManager;
@@ -255,6 +258,8 @@ final class DetailTabsPresenter {
                     DownloadFormats.DATE_FORMAT.format(result.startedAt()),
                     result.finishedAt() == null
                             ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt()),
+                    result.output(),
+                    result.exposesOutput(),
                     result.startedAt()));
         }
         for (DownloadOperationResult result : download.getOperationResults()) {
@@ -266,6 +271,8 @@ final class DetailTabsPresenter {
                     DownloadFormats.DATE_FORMAT.format(result.startedAt()),
                     result.finishedAt() == null
                             ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt()),
+                    "",
+                    false,
                     result.startedAt()));
         }
         history.sort(Comparator.comparing(DetailRow::startedAt)
@@ -280,6 +287,9 @@ final class DetailTabsPresenter {
             ListStoreCells.setString(store, iter, 2, row.result());
             ListStoreCells.setString(store, iter, 3, row.started());
             ListStoreCells.setString(store, iter, 4, row.finished());
+            ListStoreCells.setString(store, iter, ACTION_OUTPUT_COLUMN, row.output());
+            ListStoreCells.setBoolean(store, iter, ACTION_EXPOSES_OUTPUT_COLUMN,
+                    row.exposesOutput());
         });
     }
 

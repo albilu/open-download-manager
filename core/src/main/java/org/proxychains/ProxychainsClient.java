@@ -37,7 +37,9 @@ public class ProxychainsClient {
     private static final Pattern ARIA2_PROGRESS_PATTERN = Pattern.compile(
             "\\[#([0-9a-f]+)\\s+([0-9.]+)([KMGTkmgt]?i?)B/([0-9.]+)([KMGTkmgt]?i?)B\\(([0-9.]+)%\\).*");
     private static final Pattern SPEED_PATTERN = Pattern.compile(
-            ".*DL:([0-9.]+)([KMGTkmgt]?i?)B(/s)?.*");
+            ".*DL:([0-9]+(?:\\.[0-9]+)?)([KMGTkmgt]?i?)B(/s)?.*");
+    private static final Pattern UPLOAD_SPEED_PATTERN = Pattern.compile(
+            ".*UL:([0-9]+(?:\\.[0-9]+)?)([KMGTkmgt]?i?)B(/s)?.*");
 
     private final String proxychainsPath;
     private final String configPath;
@@ -347,7 +349,7 @@ public class ProxychainsClient {
      * @param unit  The speed unit (K, M, G)
      * @return The speed in bytes per second
      */
-    private float parseSpeed(String value, String unit) {
+    private static float parseSpeed(String value, String unit) {
         float speed = Float.parseFloat(value);
 
         if (unit == null || unit.isEmpty()) {
@@ -670,6 +672,16 @@ public class ProxychainsClient {
             LOGGER.debug("[POTENTIAL PROGRESS]: " + line);
         }
 
+        // BitTorrent summaries carry UL independently of the ordinary
+        // downloaded/total progress tuple. In particular, seeding lines look
+        // like "SEED(...) ... UL:..." and therefore do not match
+        // ARIA2_PROGRESS_PATTERN. Apply the upload rate before parsing download
+        // progress so both downloading and seeding torrents remain visible.
+        float uploadSpeed = parseUploadSpeed(line);
+        if (!Float.isNaN(uploadSpeed)) {
+            download.setUploadSpeed(uploadSpeed);
+        }
+
         // Parse progress information
         Matcher progressMatcher = ARIA2_PROGRESS_PATTERN.matcher(line);
         if (progressMatcher.find()) {
@@ -708,5 +720,20 @@ public class ProxychainsClient {
                         downloadedBytes, totalBytes, speed);
             }
         }
+    }
+
+    /**
+     * Extracts aria2's console UL field in bytes per second.
+     *
+     * @return the parsed rate, or {@link Float#NaN} when the line has no UL field
+     */
+    static float parseUploadSpeed(String line) {
+        if (line == null) {
+            return Float.NaN;
+        }
+        Matcher matcher = UPLOAD_SPEED_PATTERN.matcher(line);
+        return matcher.find()
+                ? parseSpeed(matcher.group(1), matcher.group(2))
+                : Float.NaN;
     }
 }

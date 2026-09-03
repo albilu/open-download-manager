@@ -187,13 +187,14 @@ final class FileTreeSupport {
         return true;
     }
 
-    static void setPriority(TreeStore store, String pathText, String priority) {
+    static boolean setPriority(TreeStore store, String pathText, String priority) {
         TreeIter iter = new TreeIter();
         if (!store.getIterFromString(iter, pathText)) {
-            return;
+            return false;
         }
         setPriorityRecursively(store, iter, normalizePriority(priority));
         updateAncestors(store, iter);
+        return true;
     }
 
     static List<Integer> selectedIndexes(TreeStore store) {

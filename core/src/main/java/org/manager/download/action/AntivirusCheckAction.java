@@ -88,7 +88,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         // One settings-backed action instance may be reused for multiple
         // downloads. Reset invocation-specific state before every scan so a
         // threat or result from an earlier file cannot leak into this row's
-        // Details result.
+        // Actions result.
         isScanning = false;
         scanProcess = null;
         scanFuture = null;
@@ -128,7 +128,8 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             LOGGER.info("Starting configured antivirus scan");
 
             // Execute the scan command
-            ProcessBuilder processBuilder = new ProcessBuilder(command);
+            ProcessBuilder processBuilder = new ProcessBuilder(command)
+                    .redirectErrorStream(true);
             scanProcess = processBuilder.start();
             isScanning = true;
 
@@ -289,6 +290,11 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     @Override
     public String getFailureMessage() {
         return outcomeMessage;
+    }
+
+    @Override
+    public String getOutput() {
+        return scanResult == null ? "" : scanResult;
     }
 
     private String getAntivirusName() {

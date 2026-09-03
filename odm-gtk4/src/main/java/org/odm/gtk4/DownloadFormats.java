@@ -33,6 +33,11 @@ final class DownloadFormats {
         return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
     }
 
+    /** Human-readable transfer rate, including an explicit zero value. */
+    static String rate(long bytesPerSecond) {
+        return size(Math.max(0, bytesPerSecond)) + "/s";
+    }
+
     /** ETA of a downloading transfer, or an em-dash when not computable. */
     static String eta(Download download) {
         float speed = download.getSpeed();

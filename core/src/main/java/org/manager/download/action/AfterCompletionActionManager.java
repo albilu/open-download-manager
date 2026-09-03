@@ -220,13 +220,14 @@ public class AfterCompletionActionManager {
                         successfulActions.add(action);
                         download.finishCompletionAction(resultId,
                                 CompletionActionResult.Status.SUCCEEDED,
-                                action.getResultMessage());
+                                action.getResultMessage(), outputOf(action));
                         notifyActionComplete(download, action);
                     } else {
                         failedActions.add(action);
                         String failureMessage = action.getFailureMessage();
                         download.finishCompletionAction(resultId,
-                                CompletionActionResult.Status.FAILED, failureMessage);
+                                CompletionActionResult.Status.FAILED, failureMessage,
+                                outputOf(action));
                         notifyActionError(download, action, failureMessage,
                                 action.getSeverity());
                     }
@@ -237,7 +238,8 @@ public class AfterCompletionActionManager {
                     String failureMessage = e.getMessage() == null
                             ? e.getClass().getSimpleName() : e.getMessage();
                     download.finishCompletionAction(resultId,
-                            CompletionActionResult.Status.FAILED, failureMessage);
+                            CompletionActionResult.Status.FAILED, failureMessage,
+                            outputOf(action));
                     notifyActionError(download, action, failureMessage, action.getSeverity());
                 }
             }
@@ -254,6 +256,18 @@ public class AfterCompletionActionManager {
                     CompletionActionResult.Status.FAILED, failureMessage);
             notifyActionError(download, action, failureMessage, action.getSeverity());
         });
+    }
+
+    private static String outputOf(AfterCompletionAction action) {
+        try {
+            return action.getOutput();
+        } catch (RuntimeException e) {
+            LOGGER.warn("Could not collect output for completion action "
+                    + action.getDescription(), e);
+            return "[Could not collect detailed action output: "
+                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
+                    + "]";
+        }
     }
 
     private static List<AfterCompletionAction> sortedCopy(

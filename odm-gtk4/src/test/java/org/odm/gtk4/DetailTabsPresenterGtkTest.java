@@ -184,7 +184,7 @@ class DetailTabsPresenterGtkTest {
 
     @Test
     @Timeout(60)
-    @DisplayName("completion action results are rendered in the Details store")
+    @DisplayName("completion action results and output are rendered in the Actions store")
     void completionActionResultsPopulateDetailsStore() throws Exception {
         Download download = download("completed");
         download.setCompletionActionResults(List.of(new CompletionActionResult(
@@ -193,6 +193,7 @@ class DetailTabsPresenterGtkTest {
                 "Antivirus check using ClamAV",
                 CompletionActionResult.Status.FAILED,
                 "Scanner executable was not found",
+                "clamscan: command not found",
                 AfterCompletionAction.Severity.HIGH,
                 Instant.parse("2026-09-02T10:00:00Z"),
                 Instant.parse("2026-09-02T10:00:01Z"))));
@@ -211,11 +212,16 @@ class DetailTabsPresenterGtkTest {
                 onLoop(() -> firstValue(completionDetailsStore, 1)));
         assertEquals("Scanner executable was not found",
                 onLoop(() -> firstValue(completionDetailsStore, 2)));
+        assertEquals("clamscan: command not found",
+                onLoop(() -> firstValue(completionDetailsStore,
+                        DetailTabsPresenter.ACTION_OUTPUT_COLUMN)));
+        assertTrue(onLoop(() -> firstBoolean(completionDetailsStore,
+                        DetailTabsPresenter.ACTION_EXPOSES_OUTPUT_COLUMN)));
     }
 
     @Test
     @Timeout(60)
-    @DisplayName("manual Recheck Data results are rendered in the Details store")
+    @DisplayName("manual Recheck Data results are rendered in the Actions store")
     void recheckDataResultsPopulateDetailsStore() throws Exception {
         Download download = download("rechecked");
         download.setOperationResults(List.of(new DownloadOperationResult(
@@ -241,6 +247,9 @@ class DetailTabsPresenterGtkTest {
                 onLoop(() -> firstValue(completionDetailsStore, 1)));
         assertEquals("aria2 accepted the integrity recheck request",
                 onLoop(() -> firstValue(completionDetailsStore, 2)));
+        assertFalse(onLoop(() -> firstBoolean(completionDetailsStore,
+                        DetailTabsPresenter.ACTION_EXPOSES_OUTPUT_COLUMN)),
+                "manual operation rows do not open completion-action logs");
     }
 
     @Test
@@ -455,6 +464,11 @@ class DetailTabsPresenterGtkTest {
     private static String firstValue(ListStore store, int column) {
         TreeIter iter = new TreeIter();
         return store.getIterFirst(iter) ? ListStoreCells.getString(store, iter, column) : null;
+    }
+
+    private static boolean firstBoolean(ListStore store, int column) {
+        TreeIter iter = new TreeIter();
+        return store.getIterFirst(iter) && ListStoreCells.getBoolean(store, iter, column);
     }
 
     private static String firstTreeValue(TreeStore store, int column) {

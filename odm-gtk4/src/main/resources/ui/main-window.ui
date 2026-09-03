@@ -32,10 +32,14 @@
       <column type="gint"/><column type="gchararray"/>
     </columns>
   </object>
+  <object class="GtkListStore" id="files_priority_store">
+    <columns><column type="gchararray"/></columns>
+  </object>
   <object class="GtkListStore" id="completion_details_store">
     <columns>
       <column type="gchararray"/><column type="gchararray"/><column type="gchararray"/>
-      <column type="gchararray"/><column type="gchararray"/>
+      <column type="gchararray"/><column type="gchararray"/><column type="gchararray"/>
+      <column type="gboolean"/>
     </columns>
   </object>
   <object class="GtkListStore" id="global_progress_store">
@@ -396,7 +400,7 @@
                                 </child>
                               </object>
                             </child>
-                            <child type="tab"><object class="GtkLabel"><property name="label">Details</property></object></child>
+                            <child type="tab"><object class="GtkLabel" id="actions_tab_label"><property name="label">Actions</property></object></child>
 
                             <child>
                               <object class="GtkScrolledWindow" id="trackers_scrolled">
@@ -441,7 +445,7 @@
                                     <child><object class="GtkTreeViewColumn" id="files_name_column"><property name="title">Name</property><property name="expand">true</property><property name="resizable">true</property><property name="min-width">160</property><property name="max-width">420</property><property name="sort-column-id">1</property><child><object class="GtkCellRendererPixbuf" id="files_icon_renderer"/><attributes><attribute name="icon-name">13</attribute></attributes></child><child><object class="GtkCellRendererText" id="files_name_renderer"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child></object></child>
                                     <child><object class="GtkTreeViewColumn" id="files_size_column"><property name="title">Size</property><property name="sort-column-id">7</property><child><object class="GtkCellRendererText" id="files_size_renderer"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
                                     <child><object class="GtkTreeViewColumn" id="files_progress_column"><property name="title">Progress</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererProgress" id="files_progress_renderer"/><attributes><attribute name="value">3</attribute><attribute name="text">6</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="files_priority_column"><property name="title">Priority</property><property name="sort-column-id">12</property><child><object class="GtkCellRendererText" id="files_priority_renderer"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="files_priority_column"><property name="title">Priority</property><property name="sort-column-id">12</property><child><object class="GtkCellRendererCombo" id="files_priority_renderer"><property name="model">files_priority_store</property><property name="text-column">0</property><property name="has-entry">false</property><property name="editable">true</property></object><attributes><attribute name="text">4</attribute></attributes></child></object></child>
                                   </object>
                                 </child>
                               </object>

@@ -129,13 +129,17 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     private final Map<String, java.util.Set<String>> downloadGids;
     /** Every GID ever tracked for a download (including retired ones). */
     private final Map<String, java.util.Set<String>> downloadSeenGids;
-    /** Last-known per-GID progress {completed, total}, for aggregation. */
-    private final Map<String, Map<String, long[]>> downloadProgress;
+    /** Last-known per-GID transfer values, aggregated into one ODM record. */
+    private final Map<String, Map<String, GidTransferStats>> downloadProgress;
     /** Approximate integrity-check activity for the current request per download. */
     private final Map<String, RecheckObservation> recheckObservations;
     private final ScheduledExecutorService progressPoller;
     private final AtomicBoolean isShuttingDown;
     private final ObjectMapper objectMapper;
+
+    private record GidTransferStats(long completed, long total,
+            long downloadSpeed, long uploadSpeed, int connections, int seeders) {
+    }
 
     /**
      * Creates a new Aria2DownloadHandler.
@@ -1243,43 +1247,50 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
             // Extract aria2 status fields
             String downloadStatus = (String) status.get("status");
-            String completedLengthStr = (String) status.get("completedLength");
-            String totalLengthStr = (String) status.get("totalLength");
-            String downloadSpeedStr = (String) status.get("downloadSpeed");
+            long completedLength = statusLong(status.get("completedLength"));
+            long totalLength = statusLong(status.get("totalLength"));
+            long downloadSpeed = statusLong(status.get("downloadSpeed"));
+            long uploadSpeed = statusLong(status.get("uploadSpeed"));
+            int connections = statusInt(status.get("connections"));
+            int numSeeders = statusInt(status.get("numSeeders"));
 
-            // Parse numeric values
-            long completedLength = Long.parseLong(completedLengthStr != null ? completedLengthStr : "0");
-            long totalLength = Long.parseLong(totalLengthStr != null ? totalLengthStr : "0");
-            float downloadSpeed = Float.parseFloat(downloadSpeedStr != null ? downloadSpeedStr : "0");
-
-            // Extended detail fields (upload speed, connections, seeders, info hash)
-            String uploadSpeedStr = (String) status.get("uploadSpeed");
-            String connectionsStr = (String) status.get("connections");
-            String numSeedersStr = (String) status.get("numSeeders");
+            // Extended detail fields (seeding state and info hash)
             String infoHash = (String) status.get("infoHash");
             boolean seeder = Boolean.parseBoolean(String.valueOf(
                     status.getOrDefault("seeder", false)));
 
-            // Record this GID's progress, then aggregate across every tracked
-            // GID so multi-file downloads report combined numbers
-            Map<String, long[]> perGid = downloadProgress.get(downloadId);
+            // Record this GID's complete transfer snapshot, then aggregate
+            // every tracked GID. Previously only completed/total were summed,
+            // while whichever related GID happened to be processed last
+            // overwrote upload speed (often with zero from magnet metadata).
+            Map<String, GidTransferStats> perGid = downloadProgress.get(downloadId);
             if (perGid != null) {
-                perGid.put(gid, new long[] { completedLength, totalLength });
+                perGid.put(gid, new GidTransferStats(completedLength, totalLength,
+                        downloadSpeed, uploadSpeed, connections, numSeeders));
             }
             long aggregatedCompleted = 0;
             long aggregatedTotal = 0;
-            for (long[] progress : perGid != null ? perGid.values() : List.<long[]>of()) {
-                aggregatedCompleted += progress[0];
-                aggregatedTotal += progress[1];
+            long aggregatedDownloadSpeed = 0;
+            long aggregatedUploadSpeed = 0;
+            int aggregatedConnections = 0;
+            int aggregatedSeeders = 0;
+            for (GidTransferStats progress : perGid != null
+                    ? perGid.values() : List.<GidTransferStats>of()) {
+                aggregatedCompleted += progress.completed();
+                aggregatedTotal += progress.total();
+                aggregatedDownloadSpeed += progress.downloadSpeed();
+                aggregatedUploadSpeed += progress.uploadSpeed();
+                aggregatedConnections += progress.connections();
+                aggregatedSeeders += progress.seeders();
             }
 
             // Update download object
             download.setDownloaded(aggregatedCompleted);
             download.setSize(aggregatedTotal);
-            download.setSpeed(downloadSpeed);
-            download.setUploadSpeed(Float.parseFloat(uploadSpeedStr != null ? uploadSpeedStr : "0"));
-            download.setConnectionCount(connectionsStr != null ? Integer.parseInt(connectionsStr) : 0);
-            download.setSeeders(numSeedersStr != null ? Integer.parseInt(numSeedersStr) : 0);
+            download.setSpeed((float) aggregatedDownloadSpeed);
+            download.setUploadSpeed((float) aggregatedUploadSpeed);
+            download.setConnectionCount(aggregatedConnections);
+            download.setSeeders(aggregatedSeeders);
             if (infoHash != null && !infoHash.isBlank()) {
                 download.setInfoHash(infoHash);
             }
@@ -1296,11 +1307,27 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             updateDownloadStatus(download, downloadStatus, gid, seeder);
 
             // Notify listeners about progress
-            notifyDownloadProgress(download, progress, aggregatedCompleted, aggregatedTotal, downloadSpeed);
+            notifyDownloadProgress(download, progress, aggregatedCompleted, aggregatedTotal,
+                    (float) aggregatedDownloadSpeed);
 
         } catch (Exception e) {
             LOGGER.warn("Error processing progress update for GID " + gid, e);
         }
+    }
+
+    private static long statusLong(Object value) {
+        if (value == null) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Long.parseLong(value.toString()));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static int statusInt(Object value) {
+        return (int) Math.min(Integer.MAX_VALUE, statusLong(value));
     }
 
     /**
@@ -1505,6 +1532,16 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         seedingStopRequests.remove(gid);
         stopProgressPolling(gid);
         gidToIdMap.remove(gid);
+        Map<String, GidTransferStats> progress = downloadProgress.get(downloadId);
+        if (progress != null) {
+            // A retired child still contributes its completed/total bytes to
+            // the record aggregate. Only its live activity must disappear;
+            // dropping the whole snapshot makes multi-GID downloads shrink
+            // as each file completes.
+            progress.computeIfPresent(gid, (ignored, retired) ->
+                    new GidTransferStats(retired.completed(), retired.total(),
+                            0, 0, 0, 0));
+        }
         if (tracked.isEmpty()) {
             downloadGids.remove(downloadId);
             downloadSeenGids.remove(downloadId);
@@ -2183,7 +2220,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * selected download.
      * Unlike changeSettings, the temporary aria2 options are deliberately not
      * persisted: a context-menu recheck must either reach a live task or fail.
-     * The manager separately persists the request outcome for the Details tab.
+     * The manager separately persists the request outcome for the Actions tab.
      */
     @Override
     public CompletableFuture<Void> recheckData(Download download) {

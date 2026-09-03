@@ -83,6 +83,7 @@ public class MainWindow {
     private final ScrolledWindow downloadScrolledWindow;
     private final Adjustment downloadScrollAdjustment;
     private final TreeView filesTreeview;
+    private final TreeView completionDetailsTreeview;
     private final GestureClick downloadContextClick;
     private final Label infoLabel;
     private final Label downSpeedLabel;
@@ -178,6 +179,8 @@ public class MainWindow {
                 "download_scrolled_window", ScrolledWindow.class);
         this.downloadScrollAdjustment = downloadScrolledWindow.getVadjustment();
         this.filesTreeview = Widgets.require(builder, "files_view", TreeView.class);
+        this.completionDetailsTreeview = Widgets.require(builder,
+                "completion_details_view", TreeView.class);
         this.infoLabel = Widgets.require(builder, "info_label", Label.class);
         this.downSpeedLabel = Widgets.require(builder, "down_speed_label", Label.class);
         this.upSpeedLabel = Widgets.require(builder, "up_speed_label", Label.class);
@@ -245,12 +248,26 @@ public class MainWindow {
         downloadsTreeview.onRowActivated((path, column) ->
                 activateDownload(downloadAt(path)));
         filesTreeview.onRowActivated((path, column) -> revealDetailFile(path));
+        completionDetailsTreeview.onRowActivated((path, column) ->
+                showCompletionActionOutput(path));
         filesTreeview.setExpanderColumn(Widgets.require(builder,
                 "files_name_column", org.gnome.gtk.TreeViewColumn.class));
 
         // Torrent per-file selection: toggle a row -> apply aria2 select-file
         Widgets.require(builder, "files_selected_renderer", org.gnome.gtk.CellRendererToggle.class)
                 .onToggled(this::onFileSelectionToggled);
+        ListStore filePriorityStore = Widgets.require(builder,
+                "files_priority_store", ListStore.class);
+        for (String priority : new String[]{FileTreeSupport.PRIORITY_HIGH,
+                FileTreeSupport.PRIORITY_NORMAL, FileTreeSupport.PRIORITY_LOW}) {
+            TreeIter iter = new TreeIter();
+            filePriorityStore.append(iter);
+            ListStoreCells.setString(filePriorityStore, iter, 0, priority);
+        }
+        Widgets.require(builder, "files_priority_renderer",
+                org.gnome.gtk.CellRendererCombo.class)
+                .onChanged((path, priorityIter) -> onFilePriorityChanged(path,
+                        ListStoreCells.getString(filePriorityStore, priorityIter, 0)));
 
         this.downloadContextClick = new GestureClick();
         downloadContextClick.setButton(3);
@@ -1436,6 +1453,25 @@ public class MainWindow {
         }
     }
 
+    /** Opens persisted process/action output only for finalizing action rows. */
+    private void showCompletionActionOutput(TreePath path) {
+        if (path == null) {
+            return;
+        }
+        TreeIter iter = new TreeIter();
+        if (!completionDetailsStore.getIter(iter, path)
+                || !ListStoreCells.getBoolean(completionDetailsStore, iter,
+                        DetailTabsPresenter.ACTION_EXPOSES_OUTPUT_COLUMN)) {
+            return;
+        }
+        ActionOutputDialog.present(window,
+                ListStoreCells.getString(completionDetailsStore, iter, 0),
+                ListStoreCells.getString(completionDetailsStore, iter, 1),
+                ListStoreCells.getString(completionDetailsStore, iter, 2),
+                ListStoreCells.getString(completionDetailsStore, iter,
+                        DetailTabsPresenter.ACTION_OUTPUT_COLUMN));
+    }
+
     /** Imports links found in a local HTML file. */
     private void onImportHtml() {
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
@@ -2122,9 +2158,8 @@ public class MainWindow {
         infoLabel.setLabel(loadedHistoryCount < summary.totalCount()
                 ? loadedHistoryCount + " of " + summary.totalCount() + " download(s) loaded"
                 : summary.totalCount() + " download(s)");
-        downSpeedLabel.setLabel(DownloadFormats.size(summary.downBytesPerSec()) + "/s");
-        upSpeedLabel.setLabel(summary.upBytesPerSec() > 0
-                ? DownloadFormats.size(summary.upBytesPerSec()) + "/s" : "—");
+        downSpeedLabel.setLabel(DownloadFormats.rate(summary.downBytesPerSec()));
+        upSpeedLabel.setLabel(DownloadFormats.rate(summary.upBytesPerSec()));
         dhtStatusLabel.setLabel(summary.totalSeeders() > 0
                 ? "DHT: " + summary.totalSeeders() + " seed(s)" : "DHT: —");
         updateInfoPanel();
@@ -2210,6 +2245,24 @@ public class MainWindow {
                         ? downloadManager.resumeDownload(download)
                         : CompletableFuture.completedFuture(null));
         trackActivity(update);
+    }
+
+    /** Applies the same persisted file-priority metadata used by New Download. */
+    private void onFilePriorityChanged(String path, String priority) {
+        applyFilePriority(filesStore, selectedDownload, path, priority);
+    }
+
+    static boolean applyFilePriority(TreeStore store, Download download,
+            String path, String priority) {
+        if (store == null || download == null
+                || !(download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings)) {
+            return false;
+        }
+        if (!FileTreeSupport.setPriority(store, path, priority)) {
+            return false;
+        }
+        aria2Settings.setFilePriorities(FileTreeSupport.priorities(store));
+        return true;
     }
 
     private void updateInfoPanel() {

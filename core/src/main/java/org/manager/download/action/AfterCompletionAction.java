@@ -109,6 +109,18 @@ public interface AfterCompletionAction {
     }
 
     /**
+     * Detailed output produced by the most recent execution. This is kept
+     * separate from the concise result message so the download list can show
+     * a readable outcome while the Actions tab can expose command/scanner
+     * logs on demand.
+     *
+     * @return captured action output, or an empty string when none is available
+     */
+    default String getOutput() {
+        return "";
+    }
+
+    /**
      * Get the severity level of this action when it fails.
      * This determines how the user should be notified if execute() returns false.
      *

@@ -179,9 +179,9 @@ public class Download {
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
     private volatile String expectedChecksum; // detected expected hash in hex
     private volatile ScheduleSettings scheduleSettings;
-    /** Persisted after-completion execution history shown in the Details tab. */
+    /** Persisted after-completion execution history shown in the Actions tab. */
     private final List<CompletionActionResult> completionActionResults;
-    /** Persisted manual-operation history shown in the Details tab. */
+    /** Persisted manual-operation history shown in the Actions tab. */
     private final List<DownloadOperationResult> operationResults;
     private volatile long attemptGeneration; // per-start operation token, never persisted
 
@@ -934,11 +934,17 @@ public class Download {
     /** Atomically replaces a running action result with its terminal outcome. */
     public boolean finishCompletionAction(String resultId,
             CompletionActionResult.Status status, String message) {
+        return finishCompletionAction(resultId, status, message, "");
+    }
+
+    /** Atomically records a terminal action outcome and its detailed output. */
+    public boolean finishCompletionAction(String resultId,
+            CompletionActionResult.Status status, String message, String output) {
         synchronized (lock) {
             for (int i = 0; i < completionActionResults.size(); i++) {
                 CompletionActionResult current = completionActionResults.get(i);
                 if (current.id().equals(resultId) && current.isRunning()) {
-                    completionActionResults.set(i, current.finished(status, message));
+                    completionActionResults.set(i, current.finished(status, message, output));
                     return true;
                 }
             }
@@ -1030,7 +1036,7 @@ public class Download {
     /**
      * Whether a running completion action represents file post-processing
      * that should animate the completed row. Notifications and global power
-     * actions still appear in Details, but do not replace 100% with a pulse.
+     * actions still appear in Actions, but do not replace 100% with a pulse.
      */
     @JsonIgnore
     public boolean hasRunningProgressCompletionActions() {

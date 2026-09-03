@@ -61,6 +61,25 @@ class ExecuteCommandActionTest {
     }
 
     @Test
+    void capturesStandardOutputAndError(@TempDir Path tempDir) throws Exception {
+        Path downloaded = Files.writeString(tempDir.resolve("data.bin"), "payload");
+        Path script = tempDir.resolve("emit.sh");
+        Files.writeString(script, "#!/bin/sh\necho stdout-line\necho stderr-line >&2\n");
+        Files.setPosixFilePermissions(script,
+                java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+        Download download = new Download(URI.create("https://example.com/data.bin"));
+        download.setDestination(tempDir);
+        download.setOutputPaths(List.of(downloaded));
+        ExecuteCommandAction action = new ExecuteCommandAction(
+                script + " {file_path}");
+
+        assertTrue(action.execute(download));
+        assertTrue(action.getOutput().contains("stdout-line"));
+        assertTrue(action.getOutput().contains("stderr-line"));
+        assertEquals("Command completed successfully", action.getResultMessage());
+    }
+
+    @Test
     void executeFailsOnNonexistentBinary() {
         Download download = new Download(URI.create("https://example.com/x"));
         download.setName("x");

@@ -79,6 +79,7 @@ class SqliteDownloadStateStoreTest {
                 "Antivirus check using ClamAV",
                 CompletionActionResult.Status.SUCCEEDED,
                 "No threats detected",
+                "file.iso: OK\nKnown viruses: 9000000",
                 AfterCompletionAction.Severity.HIGH,
                 Instant.parse("2026-08-19T11:00:01Z"),
                 Instant.parse("2026-08-19T11:00:09Z"));

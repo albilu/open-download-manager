@@ -589,10 +589,9 @@ final class DownloadListPresenter {
         ListStoreCells.setString(store, iter, COL_LEFT,
                 DownloadFormats.size(Math.max(0, download.getSize() - download.getDownloaded())));
         ListStoreCells.setString(store, iter, COL_SPEED,
-                DownloadFormats.size((long) download.getSpeed()) + "/s");
+                DownloadFormats.rate((long) download.getSpeed()));
         ListStoreCells.setString(store, iter, COL_UP_SPEED,
-                download.getUploadSpeed() > 0
-                        ? DownloadFormats.size((long) download.getUploadSpeed()) + "/s" : "—");
+                DownloadFormats.rate((long) download.getUploadSpeed()));
         ListStoreCells.setString(store, iter, COL_RETRY,
                 download.getStatus() == Download.Status.ERROR
                         && download.getErrorMessage() != null

@@ -179,6 +179,17 @@ public class ChecksumValidationAction implements AfterCompletionAction {
     }
 
     @Override
+    public String getOutput() {
+        StringBuilder output = new StringBuilder();
+        output.append("File: ").append(validatedFile == null ? "—" : validatedFile)
+                .append('\n');
+        output.append("Algorithm: ").append(algorithm.getAlgorithmName()).append('\n');
+        output.append("Expected: ").append(expectedChecksum).append('\n');
+        output.append("Actual: ").append(actualChecksum == null ? "—" : actualChecksum);
+        return output.toString();
+    }
+
+    @Override
     public boolean cancel() {
         cancelled.set(true);
         LOGGER.info("Checksum validation cancellation requested");

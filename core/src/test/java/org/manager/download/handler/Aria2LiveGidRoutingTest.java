@@ -268,6 +268,33 @@ class Aria2LiveGidRoutingTest {
     }
 
     @Test
+    @DisplayName("Related GIDs aggregate upload and download rates instead of overwriting them")
+    void relatedGidsAggregateTransferRates() {
+        Download download = new Download(URI.create(
+                "magnet:?xt=urn:btih:abababababababababababababababababababab"));
+        handler.registerTrackedDownload(download, List.of("metadata-gid", "payload-gid"));
+
+        Map<String, Object> payload = status("active", 500, 1_000);
+        payload.put("downloadSpeed", "8192");
+        payload.put("uploadSpeed", "4096");
+        payload.put("connections", "4");
+        payload.put("numSeeders", "2");
+        handler.processProgressUpdate(download.getId(), "payload-gid", payload);
+
+        Map<String, Object> metadata = status("active", 10, 10);
+        metadata.put("downloadSpeed", "128");
+        metadata.put("uploadSpeed", "0");
+        metadata.put("connections", "1");
+        handler.processProgressUpdate(download.getId(), "metadata-gid", metadata);
+
+        assertEquals(8_320f, download.getSpeed());
+        assertEquals(4_096f, download.getUploadSpeed(),
+                "a later zero-rate metadata update must not erase payload upload speed");
+        assertEquals(5, download.getConnectionCount());
+        assertEquals(2, download.getSeeders());
+    }
+
+    @Test
     @DisplayName("A paused live GID receives the relocated output directory")
     void changeDestinationRepointsEveryLiveGid() {
         Download download = new Download(URI.create("https://example.test/archive.bin"));

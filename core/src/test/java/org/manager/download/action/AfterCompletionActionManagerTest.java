@@ -124,6 +124,31 @@ class AfterCompletionActionManagerTest {
     }
 
     @Test
+    @DisplayName("Finalizing action output is persisted separately from its result summary")
+    void finalizingActionOutputIsRecorded() throws Exception {
+        TestAfterCompletionAction action = new TestAfterCompletionAction(
+                AfterCompletionAction.ActionType.EXECUTE_COMMAND, true) {
+            @Override
+            public String getResultMessage() {
+                return "Command completed successfully";
+            }
+
+            @Override
+            public String getOutput() {
+                return "stdout line\nstderr line";
+            }
+        };
+        actionManager.addAction(testDownload, action);
+
+        actionManager.executeActions(testDownload).get(5, TimeUnit.SECONDS);
+
+        CompletionActionResult result = testDownload.getCompletionActionResults().getFirst();
+        assertEquals("Command completed successfully", result.message());
+        assertEquals("stdout line\nstderr line", result.output());
+        assertTrue(result.exposesOutput());
+    }
+
+    @Test
     @DisplayName("Should handle action execution failures")
     void shouldHandleActionExecutionFailures() throws Exception {
         TestAfterCompletionAction successAction = new TestAfterCompletionAction(AfterCompletionAction.ActionType.PLAY_SOUND, true);

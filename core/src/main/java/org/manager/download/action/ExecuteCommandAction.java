@@ -1,12 +1,17 @@
 package org.manager.download.action;
 
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
@@ -40,11 +45,14 @@ public class ExecuteCommandAction implements AfterCompletionAction {
 
     /** Default process timeout in seconds; 0 means no timeout. */
     private static final int DEFAULT_TIMEOUT_SECONDS = 300;
+    private static final int MAX_CAPTURED_OUTPUT_CHARS = 1_048_576;
 
     private final String commandTemplate;
     private final int timeoutSeconds;
     private volatile Process process;
     private volatile boolean cancelled;
+    private volatile String commandOutput = "";
+    private volatile String outcomeMessage = "Action did not complete successfully";
 
     /**
      * Creates an action that runs the given command template.
@@ -80,48 +88,64 @@ public class ExecuteCommandAction implements AfterCompletionAction {
 
     @Override
     public boolean execute(Download download) {
+        commandOutput = "";
+        outcomeMessage = "Action did not complete successfully";
         if (commandTemplate.isBlank()) {
             LOGGER.warn("Custom command is empty; nothing to execute");
+            outcomeMessage = "Custom command is empty";
             return false;
         }
         Path filePath = resolveFilePath(download);
         if (filePath == null) {
             LOGGER.warn("Cannot run custom command: no file path for download " + download.getName());
+            outcomeMessage = "Downloaded file path is unknown";
             return false;
         }
 
         List<String> command = tokenize(substitute(commandTemplate, download, filePath));
         if (command.isEmpty()) {
             LOGGER.warn("Custom command produced no tokens");
+            outcomeMessage = "Custom command produced no executable";
             return false;
         }
 
         try {
             LOGGER.info("Executing configured after-completion command");
-            process = new ProcessBuilder(command).inheritIO().start();
+            process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            CompletableFuture<String> output = captureOutput(process);
             boolean finished = timeoutSeconds > 0
                     ? process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
                     : waitForUninterruptibly();
             if (cancelled) {
+                commandOutput = awaitOutput(output);
+                outcomeMessage = "Custom command was canceled";
                 return false;
             }
             if (!finished) {
                 LOGGER.warn("Custom command timed out after " + timeoutSeconds + "s");
                 process.destroyForcibly();
+                process.waitFor(5, TimeUnit.SECONDS);
+                commandOutput = awaitOutput(output);
+                outcomeMessage = "Custom command timed out after " + timeoutSeconds + " seconds";
                 return false;
             }
+            commandOutput = awaitOutput(output);
             int exit = process.exitValue();
             if (exit != 0) {
                 LOGGER.warn("Custom command exited with code " + exit);
+                outcomeMessage = "Custom command exited with code " + exit;
                 return false;
             }
+            outcomeMessage = "Command completed successfully";
             return true;
         } catch (IOException e) {
             LOGGER.error("Failed to execute custom command", e);
+            outcomeMessage = "Could not run custom command: " + e.getMessage();
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             LOGGER.warn("Custom command execution interrupted");
+            outcomeMessage = "Custom command execution was interrupted";
             return false;
         }
     }
@@ -134,6 +158,21 @@ public class ExecuteCommandAction implements AfterCompletionAction {
     @Override
     public String getDescription() {
         return "Execute command: " + commandTemplate;
+    }
+
+    @Override
+    public String getResultMessage() {
+        return outcomeMessage;
+    }
+
+    @Override
+    public String getFailureMessage() {
+        return outcomeMessage;
+    }
+
+    @Override
+    public String getOutput() {
+        return commandOutput;
     }
 
     @Override
@@ -212,5 +251,46 @@ public class ExecuteCommandAction implements AfterCompletionAction {
         // the desired cancellation path)
         process.waitFor();
         return true;
+    }
+
+    /** Drains stdout and merged stderr without allowing an unbounded log in memory. */
+    private static CompletableFuture<String> captureOutput(Process commandProcess) {
+        CompletableFuture<String> captured = new CompletableFuture<>();
+        Thread.ofVirtual().name("odm-command-output").start(() -> {
+            try (InputStreamReader reader = new InputStreamReader(
+                    commandProcess.getInputStream(), StandardCharsets.UTF_8)) {
+                StringBuilder retained = new StringBuilder();
+                boolean truncated = false;
+                char[] buffer = new char[8192];
+                int count;
+                while ((count = reader.read(buffer)) != -1) {
+                    int remaining = MAX_CAPTURED_OUTPUT_CHARS - retained.length();
+                    if (remaining > 0) {
+                        retained.append(buffer, 0, Math.min(count, remaining));
+                    }
+                    truncated |= count > remaining;
+                }
+                if (truncated) {
+                    retained.append("\n\n[Output truncated by ODM]");
+                }
+                captured.complete(retained.toString());
+            } catch (IOException e) {
+                captured.completeExceptionally(e);
+            }
+        });
+        return captured;
+    }
+
+    private static String awaitOutput(CompletableFuture<String> output)
+            throws InterruptedException {
+        try {
+            return output.get(5, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            return "[Could not read command output: "
+                    + (cause == null ? e.getMessage() : cause.getMessage()) + "]";
+        } catch (TimeoutException e) {
+            return "[Command output reader did not finish]";
+        }
     }
 }
