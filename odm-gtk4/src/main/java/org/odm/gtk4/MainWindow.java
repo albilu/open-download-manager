@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Application;
 import org.gnome.gtk.ApplicationWindow;
+import org.gnome.gtk.Adjustment;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.EventControllerKey;
 import org.gnome.gtk.GestureClick;
@@ -18,6 +19,7 @@ import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.PropagationPhase;
 import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.SelectionMode;
+import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreeModel;
@@ -41,7 +43,8 @@ import org.gnome.gtk.TreeView;
 public class MainWindow {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MainWindow.class);
-    private static final int HISTORY_WINDOW_SIZE = 500;
+    /** Internal fetch batch; every record remains reachable through scrolling. */
+    static final int HISTORY_PAGE_SIZE = 500;
     private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
             "#", "Status", "Name", "Completed", "Size", "Progress", "Elapsed",
             "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Type");
@@ -54,6 +57,7 @@ public class MainWindow {
     };
 
     private record RefreshSnapshot(List<Download> downloads, int totalCount,
+            int loadedHistoryCount,
             java.util.Map<Download.Status, Integer> statusCounts) {
     }
 
@@ -76,6 +80,8 @@ public class MainWindow {
     private final TreeView statusTreeview;
     private final TreeView categoryTreeview;
     private final TreeView downloadsTreeview;
+    private final ScrolledWindow downloadScrolledWindow;
+    private final Adjustment downloadScrollAdjustment;
     private final TreeView filesTreeview;
     private final GestureClick downloadContextClick;
     private final Label infoLabel;
@@ -113,6 +119,11 @@ public class MainWindow {
     /** Remembers that a coalesced refresh was requested by search/filter UI. */
     private final java.util.concurrent.atomic.AtomicBoolean refreshActivityRequested =
             new java.util.concurrent.atomic.AtomicBoolean();
+    /** Number of newest history records requested from the repository. */
+    private int historyFetchLimit = HISTORY_PAGE_SIZE;
+    /** Number of primary history rows returned by the last applied snapshot. */
+    private int loadedHistoryCount;
+    private int knownDownloadCount;
 
     // Listeners registered with core services; kept as fields so the window
     // can detach them on final close instead of leaking refresh work forever
@@ -163,6 +174,9 @@ public class MainWindow {
         this.statusTreeview = Widgets.require(builder, "status_treeview", TreeView.class);
         this.categoryTreeview = Widgets.require(builder, "category_treeview", TreeView.class);
         this.downloadsTreeview = Widgets.require(builder, "download_treeview", TreeView.class);
+        this.downloadScrolledWindow = Widgets.require(builder,
+                "download_scrolled_window", ScrolledWindow.class);
+        this.downloadScrollAdjustment = downloadScrolledWindow.getVadjustment();
         this.filesTreeview = Widgets.require(builder, "files_view", TreeView.class);
         this.infoLabel = Widgets.require(builder, "info_label", Label.class);
         this.downSpeedLabel = Widgets.require(builder, "down_speed_label", Label.class);
@@ -227,6 +241,7 @@ public class MainWindow {
         categoryTreeview.getSelection().onChanged(this::onCategorySelectionChanged);
         downloadsTreeview.getSelection().setMode(SelectionMode.MULTIPLE);
         downloadsTreeview.getSelection().onChanged(this::onDownloadSelectionChanged);
+        downloadScrollAdjustment.onValueChanged(this::loadNextHistoryPageIfNeeded);
         downloadsTreeview.onRowActivated((path, column) ->
                 activateDownload(downloadAt(path)));
         filesTreeview.onRowActivated((path, column) -> revealDetailFile(path));
@@ -874,8 +889,7 @@ public class MainWindow {
                 allSelectedMatch(downloads, MainWindow::canStart),
                 single && magnetUri(only) != null,
                 single && canChangeDestination(only),
-                allSelectedMatch(downloads,
-                        download -> download.getSettings() instanceof org.aria2.Aria2Settings),
+                allSelectedMatch(downloads, MainWindow::canVerifyData),
                 any,
                 any,
                 any);
@@ -905,6 +919,27 @@ public class MainWindow {
         };
     }
 
+    static boolean canVerifyData(Download download) {
+        if (download == null || download.getGid() == null || download.getGid().isBlank()
+                || !(download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings)) {
+            return false;
+        }
+        boolean liveStatus = switch (download.getStatus()) {
+            case QUEUED, STARTING, CONNECTING, DOWNLOADING, SEEDING, PAUSED -> true;
+            default -> false;
+        };
+        if (!liveStatus) {
+            return false;
+        }
+        return switch (download.getProtocol()) {
+            case TORRENT, MAGNET, METALINK -> true;
+            case HTTP, HTTPS, FTP -> download.getExpectedChecksum() != null
+                    || aria2Settings.getOption("checksum") != null;
+            case SFTP -> false;
+            case null -> false;
+        };
+    }
+
     private static String magnetUri(Download download) {
         if (download == null) {
             return null;
@@ -916,7 +951,7 @@ public class MainWindow {
                 ? null : "magnet:?xt=urn:btih:" + download.getInfoHash();
     }
 
-    /** Requests an integrity re-check of the selected download (aria2). */
+    /** Requests an immediate one-shot integrity re-check from each live aria2 task. */
     private void verifyData() {
         List<Download> targets = selectedDownloads;
         if (targets.isEmpty()) {
@@ -924,9 +959,8 @@ public class MainWindow {
         }
         java.util.List<CompletableFuture<Void>> updates = new java.util.ArrayList<>();
         for (Download target : targets) {
-            if (target.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
-                aria2Settings.setOption("check-integrity", "true");
-                updates.add(downloadManager.changeSettings(target));
+            if (canVerifyData(target)) {
+                updates.add(downloadManager.verifyData(target));
             }
         }
         if (!updates.isEmpty()) {
@@ -1438,10 +1472,13 @@ public class MainWindow {
                     return;
                 }
                 java.nio.file.Path path = java.nio.file.Path.of(file.getPath().toString());
-                // File I/O and regex over arbitrarily large documents run OFF
-                // the GTK main loop; only the result goes back to the UI
+                ImportLimits importLimits = ImportLimits.from(
+                        downloadManager.getGlobalSettings());
+                // Bounded file I/O and HTML parsing run off the GTK main loop;
+                // only the result goes back to the UI.
                 trackActivity(CompletableFuture.supplyAsync(
-                        () -> HtmlImportExport.importHtmlFile(path, downloadManager),
+                        () -> HtmlImportExport.importHtmlFile(
+                                path, downloadManager, importLimits),
                         backgroundExecutor)).thenAccept(count -> {
                     if (count == null || count < 0) {
                         return;
@@ -1473,8 +1510,11 @@ public class MainWindow {
         box.setMarginStart(16);
         box.setMarginEnd(16);
 
+        ImportLimits displayedLimits = ImportLimits.from(downloadManager.getGlobalSettings());
         org.gnome.gtk.Label help = new org.gnome.gtk.Label(
-                "Enter an HTTP(S) page. Up to 1,000 links are imported; "
+                "Enter an HTTP(S) page. Up to " + displayedLimits.maxUrls()
+                + " links are imported from a page up to "
+                + displayedLimits.maxSourceSizeMiB() + " MiB; "
                 + "relative links use the page's final address after redirects.");
         help.setWrap(true);
         org.gnome.gtk.Entry sourceEntry = new org.gnome.gtk.Entry();
@@ -1508,11 +1548,12 @@ public class MainWindow {
             }
             String proxy = settings.isGlobalProxyEnabled()
                     ? settings.getGlobalProxyAddress() : null;
+            ImportLimits importLimits = ImportLimits.from(settings);
             importButton.setSensitive(false);
             sourceEntry.setSensitive(false);
             AccessibilitySupport.status(status, "Fetching page and importing links…");
             trackActivity(CompletableFuture.supplyAsync(() -> HtmlImportExport.importRemoteHtml(
-                    source, downloadManager, proxy), backgroundExecutor))
+                    source, downloadManager, proxy, importLimits), backgroundExecutor))
                     .whenComplete((count, error) -> UiThread.marshal(() -> {
                         if (error != null || count == null || count < 0) {
                             importButton.setSensitive(true);
@@ -2012,9 +2053,11 @@ public class MainWindow {
             showActivity = true;
         }
         String selectedId = selectedDownload != null ? selectedDownload.getId() : null;
+        int requestedHistoryLimit = historyFetchLimit;
         try {
             CompletableFuture<RefreshSnapshot> refreshFuture = CompletableFuture.supplyAsync(
-                    () -> loadRefreshSnapshot(selectedId), backgroundExecutor);
+                    () -> loadRefreshSnapshot(selectedId, requestedHistoryLimit),
+                    backgroundExecutor);
             if (showActivity) {
                 trackActivity(refreshFuture);
             }
@@ -2038,14 +2081,15 @@ public class MainWindow {
         }
     }
 
-    /** Loads a bounded recent-history window plus bounded active/queued
+    /** Loads the requested recent-history pages plus bounded active/queued
      * status slices. Repository-wide status counts remain O(1) via indices. */
-    private RefreshSnapshot loadRefreshSnapshot(String selectedId) {
+    private RefreshSnapshot loadRefreshSnapshot(String selectedId, int requestedHistoryLimit) {
         java.util.LinkedHashMap<String, Download> visible = new java.util.LinkedHashMap<>();
-        addRefreshRows(visible, downloadManager.getDownloads(0, HISTORY_WINDOW_SIZE));
+        List<Download> history = downloadManager.getDownloads(0, requestedHistoryLimit);
+        addRefreshRows(visible, history);
         for (Download.Status status : ALWAYS_VISIBLE_STATUSES) {
             addRefreshRows(visible,
-                    downloadManager.getDownloadsByStatus(status, 0, HISTORY_WINDOW_SIZE));
+                    downloadManager.getDownloadsByStatus(status, 0, HISTORY_PAGE_SIZE));
         }
         if (selectedId != null) {
             Download selected = downloadManager.getDownload(selectedId);
@@ -2059,7 +2103,7 @@ public class MainWindow {
             statusCounts.put(status, downloadManager.getDownloadCountByStatus(status));
         }
         return new RefreshSnapshot(new java.util.ArrayList<>(visible.values()),
-                downloadManager.getDownloadCount(), statusCounts);
+                downloadManager.getDownloadCount(), history.size(), statusCounts);
     }
 
     private static void addRefreshRows(java.util.Map<String, Download> target,
@@ -2076,9 +2120,11 @@ public class MainWindow {
 
     /** Applies an already-fetched repository snapshot on the GTK thread. */
     private void applyRefresh(RefreshSnapshot snapshot) {
+        loadedHistoryCount = snapshot.loadedHistoryCount();
+        knownDownloadCount = snapshot.totalCount();
         DownloadListPresenter.RefreshSummary summary = listPresenter.refresh(
                 snapshot.downloads(), snapshot.totalCount(), snapshot.statusCounts());
-        if (summary.structureChanged()) {
+        if (summary.modelRebuilt()) {
             // GtkTreeSelection emits no useful row when the model was just
             // cleared, so explicitly invalidate the pointer used by actions.
             downloadsTreeview.getSelection().unselectAll();
@@ -2098,13 +2144,44 @@ public class MainWindow {
         // Status changes are normally in-place row updates, so selection
         // signals do not fire. Re-evaluate Download-menu actions explicitly.
         updateSelectionActionSensitivity();
-        infoLabel.setLabel(summary.totalCount() + " download(s)");
+        infoLabel.setLabel(loadedHistoryCount < summary.totalCount()
+                ? loadedHistoryCount + " of " + summary.totalCount() + " download(s) loaded"
+                : summary.totalCount() + " download(s)");
         downSpeedLabel.setLabel(DownloadFormats.size(summary.downBytesPerSec()) + "/s");
         upSpeedLabel.setLabel(summary.upBytesPerSec() > 0
                 ? DownloadFormats.size(summary.upBytesPerSec()) + "/s" : "—");
         dhtStatusLabel.setLabel(summary.totalSeeders() > 0
                 ? "DHT: " + summary.totalSeeders() + " seed(s)" : "DHT: —");
         updateInfoPanel();
+        // Re-evaluate after GTK has laid out appended rows. This also keeps
+        // loading while a restrictive filter leaves the viewport under-filled.
+        UiThread.marshal(this::loadNextHistoryPageIfNeeded);
+    }
+
+    private void loadNextHistoryPageIfNeeded() {
+        if (loadedHistoryCount >= knownDownloadCount
+                || historyFetchLimit > loadedHistoryCount
+                || !isNearScrollBottom(downloadScrollAdjustment.getValue(),
+                        downloadScrollAdjustment.getPageSize(),
+                        downloadScrollAdjustment.getUpper())) {
+            return;
+        }
+        historyFetchLimit = nextHistoryFetchLimit(historyFetchLimit, knownDownloadCount);
+        refreshWithActivity();
+    }
+
+    static boolean isNearScrollBottom(double value, double pageSize, double upper) {
+        return upper <= pageSize || value + pageSize >= upper - 64.0;
+    }
+
+    static int nextHistoryFetchLimit(int currentLimit, int totalCount) {
+        if (totalCount <= 0) {
+            return HISTORY_PAGE_SIZE;
+        }
+        if (currentLimit < HISTORY_PAGE_SIZE) {
+            return Math.min(totalCount, HISTORY_PAGE_SIZE);
+        }
+        return Math.min(totalCount, currentLimit + HISTORY_PAGE_SIZE);
     }
 
     /**

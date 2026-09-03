@@ -8,6 +8,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.aria2.Aria2Settings;
 import org.manager.download.Download;
 
 class MainWindowSelectionCapabilitiesTest {
@@ -89,6 +90,44 @@ class MainWindowSelectionCapabilitiesTest {
         torrent.recordOutputPath(destination.resolve("release/subfolder/video.mkv"));
 
         assertEquals(destination, MainWindow.displayedSaveFolder(torrent));
+    }
+
+    @Test
+    void verifyDataRequiresLiveAria2TaskAndIntegrityMetadata() {
+        Download magnet = download("payload", Download.Status.DOWNLOADING);
+        magnet.setUri(URI.create(
+                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+        magnet.setGid("live-magnet");
+        magnet.setSettings(new Aria2Settings());
+        assertTrue(MainWindow.canVerifyData(magnet));
+
+        magnet.setStatus(Download.Status.COMPLETED);
+        assertFalse(MainWindow.canVerifyData(magnet),
+                "a completed aria2 GID has already been retired");
+
+        Download http = download("archive.iso", Download.Status.DOWNLOADING);
+        http.setGid("live-http");
+        http.setSettings(new Aria2Settings());
+        assertFalse(MainWindow.canVerifyData(http),
+                "ordinary HTTP data has nothing authoritative to verify against");
+        http.setExpectedChecksum("00".repeat(32));
+        assertTrue(MainWindow.canVerifyData(http));
+
+        http.setGid(null);
+        assertFalse(MainWindow.canVerifyData(http));
+    }
+
+    @Test
+    void historyPaginationUsesFixedFiveHundredRecordBatches() {
+        assertEquals(500, MainWindow.nextHistoryFetchLimit(0, 10_000));
+        assertEquals(1_000, MainWindow.nextHistoryFetchLimit(500, 10_000));
+        assertEquals(10_000, MainWindow.nextHistoryFetchLimit(9_500, 10_000));
+        assertEquals(1_200, MainWindow.nextHistoryFetchLimit(1_000, 1_200));
+
+        assertFalse(MainWindow.isNearScrollBottom(100, 400, 2_000));
+        assertTrue(MainWindow.isNearScrollBottom(1_550, 400, 2_000));
+        assertTrue(MainWindow.isNearScrollBottom(0, 500, 400),
+                "an under-filled viewport should immediately fetch another page");
     }
 
     private static Download download(String name, Download.Status status) {

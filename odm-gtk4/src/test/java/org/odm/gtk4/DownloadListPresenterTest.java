@@ -134,6 +134,21 @@ class DownloadListPresenterTest {
     }
 
     @Test
+    void rowStructurePrefixRecognizesPaginationAppendOnly() {
+        Download a = download("a.zip", Download.Status.COMPLETED);
+        Download b = download("b.zip", Download.Status.COMPLETED);
+        Download c = download("c.zip", Download.Status.COMPLETED);
+
+        assertTrue(DownloadListPresenter.rowStructureIsPrefix(
+                List.of(a, b), List.of(a, b, c)));
+        assertFalse(DownloadListPresenter.rowStructureIsPrefix(
+                List.of(a, b), List.of(a, c, b)));
+        assertFalse(DownloadListPresenter.rowStructureIsPrefix(
+                List.of(a, b), List.of(a, b)));
+        assertFalse(DownloadListPresenter.rowStructureIsPrefix(null, List.of(a)));
+    }
+
+    @Test
     void rowsAtReturnsTheDistinctValidSelectionsInTreeOrder() {
         Download a = download("a.zip", Download.Status.QUEUED);
         Download b = download("b.zip", Download.Status.QUEUED);

@@ -39,15 +39,13 @@ class GlobalSettingsTest {
         assertFalse(globalSettings.isGlobalProxyEnabled());
         assertNull(globalSettings.getGlobalProxyAddress());
         assertNotNull(globalSettings.getDefaultDownloadDirectory());
-        assertTrue(globalSettings.isSaveDownloadHistory());
+        assertTrue(globalSettings.isRetainCompletedAndCanceledHistory());
         assertEquals(1000, globalSettings.getMaxDownloadsInMemory());
         assertEquals(500, globalSettings.getMaxCompletedDownloadsToKeep());
         assertEquals(24, globalSettings.getCleanupIntervalHours());
         assertEquals(30, globalSettings.getCompletedDownloadRetentionDays());
         assertEquals(7, globalSettings.getErrorDownloadRetentionDays());
-        assertTrue(globalSettings.isAutomaticCleanupEnabled());
-        assertTrue(globalSettings.isEnableLazyLoading());
-        assertEquals(50, globalSettings.getPaginationDefaultSize());
+        assertFalse(globalSettings.isAutomaticCleanupEnabled());
     }
 
     @Test
@@ -137,11 +135,11 @@ class GlobalSettingsTest {
     @Test
     @DisplayName("Should set and get download history setting")
     void shouldSetAndGetDownloadHistorySetting() {
-        globalSettings.setSaveDownloadHistory(false);
-        assertFalse(globalSettings.isSaveDownloadHistory());
+        globalSettings.setRetainCompletedAndCanceledHistory(false);
+        assertFalse(globalSettings.isRetainCompletedAndCanceledHistory());
 
-        globalSettings.setSaveDownloadHistory(true);
-        assertTrue(globalSettings.isSaveDownloadHistory());
+        globalSettings.setRetainCompletedAndCanceledHistory(true);
+        assertTrue(globalSettings.isRetainCompletedAndCanceledHistory());
     }
 
     @Test
@@ -193,7 +191,7 @@ class GlobalSettingsTest {
     void shouldValidateMemoryManagementBounds() {
         // Test minimum bounds
         globalSettings.setMaxDownloadsInMemory(0);
-        assertEquals(10, globalSettings.getMaxDownloadsInMemory()); // Should be clamped to minimum
+        assertEquals(0, globalSettings.getMaxDownloadsInMemory()); // 0 means unlimited
 
         globalSettings.setMaxCompletedDownloadsToKeep(-5);
         assertEquals(0, globalSettings.getMaxCompletedDownloadsToKeep()); // Should be clamped to 0
@@ -201,6 +199,9 @@ class GlobalSettingsTest {
         // Test maximum bounds
         globalSettings.setMaxDownloadsInMemory(100000);
         assertEquals(10000, globalSettings.getMaxDownloadsInMemory()); // Should be clamped to maximum
+
+        globalSettings.setMaxCompletedDownloadsToKeep(100000);
+        assertEquals(10000, globalSettings.getMaxCompletedDownloadsToKeep());
     }
 
     @Test
@@ -228,32 +229,10 @@ class GlobalSettingsTest {
 
         // Test negative retention days
         globalSettings.setCompletedDownloadRetentionDays(-10);
-        assertEquals(1, globalSettings.getCompletedDownloadRetentionDays()); // Should be clamped to 1
+        assertEquals(0, globalSettings.getCompletedDownloadRetentionDays()); // 0 means never
 
         globalSettings.setErrorDownloadRetentionDays(-5);
-        assertEquals(1, globalSettings.getErrorDownloadRetentionDays()); // Should be clamped to 1
-    }
-
-    @Test
-    @DisplayName("Should set and get pagination settings")
-    void shouldSetAndGetPaginationSettings() {
-        globalSettings.setEnableLazyLoading(false);
-        assertFalse(globalSettings.isEnableLazyLoading());
-
-        globalSettings.setPaginationDefaultSize(100);
-        assertEquals(100, globalSettings.getPaginationDefaultSize());
-    }
-
-    @Test
-    @DisplayName("Should validate pagination settings bounds")
-    void shouldValidatePaginationSettingsBounds() {
-        // Test minimum page size
-        globalSettings.setPaginationDefaultSize(0);
-        assertEquals(10, globalSettings.getPaginationDefaultSize()); // Should be clamped to minimum
-
-        // Test maximum page size
-        globalSettings.setPaginationDefaultSize(10000);
-        assertEquals(1000, globalSettings.getPaginationDefaultSize()); // Should be clamped to maximum
+        assertEquals(0, globalSettings.getErrorDownloadRetentionDays()); // 0 means never
     }
 
     @Test

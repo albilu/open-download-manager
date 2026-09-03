@@ -26,8 +26,6 @@ import org.manager.tools.BoundedHttpFetcher;
 final class HtmlImportExport {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(HtmlImportExport.class);
-    static final long MAX_HTML_BYTES = 8L * 1024 * 1024;
-    static final int MAX_IMPORT_LINKS = 1_000;
     private static final java.util.regex.Pattern HREF_PATTERN = java.util.regex.Pattern.compile(
             "<a\\b[^>]*?\\s+href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
             java.util.regex.Pattern.CASE_INSENSITIVE);
@@ -44,14 +42,20 @@ final class HtmlImportExport {
      * against a valid http(s) base element. Invalid values are skipped.
      */
     static List<URI> extractHttpLinks(String html) {
-        return extractHttpLinks(html, null);
+        return extractHttpLinks(html, null, ImportLimits.defaults());
     }
 
     static List<URI> extractHttpLinks(String html, URI documentUri) {
+        return extractHttpLinks(html, documentUri, ImportLimits.defaults());
+    }
+
+    static List<URI> extractHttpLinks(String html, URI documentUri,
+            ImportLimits limits) {
+        ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         LinkedHashSet<URI> urls = new LinkedHashSet<>();
         URI base = extractBaseUri(html, documentUri);
         java.util.regex.Matcher m = HREF_PATTERN.matcher(html);
-        while (m.find() && urls.size() < MAX_IMPORT_LINKS) {
+        while (m.find() && urls.size() < effective.maxUrls()) {
             try {
                 String raw = decodeHtmlEntities(firstGroup(m));
                 URI candidate;
@@ -141,15 +145,22 @@ final class HtmlImportExport {
      *         be read
      */
     static int importHtmlFile(Path path, DownloadOperations operations) {
+        return importHtmlFile(path, operations, ImportLimits.defaults());
+    }
+
+    static int importHtmlFile(Path path, DownloadOperations operations,
+            ImportLimits limits) {
+        ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         try {
             byte[] bytes;
             try (java.io.InputStream input = Files.newInputStream(path)) {
-                bytes = input.readNBytes(Math.toIntExact(MAX_HTML_BYTES) + 1);
+                bytes = input.readNBytes(Math.toIntExact(effective.maxSourceBytes()) + 1);
             }
-            if (bytes.length > MAX_HTML_BYTES) {
+            if (bytes.length > effective.maxSourceBytes()) {
                 return -1;
             }
-            List<URI> urls = extractHttpLinks(new String(bytes, StandardCharsets.UTF_8));
+            List<URI> urls = extractHttpLinks(
+                    new String(bytes, StandardCharsets.UTF_8), null, effective);
             return queueLinks(urls, operations);
         } catch (Exception e) {
             LOGGER.debug("HTML import failed", e);
@@ -164,19 +175,27 @@ final class HtmlImportExport {
      */
     static int importRemoteHtml(URI source, DownloadOperations operations,
             String proxyAddress) {
+        return importRemoteHtml(source, operations, proxyAddress,
+                ImportLimits.defaults());
+    }
+
+    static int importRemoteHtml(URI source, DownloadOperations operations,
+            String proxyAddress, ImportLimits limits) {
+        ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         if (!isHttp(source)) {
             return -1;
         }
         try {
             BoundedHttpFetcher.FetchResult response = BoundedHttpFetcher.fetchResult(
-                    source, MAX_HTML_BYTES, Duration.ofSeconds(10),
+                    source, effective.maxSourceBytes(), Duration.ofSeconds(10),
                     Duration.ofSeconds(30), proxyAddress);
             if (!isHtmlContentType(response.contentType())) {
                 return -1;
             }
             Charset charset = responseCharset(response.contentType());
             String html = new String(response.body(), charset);
-            return queueLinks(extractHttpLinks(html, response.finalUri()), operations);
+            return queueLinks(extractHttpLinks(
+                    html, response.finalUri(), effective), operations);
         } catch (Exception e) {
             LOGGER.debug("Remote HTML import failed", e);
             return -1;

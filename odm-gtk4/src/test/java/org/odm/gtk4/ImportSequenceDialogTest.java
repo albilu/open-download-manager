@@ -30,10 +30,12 @@ class ImportSequenceDialogTest {
     }
 
     @Test
-    void generationRequiresAPlaceholderAndHonorsTheGlobalCap() {
+    void generationRequiresAPlaceholderAndHonorsTheConfiguredCap() {
         assertTrue(ImportSequenceDialog.generateSequence(
                 "https://example.test/static", false, 1, 10, "", "", 10).isEmpty());
-        assertEquals(ImportSequenceDialog.MAX_IMPORT_URLS,
+        assertEquals(37, ImportSequenceDialog.generateSequence("item-{}", false,
+                1, 10_000, "", "", 10_000, 37).size());
+        assertEquals(ImportLimits.DEFAULT_MAX_URLS,
                 ImportSequenceDialog.generateSequence("item-{}", false,
                         1, 10_000, "", "", 10_000).size());
     }

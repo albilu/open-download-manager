@@ -336,7 +336,8 @@ class WindowSmokeTest {
         }
         Widgets.require(builder, "default_download_folder_chooser", MenuButton.class);
         Widgets.require(builder, "monitored_folder_chooser", MenuButton.class);
-        for (String id : new String[]{"save_download_history_check", "clipboard_monitor_check",
+        for (String id : new String[]{"retain_completed_canceled_history_check",
+                "automatic_cleanup_check", "clipboard_monitor_check",
                 "clipboard_silent_check", "system_tray_check", "start_automatically_check",
                 "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
                 "move_to_trash_check",
@@ -348,7 +349,10 @@ class WindowSmokeTest {
         }
         for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
                 "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "min_split_size_spin1",
-                "max_peers_spin", "peer_speed_limit_spin", "seed_time_spin", "depth_spin", "proxy_port_spin"}) {
+                "max_peers_spin", "peer_speed_limit_spin", "seed_time_spin", "depth_spin", "proxy_port_spin",
+                "cleanup_interval_spin", "max_history_records_spin", "max_completed_records_spin",
+                "completed_retention_spin", "error_retention_spin",
+                "max_import_urls_spin", "max_import_source_size_spin"}) {
             Widgets.require(builder, id, SpinButton.class);
         }
         for (String id : new String[]{"aria2_path_entry", "ytdlp_path_entry", "httrack_path_entry",
@@ -388,6 +392,12 @@ class WindowSmokeTest {
         assertSame(Widgets.require(builder, "general_options_grid", Grid.class),
                 Widgets.require(builder, "enable_auto_save_check", CheckButton.class).getParent(),
                 "ODM auto save belongs to General rather than the Aria2 engine tab");
+        CheckButton saveHistory = Widgets.require(builder,
+                "retain_completed_canceled_history_check", CheckButton.class);
+        assertEquals("Keep completed and canceled records after restart", saveHistory.getLabel());
+        assertSame(Widgets.require(builder, "history_cleanup_box", Box.class),
+                saveHistory.getParent(),
+                "Keep completed and canceled records after restart belongs to Advanced > Download History");
         assertNull(builder.getObject("start_automatically_check2"),
                 "the global automatic-start policy must not be duplicated on Network");
         assertNull(builder.getObject("move_torrent_check2"),
@@ -405,7 +415,9 @@ class WindowSmokeTest {
                 Widgets.require(builder, "depth_spin", SpinButton.class)));
         assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
                 "proxy_settings_heading", "tor_settings_heading",
-                "scheduling_heading", "advanced_tools_heading");
+                "scheduling_heading", "history_cleanup_heading",
+                "import_limits_heading", "advanced_tools_heading");
+        Widgets.require(builder, "import_limits_grid", Grid.class);
         Widgets.require(builder, "scheduler_selection_label", Label.class);
         Box legend = Widgets.require(builder, "scheduler_legend_box", Box.class);
         assertEquals(Orientation.VERTICAL, legend.getOrientation());
@@ -878,6 +890,46 @@ class WindowSmokeTest {
         assertFalse(tree.getSelection().pathIsSelected(first));
         assertTrue(tree.getSelection().pathIsSelected(third),
                 "an unselected clicked row must become the context target");
+    }
+
+    @Test
+    @DisplayName("appending a history page preserves the current multi-selection")
+    void paginationAppendPreservesMultiSelection() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ListStore store = Widgets.require(builder, "download_store", ListStore.class);
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        DownloadListPresenter presenter = new DownloadListPresenter(
+                Widgets.require(builder, "status_store", ListStore.class),
+                Widgets.require(builder, "category_store", ListStore.class),
+                store,
+                Widgets.require(builder, "global_progress_store", ListStore.class),
+                Widgets.require(builder, "status_treeview", TreeView.class),
+                Widgets.require(builder, "category_treeview", TreeView.class), () -> { });
+        org.manager.download.Download first = new org.manager.download.Download(
+                URI.create("https://example.com/first.bin"));
+        org.manager.download.Download second = new org.manager.download.Download(
+                URI.create("https://example.com/second.bin"));
+        org.manager.download.Download third = new org.manager.download.Download(
+                URI.create("https://example.com/third.bin"));
+        first.setStatus(org.manager.download.Download.Status.COMPLETED);
+        second.setStatus(org.manager.download.Download.Status.COMPLETED);
+        third.setStatus(org.manager.download.Download.Status.COMPLETED);
+
+        presenter.refresh(List.of(first, second));
+        tree.getSelection().setMode(org.gnome.gtk.SelectionMode.MULTIPLE);
+        TreePath firstPath = TreePath.fromString("0");
+        TreePath secondPath = TreePath.fromString("1");
+        tree.getSelection().selectPath(firstPath);
+        tree.getSelection().selectPath(secondPath);
+
+        DownloadListPresenter.RefreshSummary summary = presenter.refresh(
+                List.of(first, second, third));
+
+        assertFalse(summary.modelRebuilt());
+        assertEquals(2, tree.getSelection().countSelectedRows());
+        assertTrue(tree.getSelection().pathIsSelected(firstPath));
+        assertTrue(tree.getSelection().pathIsSelected(secondPath));
+        assertEquals(3, store.iterNChildren(null));
     }
 
     private static Object defaultValue(Class<?> type) {

@@ -42,13 +42,12 @@ import org.manager.download.DownloadManager;
 public class ImportListDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ImportListDialog.class);
-    static final int MAX_IMPORT_URLS = 1_000;
-    static final long MAX_IMPORT_FILE_BYTES = 8L * 1024 * 1024;
 
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final Runnable onImportDone;
     private final GtkBuilder builder;
+    private final ImportLimits importLimits;
 
     private final ListStore urlStore;
     private final ListStore extensionFilterStore;
@@ -59,9 +58,10 @@ public class ImportListDialog {
     private Path destinationFolder;
 
     private ImportListDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone,
-            List<String> initialUrls) {
+            List<String> initialUrls, ImportLimits importLimits) {
         this.downloadManager = downloadManager;
         this.onImportDone = onImportDone;
+        this.importLimits = importLimits != null ? importLimits : ImportLimits.defaults();
 
         this.builder = UiLoader.load("/ui/import-list.ui");
         this.dialog = Widgets.require(builder, "import_dialog", Window.class);
@@ -156,10 +156,12 @@ public class ImportListDialog {
                 File file = fileDialog.openFinish(result);
                 if (file != null && file.getPath() != null) {
                     Path path = Path.of(file.getPath().toString());
-                    loadSelectionThenPresent(path, java.util.concurrent.ForkJoinPool.commonPool(),
+                    ImportLimits limits = ImportLimits.from(downloadManager.getGlobalSettings());
+                    loadSelectionThenPresent(path, limits,
+                            java.util.concurrent.ForkJoinPool.commonPool(),
                             lines -> UiThread.marshal(() ->
                                     new ImportListDialog(parent, downloadManager,
-                                            onImportDone, lines).present()),
+                                            onImportDone, lines, limits).present()),
                             error -> UiThread.marshal(() -> showLoadError(parent, error)));
                 }
             } catch (Exception e) {
@@ -174,10 +176,17 @@ public class ImportListDialog {
      */
     static void loadSelectionThenPresent(Path selectedPath, Executor executor,
             Consumer<List<String>> presenter, Consumer<Throwable> onFailure) {
+        loadSelectionThenPresent(selectedPath, ImportLimits.defaults(), executor,
+                presenter, onFailure);
+    }
+
+    static void loadSelectionThenPresent(Path selectedPath, ImportLimits limits,
+            Executor executor, Consumer<List<String>> presenter,
+            Consumer<Throwable> onFailure) {
         if (selectedPath == null) {
             return;
         }
-        CompletableFuture.supplyAsync(() -> readImportLines(selectedPath), executor)
+        CompletableFuture.supplyAsync(() -> readImportLines(selectedPath, limits), executor)
                 .whenComplete((lines, error) -> {
                     if (error == null) {
                         presenter.accept(lines);
@@ -206,22 +215,29 @@ public class ImportListDialog {
     }
 
     static List<String> readImportLines(Path path) {
+        return readImportLines(path, ImportLimits.defaults());
+    }
+
+    static List<String> readImportLines(Path path, ImportLimits limits) {
+        ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         try {
             byte[] bytes;
             try (java.io.InputStream input = Files.newInputStream(path)) {
-                bytes = input.readNBytes(Math.toIntExact(MAX_IMPORT_FILE_BYTES) + 1);
+                bytes = input.readNBytes(Math.toIntExact(effective.maxSourceBytes()) + 1);
             }
-            if (bytes.length > MAX_IMPORT_FILE_BYTES) {
-                throw new IllegalArgumentException("URL list exceeds the 8 MiB limit");
+            if (bytes.length > effective.maxSourceBytes()) {
+                throw new IllegalArgumentException("URL list exceeds the configured "
+                        + effective.maxSourceSizeMiB() + " MiB limit");
             }
             try (java.util.stream.Stream<String> stream = new String(bytes,
                     java.nio.charset.StandardCharsets.UTF_8).lines()) {
                 List<String> lines = stream.map(String::trim)
                         .filter(line -> !line.isEmpty() && !line.startsWith("#"))
-                        .limit(MAX_IMPORT_URLS + 1L)
+                        .limit(effective.maxUrls() + 1L)
                         .toList();
-                if (lines.size() > MAX_IMPORT_URLS) {
-                    throw new IllegalArgumentException("URL list exceeds the 1,000 URL limit");
+                if (lines.size() > effective.maxUrls()) {
+                    throw new IllegalArgumentException("URL list exceeds the configured "
+                            + effective.maxUrls() + " URL limit");
                 }
                 return lines;
             }
@@ -233,7 +249,7 @@ public class ImportListDialog {
     private void loadUrls(List<String> lines) {
         urlStore.clear();
         List<String> extensions = new ArrayList<>();
-        for (String rawLine : lines.stream().limit(MAX_IMPORT_URLS).toList()) {
+        for (String rawLine : lines.stream().limit(importLimits.maxUrls()).toList()) {
             String line = rawLine.trim();
             if (line.isEmpty() || line.startsWith("#")) {
                 continue;
@@ -249,7 +265,8 @@ public class ImportListDialog {
             }
         }
         rebuildExtensionFilter(extensions);
-        LOGGER.info("Loaded " + Math.min(lines.size(), MAX_IMPORT_URLS) + " URLs into import list");
+        LOGGER.info("Loaded " + Math.min(lines.size(), importLimits.maxUrls())
+                + " URLs into import list");
     }
 
     private void rebuildExtensionFilter(List<String> extensions) {
@@ -328,7 +345,7 @@ public class ImportListDialog {
 
     private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
         int queued = 0;
-        for (String url : urls.stream().limit(MAX_IMPORT_URLS).toList()) {
+        for (String url : urls.stream().limit(importLimits.maxUrls()).toList()) {
             try {
                 Download download = downloadManager.createDownload(
                         org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);

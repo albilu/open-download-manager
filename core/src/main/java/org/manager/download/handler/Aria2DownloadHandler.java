@@ -2049,6 +2049,34 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
+     * Requests aria2's one-shot integrity check on every currently owned GID.
+     * Unlike changeSettings, this operation is deliberately not persisted: a
+     * context-menu verification must either reach a live task or fail.
+     */
+    @Override
+    public CompletableFuture<Void> verifyData(Download download) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                ensureInitialized();
+                List<String> gids = liveTrackedGidsSnapshot(download);
+                if (gids.isEmpty()) {
+                    throw new IllegalStateException(
+                            "The aria2 task is no longer active; no data was verified");
+                }
+                applyToEveryGid(gids, "verify data",
+                        gid -> aria2Client.changeOption(gid,
+                                Map.of("check-integrity", "true")));
+                LOGGER.info("Requested integrity verification for " + download.getName()
+                        + " on GIDs " + gids);
+            } catch (Exception e) {
+                LOGGER.error("Failed to request integrity verification for: "
+                        + download.getName(), e);
+                throw new RuntimeException("Failed to request integrity verification", e);
+            }
+        }, executor);
+    }
+
+    /**
      * Turns a daemon push into an immediate status poll, so terminal and pause
      * transitions surface without waiting for the next batch tick. Both the
      * scheduling boundary and the runnable re-check ownership: cancellation

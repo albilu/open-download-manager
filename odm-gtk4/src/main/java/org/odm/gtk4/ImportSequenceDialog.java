@@ -7,6 +7,7 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.concurrent.CompletableFuture;
+import org.gnome.gtk.Adjustment;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
@@ -35,12 +36,12 @@ public class ImportSequenceDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ImportSequenceDialog.class);
     private static final String[] RANGE_MODES = {"Number", "Character"};
-    static final int MAX_IMPORT_URLS = 1_000;
 
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final Runnable onImportDone;
     private final GtkBuilder builder;
+    private final ImportLimits importLimits;
 
     private final Entry uriEntry;
     private final SpinButton numStartSpin;
@@ -64,6 +65,7 @@ public class ImportSequenceDialog {
     public ImportSequenceDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone) {
         this.downloadManager = downloadManager;
         this.onImportDone = onImportDone;
+        this.importLimits = ImportLimits.from(downloadManager.getGlobalSettings());
 
         this.builder = UiLoader.load("/ui/import-sequence.ui");
         this.dialog = Widgets.require(builder, "import_sequence_dialog", Window.class);
@@ -71,6 +73,8 @@ public class ImportSequenceDialog {
         this.numStartSpin = Widgets.require(builder, "num_start_spin", SpinButton.class);
         this.numVersSpin = Widgets.require(builder, "num_vers_spin", SpinButton.class);
         this.numCountSpin = Widgets.require(builder, "num_count_spin", SpinButton.class);
+        Widgets.require(builder, "num_count_adjustment", Adjustment.class)
+                .setUpper(importLimits.maxUrls());
         this.charEntry = Widgets.require(builder, "char_entry", Entry.class);
         this.charVersEntry = Widgets.require(builder, "char_vers_entry", Entry.class);
         this.numModeCombo = Widgets.require(builder, "num_combo", DropDown.class);
@@ -153,9 +157,9 @@ public class ImportSequenceDialog {
 
     private record SequenceInput(String pattern, boolean characterMode,
             int start, int end, String charFrom, String charTo, int count) {
-        List<String> generate() {
+        List<String> generate(int maximumUrls) {
             return generateSequence(pattern, characterMode, start, end,
-                    charFrom, charTo, count);
+                    charFrom, charTo, count, maximumUrls);
         }
     }
 
@@ -179,11 +183,19 @@ public class ImportSequenceDialog {
 
     static List<String> generateSequence(String pattern, boolean characterMode,
             int start, int end, String charFrom, String charTo, int requestedCount) {
+        return generateSequence(pattern, characterMode, start, end, charFrom,
+                charTo, requestedCount, ImportLimits.DEFAULT_MAX_URLS);
+    }
+
+    static List<String> generateSequence(String pattern, boolean characterMode,
+            int start, int end, String charFrom, String charTo, int requestedCount,
+            int maximumUrls) {
         List<String> urls = new ArrayList<>();
         if (pattern.isEmpty() || !pattern.contains("{}")) {
             return urls;
         }
-        int count = Math.min(MAX_IMPORT_URLS,
+        int count = Math.min(new ImportLimits(maximumUrls,
+                ImportLimits.DEFAULT_MAX_SOURCE_SIZE_MIB).maxUrls(),
                 Math.max(1, requestedCount));
 
         if (characterMode) {
@@ -220,7 +232,8 @@ public class ImportSequenceDialog {
         previewStore.clear();
         currentPreviewUrls = List.of();
         validateButton.setSensitive(false);
-        activity.track(CompletableFuture.supplyAsync(input::generate))
+        activity.track(CompletableFuture.supplyAsync(
+                () -> input.generate(importLimits.maxUrls())))
                 .whenComplete((urls, error) -> UiThread.marshal(() -> {
                     if (epoch != previewEpoch) {
                         return;
@@ -292,7 +305,7 @@ public class ImportSequenceDialog {
 
     private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
         List<CompletableFuture<Boolean>> admissions = new ArrayList<>();
-        for (String url : urls.stream().limit(MAX_IMPORT_URLS).toList()) {
+        for (String url : urls.stream().limit(importLimits.maxUrls()).toList()) {
             try {
                 Download download = downloadManager.createDownload(
                         org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);

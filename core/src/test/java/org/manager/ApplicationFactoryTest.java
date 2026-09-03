@@ -59,8 +59,10 @@ class ApplicationFactoryTest {
         assertNotNull(settings, "GlobalSettings should be created");
         assertEquals(3, settings.getMaxConcurrentDownloads(), "Default max concurrent downloads should be 3");
         assertEquals(0, settings.getGlobalSpeedLimit(), "Default speed limit should be 0 (unlimited)");
-        assertTrue(settings.isSaveDownloadHistory(), "Download history should be enabled by default");
-        assertTrue(settings.isAutomaticCleanupEnabled(), "Automatic cleanup should be enabled by default");
+        assertTrue(settings.isRetainCompletedAndCanceledHistory(),
+                "Completed and canceled history should be retained by default");
+        assertFalse(settings.isAutomaticCleanupEnabled(),
+                "Automatic cleanup must require explicit user consent");
 
         // Test singleton behavior
         GlobalSettings settings2 = factory.getGlobalSettings();

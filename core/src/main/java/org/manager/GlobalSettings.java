@@ -52,7 +52,7 @@ public class GlobalSettings {
     private final CustomProperties custom = new CustomProperties();
 
     private volatile Path defaultDownloadDirectory = Paths.get(System.getProperty("user.home"), "Downloads");
-    private volatile boolean saveDownloadHistory = true;
+    private volatile boolean retainCompletedAndCanceledHistory = true;
 
     // Clipboard monitoring settings
     private volatile ClipboardSettings clipboardSettings = new ClipboardSettings();
@@ -245,23 +245,32 @@ public class GlobalSettings {
     }
 
     /**
-     * Checks if download history should be saved.
-     *
-     * @return true if download history should be saved, false otherwise
+     * Whether completed and canceled records remain in ODM's history database
+     * across restarts. Error and resumable records are always retained.
      */
-    public boolean isSaveDownloadHistory() {
-        return saveDownloadHistory;
+    public boolean isRetainCompletedAndCanceledHistory() {
+        return retainCompletedAndCanceledHistory;
     }
 
     /**
-     * Sets whether to save download history.
-     *
-     * @param saveDownloadHistory true to save download history, false otherwise
-     * @return This settings object for chaining
+     * Controls retention of completed and canceled records across restarts.
+     * Downloaded payload files are never affected.
      */
-    public GlobalSettings setSaveDownloadHistory(boolean saveDownloadHistory) {
-        this.saveDownloadHistory = saveDownloadHistory;
+    public GlobalSettings setRetainCompletedAndCanceledHistory(boolean retain) {
+        this.retainCompletedAndCanceledHistory = retain;
         return this;
+    }
+
+    /** @deprecated use {@link #isRetainCompletedAndCanceledHistory()} */
+    @Deprecated(forRemoval = false)
+    public boolean isSaveDownloadHistory() {
+        return isRetainCompletedAndCanceledHistory();
+    }
+
+    /** @deprecated use {@link #setRetainCompletedAndCanceledHistory(boolean)} */
+    @Deprecated(forRemoval = false)
+    public GlobalSettings setSaveDownloadHistory(boolean retain) {
+        return setRetainCompletedAndCanceledHistory(retain);
     }
 
     /**
@@ -411,46 +420,6 @@ public class GlobalSettings {
      */
     public GlobalSettings setAutomaticCleanupEnabled(boolean automaticCleanupEnabled) {
         cleanup.setAutomaticCleanupEnabled(automaticCleanupEnabled);
-        return this;
-    }
-
-    /**
-     * Checks if lazy loading is enabled.
-     *
-     * @return true if lazy loading is enabled, false otherwise
-     */
-    public boolean isEnableLazyLoading() {
-        return cleanup.enableLazyLoading;
-    }
-
-    /**
-     * Sets whether lazy loading is enabled.
-     *
-     * @param enableLazyLoading true to enable lazy loading, false otherwise
-     * @return This settings object for chaining
-     */
-    public GlobalSettings setEnableLazyLoading(boolean enableLazyLoading) {
-        cleanup.setEnableLazyLoading(enableLazyLoading);
-        return this;
-    }
-
-    /**
-     * Gets the default pagination size.
-     *
-     * @return The default pagination size
-     */
-    public int getPaginationDefaultSize() {
-        return cleanup.paginationDefaultSize;
-    }
-
-    /**
-     * Sets the default pagination size.
-     *
-     * @param paginationDefaultSize The default pagination size
-     * @return This settings object for chaining
-     */
-    public GlobalSettings setPaginationDefaultSize(int paginationDefaultSize) {
-        cleanup.setPaginationDefaultSize(paginationDefaultSize);
         return this;
     }
 
@@ -734,7 +703,7 @@ public class GlobalSettings {
         copy.cleanup.copyFrom(cleanup);
         copy.toolPaths.copyFrom(toolPaths);
         copy.defaultDownloadDirectory = this.defaultDownloadDirectory;
-        copy.saveDownloadHistory = this.saveDownloadHistory;
+        copy.retainCompletedAndCanceledHistory = this.retainCompletedAndCanceledHistory;
         copy.clipboardSettings = this.clipboardSettings != null ? this.clipboardSettings.copy()
                 : new ClipboardSettings();
         copy.custom.copyFrom(custom);
@@ -764,8 +733,6 @@ public class GlobalSettings {
                 cleanup.maxDownloadsInMemory;
             case "maxCompletedDownloadsToKeep" ->
                 cleanup.maxCompletedDownloadsToKeep;
-            case "paginationDefaultSize" ->
-                cleanup.paginationDefaultSize;
             default -> {
                 String value = custom.get(propertyName, null);
                 if (value != null) {
@@ -792,12 +759,10 @@ public class GlobalSettings {
         return switch (propertyName) {
             case "globalProxyEnabled" ->
                 proxy.globalProxyEnabled;
-            case "saveDownloadHistory" ->
-                saveDownloadHistory;
+            case "history.retainCompletedAndCanceled", "saveDownloadHistory" ->
+                retainCompletedAndCanceledHistory;
             case "automaticCleanupEnabled" ->
                 cleanup.automaticCleanupEnabled;
-            case "enableLazyLoading" ->
-                cleanup.enableLazyLoading;
             default -> {
                 String value = custom.get(propertyName, null);
                 if (value != null) {
@@ -999,7 +964,7 @@ public class GlobalSettings {
         this.cleanup.copyFrom(other.cleanup);
         this.toolPaths.copyFrom(other.toolPaths);
         this.defaultDownloadDirectory = other.defaultDownloadDirectory;
-        this.saveDownloadHistory = other.saveDownloadHistory;
+        this.retainCompletedAndCanceledHistory = other.retainCompletedAndCanceledHistory;
         this.clipboardSettings = other.clipboardSettings;
 
         this.custom.copyFrom(other.custom);
@@ -1016,7 +981,9 @@ public class GlobalSettings {
         cleanup.syncTo(custom);
         toolPaths.syncTo(custom);
 
-        custom.set("saveDownloadHistory", String.valueOf(saveDownloadHistory));
+        custom.set("history.retainCompletedAndCanceled",
+                String.valueOf(retainCompletedAndCanceledHistory));
+        custom.remove("saveDownloadHistory");
         if (clipboardSettings != null) {
             custom.set("clipboard.monitoringEnabled",
                     String.valueOf(clipboardSettings.isMonitoringEnabled()));
@@ -1045,8 +1012,13 @@ public class GlobalSettings {
         if (custom.containsKey("defaultDownloadDirectory")) {
             defaultDownloadDirectory = Paths.get(custom.get("defaultDownloadDirectory", null));
         }
-        if (custom.containsKey("saveDownloadHistory")) {
-            saveDownloadHistory = Boolean.parseBoolean(custom.get("saveDownloadHistory", null));
+        if (custom.containsKey("history.retainCompletedAndCanceled")) {
+            retainCompletedAndCanceledHistory = Boolean.parseBoolean(
+                    custom.get("history.retainCompletedAndCanceled", null));
+        } else if (custom.containsKey("saveDownloadHistory")) {
+            // Backward-compatible migration from the misleading legacy name.
+            retainCompletedAndCanceledHistory = Boolean.parseBoolean(
+                    custom.get("saveDownloadHistory", null));
         }
         if (custom.containsKey("clipboard.monitoringEnabled")) {
             if (clipboardSettings == null) {
@@ -1191,10 +1163,9 @@ public class GlobalSettings {
     }
 
     /**
-     * Memory-management and cleanup policy: in-memory/pagination limits,
-     * retention windows, and cleanup toggles. Note that today only the
-     * toggles and numeric limits below marked in {@link #syncTo} persist;
-     * the retention windows are runtime-only.
+     * Download-history cleanup policy. Automatic cleanup is opt-in because
+     * every cleanup rule removes records from the user's visible history.
+     * Downloaded payload files are never removed by this policy.
      */
     static final class CleanupPolicy {
         private volatile int maxDownloadsInMemory = 1000; // 0 for unlimited
@@ -1202,40 +1173,30 @@ public class GlobalSettings {
         private volatile long cleanupIntervalHours = 24; // Cleanup every 24 hours
         private volatile long completedDownloadRetentionDays = 30; // Keep completed downloads for 30 days
         private volatile long errorDownloadRetentionDays = 7; // Keep error downloads for 7 days
-        private volatile boolean automaticCleanupEnabled = true;
-        private volatile boolean enableLazyLoading = true; // Enable lazy loading for large datasets
-        private volatile int paginationDefaultSize = 50; // Default page size for paginated queries
+        private volatile boolean automaticCleanupEnabled = false;
 
         void setMaxDownloadsInMemory(int value) {
-            this.maxDownloadsInMemory = Math.clamp(value, 10, 10000);
+            this.maxDownloadsInMemory = value == 0 ? 0 : Math.clamp(value, 10, 10000);
         }
 
         void setMaxCompletedDownloadsToKeep(int value) {
-            this.maxCompletedDownloadsToKeep = Math.max(0, value);
+            this.maxCompletedDownloadsToKeep = Math.clamp(value, 0, 10000);
         }
 
         void setCleanupIntervalHours(long value) {
-            this.cleanupIntervalHours = Math.max(1, value);
+            this.cleanupIntervalHours = Math.clamp(value, 1, 8760);
         }
 
         void setCompletedDownloadRetentionDays(long value) {
-            this.completedDownloadRetentionDays = Math.max(1, value);
+            this.completedDownloadRetentionDays = Math.clamp(value, 0, 36500);
         }
 
         void setErrorDownloadRetentionDays(long value) {
-            this.errorDownloadRetentionDays = Math.max(1, value);
+            this.errorDownloadRetentionDays = Math.clamp(value, 0, 36500);
         }
 
         void setAutomaticCleanupEnabled(boolean value) {
             this.automaticCleanupEnabled = value;
-        }
-
-        void setEnableLazyLoading(boolean value) {
-            this.enableLazyLoading = value;
-        }
-
-        void setPaginationDefaultSize(int value) {
-            this.paginationDefaultSize = Math.clamp(value, 10, 1000);
         }
 
         void copyFrom(CleanupPolicy other) {
@@ -1245,28 +1206,34 @@ public class GlobalSettings {
             this.completedDownloadRetentionDays = other.completedDownloadRetentionDays;
             this.errorDownloadRetentionDays = other.errorDownloadRetentionDays;
             this.automaticCleanupEnabled = other.automaticCleanupEnabled;
-            this.enableLazyLoading = other.enableLazyLoading;
-            this.paginationDefaultSize = other.paginationDefaultSize;
         }
 
         void syncTo(CustomProperties bag) {
-            bag.set("automaticCleanupEnabled", String.valueOf(automaticCleanupEnabled));
-            bag.set("enableLazyLoading", String.valueOf(enableLazyLoading));
+            // The legacy automaticCleanupEnabled key was hidden and defaulted
+            // to true, so it cannot prove user consent. Persist the new opt-in
+            // key and remove the legacy value during the next settings save.
+            bag.set("historyCleanup.enabled", String.valueOf(automaticCleanupEnabled));
+            bag.remove("automaticCleanupEnabled");
+            bag.remove("enableLazyLoading");
             bag.set("maxDownloadsInMemory", String.valueOf(maxDownloadsInMemory));
             bag.set("maxCompletedDownloadsToKeep", String.valueOf(maxCompletedDownloadsToKeep));
-            bag.set("paginationDefaultSize", String.valueOf(paginationDefaultSize));
+            bag.set("cleanupIntervalHours", String.valueOf(cleanupIntervalHours));
+            bag.set("completedDownloadRetentionDays", String.valueOf(completedDownloadRetentionDays));
+            bag.set("errorDownloadRetentionDays", String.valueOf(errorDownloadRetentionDays));
+            // This was never consumed. Main-window paging now owns a fixed,
+            // tested batch size rather than exposing an ineffective setting.
+            bag.remove("paginationDefaultSize");
         }
 
         void applyLoaded(CustomProperties bag) {
-            if (bag.containsKey("automaticCleanupEnabled")) {
-                automaticCleanupEnabled = Boolean.parseBoolean(bag.get("automaticCleanupEnabled", null));
-            }
-            if (bag.containsKey("enableLazyLoading")) {
-                enableLazyLoading = Boolean.parseBoolean(bag.get("enableLazyLoading", null));
+            if (bag.containsKey("historyCleanup.enabled")) {
+                automaticCleanupEnabled = Boolean.parseBoolean(
+                        bag.get("historyCleanup.enabled", null));
             }
             if (bag.containsKey("maxDownloadsInMemory")) {
                 try {
-                    maxDownloadsInMemory = Integer.parseInt(bag.get("maxDownloadsInMemory", null));
+                    setMaxDownloadsInMemory(Integer.parseInt(
+                            bag.get("maxDownloadsInMemory", null)));
                 } catch (NumberFormatException e) {
                     LOGGER.warn("Invalid maxDownloadsInMemory in settings file: "
                             + bag.get("maxDownloadsInMemory", null));
@@ -1274,18 +1241,38 @@ public class GlobalSettings {
             }
             if (bag.containsKey("maxCompletedDownloadsToKeep")) {
                 try {
-                    maxCompletedDownloadsToKeep = Integer.parseInt(bag.get("maxCompletedDownloadsToKeep", null));
+                    setMaxCompletedDownloadsToKeep(Integer.parseInt(
+                            bag.get("maxCompletedDownloadsToKeep", null)));
                 } catch (NumberFormatException e) {
                     LOGGER.warn("Invalid maxCompletedDownloadsToKeep in settings file: "
                             + bag.get("maxCompletedDownloadsToKeep", null));
                 }
             }
-            if (bag.containsKey("paginationDefaultSize")) {
+            if (bag.containsKey("cleanupIntervalHours")) {
                 try {
-                    paginationDefaultSize = Integer.parseInt(bag.get("paginationDefaultSize", null));
+                    setCleanupIntervalHours(Long.parseLong(
+                            bag.get("cleanupIntervalHours", null)));
                 } catch (NumberFormatException e) {
-                    LOGGER.warn("Invalid paginationDefaultSize in settings file: "
-                            + bag.get("paginationDefaultSize", null));
+                    LOGGER.warn("Invalid cleanupIntervalHours in settings file: "
+                            + bag.get("cleanupIntervalHours", null));
+                }
+            }
+            if (bag.containsKey("completedDownloadRetentionDays")) {
+                try {
+                    setCompletedDownloadRetentionDays(Long.parseLong(
+                            bag.get("completedDownloadRetentionDays", null)));
+                } catch (NumberFormatException e) {
+                    LOGGER.warn("Invalid completedDownloadRetentionDays in settings file: "
+                            + bag.get("completedDownloadRetentionDays", null));
+                }
+            }
+            if (bag.containsKey("errorDownloadRetentionDays")) {
+                try {
+                    setErrorDownloadRetentionDays(Long.parseLong(
+                            bag.get("errorDownloadRetentionDays", null)));
+                } catch (NumberFormatException e) {
+                    LOGGER.warn("Invalid errorDownloadRetentionDays in settings file: "
+                            + bag.get("errorDownloadRetentionDays", null));
                 }
             }
         }

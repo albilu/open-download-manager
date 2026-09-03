@@ -21,8 +21,10 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.aria2.Aria2Client;
+import org.aria2.Aria2Settings;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -268,6 +270,39 @@ class Aria2LiveGidRoutingTest {
         assertEquals(Set.of("gid-a", "gid-b"), Set.copyOf(client.optionGids));
         assertEquals(List.of(Map.of("dir", destination.toString()),
                 Map.of("dir", destination.toString())), client.optionValues);
+    }
+
+    @Test
+    @DisplayName("Verify Data reaches every live GID without changing persistent options")
+    void verifyDataIsAOneShotLiveRequest() {
+        Download download = new Download(URI.create(
+                "magnet:?xt=urn:btih:dddddddddddddddddddddddddddddddddddddddd"));
+        download.initSettings(new DownloadSettingsFactory(globalSettings));
+        handler.registerTrackedDownload(download, List.of("verify-b", "verify-a"));
+        client.clearRecordings();
+
+        handler.verifyData(download).join();
+
+        assertEquals(Set.of("verify-a", "verify-b"), Set.copyOf(client.optionGids));
+        assertEquals(List.of(Map.of("check-integrity", "true"),
+                Map.of("check-integrity", "true")), client.optionValues);
+        assertFalse(((Aria2Settings) download.getSettings()).isCheckIntegrity(),
+                "the context action must not permanently enable startup verification");
+    }
+
+    @Test
+    @DisplayName("Verify Data reports a retired task instead of claiming success")
+    void verifyDataFailsWhenNoLiveGidExists() {
+        Download download = new Download(URI.create(
+                "magnet:?xt=urn:btih:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"));
+        download.setGid("persisted-stale-gid");
+
+        RuntimeException failure = assertThrows(RuntimeException.class,
+                () -> handler.verifyData(download).join());
+
+        assertTrue(failure.getCause().getMessage().contains("integrity verification"));
+        assertTrue(client.optionGids.isEmpty(),
+                "a persisted or retired GID must never receive an aria2 RPC");
     }
 
     @Test

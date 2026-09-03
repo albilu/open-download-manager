@@ -620,10 +620,8 @@ public class ApplicationFactory {
         settings.setDefaultDownloadDirectory(Paths.get(System.getProperty("user.home"), "Downloads"));
         settings.setMaxConcurrentDownloads(3);
         settings.setGlobalSpeedLimit(0); // Unlimited
-        settings.setSaveDownloadHistory(true);
-        settings.setAutomaticCleanupEnabled(true);
-        settings.setEnableLazyLoading(true);
-        settings.setPaginationDefaultSize(50);
+        settings.setRetainCompletedAndCanceledHistory(true);
+        settings.setAutomaticCleanupEnabled(false);
 
         // Memory management defaults
         settings.setMaxDownloadsInMemory(1000);

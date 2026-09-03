@@ -169,12 +169,18 @@ public class DownloadCleanupManager {
 
                 try {
                     // 1. Prune completed downloads based on retention policy
-                    Duration completedRetention = Duration.ofDays(globalSettings.getCompletedDownloadRetentionDays());
-                    totalRemoved += pruneCompletedDownloadsByAge(completedRetention);
+                    long completedRetentionDays = globalSettings.getCompletedDownloadRetentionDays();
+                    if (completedRetentionDays > 0) {
+                        Duration completedRetention = Duration.ofDays(completedRetentionDays);
+                        totalRemoved += pruneCompletedDownloadsByAge(completedRetention);
+                    }
 
                     // 2. Prune error downloads based on retention policy
-                    Duration errorRetention = Duration.ofDays(globalSettings.getErrorDownloadRetentionDays());
-                    totalRemoved += pruneErrorDownloadsByAge(errorRetention);
+                    long errorRetentionDays = globalSettings.getErrorDownloadRetentionDays();
+                    if (errorRetentionDays > 0) {
+                        Duration errorRetention = Duration.ofDays(errorRetentionDays);
+                        totalRemoved += pruneErrorDownloadsByAge(errorRetention);
+                    }
 
                     // 3. Enforce maximum downloads limit
                     int maxDownloads = globalSettings.getMaxDownloadsInMemory();

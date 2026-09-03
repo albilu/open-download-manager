@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import java.nio.file.Path;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.gnome.gdk.Display;
@@ -19,6 +20,7 @@ import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
 import org.gnome.gtk.ToggleButton;
+import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
 import org.manager.GlobalSettings;
 import org.manager.download.DownloadManager;
@@ -39,6 +41,164 @@ public class SettingsDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SettingsDialog.class);
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
+    private static final Map<String, String> SETTING_TOOLTIPS = Map.ofEntries(
+            // General
+            Map.entry("default_download_folder_chooser",
+                    "Folder used for new downloads unless another destination is chosen in a download dialog."),
+            Map.entry("max_concurrent_downloads_spin",
+                    "Maximum downloads ODM may run at once; additional downloads remain queued."),
+            Map.entry("monitored_folder_chooser",
+                    "Folder watched for new .torrent, .metalink, and .meta4 descriptor files when folder monitoring is enabled."),
+            Map.entry("folder_monitoring_check",
+                    "Automatically create downloads from supported descriptor files placed in the monitored folder."),
+            Map.entry("folder_recursive_check",
+                    "Also watch subfolders inside the monitored folder."),
+            Map.entry("move_to_trash_check",
+                    "After creating the download, move the original watched descriptor to the Linux/XDG Trash."),
+            Map.entry("clipboard_monitor_check",
+                    "Detect supported download URLs copied by other applications."),
+            Map.entry("clipboard_silent_check",
+                    "Add detected clipboard URLs without opening the New Download dialog."),
+            Map.entry("system_tray_check",
+                    "Show the ODM status icon in the desktop system tray when supported."),
+            Map.entry("startup_check",
+                    "Start ODM automatically when the desktop session begins."),
+            Map.entry("start_automatically_check",
+                    "Automatically start downloads admitted by clipboard and folder monitoring; user-triggered dialogs and imports are unaffected."),
+            Map.entry("move_torrent_check",
+                    "After creating a download from a selected descriptor, move the original .torrent, .metalink, or .meta4 file to the Linux/XDG Trash."),
+            Map.entry("enable_auto_save_check",
+                    "Periodically save ODM download and session state so it can be recovered after a crash."),
+
+            // Network
+            Map.entry("max_connections_spin",
+                    "Default maximum connections per server for new aria2 downloads."),
+            Map.entry("retry_limit_spin",
+                    "Maximum attempts for new aria2 downloads; 0 uses ODM's engine default."),
+            Map.entry("retry_after",
+                    "Seconds between retry attempts for new aria2 downloads; 0 uses ODM's engine default."),
+            Map.entry("max_download_speed_spin",
+                    "Default download speed limit for new aria2 downloads; 0 means unlimited."),
+            Map.entry("max_upload_speed_spin",
+                    "Default upload speed limit for new aria2 downloads; 0 means unlimited."),
+            Map.entry("referer_entry",
+                    "HTTP Referer header sent by new aria2 HTTP(S) downloads; leave empty to omit it."),
+            Map.entry("cookie_entry",
+                    "HTTP Cookie header sent by new aria2 HTTP(S) downloads; leave empty to omit it."),
+            Map.entry("user_agent_entry",
+                    "User-Agent header used by new aria2 HTTP(S) downloads; leave empty for the engine default."),
+            Map.entry("proxy_type_combo",
+                    "Global proxy protocol used by new downloads; select None to disable the global proxy."),
+            Map.entry("proxy_host_entry",
+                    "Host name or IP address of the global proxy server."),
+            Map.entry("proxy_port_spin",
+                    "TCP port of the global proxy server."),
+            Map.entry("proxy_username_entry",
+                    "Optional username used to authenticate with the global proxy."),
+            Map.entry("proxy_password_entry",
+                    "Optional password used to authenticate with the global proxy."),
+            Map.entry("tor_switch",
+                    "Route new downloads through the Tor service managed by ODM."),
+
+            // aria2
+            Map.entry("aria2_path_entry",
+                    "Path to the aria2c executable; leave empty to discover it automatically."),
+            Map.entry("browse_aria2_button",
+                    "Choose the aria2c executable used by ODM."),
+            Map.entry("min_split_size_spin1",
+                    "Smallest file segment aria2 creates when splitting a download across connections."),
+            Map.entry("file_allocation_combo",
+                    "How aria2 reserves disk space before downloading: none, prealloc, or Linux falloc."),
+            Map.entry("max_peers_spin",
+                    "Maximum peers per BitTorrent download; 0 means unlimited."),
+            Map.entry("peer_speed_limit_spin",
+                    "Preferred BitTorrent speed threshold. When every torrent is slower, aria2 may temporarily request more peers; 0 disables the threshold."),
+            Map.entry("enable_seeding_check",
+                    "Keep completed BitTorrent downloads running so ODM can upload pieces to peers."),
+            Map.entry("seed_time_spin",
+                    "Minutes to seed after completion; with seeding enabled, 0 leaves aria2's own stopping rule in effect."),
+            Map.entry("tracker_refresh_spin",
+                    "How often ODM reapplies the extra tracker list to active torrents; 0 disables periodic refresh."),
+            Map.entry("tracker_list_entry",
+                    "Comma-, space-, or line-separated tracker announce URLs added to BitTorrent downloads."),
+            Map.entry("continue_download_check",
+                    "Resume partial files instead of restarting them when a download is retried or resumed."),
+            Map.entry("check_integrity_check",
+                    "Ask aria2 to verify available checksums before accepting downloaded data."),
+
+            // yt-dlp
+            Map.entry("ytdlp_path_entry",
+                    "Path to the yt-dlp executable; leave empty to discover it automatically."),
+            Map.entry("browse_ytdlp_button",
+                    "Choose the yt-dlp executable used by ODM."),
+            Map.entry("video_format_entry",
+                    "yt-dlp format selector, for example bestvideo+bestaudio/best; leave empty to use best."),
+            Map.entry("subtitle_language_entry",
+                    "Comma-separated language codes used by yt-dlp and the Download Subtitles completion action."),
+            Map.entry("write_thumbnail_check",
+                    "Embed the media thumbnail in the output file when the selected format supports it."),
+            Map.entry("write_subtitles_check",
+                    "Download subtitle files for the configured subtitle languages."),
+            Map.entry("embed_metadata_check",
+                    "Embed available title, artist, chapter, and other metadata in the media file."),
+            Map.entry("extract_audio_check",
+                    "Keep an audio-only output using yt-dlp post-processing."),
+            Map.entry("use_aria2_external_check",
+                    "Let yt-dlp use aria2 for supported media fragments and direct media URLs."),
+
+            // HTTrack
+            Map.entry("httrack_path_entry",
+                    "Path to the HTTrack executable; leave empty to discover it automatically."),
+            Map.entry("browse_httrack_button",
+                    "Choose the HTTrack executable used by ODM."),
+            Map.entry("depth_spin",
+                    "Maximum number of link levels to crawl; ODM treats 0 as depth 1."),
+            Map.entry("include_entry",
+                    "Whitespace-separated HTTrack wildcard patterns to include; when empty, ODM includes common page assets."),
+            Map.entry("exclude_entry",
+                    "Whitespace-separated HTTrack wildcard patterns to exclude from the website mirror."),
+            Map.entry("include_archives_check",
+                    "Allow ZIP, RAR, TAR, and GZ files in website mirrors."),
+
+            // Advanced
+            Map.entry("enable_scheduling_check",
+                    "Apply the weekly grid globally: inactive hours pause active downloads and prevent queued downloads from starting."),
+            Map.entry("retain_completed_canceled_history_check",
+                    "When enabled, keep completed and canceled records across restarts. When disabled, omit only those records from persisted history. Downloaded files are never deleted; automatic cleanup is controlled separately."),
+            Map.entry("automatic_cleanup_check",
+                    "Periodically remove old records from ODM history according to the limits below. Downloaded files are never removed."),
+            Map.entry("cleanup_interval_spin",
+                    "How often ODM evaluates the enabled history cleanup rules."),
+            Map.entry("max_history_records_spin",
+                    "Maximum total history records kept when automatic cleanup runs; 0 means unlimited. Active downloads are never removed."),
+            Map.entry("max_completed_records_spin",
+                    "Maximum completed records kept when automatic cleanup runs; 0 means unlimited."),
+            Map.entry("completed_retention_spin",
+                    "Remove completed records older than this many days when automatic cleanup runs; 0 disables age-based removal."),
+            Map.entry("error_retention_spin",
+                    "Remove error records older than this many days when automatic cleanup runs; 0 disables age-based removal."),
+            Map.entry("max_import_urls_spin",
+                    "Maximum URLs accepted by one URL-list, generated-sequence, or HTML import."),
+            Map.entry("max_import_source_size_spin",
+                    "Maximum size of a local URL list or local/remote HTML source parsed in memory."),
+            Map.entry("proxychains_path_entry",
+                    "Path to the proxychains executable used for SOCKS and Tor-routed downloads; leave empty to discover it automatically."),
+            Map.entry("browse_proxychains_button",
+                    "Choose the proxychains executable used by ODM."),
+            Map.entry("tor_path_entry",
+                    "Path to the Tor executable managed by ODM; leave empty to discover it automatically."),
+            Map.entry("browse_tor_button",
+                    "Choose the Tor executable managed by ODM."),
+            Map.entry("axel_path_entry",
+                    "Reserved Axel executable path. ODM does not currently route downloads through Axel."),
+            Map.entry("browse_axel_button",
+                    "Choose the reserved Axel executable path; Axel downloads are not currently enabled."),
+            Map.entry("subliminal_path_entry",
+                    "Path to the Subliminal executable used by the Download Subtitles completion action; leave empty to discover it automatically."),
+            Map.entry("browse_subliminal_button",
+                    "Choose the Subliminal executable used by completion actions."),
+            Map.entry("antivirus_type_combo",
+                    "Scanner used by Antivirus Scan completion actions; ODM lists validated installed scanners plus Custom command."));
 
     record AntivirusChoice(String key, String label) {
     }
@@ -127,6 +287,24 @@ public class SettingsDialog {
 
         AccessibilitySupport.label(spin("max_concurrent_downloads_spin"),
                 "Maximum concurrent downloads");
+        AccessibilitySupport.label(check("automatic_cleanup_check"),
+                "Automatically remove old download records");
+        AccessibilitySupport.label(check("retain_completed_canceled_history_check"),
+                "Save download history");
+        AccessibilitySupport.label(spin("cleanup_interval_spin"),
+                "History cleanup interval in hours");
+        AccessibilitySupport.label(spin("max_history_records_spin"),
+                "Maximum download history records, zero for unlimited");
+        AccessibilitySupport.label(spin("max_completed_records_spin"),
+                "Maximum completed history records, zero for unlimited");
+        AccessibilitySupport.label(spin("completed_retention_spin"),
+                "Completed record retention in days, zero to never remove by age");
+        AccessibilitySupport.label(spin("error_retention_spin"),
+                "Error record retention in days, zero to never remove by age");
+        AccessibilitySupport.label(spin("max_import_urls_spin"),
+                "Maximum URLs accepted by one import");
+        AccessibilitySupport.label(spin("max_import_source_size_spin"),
+                "Maximum import source size in MiB");
         AccessibilitySupport.label(entry("proxy_host_entry"), "Global proxy host");
         AccessibilitySupport.label(spin("proxy_port_spin"), "Global proxy port");
         AccessibilitySupport.label(entry("proxy_username_entry"), "Global proxy username");
@@ -168,9 +346,11 @@ public class SettingsDialog {
         onPickFile("browse_subliminal_button", "Select Subliminal binary",
                 e -> setText("subliminal_path_entry", e));
 
+        configureSettingTooltips();
         load();
         discoverAvailableAntiviruses();
         bindFolderMonitoringChildren();
+        bindHistoryCleanupControls();
 
         dialog.onCloseRequest(() -> {
             closed.set(true);
@@ -293,6 +473,54 @@ public class SettingsDialog {
         return availableSpaceLabel.getLabel();
     }
 
+    static java.util.Set<String> documentedSettingIds() {
+        return SETTING_TOOLTIPS.keySet();
+    }
+
+    String settingTooltip(String id) {
+        return Widgets.require(builder, id, Widget.class).getTooltipText();
+    }
+
+    void setHistoryCleanupEnabled(boolean enabled) {
+        check("automatic_cleanup_check").setActive(enabled);
+    }
+
+    boolean retainCompletedAndCanceledHistory() {
+        return check("retain_completed_canceled_history_check").getActive();
+    }
+
+    void setRetainCompletedAndCanceledHistory(boolean retain) {
+        check("retain_completed_canceled_history_check").setActive(retain);
+    }
+
+    boolean historyCleanupControlsSensitive() {
+        return Widgets.require(builder, "history_cleanup_controls_grid",
+                org.gnome.gtk.Grid.class).getSensitive();
+    }
+
+    void setHistoryCleanupValues(int intervalHours, int maximumRecords,
+            int maximumCompletedRecords, int completedRetentionDays,
+            int errorRetentionDays) {
+        spin("cleanup_interval_spin").setValue(intervalHours);
+        spin("max_history_records_spin").setValue(maximumRecords);
+        spin("max_completed_records_spin").setValue(maximumCompletedRecords);
+        spin("completed_retention_spin").setValue(completedRetentionDays);
+        spin("error_retention_spin").setValue(errorRetentionDays);
+    }
+
+    int maximumImportUrls() {
+        return (int) spin("max_import_urls_spin").getValue();
+    }
+
+    int maximumImportSourceSizeMiB() {
+        return (int) spin("max_import_source_size_spin").getValue();
+    }
+
+    void setImportLimits(int maximumUrls, int maximumSourceSizeMiB) {
+        spin("max_import_urls_spin").setValue(maximumUrls);
+        spin("max_import_source_size_spin").setValue(maximumSourceSizeMiB);
+    }
+
     // ---- widget helpers ----
 
     /** Fills the scheduler grid toggles from a persisted hex grid. */
@@ -378,6 +606,22 @@ public class SettingsDialog {
             list.append(item);
         }
         Widgets.require(builder, id, DropDown.class).setModel(list);
+    }
+
+    private void configureSettingTooltips() {
+        SETTING_TOOLTIPS.forEach((id, help) ->
+                Widgets.require(builder, id, Widget.class).setTooltipText(help));
+    }
+
+    private void updateSettingTooltipWithCurrentValue(String id, String currentValue) {
+        String help = SETTING_TOOLTIPS.get(id);
+        if (help == null) {
+            throw new IllegalArgumentException("No settings help registered for " + id);
+        }
+        String tooltip = currentValue == null || currentValue.isBlank()
+                ? help
+                : help + "\nCurrent: " + currentValue;
+        Widgets.require(builder, id, Widget.class).setTooltipText(tooltip);
     }
 
     /**
@@ -516,11 +760,22 @@ public class SettingsDialog {
         updateSensitivity.run();
     }
 
+    private void bindHistoryCleanupControls() {
+        CheckButton enabled = check("automatic_cleanup_check");
+        org.gnome.gtk.Grid controls = Widgets.require(builder,
+                "history_cleanup_controls_grid", org.gnome.gtk.Grid.class);
+        Runnable updateSensitivity = () -> controls.setSensitive(enabled.getActive());
+        enabled.onToggled(updateSensitivity::run);
+        updateSensitivity.run();
+    }
+
     // ---- load / apply ----
 
     private void setDefaultDir(String dir) {
         Path directory = Path.of(dir);
         defaultDirectoryChooser.setPath(directory);
+        updateSettingTooltipWithCurrentValue(
+                "default_download_folder_chooser", directory.toString());
         try {
             long free = directory.toFile().getUsableSpace();
             availableSpaceLabel.setLabel(String.format("%.2f GB free",
@@ -533,8 +788,12 @@ public class SettingsDialog {
     private void setMonitoredDir(String dir) {
         if (dir == null || dir.isBlank()) {
             monitoredDirectoryChooser.clear();
+            updateSettingTooltipWithCurrentValue("monitored_folder_chooser", null);
         } else {
-            monitoredDirectoryChooser.setPath(Path.of(dir));
+            Path directory = Path.of(dir);
+            monitoredDirectoryChooser.setPath(directory);
+            updateSettingTooltipWithCurrentValue(
+                    "monitored_folder_chooser", directory.toString());
         }
     }
 
@@ -544,7 +803,8 @@ public class SettingsDialog {
         Path dir = s.getDefaultDownloadDirectory();
         setDefaultDir(dir != null ? dir.toString() : System.getProperty("user.home") + "/Downloads");
         spin("max_concurrent_downloads_spin").setValue(s.getMaxConcurrentDownloads());
-        check("save_download_history_check").setActive(s.isSaveDownloadHistory());
+        check("retain_completed_canceled_history_check").setActive(
+                s.isRetainCompletedAndCanceledHistory());
         check("clipboard_monitor_check").setActive(downloadManager.isClipboardMonitoringEnabled());
         check("folder_monitoring_check").setActive(downloadManager.isTorrentFolderMonitoringEnabled()
                 || downloadManager.isMetaLinkFolderMonitoringEnabled());
@@ -609,6 +869,15 @@ public class SettingsDialog {
         entry("exclude_entry").setText(s.getProperty("httrack.exclude", ""));
         check("include_archives_check").setActive(s.getBooleanProperty("httrack.includeArchives", false));
         // Advanced
+        check("automatic_cleanup_check").setActive(s.isAutomaticCleanupEnabled());
+        spin("cleanup_interval_spin").setValue(s.getCleanupIntervalHours());
+        spin("max_history_records_spin").setValue(s.getMaxDownloadsInMemory());
+        spin("max_completed_records_spin").setValue(s.getMaxCompletedDownloadsToKeep());
+        spin("completed_retention_spin").setValue(s.getCompletedDownloadRetentionDays());
+        spin("error_retention_spin").setValue(s.getErrorDownloadRetentionDays());
+        ImportLimits importLimits = ImportLimits.from(s);
+        spin("max_import_urls_spin").setValue(importLimits.maxUrls());
+        spin("max_import_source_size_spin").setValue(importLimits.maxSourceSizeMiB());
         boolean schedulingEnabled = s.getBooleanProperty("scheduler.enabled", false);
         check("enable_scheduling_check").setActive(schedulingEnabled);
         Widgets.require(builder, "scheduler_grid_box", org.gnome.gtk.Box.class)
@@ -697,7 +966,8 @@ public class SettingsDialog {
         }
         s.setDefaultDownloadDirectory(defaultDirectory);
         s.setMaxConcurrentDownloads((int) spin("max_concurrent_downloads_spin").getValue());
-        s.setSaveDownloadHistory(check("save_download_history_check").getActive());
+        s.setRetainCompletedAndCanceledHistory(
+                check("retain_completed_canceled_history_check").getActive());
         s.setProperty("ui.systemTray", String.valueOf(check("system_tray_check").getActive()));
         s.setProperty("ui.startAutomatically", String.valueOf(check("start_automatically_check").getActive()));
         s.setProperty("ui.moveTorrent", String.valueOf(check("move_torrent_check").getActive()));
@@ -775,6 +1045,14 @@ public class SettingsDialog {
         s.setProperty("httrack.exclude", entry("exclude_entry").getText().trim());
         s.setProperty("httrack.includeArchives", String.valueOf(check("include_archives_check").getActive()));
         // Advanced
+        s.setAutomaticCleanupEnabled(check("automatic_cleanup_check").getActive());
+        s.setCleanupIntervalHours((long) spin("cleanup_interval_spin").getValue());
+        s.setMaxDownloadsInMemory((int) spin("max_history_records_spin").getValue());
+        s.setMaxCompletedDownloadsToKeep((int) spin("max_completed_records_spin").getValue());
+        s.setCompletedDownloadRetentionDays((long) spin("completed_retention_spin").getValue());
+        s.setErrorDownloadRetentionDays((long) spin("error_retention_spin").getValue());
+        new ImportLimits((int) spin("max_import_urls_spin").getValue(),
+                (int) spin("max_import_source_size_spin").getValue()).applyTo(s);
         boolean schedulingEnabled = check("enable_scheduling_check").getActive();
         boolean[][] hourGrid = readSchedulerGrid();
         s.setProperty("scheduler.enabled", String.valueOf(schedulingEnabled));

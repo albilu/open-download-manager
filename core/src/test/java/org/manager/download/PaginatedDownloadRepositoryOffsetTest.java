@@ -1,8 +1,12 @@
 package org.manager.download;
 
 import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.manager.GlobalSettings;
@@ -46,5 +50,34 @@ class PaginatedDownloadRepositoryOffsetTest {
         assertEquals(15, a.size());
         assertEquals(10, b.size());
         assertEquals(25, a.size() + b.size(), "two adjacent windows cover all items exactly once");
+    }
+
+    @Test
+    @DisplayName("Ten thousand records remain complete and responsive in 500-row pages")
+    void tenThousandRecordsPageWithoutLoss() {
+        assertTimeout(Duration.ofSeconds(20), () -> {
+            GlobalSettings settings = new GlobalSettings()
+                    .setMaxDownloadsInMemory(10_000);
+            PaginatedDownloadRepository repository =
+                    new PaginatedDownloadRepository(settings);
+
+            for (int i = 0; i < 10_000; i++) {
+                Download download = new Download("scale-" + i,
+                        Instant.EPOCH.plusMillis(i));
+                download.setName("scale-" + i);
+                repository.addDownload(download);
+            }
+
+            HashSet<String> ids = new HashSet<>();
+            for (int offset = 0; offset < 10_000; offset += 500) {
+                PaginatedDownloadRepository.DownloadPage page =
+                        repository.getAllDownloadsByOffset(offset, 500);
+                assertEquals(10_000, page.getTotalCount());
+                assertEquals(500, page.getDownloads().size());
+                page.getDownloads().forEach(download -> ids.add(download.getId()));
+            }
+            assertEquals(10_000, ids.size(),
+                    "adjacent UI-sized pages must expose every record exactly once");
+        });
     }
 }

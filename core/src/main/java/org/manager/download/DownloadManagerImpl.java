@@ -966,6 +966,27 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     @Override
+    public CompletableFuture<Void> verifyData(Download download) {
+        return CompletableFuture.runAsync(() -> {
+            if (download == null) {
+                throw new CompletionException(
+                        new IllegalArgumentException("Download cannot be null"));
+            }
+            DownloadHandler handler = handlerFor(download);
+            if (handler == null) {
+                throw new CompletionException(new IllegalStateException(
+                        "No handler found for download type: " + download.getType()));
+            }
+            try {
+                handler.verifyData(download).join();
+            } catch (Exception e) {
+                throw new CompletionException("Failed to verify data for: "
+                        + download.getName(), e);
+            }
+        }, executorManager.getGeneralExecutor());
+    }
+
+    @Override
     public CompletableFuture<Void> relocateDownload(Download download, Path destination) {
         if (download == null || destination == null) {
             return CompletableFuture.failedFuture(
@@ -1508,6 +1529,7 @@ public class DownloadManagerImpl implements DownloadManager {
             servicesScheduler.startTrackerRefreshJob();
             servicesScheduler.runTrackerRefresh();
             servicesScheduler.startStateSnapshotJob();
+            cleanupManager.updateAutomaticCleanupConfig();
         }
     }
 
@@ -1700,7 +1722,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
     private void persistState(List<Download> allDownloads, Set<String> activeDownloads) {
         List<Download> persistedDownloads = allDownloads;
-        if (!getGlobalSettings().isSaveDownloadHistory()) {
+        if (!getGlobalSettings().isRetainCompletedAndCanceledHistory()) {
             persistedDownloads = allDownloads.stream()
                     .filter(download -> download.getStatus() != Download.Status.COMPLETED
                             && download.getStatus() != Download.Status.CANCELED)
@@ -1733,7 +1755,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 if (!savedDownloads.isEmpty()) {
                     // Add loaded downloads to our map
                     for (Download download : savedDownloads) {
-                        if (!getGlobalSettings().isSaveDownloadHistory()
+                        if (!getGlobalSettings().isRetainCompletedAndCanceledHistory()
                                 && (download.getStatus() == Download.Status.COMPLETED
                                         || download.getStatus() == Download.Status.CANCELED)) {
                             continue;

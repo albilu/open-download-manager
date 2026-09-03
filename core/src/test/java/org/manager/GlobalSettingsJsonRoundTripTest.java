@@ -93,13 +93,14 @@ class GlobalSettingsJsonRoundTripTest {
         assertEquals("/tmp/proxy-list.txt", settings.getProxyListFilePath());
         // downloads / history
         assertEquals(Path.of("/home/dev/Downloads"), settings.getDefaultDownloadDirectory());
-        assertFalse(settings.isSaveDownloadHistory());
+        assertFalse(settings.isRetainCompletedAndCanceledHistory());
         // cleanup policy
         assertEquals(5000, settings.getMaxDownloadsInMemory());
         assertEquals(250, settings.getMaxCompletedDownloadsToKeep());
         assertFalse(settings.isAutomaticCleanupEnabled());
-        assertFalse(settings.isEnableLazyLoading());
-        assertEquals(100, settings.getPaginationDefaultSize());
+        assertEquals(48, settings.getCleanupIntervalHours());
+        assertEquals(120, settings.getCompletedDownloadRetentionDays());
+        assertEquals(14, settings.getErrorDownloadRetentionDays());
         // custom bag keys survive verbatim
         assertEquals("true", settings.getProperty("ui.systemTray", null));
         assertEquals("7", settings.getProperty("aria2.maxConnectionsPerServer", null));
@@ -140,6 +141,32 @@ class GlobalSettingsJsonRoundTripTest {
                 "null proxy address must not resurrect the stale key");
         assertFalse(saved.containsKey("proxyListFilePath"),
                 "null proxy list path must not resurrect the stale key");
+    }
+
+    @Test
+    @DisplayName("legacy history names migrate without treating a hidden cleanup default as consent")
+    void legacyHistoryKeysMigrateSafely() throws Exception {
+        Path file = tempDir.resolve("legacy-settings.json");
+        Files.writeString(file, """
+                {"saveDownloadHistory":"false","automaticCleanupEnabled":"true"}
+                """);
+
+        GlobalSettings settings = new GlobalSettings();
+        settings.load(file);
+
+        assertFalse(settings.isRetainCompletedAndCanceledHistory(),
+                "the explicit legacy retention choice must survive");
+        assertFalse(settings.isAutomaticCleanupEnabled(),
+                "the former hidden true default is not user cleanup consent");
+
+        settings.save(file);
+        Map<String, String> saved = readJson(file);
+        assertEquals("false", saved.get("history.retainCompletedAndCanceled"));
+        assertEquals("false", saved.get("historyCleanup.enabled"));
+        assertFalse(saved.containsKey("saveDownloadHistory"));
+        assertFalse(saved.containsKey("automaticCleanupEnabled"));
+        assertFalse(saved.containsKey("paginationDefaultSize"));
+        assertFalse(saved.containsKey("enableLazyLoading"));
     }
 
     @Test

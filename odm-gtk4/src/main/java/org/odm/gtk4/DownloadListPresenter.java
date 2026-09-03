@@ -75,7 +75,7 @@ final class DownloadListPresenter {
      */
     record RefreshSummary(int totalCount, long downBytesPerSec, long upBytesPerSec,
             int totalSeeders, boolean anyActive, long totalBytes, long doneBytes,
-            boolean structureChanged) {
+            boolean modelRebuilt) {
     }
 
     private final ListStore statusStore;
@@ -326,22 +326,26 @@ final class DownloadListPresenter {
                     categoryFilter);
         }
 
-        // In-place row updates when the visible id sequence is unchanged;
-        // full rebuild only when the structure changed
-        boolean structureChanged = !rowStructureMatches(rowSnapshot, display);
-        if (!structureChanged) {
-            for (int row = 0; row < display.size(); row++) {
+        // Preserve selection while pagination extends the existing id prefix:
+        // update old rows in place and append only the newly fetched suffix.
+        // Rebuild only for a true reorder/removal/filter structure change.
+        boolean sameStructure = rowStructureMatches(rowSnapshot, display);
+        boolean appendOnly = !sameStructure && rowStructureIsPrefix(rowSnapshot, display);
+        boolean canUpdateInPlace = sameStructure || appendOnly;
+        int existingRows = appendOnly ? rowSnapshot.size() : display.size();
+        if (canUpdateInPlace) {
+            for (int row = 0; row < existingRows; row++) {
                 Download download = display.get(row);
                 TreeRowReference reference = rowReferences.get(download.getId());
                 TreePath path = reference == null ? null : reference.getPath();
                 if (path == null) {
-                    structureChanged = true;
+                    canUpdateInPlace = false;
                     break;
                 }
                 try {
                     TreeIter iter = new TreeIter();
                     if (!downloadsStore.getIter(iter, path)) {
-                        structureChanged = true;
+                        canUpdateInPlace = false;
                         break;
                     }
                     updateRowCells(downloadsStore, iter, row, download);
@@ -350,7 +354,16 @@ final class DownloadListPresenter {
                 }
             }
         }
-        if (structureChanged) {
+        boolean modelRebuilt = false;
+        if (canUpdateInPlace && appendOnly) {
+            TreeIter iter = new TreeIter();
+            for (int row = existingRows; row < display.size(); row++) {
+                downloadsStore.append(iter);
+                updateRowCells(downloadsStore, iter, row, display.get(row));
+            }
+            freeRowReferences();
+            rebuildRowReferences();
+        } else if (!canUpdateInPlace) {
             freeRowReferences();
             downloadsStore.clear();
             TreeIter iter = new TreeIter();
@@ -360,6 +373,7 @@ final class DownloadListPresenter {
                 updateRowCells(downloadsStore, iter, row, download);
             }
             rebuildRowReferences();
+            modelRebuilt = true;
         }
         rowSnapshot = new ArrayList<>(display);
 
@@ -373,7 +387,7 @@ final class DownloadListPresenter {
                 ProgressPresentation.percentage(globalProgress));
 
         return new RefreshSummary(totalCount, (long) totalDownSpeed, (long) totalUpSpeed,
-                totalSeeders, anyActive, totalBytes, doneBytes, structureChanged);
+                totalSeeders, anyActive, totalBytes, doneBytes, modelRebuilt);
     }
 
     /**
@@ -408,6 +422,21 @@ final class DownloadListPresenter {
             String a = snapshot.get(i) == null ? null : snapshot.get(i).getId();
             String b = display.get(i) == null ? null : display.get(i).getId();
             if (!Objects.equals(a, b)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** True when pagination only adds rows after the existing logical order. */
+    static boolean rowStructureIsPrefix(List<Download> snapshot, List<Download> display) {
+        if (snapshot == null || display == null || snapshot.size() >= display.size()) {
+            return false;
+        }
+        for (int i = 0; i < snapshot.size(); i++) {
+            String existing = snapshot.get(i) == null ? null : snapshot.get(i).getId();
+            String candidate = display.get(i) == null ? null : display.get(i).getId();
+            if (!Objects.equals(existing, candidate)) {
                 return false;
             }
         }

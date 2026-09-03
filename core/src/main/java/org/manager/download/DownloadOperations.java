@@ -135,6 +135,16 @@ public interface DownloadOperations {
     CompletableFuture<Void> changeSettings(Download download);
 
     /**
+     * Requests an immediate integrity verification from the download's live
+     * engine task. This is a one-shot operation and must fail when the engine
+     * no longer owns a task rather than silently changing future defaults.
+     *
+     * @param download The live download to verify
+     * @return A future that completes after the engine accepts the request
+     */
+    CompletableFuture<Void> verifyData(Download download);
+
+    /**
      * Moves a download's payload to another directory. Active transfers are
      * paused while their payload and resume metadata are moved, reconfigured
      * at the engine, and then resumed. A download that was already paused

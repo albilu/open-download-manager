@@ -82,6 +82,21 @@ class HtmlImportExportTest {
     }
 
     @Test
+    void configuredLinkLimitCapsHtmlExtraction() {
+        String html = """
+                <a href='https://example.com/1'>1</a>
+                <a href='https://example.com/2'>2</a>
+                <a href='https://example.com/3'>3</a>
+                """;
+
+        assertEquals(List.of(
+                URI.create("https://example.com/1"),
+                URI.create("https://example.com/2")),
+                HtmlImportExport.extractHttpLinks(
+                        html, null, new ImportLimits(2, 1)));
+    }
+
+    @Test
     void remoteImportFollowsRedirectAndUsesTheFinalDocumentAsRelativeBase() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/start", exchange -> {

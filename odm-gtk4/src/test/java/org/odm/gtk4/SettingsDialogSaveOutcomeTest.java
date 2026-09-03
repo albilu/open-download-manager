@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.github.stefanbirkner.systemlambda.SystemLambda;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import org.gnome.glib.MainLoop;
 import org.gnome.gtk.Gtk;
@@ -27,6 +28,39 @@ import org.manager.download.DownloadManager;
  */
 @DisplayName("SettingsDialog save outcome reporting")
 class SettingsDialogSaveOutcomeTest {
+
+    private static final Set<String> EXPECTED_DOCUMENTED_SETTINGS = Set.of(
+            // General
+            "default_download_folder_chooser", "max_concurrent_downloads_spin",
+            "monitored_folder_chooser", "folder_monitoring_check",
+            "folder_recursive_check", "move_to_trash_check", "clipboard_monitor_check",
+            "clipboard_silent_check", "system_tray_check", "startup_check",
+            "start_automatically_check", "move_torrent_check", "enable_auto_save_check",
+            // Network
+            "max_connections_spin", "retry_limit_spin", "retry_after",
+            "max_download_speed_spin", "max_upload_speed_spin", "referer_entry",
+            "cookie_entry", "user_agent_entry", "proxy_type_combo", "proxy_host_entry",
+            "proxy_port_spin", "proxy_username_entry", "proxy_password_entry", "tor_switch",
+            // aria2
+            "aria2_path_entry", "browse_aria2_button", "min_split_size_spin1",
+            "file_allocation_combo", "max_peers_spin", "peer_speed_limit_spin",
+            "enable_seeding_check", "seed_time_spin", "tracker_refresh_spin",
+            "tracker_list_entry", "continue_download_check", "check_integrity_check",
+            // yt-dlp
+            "ytdlp_path_entry", "browse_ytdlp_button", "video_format_entry",
+            "subtitle_language_entry", "write_thumbnail_check", "write_subtitles_check",
+            "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
+            // HTTrack
+            "httrack_path_entry", "browse_httrack_button", "depth_spin", "include_entry",
+            "exclude_entry", "include_archives_check",
+            // Advanced
+            "enable_scheduling_check", "retain_completed_canceled_history_check",
+            "automatic_cleanup_check", "cleanup_interval_spin", "max_history_records_spin",
+            "max_completed_records_spin", "completed_retention_spin", "error_retention_spin",
+            "max_import_urls_spin", "max_import_source_size_spin", "proxychains_path_entry",
+            "browse_proxychains_button", "tor_path_entry", "browse_tor_button",
+            "axel_path_entry", "browse_axel_button", "subliminal_path_entry",
+            "browse_subliminal_button", "antivirus_type_combo");
 
     private static MainLoop loop;
     private static java.util.concurrent.ExecutorService loopThread;
@@ -89,6 +123,24 @@ class SettingsDialogSaveOutcomeTest {
 
     private SettingsDialog buildDialog() {
         return new SettingsDialog(null, newStubManager(), null);
+    }
+
+    @Test
+    @DisplayName("every interactive setting has explanatory help")
+    void everySettingHasExplanatoryHelp() {
+        assertEquals(EXPECTED_DOCUMENTED_SETTINGS, SettingsDialog.documentedSettingIds(),
+                "add meaningful help whenever a setting is added or removed");
+
+        SettingsDialog dialog = buildDialog();
+        for (String id : EXPECTED_DOCUMENTED_SETTINGS) {
+            String tooltip = dialog.settingTooltip(id);
+            assertNotNull(tooltip, id + " must have a tooltip");
+            assertFalse(tooltip.isBlank(), id + " must have a non-blank tooltip");
+            assertTrue(tooltip.length() >= 20, id + " must explain the setting");
+        }
+        assertTrue(dialog.settingTooltip("default_download_folder_chooser")
+                .contains("Current:"),
+                "folder help must retain the currently selected path");
     }
 
     @Test
@@ -163,6 +215,62 @@ class SettingsDialogSaveOutcomeTest {
             assertTrue(settings.get().getBooleanProperty("scheduler.enabled", false));
             assertEquals("0".repeat(42),
                     settings.get().getProperty("scheduler.grid", ""));
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("history cleanup is opt-in and all destructive rules persist from Advanced settings")
+    void historyCleanupRequiresExplicitOptIn() throws Exception {
+        Path configHome = tempDir.resolve("cleanup-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(new GlobalSettings());
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null);
+
+            assertTrue(dialog.retainCompletedAndCanceledHistory());
+            assertFalse(settings.get().isAutomaticCleanupEnabled());
+            assertFalse(dialog.historyCleanupControlsSensitive());
+
+            dialog.setRetainCompletedAndCanceledHistory(false);
+            dialog.setHistoryCleanupEnabled(true);
+            assertTrue(dialog.historyCleanupControlsSensitive());
+            dialog.setHistoryCleanupValues(12, 10_000, 7_500, 0, 45);
+            dialog.applySettings();
+
+            GlobalSettings saved = settings.get();
+            assertFalse(saved.isRetainCompletedAndCanceledHistory());
+            assertTrue(saved.isAutomaticCleanupEnabled());
+            assertEquals(12, saved.getCleanupIntervalHours());
+            assertEquals(10_000, saved.getMaxDownloadsInMemory());
+            assertEquals(7_500, saved.getMaxCompletedDownloadsToKeep());
+            assertEquals(0, saved.getCompletedDownloadRetentionDays());
+            assertEquals(45, saved.getErrorDownloadRetentionDays());
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("Advanced import guards use defaults and persist user-selected limits")
+    void importGuardsAreUserControlled() throws Exception {
+        Path configHome = tempDir.resolve("import-limits-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(new GlobalSettings());
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null);
+
+            assertEquals(ImportLimits.DEFAULT_MAX_URLS, dialog.maximumImportUrls());
+            assertEquals(ImportLimits.DEFAULT_MAX_SOURCE_SIZE_MIB,
+                    dialog.maximumImportSourceSizeMiB());
+
+            dialog.setImportLimits(7_500, 32);
+            dialog.applySettings();
+
+            ImportLimits saved = ImportLimits.from(settings.get());
+            assertEquals(7_500, saved.maxUrls());
+            assertEquals(32, saved.maxSourceSizeMiB());
         });
     }
 
