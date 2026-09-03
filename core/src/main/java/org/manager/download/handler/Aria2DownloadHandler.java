@@ -55,10 +55,10 @@ import org.aria2.Aria2ToolManager;
  * <li><strong>Polling Interval:</strong> Every 1000ms (1 second)</li>
  * <li><strong>RPC Method:</strong> Uses {@code aria2.tellStatus(gid, keys)} to
  * query specific status fields</li>
- * <li><strong>Status Fields:</strong> Extracts completedLength, totalLength,
- * downloadSpeed, and status</li>
- * <li><strong>Network Optimization:</strong> Requests only 4 essential fields
- * instead of all ~20 available fields</li>
+ * <li><strong>Status Fields:</strong> Extracts progress, transfer, output,
+ * relationship, and integrity-check activity fields</li>
+ * <li><strong>Network Optimization:</strong> Requests only the compact field
+ * set used by ODM instead of every available field</li>
  * <li><strong>Threading:</strong> Uses ScheduledExecutorService for concurrent
  * polling of multiple downloads</li>
  * <li><strong>Lifecycle:</strong> Polling starts when download begins and stops
@@ -74,6 +74,13 @@ import org.aria2.Aria2ToolManager;
 public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
     private static final long PROGRESS_POLL_INTERVAL_MS = 1000;
+    /**
+     * Allows several regular progress polls to observe a short integrity
+     * check. If aria2 finishes between polls, the operation is treated as
+     * accepted after this grace period rather than leaving UI activity stuck.
+     */
+    private static final long RECHECK_OBSERVATION_GRACE_MS =
+            PROGRESS_POLL_INTERVAL_MS * 3;
 
     /**
      * Required keys for aria2.tellStatus to minimize data transfer. Only
@@ -81,10 +88,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      *
      * <p>
      * <strong>Performance Benefit:</strong> aria2.tellStatus normally returns
-     * ~20 fields including: bitfield, pieceLength, numPieces, connections,
-     * errorCode, errorMessage, followedBy, following, belongsTo, dir, files,
-     * bittorrent, verifiedLength, verifyIntegrityPending, etc. By requesting
-     * only 4 fields, we reduce network overhead by ~80%.
+     * all available fields. Requesting this compact set avoids unrelated
+     * payload while retaining progress, file discovery, and integrity-check
+     * activity.
      * </p>
      */
     private static final String[] REQUIRED_STATUS_KEYS = {
@@ -100,7 +106,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         "files", // Authoritative output artifact paths
         "followedBy", // GIDs spawned by this one (BT metadata -> payload)
         "following", // GID this one was spawned by
-        "belongsTo" // Parent GID (e.g. metadata download of a payload)
+        "belongsTo", // Parent GID (e.g. metadata download of a payload)
+        "verifiedLength", // Bytes examined while aria2 is checking hashes
+        "verifyIntegrityPending" // True while a requested hash check is queued
     };
 
     private final Aria2Client aria2Client;
@@ -123,6 +131,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     private final Map<String, java.util.Set<String>> downloadSeenGids;
     /** Last-known per-GID progress {completed, total}, for aggregation. */
     private final Map<String, Map<String, long[]>> downloadProgress;
+    /** Approximate integrity-check activity for the current request per download. */
+    private final Map<String, RecheckObservation> recheckObservations;
     private final ScheduledExecutorService progressPoller;
     private final AtomicBoolean isShuttingDown;
     private final ObjectMapper objectMapper;
@@ -159,6 +169,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         this.downloadGids = new ConcurrentHashMap<>();
         this.downloadSeenGids = new ConcurrentHashMap<>();
         this.downloadProgress = new ConcurrentHashMap<>();
+        this.recheckObservations = new ConcurrentHashMap<>();
         this.progressPoller = Objects.requireNonNull(progressPoller, "progressPoller");
         this.pollTasks = ConcurrentHashMap.newKeySet();
         this.isShuttingDown = new AtomicBoolean(false);
@@ -1091,6 +1102,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
         }
         pollTasks.clear();
+        new ArrayList<>(recheckObservations.values())
+                .forEach(RecheckObservation::finish);
 
         // Clear all download references
         activeDownloads.clear();
@@ -1216,9 +1229,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             Download download = getDownloadById(downloadId);
             if (download == null) {
                 LOGGER.warn("Download not found for ID: " + downloadId);
+                finishRecheckObservation(downloadId);
                 stopProgressPolling(gid);
                 return;
             }
+
+            observeRecheckActivity(downloadId, gid, status);
 
             // Related GIDs (followedBy/following/belongTo) may surface at any
             // time: a finished magnet metadata download spawns its payload
@@ -1513,6 +1529,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * the whole download (error, removed, cancel).
      */
     private void untrackEntireDownload(String downloadId) {
+        finishRecheckObservation(downloadId);
         java.util.Set<String> tracked = downloadGids.remove(downloadId);
         if (tracked != null) {
             for (String gid : tracked) {
@@ -2170,7 +2187,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      */
     @Override
     public CompletableFuture<Void> recheckData(Download download) {
-        return CompletableFuture.runAsync(() -> {
+        return CompletableFuture.supplyAsync(() -> {
+            RecheckObservation observation = null;
             try {
                 ensureInitialized();
                 if (!canRecheckData(download)) {
@@ -2182,6 +2200,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     throw new IllegalStateException(
                             "The aria2 task is no longer active; no data was rechecked");
                 }
+                observation = beginRecheckObservation(download.getId(), gids);
                 Map<String, Object> options = new HashMap<>();
                 options.put("check-integrity", "true");
                 if (download.getProtocol() == Download.Protocol.HTTP
@@ -2199,12 +2218,134 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                         gid -> aria2Client.changeOption(gid, recheckOptions));
                 LOGGER.info("Requested data recheck for " + download.getName()
                         + " on GIDs " + gids);
+                RecheckObservation activeObservation = observation;
+                try {
+                    activeObservation.armGrace(progressPoller.schedule(
+                            activeObservation::finishUnobserved,
+                            RECHECK_OBSERVATION_GRACE_MS,
+                            TimeUnit.MILLISECONDS));
+                } catch (RuntimeException monitoringFailure) {
+                    LOGGER.warn("Could not monitor aria2 integrity-check activity for "
+                            + download.getName(), monitoringFailure);
+                    activeObservation.finish();
+                }
+                return activeObservation.completion();
             } catch (Exception e) {
+                if (observation != null) {
+                    observation.finish();
+                }
                 LOGGER.error("Failed to request data recheck for: "
                         + (download == null ? "<null>" : download.getName()), e);
                 throw new RuntimeException("Failed to request data recheck", e);
             }
-        }, executor);
+        }, executor).thenCompose(completion -> completion);
+    }
+
+    private RecheckObservation beginRecheckObservation(String downloadId,
+            List<String> gids) {
+        RecheckObservation observation = new RecheckObservation(gids);
+        RecheckObservation existing = recheckObservations.putIfAbsent(
+                downloadId, observation);
+        if (existing != null) {
+            throw new IllegalStateException(
+                    "A data recheck is already running for this download");
+        }
+        observation.completion().whenComplete((ignored, failure) -> {
+            recheckObservations.remove(downloadId, observation);
+            observation.cancelGrace();
+        });
+        return observation;
+    }
+
+    private void observeRecheckActivity(String downloadId, String gid,
+            Map<String, Object> status) {
+        RecheckObservation observation = recheckObservations.get(downloadId);
+        if (observation != null) {
+            observation.observe(gid, status);
+        }
+    }
+
+    private void finishRecheckObservation(String downloadId) {
+        RecheckObservation observation = recheckObservations.get(downloadId);
+        if (observation != null) {
+            observation.finish();
+        }
+    }
+
+    /**
+     * Tracks the integrity fields already returned by the regular progress
+     * poll. This intentionally provides activity feedback, not a clean/corrupt
+     * verdict: aria2 does not expose that verdict through these status fields.
+     */
+    private static final class RecheckObservation {
+
+        private final java.util.Set<String> pendingGids;
+        private final java.util.Set<String> observedGids = new java.util.HashSet<>();
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
+        private ScheduledFuture<?> graceTask;
+
+        RecheckObservation(List<String> gids) {
+            this.pendingGids = new java.util.HashSet<>(gids);
+        }
+
+        synchronized CompletableFuture<Void> completion() {
+            return completion;
+        }
+
+        synchronized void observe(String gid, Map<String, Object> status) {
+            if (!pendingGids.contains(gid)) {
+                return;
+            }
+            String aria2Status = String.valueOf(status.get("status"));
+            if ("complete".equals(aria2Status)
+                    || "error".equals(aria2Status)
+                    || "removed".equals(aria2Status)) {
+                pendingGids.remove(gid);
+            } else if (isIntegrityActivity(status)) {
+                observedGids.add(gid);
+            } else if (observedGids.contains(gid)) {
+                pendingGids.remove(gid);
+            }
+            completeIfFinished();
+        }
+
+        private static boolean isIntegrityActivity(Map<String, Object> status) {
+            return status.containsKey("verifiedLength")
+                    || Boolean.parseBoolean(String.valueOf(
+                            status.get("verifyIntegrityPending")));
+        }
+
+        /** Completes GIDs whose entire short check fell between poll ticks. */
+        synchronized void finishUnobserved() {
+            pendingGids.removeIf(gid -> !observedGids.contains(gid));
+            completeIfFinished();
+        }
+
+        synchronized void finish() {
+            pendingGids.clear();
+            completeIfFinished();
+        }
+
+        synchronized void armGrace(ScheduledFuture<?> task) {
+            if (completion.isDone()) {
+                task.cancel(false);
+            } else {
+                graceTask = task;
+            }
+        }
+
+        synchronized void cancelGrace() {
+            if (graceTask != null) {
+                graceTask.cancel(false);
+                graceTask = null;
+            }
+        }
+
+        private void completeIfFinished() {
+            if (pendingGids.isEmpty()) {
+                completion.complete(null);
+            }
+        }
     }
 
     /**

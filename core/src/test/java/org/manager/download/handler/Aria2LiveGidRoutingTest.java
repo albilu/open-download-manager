@@ -3,6 +3,7 @@ package org.manager.download.handler;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,6 +20,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -281,8 +283,8 @@ class Aria2LiveGidRoutingTest {
     }
 
     @Test
-    @DisplayName("Recheck Data reaches every owned live GID without changing persistent options")
-    void recheckDataIsAOneShotLiveRequest() {
+    @DisplayName("Recheck Data reaches every live GID and tracks the observed integrity phase")
+    void recheckDataTracksObservedIntegrityPhase() throws Exception {
         Download download = new Download(URI.create(
                 "magnet:?xt=urn:btih:dddddddddddddddddddddddddddddddddddddddd"));
         download.initSettings(new DownloadSettingsFactory(globalSettings));
@@ -290,13 +292,32 @@ class Aria2LiveGidRoutingTest {
         download.setStatus(Download.Status.DOWNLOADING);
         client.clearRecordings();
 
-        handler.recheckData(download).join();
+        CompletableFuture<Void> recheck = handler.recheckData(download);
+        await().atMost(Duration.ofSeconds(2))
+                .until(() -> client.optionGids.size() == 2);
 
         assertEquals(Set.of("verify-a", "verify-b"), Set.copyOf(client.optionGids));
         assertEquals(List.of(Map.of("check-integrity", "true"),
                 Map.of("check-integrity", "true")), client.optionValues);
         assertFalse(((Aria2Settings) download.getSettings()).isCheckIntegrity(),
                 "the context action must not permanently enable startup verification");
+
+        Map<String, Object> pending = status("active", 100, 100);
+        pending.put("verifyIntegrityPending", "true");
+        handler.processProgressUpdate(download.getId(), "verify-a", pending);
+        Map<String, Object> checking = status("active", 100, 100);
+        checking.put("verifiedLength", "50");
+        handler.processProgressUpdate(download.getId(), "verify-b", checking);
+        assertFalse(recheck.isDone(),
+                "the operation and activity spinner must remain active while checking");
+
+        handler.processProgressUpdate(download.getId(), "verify-a",
+                status("active", 100, 100));
+        assertFalse(recheck.isDone(), "every owned GID must leave the integrity phase");
+        handler.processProgressUpdate(download.getId(), "verify-b",
+                status("active", 100, 100));
+
+        recheck.get(2, TimeUnit.SECONDS);
     }
 
     @Test

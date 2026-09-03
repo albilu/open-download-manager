@@ -949,16 +949,6 @@ public class MainWindow {
             refreshDetailHistoryPresentation(target);
             updates.add(update.whenComplete((ignored, error) -> UiThread.marshal(() -> {
                 refreshDetailHistoryPresentation(target);
-                if (error == null) {
-                    AccessibilitySupport.status(infoLabel,
-                            "Recheck Data requested for " + target.getName()
-                                    + "; aria2 will verify and repair damaged data");
-                } else {
-                    AccessibilitySupport.status(infoLabel,
-                            "Recheck Data failed for " + target.getName() + ": "
-                                    + failureMessage(error),
-                            org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                }
             })));
         }
         trackActivity(allOf(updates));
