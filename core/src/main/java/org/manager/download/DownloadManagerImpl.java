@@ -922,6 +922,9 @@ public class DownloadManagerImpl implements DownloadManager {
             // Recovered process-backed handlers have no in-memory task. A
             // normal start rebuilds yt-dlp/HTTrack tasks and aria2 GID maps,
             // while retaining the already-claimed admission slot.
+            if (download.getSettings() instanceof org.httrack.HttrackSettings httrack) {
+                httrack.setRunMode(org.httrack.HttrackSettings.RunMode.CONTINUE);
+            }
             download.setGid(null);
             startDownloadInternal(download, true);
             return;
@@ -1001,6 +1004,21 @@ public class DownloadManagerImpl implements DownloadManager {
                         deepestFailureMessage(failure));
             }
         });
+    }
+
+    @Override
+    public CompletableFuture<Void> updateWebsiteMirror(
+            Download download, boolean purgeOldFiles) {
+        if (download == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("Download cannot be null"));
+        }
+        try {
+            HttrackMirrorSupport.prepareUpdate(download, purgeOldFiles);
+        } catch (IllegalStateException invalidMirror) {
+            return CompletableFuture.failedFuture(invalidMirror);
+        }
+        return startDownload(download);
     }
 
     private static String deepestFailureMessage(Throwable failure) {

@@ -41,8 +41,26 @@
   <object class="GtkAdjustment" id="aria2_rpc_port_adjustment">
     <property name="lower">1</property><property name="upper">65535</property><property name="value">6801</property><property name="step-increment">1</property>
   </object>
-  <object class="GtkAdjustment" id="depth_adjustment">
-    <property name="lower">1</property><property name="upper">20</property><property name="value">3</property><property name="step-increment">1</property>
+  <object class="GtkAdjustment" id="httrack_max_total_size_adjustment">
+    <property name="lower">0</property><property name="upper">1048576</property><property name="value">1024</property><property name="step-increment">100</property><property name="page-increment">1024</property>
+  </object>
+  <object class="GtkAdjustment" id="httrack_max_non_html_size_adjustment">
+    <property name="lower">0</property><property name="upper">1048576</property><property name="value">100</property><property name="step-increment">10</property><property name="page-increment">100</property>
+  </object>
+  <object class="GtkAdjustment" id="httrack_max_html_size_adjustment">
+    <property name="lower">0</property><property name="upper">1048576</property><property name="value">10</property><property name="step-increment">1</property><property name="page-increment">10</property>
+  </object>
+  <object class="GtkAdjustment" id="httrack_max_duration_adjustment">
+    <property name="lower">0</property><property name="upper">525600</property><property name="value">60</property><property name="step-increment">10</property><property name="page-increment">60</property>
+  </object>
+  <object class="GtkAdjustment" id="httrack_max_links_adjustment">
+    <property name="lower">0</property><property name="upper">10000000</property><property name="value">100000</property><property name="step-increment">1000</property><property name="page-increment">10000</property>
+  </object>
+  <object class="GtkAdjustment" id="httrack_connections_per_second_adjustment">
+    <property name="lower">0</property><property name="upper">100</property><property name="value">5</property><property name="step-increment">0.5</property><property name="page-increment">5</property>
+  </object>
+  <object class="GtkAdjustment" id="httrack_delay_between_files_adjustment">
+    <property name="lower">0</property><property name="upper">3600</property><property name="value">0</property><property name="step-increment">1</property><property name="page-increment">10</property>
   </object>
   <object class="GtkAdjustment" id="proxy_port_adjustment">
     <property name="lower">0</property><property name="upper">65535</property><property name="value">8080</property><property name="step-increment">1</property>
@@ -322,13 +340,20 @@
                     <property name="margin-top">18</property><property name="margin-bottom">18</property>
                     <child><object class="GtkLabel"><property name="label">httrack path:</property><property name="xalign">0</property><property name="halign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="httrack_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout><child><object class="GtkEntry" id="httrack_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_httrack_button"><property name="label">Browse</property></object></child></object></child>
-                    <child><object class="GtkLabel"><property name="label">Depth:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkSpinButton" id="depth_spin"><property name="adjustment">depth_adjustment</property><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
-                    <child><object class="GtkLabel"><property name="label">Include:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkEntry" id="include_entry"><property name="hexpand">true</property><property name="placeholder-text">*.html *.css example.com/downloads/*</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
-                    <child><object class="GtkLabel"><property name="label">Exclude:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkEntry" id="exclude_entry"><property name="hexpand">true</property><property name="placeholder-text">*/admin/* */logout/* *.tmp</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
-                    <child><object class="GtkCheckButton" id="include_archives_check"><property name="label">Include archives</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Maximum mirror size (MiB):</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="httrack_max_total_size_spin"><property name="adjustment">httrack_max_total_size_adjustment</property><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Maximum non-HTML file (MiB):</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="httrack_max_non_html_size_spin"><property name="adjustment">httrack_max_non_html_size_adjustment</property><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Maximum HTML file (MiB):</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="httrack_max_html_size_spin"><property name="adjustment">httrack_max_html_size_adjustment</property><property name="hexpand">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Maximum duration (minutes):</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="httrack_max_duration_spin"><property name="adjustment">httrack_max_duration_adjustment</property><property name="hexpand">true</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Maximum links:</property><property name="xalign">0</property><layout><property name="row">5</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="httrack_max_links_spin"><property name="adjustment">httrack_max_links_adjustment</property><property name="hexpand">true</property><layout><property name="row">5</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Connections per second:</property><property name="xalign">0</property><layout><property name="row">6</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="httrack_connections_per_second_spin"><property name="adjustment">httrack_connections_per_second_adjustment</property><property name="digits">1</property><property name="hexpand">true</property><layout><property name="row">6</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel"><property name="label">Delay between files (seconds):</property><property name="xalign">0</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="httrack_delay_between_files_spin"><property name="adjustment">httrack_delay_between_files_adjustment</property><property name="hexpand">true</property><layout><property name="row">7</property><property name="column">1</property></layout></object></child>
                       </object>
                     </child>
                   </object>

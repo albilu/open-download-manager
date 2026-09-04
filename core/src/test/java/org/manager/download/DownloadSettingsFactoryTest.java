@@ -229,22 +229,47 @@ class DownloadSettingsFactoryTest {
     }
 
     @Test
-    @DisplayName("HTTrack preference fields flow into new website downloads")
-    void httrackPropertyMapping() {
+    @DisplayName("HTTrack engine preferences flow while request choices remain per-record")
+    void httrackEnginePropertyMapping() {
         GlobalSettings global = new GlobalSettings();
+        // Obsolete global crawl and request keys must not override a new
+        // download's neutral defaults; New Website Scrape owns these values.
         global.setProperty("httrack.depth", "7");
         global.setProperty("httrack.include", "example.test/* *.css");
         global.setProperty("httrack.exclude", "*/logout/* */private/*");
         global.setProperty("httrack.includeArchives", "true");
+        global.setProperty("httrack.scope", "custom_external_depth");
+        global.setProperty("httrack.externalDepth", "2");
+        global.setProperty("httrack.maxTotalSizeMb", "2048");
+        global.setProperty("httrack.maxNonHtmlFileSizeMb", "200");
+        global.setProperty("httrack.maxHtmlFileSizeMb", "20");
+        global.setProperty("httrack.maxDurationMinutes", "90");
+        global.setProperty("httrack.maxLinks", "250000");
+        global.setProperty("httrack.connectionsPerSecond", "2.5");
+        global.setProperty("httrack.delayBetweenFilesSeconds", "2");
+        global.setProperty("httrack.additionalHeaders",
+                "Accept-Language: fr\nX-ODM-Test: enabled");
+        global.setProperty("httrack.cookieFile", "/tmp/cookies.txt");
 
         HttrackSettings settings = new DownloadSettingsFactory(global).createHttrackSettings();
 
-        assertEquals(7, settings.getDepth());
-        assertEquals(java.util.List.of("example.test/*", "*.css"),
-                settings.getIncludePatterns());
-        assertEquals(java.util.List.of("*/logout/*", "*/private/*"),
-                settings.getExcludePatterns());
-        assertTrue(settings.isIncludeArchives());
+        assertEquals(DownloadSettingsFactory.DEFAULT_HTTRACK_DEPTH, settings.getDepth());
+        assertTrue(settings.getIncludePatterns().isEmpty());
+        assertTrue(settings.getExcludePatterns().isEmpty());
+        assertFalse(settings.isIncludeArchives());
+        assertEquals(HttrackSettings.CrawlScope.SAME_HOST, settings.getCrawlScope());
+        assertEquals(1, settings.getExternalDepth());
+        assertEquals(2048L * 1024 * 1024, settings.getMaxTotalSizeBytes());
+        assertEquals(200L * 1024 * 1024, settings.getMaxNonHtmlFileSizeBytes());
+        assertEquals(20L * 1024 * 1024, settings.getMaxHtmlFileSizeBytes());
+        assertEquals(90 * 60, settings.getMaxDurationSeconds());
+        assertEquals(250_000, settings.getMaxLinks());
+        assertEquals(2.5, settings.getConnectionsPerSecond());
+        assertEquals(2, settings.getDelayBetweenFilesSeconds());
+        assertTrue(settings.getAdditionalHttpHeaders().isEmpty(),
+                "global headers must not leak into an unrelated website mirror");
+        assertNull(settings.getCookieFile(),
+                "the New Website Scrape dialog owns the cookie file");
     }
 
     @Test
@@ -256,6 +281,14 @@ class DownloadSettingsFactoryTest {
 
         assertTrue(settings.getIncludePatterns().isEmpty());
         assertNull(settings.getUserAgent());
+        assertEquals(HttrackSettings.CrawlScope.SAME_HOST, settings.getCrawlScope());
+        assertEquals(DownloadSettingsFactory.DEFAULT_HTTRACK_MAX_TOTAL_SIZE_MB
+                        * 1024L * 1024L,
+                settings.getMaxTotalSizeBytes());
+        assertEquals(DownloadSettingsFactory.DEFAULT_HTTRACK_MAX_LINKS,
+                settings.getMaxLinks());
+        assertEquals(DownloadSettingsFactory.DEFAULT_HTTRACK_CONNECTIONS_PER_SECOND,
+                settings.getConnectionsPerSecond());
         assertTrue(settings.isIncludeVideos(),
                 "video handling must not be changed by an unexposed factory default");
         assertFalse(settings.buildCommandLine().stream().anyMatch(arg -> arg.startsWith("+*.")));

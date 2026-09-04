@@ -145,6 +145,19 @@ public interface DownloadOperations {
     CompletableFuture<Void> recheckData(Download download);
 
     /**
+     * Re-runs a completed HTTrack mirror against its existing cache.
+     * Existing local files are preserved unless the caller explicitly opts
+     * into purging files that disappeared remotely.
+     *
+     * @param download completed website-mirror record
+     * @param purgeOldFiles whether HTTrack may remove locally mirrored files
+     *                      that no longer exist remotely
+     * @return a future that completes once the update has been submitted
+     */
+    CompletableFuture<Void> updateWebsiteMirror(
+            Download download, boolean purgeOldFiles);
+
+    /**
      * Moves a download's payload to another directory. Active transfers are
      * paused while their payload and resume metadata are moved, reconfigured
      * at the engine, and then resumed. A download that was already paused

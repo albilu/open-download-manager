@@ -94,6 +94,60 @@ class DownloadStateSerializationTest {
     }
 
     @Test
+    void websiteDownloadRoundTripRestoresHttrackSafetyAndUpdateSettings() throws Exception {
+        Download original = new Download(URI.create("https://example.com/"));
+        original.setType(Download.Type.WEBSITE_SCRAPING);
+        org.httrack.HttrackSettings originalSettings = new org.httrack.HttrackSettings()
+                .setDepth(7)
+                .setCrawlScope(org.httrack.HttrackSettings.CrawlScope.CUSTOM_EXTERNAL_DEPTH)
+                .setExternalDepth(2)
+                .setIncludePatterns(List.of("*.html", "example.com/downloads/*"))
+                .setExcludePatterns(List.of("*/admin/*", "*/logout/*"))
+                .setIncludeArchives(true)
+                .setMaxTotalSizeBytes(1_073_741_824L)
+                .setMaxNonHtmlFileSizeBytes(104_857_600L)
+                .setMaxHtmlFileSizeBytes(10_485_760L)
+                .setMaxLinks(100_000)
+                .setMaxDurationSeconds(3_600)
+                .setConnectionsPerSecond(2.5)
+                .setDelayBetweenFilesSeconds(1)
+                .setAdditionalHttpHeaders(List.of("Accept-Language: en"))
+                .setCookieFile(Path.of("/tmp/cookies.txt"))
+                .setRunMode(org.httrack.HttrackSettings.RunMode.UPDATE)
+                .setPurgeOldFiles(false);
+        original.setSettings(originalSettings);
+
+        Download restored = roundTrip(original);
+        org.httrack.HttrackSettings restoredSettings = assertInstanceOf(
+                org.httrack.HttrackSettings.class, restored.getSettings());
+
+        assertEquals(originalSettings.getDepth(), restoredSettings.getDepth());
+        assertEquals(originalSettings.getCrawlScope(), restoredSettings.getCrawlScope());
+        assertEquals(originalSettings.getExternalDepth(), restoredSettings.getExternalDepth());
+        assertEquals(originalSettings.getIncludePatterns(), restoredSettings.getIncludePatterns());
+        assertEquals(originalSettings.getExcludePatterns(), restoredSettings.getExcludePatterns());
+        assertEquals(originalSettings.isIncludeArchives(), restoredSettings.isIncludeArchives());
+        assertEquals(originalSettings.getMaxTotalSizeBytes(),
+                restoredSettings.getMaxTotalSizeBytes());
+        assertEquals(originalSettings.getMaxNonHtmlFileSizeBytes(),
+                restoredSettings.getMaxNonHtmlFileSizeBytes());
+        assertEquals(originalSettings.getMaxHtmlFileSizeBytes(),
+                restoredSettings.getMaxHtmlFileSizeBytes());
+        assertEquals(originalSettings.getMaxLinks(), restoredSettings.getMaxLinks());
+        assertEquals(originalSettings.getMaxDurationSeconds(),
+                restoredSettings.getMaxDurationSeconds());
+        assertEquals(originalSettings.getConnectionsPerSecond(),
+                restoredSettings.getConnectionsPerSecond());
+        assertEquals(originalSettings.getDelayBetweenFilesSeconds(),
+                restoredSettings.getDelayBetweenFilesSeconds());
+        assertEquals(originalSettings.getAdditionalHttpHeaders(),
+                restoredSettings.getAdditionalHttpHeaders());
+        assertEquals(originalSettings.getCookieFile(), restoredSettings.getCookieFile());
+        assertEquals(originalSettings.getRunMode(), restoredSettings.getRunMode());
+        assertEquals(originalSettings.isPurgeOldFiles(), restoredSettings.isPurgeOldFiles());
+    }
+
+    @Test
     void timestampsRoundTripAsIsoStrings() throws Exception {
         Download original = new Download(URI.create("https://example.com/timestamped"));
         Instant started = Instant.parse("2026-08-19T10:15:30Z");

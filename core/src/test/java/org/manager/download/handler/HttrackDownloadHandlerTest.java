@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.httrack.HttrackSettings;
 import org.manager.ApplicationContext;
 import org.manager.download.Download;
 import org.manager.download.DownloadListener;
@@ -195,6 +196,27 @@ class HttrackDownloadHandlerTest {
         handler.pauseDownload(unknown).get(30, TimeUnit.SECONDS);
         assertEquals(Download.Status.CREATED, unknown.getStatus(),
                 "no job, no status change");
+    }
+
+    @Test
+    @DisplayName("updating a legacy record reuses its existing mirror directory")
+    @org.junit.jupiter.api.Timeout(180)
+    void updateReusesLegacyMirrorDirectory() throws Exception {
+        Download download = scrapingDownload();
+        Path originalMirror = tempDir.resolve("odm-mirror-site");
+        Files.createDirectories(originalMirror.resolve("hts-cache"));
+        download.setSettings(new HttrackSettings()
+                .setRunMode(HttrackSettings.RunMode.UPDATE));
+        download.setStatus(Download.Status.STARTING);
+        download.setOutputPaths(List.of());
+
+        handler.startDownload(download).get(60, TimeUnit.SECONDS);
+
+        assertEquals("odm-mirror-site", download.getName(),
+                "an update must not select a collision-avoidance name");
+        assertEquals(originalMirror.toAbsolutePath().normalize(),
+                download.getPrimaryOutputPath());
+        assertFalse(Files.exists(tempDir.resolve("odm-mirror-site_1")));
     }
 
     @Test

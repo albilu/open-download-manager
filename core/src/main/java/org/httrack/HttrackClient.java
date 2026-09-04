@@ -221,9 +221,10 @@ public class HttrackClient {
 
                 if (job != null && job.getStatus() == HttrackJob.Status.PAUSED) {
                     try {
-                    // Add update flag to continue existing mirror
+                    // Resume the interrupted cache without turning the action
+                    // into a remote-content update.
                     HttrackSettings settings = job.getSettings().copySettings();
-                    settings.addAdditionalOption("i", ""); // Update existing mirror
+                    settings.setRunMode(HttrackSettings.RunMode.CONTINUE);
 
                     // Restart the process
                     List<String> command = buildCommand(settings);

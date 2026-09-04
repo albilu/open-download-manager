@@ -111,4 +111,25 @@ class ToolOptionFilterTest {
 
         assertTrue(filtered.isEmpty(), "every malformed entry must be dropped: " + filtered);
     }
+
+    @Test
+    @DisplayName("HTTrack allows non-executable crawl controls and ignores ODM bridge keys")
+    void httrackCrawlControlsKept() {
+        Map<String, String> input = new LinkedHashMap<>();
+        input.put("E", "3600");
+        input.put("%R", "https://referrer.test/");
+        input.put("%X", "X-Test: yes");
+        input.put("%K", "/tmp/cookies.txt");
+        input.put("%c", "2.5");
+        input.put("%G", "1");
+        input.put("odm.max-retries", "4");
+
+        Map<String, String> filtered = ToolOptionFilter.filter(
+                ToolOptionFilter.Tool.HTTRACK, input);
+
+        assertEquals(6, filtered.size());
+        assertEquals("3600", filtered.get("E"));
+        assertEquals("X-Test: yes", filtered.get("%X"));
+        assertFalse(filtered.containsKey("odm.max-retries"));
+    }
 }

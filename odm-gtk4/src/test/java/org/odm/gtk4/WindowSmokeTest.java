@@ -45,7 +45,6 @@ import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.SortType;
-import org.gnome.gtk.TextView;
 import org.gnome.gtk.TreeView;
 import org.gnome.gtk.TreeViewColumn;
 import org.gnome.gtk.TreeViewColumnSizing;
@@ -370,14 +369,17 @@ class WindowSmokeTest {
                 "write_thumbnail_check", "embed_thumbnail_check",
                 "embed_metadata_check", "use_aria2_external_check",
                 "honor_external_ytdlp_config_check",
-                "include_archives_check", "enable_scheduling_check"}) {
+                "enable_scheduling_check"}) {
             Widgets.require(builder, id, CheckButton.class);
         }
         for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
                 "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "min_split_size_spin1",
                 "max_peers_spin", "peer_speed_limit_spin", "seed_ratio_spin", "seed_time_spin",
                 "aria2_rpc_port_spin",
-                "depth_spin", "proxy_port_spin",
+                "httrack_max_total_size_spin", "httrack_max_non_html_size_spin",
+                "httrack_max_html_size_spin", "httrack_max_duration_spin",
+                "httrack_max_links_spin", "httrack_connections_per_second_spin",
+                "httrack_delay_between_files_spin", "proxy_port_spin",
                 "cleanup_interval_spin", "max_history_records_spin", "max_completed_records_spin",
                 "completed_retention_spin", "error_retention_spin",
                 "max_import_urls_spin", "max_import_source_size_spin",
@@ -388,15 +390,13 @@ class WindowSmokeTest {
                 "referer_entry", "cookie_entry", "user_agent_entry", "proxy_host_entry",
                 "proxy_username_entry", "proxy_password_entry",
                 "torrent_listen_ports_entry",
-                "include_entry", "exclude_entry",
                 "proxychains_path_entry", "tor_path_entry", "curl_path_entry",
                 "subliminal_path_entry", "antivirus_command_entry"}) {
             Widgets.require(builder, id, Entry.class);
         }
-        assertEquals("*.html *.css example.com/downloads/*",
-                Widgets.require(builder, "include_entry", Entry.class).getPlaceholderText());
-        assertEquals("*/admin/* */logout/* *.tmp",
-                Widgets.require(builder, "exclude_entry", Entry.class).getPlaceholderText());
+        assertNull(builder.getObject("httrack_headers_view"));
+        assertNull(builder.getObject("httrack_cookie_file_entry"));
+        assertNull(builder.getObject("browse_httrack_cookie_button"));
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "seeding_policy_combo", org.gnome.gtk.DropDown.class);
@@ -443,9 +443,11 @@ class WindowSmokeTest {
                 "the global descriptor Trash policy must not be duplicated on Network");
         for (String id : new String[]{"video_format_entry", "container_profile_combo",
                 "subtitle_language_entry", "write_subtitles_check", "extract_audio_check",
-                "cookie_browser_combo", "cookie_browser_profile_entry"}) {
+                "cookie_browser_combo", "cookie_browser_profile_entry",
+                "depth_spin", "httrack_scope_combo", "httrack_external_depth_spin",
+                "include_entry", "exclude_entry", "include_archives_check"}) {
             assertNull(builder.getObject(id),
-                    id + " is a per-record choice owned by New Media");
+                    id + " is a per-record choice owned by its download dialog");
         }
         assertDownloadOptionsLayout(builder);
         for (String id : new String[]{"aria2_layout_grid", "ytdlp_layout_grid",
@@ -457,7 +459,7 @@ class WindowSmokeTest {
         assertEquals(1, gridColumn(Widgets.require(builder, "ytdlp_layout_grid", Grid.class),
                 Widgets.require(builder, "ytdlp_path_box", Box.class)));
         assertEquals(1, gridColumn(Widgets.require(builder, "httrack_layout_grid", Grid.class),
-                Widgets.require(builder, "depth_spin", SpinButton.class)));
+                Widgets.require(builder, "httrack_path_box", Box.class)));
         assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
                 "proxy_settings_heading", "tor_settings_heading",
                 "scheduling_heading", "history_cleanup_heading",
@@ -667,10 +669,36 @@ class WindowSmokeTest {
         Widgets.require(builder, "import_sequence_spinner", Spinner.class);
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "validate_button", Button.class);
+        Widgets.require(builder, "referrer_entry", Entry.class);
+        Widgets.require(builder, "cookie_entry", Entry.class);
+        Widgets.require(builder, "user_agent_entry", Entry.class);
         assertDiskLabelBelowChooser(builder, "destination_folder", "disk_space_label");
         assertNull(builder.getObject("start_automatically_check1"));
         assertNull(builder.getObject("move_torrent_check1"));
         assertDownloadOptionsLayout(builder);
+    }
+
+    @Test
+    @DisplayName("Import URL Sequence constructs and presents from its runtime dependencies")
+    void importSequenceDialogConstructsAndPresents() {
+        org.manager.download.DownloadManager stub =
+                (org.manager.download.DownloadManager) java.lang.reflect.Proxy.newProxyInstance(
+                        org.manager.download.DownloadManager.class.getClassLoader(),
+                        new Class<?>[]{org.manager.download.DownloadManager.class},
+                        (proxy, method, args) -> switch (method.getName()) {
+                            case "getGlobalSettings" -> new org.manager.GlobalSettings();
+                            default -> defaultValue(method.getReturnType());
+                        });
+        Window parent = new Window();
+        ImportSequenceDialog sequenceDialog = new ImportSequenceDialog(parent, stub, () -> { });
+        try {
+            sequenceDialog.present();
+            assertTrue(sequenceDialog.isVisible());
+        } finally {
+            sequenceDialog.close();
+            parent.close();
+            drainGtkEvents();
+        }
     }
 
     @Test

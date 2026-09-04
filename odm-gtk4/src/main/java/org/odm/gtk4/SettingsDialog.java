@@ -175,14 +175,20 @@ public class SettingsDialog {
                     "Path to the HTTrack executable; leave empty to discover it automatically. Changes take effect after restarting ODM."),
             Map.entry("browse_httrack_button",
                     "Choose the HTTrack executable used by ODM after it restarts."),
-            Map.entry("depth_spin",
-                    "Maximum number of link levels HTTrack crawls, from 1 to 20."),
-            Map.entry("include_entry",
-                    "Whitespace-separated HTTrack wildcard patterns to include; leave empty to preserve HTTrack's native crawl scope."),
-            Map.entry("exclude_entry",
-                    "Whitespace-separated HTTrack wildcard patterns to exclude from the website mirror."),
-            Map.entry("include_archives_check",
-                    "Allow ZIP, RAR, TAR, and GZ files in website mirrors."),
+            Map.entry("httrack_max_total_size_spin",
+                    "Stop after this many MiB have been mirrored; 0 means unlimited. The first-run default is 1024 MiB."),
+            Map.entry("httrack_max_non_html_size_spin",
+                    "Skip individual non-HTML files larger than this many MiB; 0 means unlimited."),
+            Map.entry("httrack_max_html_size_spin",
+                    "Skip individual HTML files larger than this many MiB; 0 means unlimited."),
+            Map.entry("httrack_max_duration_spin",
+                    "Stop the crawl after this many minutes; 0 means unlimited."),
+            Map.entry("httrack_max_links_spin",
+                    "Stop after discovering this many links; 0 disables HTTrack's link-count limit."),
+            Map.entry("httrack_connections_per_second_spin",
+                    "Maximum new connections HTTrack opens per second. Lower values are gentler on remote servers; 0 disables this throttle."),
+            Map.entry("httrack_delay_between_files_spin",
+                    "Minimum pause in seconds between file requests; 0 adds no ODM delay."),
 
             // Advanced
             Map.entry("enable_scheduling_check",
@@ -361,6 +367,20 @@ public class SettingsDialog {
                 "Custom antivirus command including file placeholder");
         AccessibilitySupport.label(spin("antivirus_timeout_spin"),
                 "Antivirus scan timeout in seconds, zero for no timeout");
+        AccessibilitySupport.label(spin("httrack_max_total_size_spin"),
+                "Maximum mirror size in MiB, zero for unlimited");
+        AccessibilitySupport.label(spin("httrack_max_non_html_size_spin"),
+                "Maximum non-HTML file size in MiB, zero for unlimited");
+        AccessibilitySupport.label(spin("httrack_max_html_size_spin"),
+                "Maximum HTML file size in MiB, zero for unlimited");
+        AccessibilitySupport.label(spin("httrack_max_duration_spin"),
+                "Maximum mirror duration in minutes, zero for unlimited");
+        AccessibilitySupport.label(spin("httrack_max_links_spin"),
+                "Maximum mirror link count, zero for unlimited");
+        AccessibilitySupport.label(spin("httrack_connections_per_second_spin"),
+                "Maximum HTTrack connections per second");
+        AccessibilitySupport.label(spin("httrack_delay_between_files_spin"),
+                "Delay between HTTrack files in seconds");
 
         dialog.setTransientFor(parent);
 
@@ -698,6 +718,17 @@ public class SettingsDialog {
         return selected >= 0 && selected < values.length ? values[(int) selected] : fallback;
     }
 
+    private static double settingDouble(GlobalSettings settings, String key,
+            double fallback) {
+        try {
+            double value = Double.parseDouble(settings.getProperty(key,
+                    Double.toString(fallback)));
+            return Double.isFinite(value) && value >= 0 ? value : fallback;
+        } catch (NumberFormatException invalid) {
+            return fallback;
+        }
+    }
+
     private void configureSettingTooltips() {
         SETTING_TOOLTIPS.forEach((id, help) ->
                 Widgets.require(builder, id, Widget.class).setTooltipText(help));
@@ -1027,11 +1058,26 @@ public class SettingsDialog {
                 s.isHonorExternalYtDlpConfiguration());
         // HTTrack
         entry("httrack_path_entry").setText(s.getHttrackPath() != null ? s.getHttrackPath() : "");
-        spin("depth_spin").setValue(s.getIntProperty("httrack.depth",
-                org.manager.download.DownloadSettingsFactory.DEFAULT_HTTRACK_DEPTH));
-        entry("include_entry").setText(s.getProperty("httrack.include", ""));
-        entry("exclude_entry").setText(s.getProperty("httrack.exclude", ""));
-        check("include_archives_check").setActive(s.getBooleanProperty("httrack.includeArchives", false));
+        spin("httrack_max_total_size_spin").setValue(s.getIntProperty(
+                "httrack.maxTotalSizeMb",
+                DownloadSettingsFactory.DEFAULT_HTTRACK_MAX_TOTAL_SIZE_MB));
+        spin("httrack_max_non_html_size_spin").setValue(s.getIntProperty(
+                "httrack.maxNonHtmlFileSizeMb",
+                DownloadSettingsFactory.DEFAULT_HTTRACK_MAX_NON_HTML_FILE_SIZE_MB));
+        spin("httrack_max_html_size_spin").setValue(s.getIntProperty(
+                "httrack.maxHtmlFileSizeMb",
+                DownloadSettingsFactory.DEFAULT_HTTRACK_MAX_HTML_FILE_SIZE_MB));
+        spin("httrack_max_duration_spin").setValue(s.getIntProperty(
+                "httrack.maxDurationMinutes",
+                DownloadSettingsFactory.DEFAULT_HTTRACK_MAX_DURATION_MINUTES));
+        spin("httrack_max_links_spin").setValue(s.getIntProperty(
+                "httrack.maxLinks", DownloadSettingsFactory.DEFAULT_HTTRACK_MAX_LINKS));
+        spin("httrack_connections_per_second_spin").setValue(settingDouble(s,
+                "httrack.connectionsPerSecond",
+                DownloadSettingsFactory.DEFAULT_HTTRACK_CONNECTIONS_PER_SECOND));
+        spin("httrack_delay_between_files_spin").setValue(s.getIntProperty(
+                "httrack.delayBetweenFilesSeconds",
+                DownloadSettingsFactory.DEFAULT_HTTRACK_DELAY_BETWEEN_FILES_SECONDS));
         // Advanced
         check("automatic_cleanup_check").setActive(s.isAutomaticCleanupEnabled());
         spin("cleanup_interval_spin").setValue(s.getCleanupIntervalHours());
@@ -1228,10 +1274,20 @@ public class SettingsDialog {
                 check("honor_external_ytdlp_config_check").getActive());
         // HTTrack
         s.setHttrackPath(entry("httrack_path_entry").getText().trim());
-        s.setProperty("httrack.depth", String.valueOf((int) spin("depth_spin").getValue()));
-        s.setProperty("httrack.include", entry("include_entry").getText().trim());
-        s.setProperty("httrack.exclude", entry("exclude_entry").getText().trim());
-        s.setProperty("httrack.includeArchives", String.valueOf(check("include_archives_check").getActive()));
+        s.setProperty("httrack.maxTotalSizeMb", String.valueOf(
+                (int) spin("httrack_max_total_size_spin").getValue()));
+        s.setProperty("httrack.maxNonHtmlFileSizeMb", String.valueOf(
+                (int) spin("httrack_max_non_html_size_spin").getValue()));
+        s.setProperty("httrack.maxHtmlFileSizeMb", String.valueOf(
+                (int) spin("httrack_max_html_size_spin").getValue()));
+        s.setProperty("httrack.maxDurationMinutes", String.valueOf(
+                (int) spin("httrack_max_duration_spin").getValue()));
+        s.setProperty("httrack.maxLinks", String.valueOf(
+                (int) spin("httrack_max_links_spin").getValue()));
+        s.setProperty("httrack.connectionsPerSecond", Double.toString(
+                spin("httrack_connections_per_second_spin").getValue()));
+        s.setProperty("httrack.delayBetweenFilesSeconds", String.valueOf(
+                (int) spin("httrack_delay_between_files_spin").getValue()));
         // Advanced
         s.setAutomaticCleanupEnabled(check("automatic_cleanup_check").getActive());
         s.setCleanupIntervalHours((long) spin("cleanup_interval_spin").getValue());

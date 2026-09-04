@@ -13,17 +13,49 @@ import org.manager.download.DownloadSettings;
  */
 public class HttrackSettings extends DownloadSettings {
 
+    /** Deliberately bounded crawl scopes exposed by ODM. */
+    public enum CrawlScope {
+        SAME_DIRECTORY,
+        SAME_HOST,
+        SAME_DOMAIN,
+        NEARBY_EXTERNAL_ASSETS,
+        CUSTOM_EXTERNAL_DEPTH;
+
+        public static CrawlScope fromProperty(String value) {
+            if (value == null || value.isBlank()) {
+                return SAME_HOST;
+            }
+            try {
+                return valueOf(value.trim().toUpperCase(java.util.Locale.ROOT)
+                        .replace('-', '_').replace(' ', '_'));
+            } catch (IllegalArgumentException invalid) {
+                return SAME_HOST;
+            }
+        }
+    }
+
+    /** How HTTrack should treat an existing mirror cache. */
+    public enum RunMode {
+        MIRROR,
+        CONTINUE,
+        UPDATE
+    }
+
     @Override
     public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
         return capability == org.manager.download.ExternalToolSettings.Capability.CONNECTIONS
                 || capability == org.manager.download.ExternalToolSettings.Capability.DOWNLOAD_LIMIT
-                || capability == org.manager.download.ExternalToolSettings.Capability.USER_AGENT;
+                || capability == org.manager.download.ExternalToolSettings.Capability.MAX_RETRIES
+                || capability == org.manager.download.ExternalToolSettings.Capability.REFERER
+                || capability == org.manager.download.ExternalToolSettings.Capability.USER_AGENT
+                || capability == org.manager.download.ExternalToolSettings.Capability.COOKIE;
     }
 
     private String url;
     private Path outputDirectory;
     private int depth = 5;//
-    private boolean followExternalLinks = false;
+    private CrawlScope crawlScope = CrawlScope.SAME_HOST;
+    private int externalDepth = 1;
     private boolean includeImages = true;
     private boolean includeVideos = true;
     private boolean includeAudio = true;
@@ -40,6 +72,19 @@ public class HttrackSettings extends DownloadSettings {
     private List<String> excludePatterns = new ArrayList<>();//
     private List<String> includePatterns = new ArrayList<>();//
     private boolean mirrorMode = true;
+    private long maxTotalSizeBytes;
+    private long maxNonHtmlFileSizeBytes;
+    private long maxHtmlFileSizeBytes;
+    /** -1 leaves HTTrack's native value alone; 0 explicitly means unlimited. */
+    private int maxLinks = -1;
+    private int maxDurationSeconds;
+    /** -1 leaves HTTrack's native value alone; 0 explicitly disables the throttle. */
+    private double connectionsPerSecond = -1;
+    private int delayBetweenFilesSeconds;
+    private List<String> additionalHttpHeaders = new ArrayList<>();
+    private Path cookieFile;
+    private RunMode runMode = RunMode.MIRROR;
+    private boolean purgeOldFiles;
 
     /**
      * Creates new httrack settings with default values.
@@ -141,7 +186,7 @@ public class HttrackSettings extends DownloadSettings {
      * @return true if external links should be followed, false otherwise
      */
     public boolean isFollowExternalLinks() {
-        return followExternalLinks;
+        return crawlScope == CrawlScope.CUSTOM_EXTERNAL_DEPTH;
     }
 
     /**
@@ -151,7 +196,30 @@ public class HttrackSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public HttrackSettings setFollowExternalLinks(boolean followExternalLinks) {
-        this.followExternalLinks = followExternalLinks;
+        this.crawlScope = followExternalLinks
+                ? CrawlScope.CUSTOM_EXTERNAL_DEPTH : CrawlScope.SAME_HOST;
+        return this;
+    }
+
+    public CrawlScope getCrawlScope() {
+        return crawlScope;
+    }
+
+    public HttrackSettings setCrawlScope(CrawlScope crawlScope) {
+        this.crawlScope = crawlScope == null ? CrawlScope.SAME_HOST : crawlScope;
+        return this;
+    }
+
+    public int getExternalDepth() {
+        return externalDepth;
+    }
+
+    public HttrackSettings setExternalDepth(int externalDepth) {
+        if (externalDepth < 1 || externalDepth > 20) {
+            throw new IllegalArgumentException(
+                    "External depth must be between 1 and 20: " + externalDepth);
+        }
+        this.externalDepth = externalDepth;
         return this;
     }
 
@@ -519,6 +587,168 @@ public class HttrackSettings extends DownloadSettings {
         return this;
     }
 
+    public long getMaxTotalSizeBytes() {
+        return maxTotalSizeBytes;
+    }
+
+    public HttrackSettings setMaxTotalSizeBytes(long bytes) {
+        this.maxTotalSizeBytes = requireNonNegative(bytes, "Maximum total size");
+        return this;
+    }
+
+    public long getMaxNonHtmlFileSizeBytes() {
+        return maxNonHtmlFileSizeBytes;
+    }
+
+    public HttrackSettings setMaxNonHtmlFileSizeBytes(long bytes) {
+        this.maxNonHtmlFileSizeBytes = requireNonNegative(bytes,
+                "Maximum non-HTML file size");
+        return this;
+    }
+
+    public long getMaxHtmlFileSizeBytes() {
+        return maxHtmlFileSizeBytes;
+    }
+
+    public HttrackSettings setMaxHtmlFileSizeBytes(long bytes) {
+        this.maxHtmlFileSizeBytes = requireNonNegative(bytes,
+                "Maximum HTML file size");
+        return this;
+    }
+
+    public int getMaxLinks() {
+        return maxLinks;
+    }
+
+    /** 0 means unlimited; -1 leaves HTTrack's native value unchanged. */
+    public HttrackSettings setMaxLinks(int maxLinks) {
+        if (maxLinks < -1) {
+            throw new IllegalArgumentException(
+                    "Maximum link count must be -1 (engine default), 0, or positive: "
+                            + maxLinks);
+        }
+        this.maxLinks = maxLinks;
+        return this;
+    }
+
+    public int getMaxDurationSeconds() {
+        return maxDurationSeconds;
+    }
+
+    public HttrackSettings setMaxDurationSeconds(int seconds) {
+        if (seconds < 0) {
+            throw new IllegalArgumentException("Maximum crawl duration cannot be negative: " + seconds);
+        }
+        this.maxDurationSeconds = seconds;
+        return this;
+    }
+
+    public double getConnectionsPerSecond() {
+        return connectionsPerSecond;
+    }
+
+    /** 0 disables this throttle; -1 leaves HTTrack's native value unchanged. */
+    public HttrackSettings setConnectionsPerSecond(double rate) {
+        if (!Double.isFinite(rate) || rate < -1) {
+            throw new IllegalArgumentException(
+                    "Connections per second must be -1 (engine default), 0, or positive: "
+                            + rate);
+        }
+        this.connectionsPerSecond = rate;
+        return this;
+    }
+
+    public int getDelayBetweenFilesSeconds() {
+        return delayBetweenFilesSeconds;
+    }
+
+    public HttrackSettings setDelayBetweenFilesSeconds(int seconds) {
+        if (seconds < 0) {
+            throw new IllegalArgumentException("Delay between files cannot be negative: " + seconds);
+        }
+        this.delayBetweenFilesSeconds = seconds;
+        return this;
+    }
+
+    public List<String> getAdditionalHttpHeaders() {
+        return List.copyOf(additionalHttpHeaders);
+    }
+
+    public HttrackSettings setAdditionalHttpHeaders(List<String> headers) {
+        List<String> validated = new ArrayList<>();
+        if (headers != null) {
+            for (String header : headers) {
+                String normalized = validatedHeader(header);
+                if (normalized != null) {
+                    validated.add(normalized);
+                }
+            }
+        }
+        this.additionalHttpHeaders = validated;
+        return this;
+    }
+
+    public HttrackSettings addAdditionalHttpHeader(String header) {
+        String normalized = validatedHeader(header);
+        if (normalized != null) {
+            additionalHttpHeaders.add(normalized);
+        }
+        return this;
+    }
+
+    public Path getCookieFile() {
+        return cookieFile;
+    }
+
+    public HttrackSettings setCookieFile(Path cookieFile) {
+        this.cookieFile = cookieFile;
+        return this;
+    }
+
+    public HttrackSettings setCookieFile(String cookieFile) {
+        this.cookieFile = cookieFile == null || cookieFile.isBlank()
+                ? null : Paths.get(cookieFile.trim());
+        return this;
+    }
+
+    public RunMode getRunMode() {
+        return runMode;
+    }
+
+    public HttrackSettings setRunMode(RunMode runMode) {
+        this.runMode = runMode == null ? RunMode.MIRROR : runMode;
+        return this;
+    }
+
+    public boolean isPurgeOldFiles() {
+        return purgeOldFiles;
+    }
+
+    public HttrackSettings setPurgeOldFiles(boolean purgeOldFiles) {
+        this.purgeOldFiles = purgeOldFiles;
+        return this;
+    }
+
+    private static long requireNonNegative(long value, String label) {
+        if (value < 0) {
+            throw new IllegalArgumentException(label + " cannot be negative: " + value);
+        }
+        return value;
+    }
+
+    private static String validatedHeader(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        String normalized = header.trim();
+        if (normalized.indexOf('\0') >= 0 || normalized.indexOf('\r') >= 0
+                || normalized.indexOf('\n') >= 0 || normalized.indexOf(':') <= 0) {
+            throw new IllegalArgumentException(
+                    "Each HTTrack HTTP header must be one Name: value line");
+        }
+        return normalized;
+    }
+
     /**
      * Creates a typed copy of these httrack settings.
      *
@@ -534,7 +764,8 @@ public class HttrackSettings extends DownloadSettings {
         copy.url = this.url;
         copy.outputDirectory = this.outputDirectory;
         copy.depth = this.depth;
-        copy.followExternalLinks = this.followExternalLinks;
+        copy.crawlScope = this.crawlScope;
+        copy.externalDepth = this.externalDepth;
         copy.includeImages = this.includeImages;
         copy.includeVideos = this.includeVideos;
         copy.includeAudio = this.includeAudio;
@@ -550,6 +781,17 @@ public class HttrackSettings extends DownloadSettings {
         copy.excludePatterns = new ArrayList<>(this.excludePatterns);
         copy.includePatterns = new ArrayList<>(this.includePatterns);
         copy.mirrorMode = this.mirrorMode;
+        copy.maxTotalSizeBytes = this.maxTotalSizeBytes;
+        copy.maxNonHtmlFileSizeBytes = this.maxNonHtmlFileSizeBytes;
+        copy.maxHtmlFileSizeBytes = this.maxHtmlFileSizeBytes;
+        copy.maxLinks = this.maxLinks;
+        copy.maxDurationSeconds = this.maxDurationSeconds;
+        copy.connectionsPerSecond = this.connectionsPerSecond;
+        copy.delayBetweenFilesSeconds = this.delayBetweenFilesSeconds;
+        copy.additionalHttpHeaders = new ArrayList<>(this.additionalHttpHeaders);
+        copy.cookieFile = this.cookieFile;
+        copy.runMode = this.runMode;
+        copy.purgeOldFiles = this.purgeOldFiles;
 
         return copy;
     }
@@ -575,11 +817,26 @@ public class HttrackSettings extends DownloadSettings {
         // Set the recursion depth
         args.add("-r" + depth);
 
-        // Follow external links? %e1 lets httrack travel external links to
-        // depth 1 (note: -x is NOT this; it replaces external links with
-        // error pages)
-        if (followExternalLinks) {
-            args.add("-%e1");
+        switch (crawlScope) {
+            case SAME_DIRECTORY -> args.add("-S");
+            case SAME_HOST -> args.add("-a");
+            case SAME_DOMAIN -> args.add("-d");
+            case NEARBY_EXTERNAL_ASSETS -> {
+                args.add("-a");
+                args.add("-n");
+            }
+            case CUSTOM_EXTERNAL_DEPTH -> args.add("-%e" + externalDepth);
+        }
+        switch (runMode) {
+            case MIRROR -> { }
+            case CONTINUE -> args.add("--continue");
+            case UPDATE -> {
+                args.add("--update");
+                // HTTrack purges old files during updates by default. ODM's
+                // safe default is explicit preservation; removal requires a
+                // separate user choice in the UI.
+                args.add(purgeOldFiles ? "-X1" : "-X0");
+            }
         }
         if (!mirrorMode) {
             args.add("-g");
@@ -602,6 +859,19 @@ public class HttrackSettings extends DownloadSettings {
         }
         if (!includeArchives) {
             addTypeFilters(args, "-", "zip", "rar", "tar", "gz");
+        }
+
+        if (maxTotalSizeBytes > 0) {
+            args.add("-M" + maxTotalSizeBytes);
+        }
+        if (maxNonHtmlFileSizeBytes > 0 || maxHtmlFileSizeBytes > 0) {
+            args.add("-m" + maxNonHtmlFileSizeBytes + "," + maxHtmlFileSizeBytes);
+        }
+        if (maxDurationSeconds > 0) {
+            args.add("-E" + maxDurationSeconds);
+        }
+        if (maxLinks >= 0) {
+            args.add("-#L" + maxLinks);
         }
 
         // Add exclude patterns
@@ -627,6 +897,33 @@ public class HttrackSettings extends DownloadSettings {
 
         // Number of connections
         args.add("-c" + connections);
+
+        if (connectionsPerSecond >= 0) {
+            args.add("-%c" + compactDecimal(connectionsPerSecond));
+        }
+        if (delayBetweenFilesSeconds > 0) {
+            args.add("-%G" + delayBetweenFilesSeconds);
+        }
+
+        if (getMaxRetries() > 0) {
+            args.add("-R" + getMaxRetries());
+        }
+        if (getReferer() != null && !getReferer().isBlank()) {
+            args.add("-%R");
+            args.add(getReferer().trim());
+        }
+        if (getCookieHeader() != null && !getCookieHeader().isBlank()) {
+            args.add("-%X");
+            args.add(validatedHeader(getCookieHeader()));
+        }
+        for (String header : additionalHttpHeaders) {
+            args.add("-%X");
+            args.add(header);
+        }
+        if (cookieFile != null) {
+            args.add("-%K");
+            args.add(cookieFile.toString());
+        }
 
         // User agent
         if (userAgent != null && !userAgent.isEmpty()) {
@@ -710,6 +1007,13 @@ public class HttrackSettings extends DownloadSettings {
         }
     }
 
+    private static String compactDecimal(double value) {
+        if (value == Math.rint(value)) {
+            return Long.toString((long) value);
+        }
+        return java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+    }
+
     @Override
     public Map<String, String> toMap() {
         Map<String, String> map = super.toMap();
@@ -717,7 +1021,9 @@ public class HttrackSettings extends DownloadSettings {
         map.put("httrack.url", url != null ? url : "");
         map.put("httrack.output_directory", outputDirectory != null ? outputDirectory.toString() : "");
         map.put("httrack.depth", String.valueOf(depth));
-        map.put("httrack.follow_external_links", String.valueOf(followExternalLinks));
+        map.put("httrack.crawl_scope", crawlScope.name());
+        map.put("httrack.follow_external_links", String.valueOf(isFollowExternalLinks()));
+        map.put("httrack.external_depth", String.valueOf(externalDepth));
         map.put("httrack.include_images", String.valueOf(includeImages));
         map.put("httrack.include_videos", String.valueOf(includeVideos));
         map.put("httrack.include_audio", String.valueOf(includeAudio));
@@ -727,39 +1033,24 @@ public class HttrackSettings extends DownloadSettings {
         map.put("httrack.connections", String.valueOf(connections));
         map.put("httrack.user_agent", userAgent != null ? userAgent : "");
         map.put("httrack.mirror_mode", String.valueOf(mirrorMode));
+        map.put("httrack.max_total_size_bytes", String.valueOf(maxTotalSizeBytes));
+        map.put("httrack.max_non_html_file_size_bytes", String.valueOf(maxNonHtmlFileSizeBytes));
+        map.put("httrack.max_html_file_size_bytes", String.valueOf(maxHtmlFileSizeBytes));
+        map.put("httrack.max_links", String.valueOf(maxLinks));
+        map.put("httrack.max_duration_seconds", String.valueOf(maxDurationSeconds));
+        map.put("httrack.connections_per_second", String.valueOf(connectionsPerSecond));
+        map.put("httrack.delay_between_files_seconds", String.valueOf(delayBetweenFilesSeconds));
+        map.put("httrack.additional_http_headers", String.join("\n", additionalHttpHeaders));
+        map.put("httrack.cookie_file", cookieFile != null ? cookieFile.toString() : "");
+        map.put("httrack.run_mode", runMode.name());
+        map.put("httrack.purge_old_files", String.valueOf(purgeOldFiles));
 
         return map;
     }
 
     @Override
-    public DownloadSettings copy() {
-        HttrackSettings copy = new HttrackSettings();
-
-        // Copy base DownloadSettings fields
-        copyTo(copy);
-
-        // Copy HttrackSettings-specific fields
-        copy.url = this.url;
-        copy.outputDirectory = this.outputDirectory;
-        copy.depth = this.depth;
-        copy.followExternalLinks = this.followExternalLinks;
-        copy.includeImages = this.includeImages;
-        copy.includeVideos = this.includeVideos;
-        copy.includeAudio = this.includeAudio;
-        copy.includeDocuments = this.includeDocuments;
-        copy.includeArchives = this.includeArchives;
-        copy.maxRate = this.maxRate;
-        copy.connections = this.connections;
-        copy.userAgent = this.userAgent;
-        copy.useProxy = this.useProxy;
-        copy.proxyAddress = this.proxyAddress;
-        copy.proxyUsername = this.proxyUsername;
-        copy.proxyPassword = this.proxyPassword;
-        copy.excludePatterns = new ArrayList<>(this.excludePatterns);
-        copy.includePatterns = new ArrayList<>(this.includePatterns);
-        copy.mirrorMode = this.mirrorMode;
-
-        return copy;
+    public HttrackSettings copy() {
+        return copySettings();
     }
 
 }

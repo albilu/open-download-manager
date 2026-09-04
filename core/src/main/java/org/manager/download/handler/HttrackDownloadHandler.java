@@ -99,8 +99,22 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                 // Set default destination if none provided
                 setDefaultDestinationIfNeeded(download);
 
-                // Override output
-                overrideOutputPath(download);
+                HttrackSettings storedSettings = download.getSettings() instanceof HttrackSettings value
+                        ? value : null;
+                boolean reuseExistingMirror = download.getStatus() == Download.Status.PAUSED
+                        || storedSettings != null
+                        && storedSettings.getRunMode() != HttrackSettings.RunMode.MIRROR;
+                Path existingMirror = reuseExistingMirror
+                        ? org.manager.download.HttrackMirrorSupport.mirrorDirectory(download)
+                        : null;
+
+                // New mirrors avoid collisions by choosing a unique project
+                // name. Continue/update runs must instead reopen the original
+                // mirror and its hts-cache, including legacy records that do
+                // not yet have a persisted outputPaths entry.
+                if (!reuseExistingMirror) {
+                    overrideOutputPath(download);
+                }
 
                 // Set download status to connecting
                 download.setStatus(Download.Status.CONNECTING);
@@ -121,7 +135,8 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                     download.setName(websiteName);
                 }
 
-                Path projectDir = destinationDir.resolve(websiteName);
+                Path projectDir = reuseExistingMirror && existingMirror != null
+                        ? existingMirror : destinationDir.resolve(websiteName);
                 Files.createDirectories(projectDir);
                 download.recordOutputPath(projectDir);
 
@@ -259,9 +274,10 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                     .setProxyAddress(globalSettings.getGlobalProxyAddress());
         }
 
-        // Add resume capability if this is a paused download
+        // An in-memory pause uses HttrackClient.resumeJob. This fallback is
+        // for callers that invoke the handler directly with a paused record.
         if (download.getStatus() == Download.Status.PAUSED) {
-            settings.addAdditionalOption("i", ""); // Update existing mirror
+            settings.setRunMode(HttrackSettings.RunMode.CONTINUE);
         }
 
         return settings;

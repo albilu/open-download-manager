@@ -5,13 +5,19 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.aria2.Aria2Settings;
+import org.httrack.HttrackSettings;
 import org.manager.download.Download;
 
 class MainWindowSelectionCapabilitiesTest {
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void singleOnlyActionsAreDisabledForMultipleDownloads() {
@@ -138,6 +144,27 @@ class MainWindowSelectionCapabilitiesTest {
             assertFalse(MainWindow.canRecheckData(routed),
                     () -> type + " must not expose the aria2-only command");
         }
+    }
+
+    @Test
+    void completedHttrackMirrorExposesUpdateAndAvailableDiagnostics() throws Exception {
+        Path mirror = tempDir.resolve("example.test");
+        Files.createDirectories(mirror.resolve("hts-cache"));
+        Files.writeString(mirror.resolve("hts-log.txt"), "mirror log");
+        Download website = new Download(URI.create("https://example.test/"));
+        website.setName("example.test");
+        website.setDestination(tempDir);
+        website.setType(Download.Type.WEBSITE_SCRAPING);
+        website.setSettings(new HttrackSettings());
+        website.setStatus(Download.Status.COMPLETED);
+        website.recordOutputPath(mirror);
+
+        MainWindow.DownloadSelectionCapabilities capabilities =
+                MainWindow.selectionCapabilities(List.of(website));
+
+        assertTrue(capabilities.updateMirror());
+        assertTrue(capabilities.openHttrackLog());
+        assertFalse(capabilities.openHttrackErrorLog());
     }
 
     @Test

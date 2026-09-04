@@ -27,6 +27,13 @@ public class DownloadSettingsFactory {
     public static final double DEFAULT_ARIA2_SEED_RATIO =
             Aria2GlobalOptions.DEFAULT_SEED_RATIO;
     public static final int DEFAULT_HTTRACK_DEPTH = 3;
+    public static final int DEFAULT_HTTRACK_MAX_TOTAL_SIZE_MB = 1024;
+    public static final int DEFAULT_HTTRACK_MAX_NON_HTML_FILE_SIZE_MB = 100;
+    public static final int DEFAULT_HTTRACK_MAX_HTML_FILE_SIZE_MB = 10;
+    public static final int DEFAULT_HTTRACK_MAX_DURATION_MINUTES = 60;
+    public static final int DEFAULT_HTTRACK_MAX_LINKS = 100_000;
+    public static final double DEFAULT_HTTRACK_CONNECTIONS_PER_SECOND = 5.0;
+    public static final int DEFAULT_HTTRACK_DELAY_BETWEEN_FILES_SECONDS = 0;
 
     private static final String NETWORK_MAX_CONNECTIONS = "network.maxConnections";
     private static final String NETWORK_MAX_RETRIES = "network.maxRetries";
@@ -295,34 +302,58 @@ public class DownloadSettingsFactory {
         HttrackSettings settings = new HttrackSettings();
         GlobalSettings g = getGlobalSettings();
 
-        // Defaults, overridable from the Settings dialog (httrack.* properties)
-        // Depth must be >= 1; clamp persisted/absent values defensively
-        settings.setDepth(Math.max(1, g.getIntProperty("httrack.depth",
-                DEFAULT_HTTRACK_DEPTH)));
-        settings.setFollowExternalLinks(false);
+        // Crawl scope and filters belong to each website download. The New
+        // Website Scrape dialog replaces these neutral per-record defaults.
+        settings.setDepth(DEFAULT_HTTRACK_DEPTH);
+        settings.setCrawlScope(HttrackSettings.CrawlScope.SAME_HOST);
+        settings.setExternalDepth(1);
+        settings.setIncludeArchives(false);
+
+        // Engine-wide defaults, overridable from the HTTrack preferences tab.
+        settings.setMaxTotalSizeBytes(mebibytes(clamp(g.getIntProperty(
+                "httrack.maxTotalSizeMb", DEFAULT_HTTRACK_MAX_TOTAL_SIZE_MB),
+                0, 1_048_576)));
+        settings.setMaxNonHtmlFileSizeBytes(mebibytes(clamp(g.getIntProperty(
+                "httrack.maxNonHtmlFileSizeMb",
+                DEFAULT_HTTRACK_MAX_NON_HTML_FILE_SIZE_MB), 0, 1_048_576)));
+        settings.setMaxHtmlFileSizeBytes(mebibytes(clamp(g.getIntProperty(
+                "httrack.maxHtmlFileSizeMb", DEFAULT_HTTRACK_MAX_HTML_FILE_SIZE_MB),
+                0, 1_048_576)));
+        settings.setMaxDurationSeconds(clamp(g.getIntProperty(
+                "httrack.maxDurationMinutes", DEFAULT_HTTRACK_MAX_DURATION_MINUTES),
+                0, 525_600) * 60);
+        settings.setMaxLinks(clamp(g.getIntProperty(
+                "httrack.maxLinks", DEFAULT_HTTRACK_MAX_LINKS), 0, 10_000_000));
+        settings.setConnectionsPerSecond(Math.min(100, nonNegativeDouble(g,
+                "httrack.connectionsPerSecond",
+                DEFAULT_HTTRACK_CONNECTIONS_PER_SECOND)));
+        settings.setDelayBetweenFilesSeconds(clamp(g.getIntProperty(
+                "httrack.delayBetweenFilesSeconds",
+                DEFAULT_HTTRACK_DELAY_BETWEEN_FILES_SECONDS), 0, 3_600));
         // maxRate stays at 0: ODM emits no rate flag and leaves HTTrack's
         // engine-default safety policy intact.
-        settings.setIncludeArchives(g.getBooleanProperty("httrack.includeArchives", false));
-        String include = g.getProperty("httrack.include", "");
-        if (!include.isEmpty()) {
-            for (String pattern : include.split("\\s+")) {
-                if (!pattern.isBlank()) {
-                    settings.addIncludePattern(pattern);
-                }
-            }
-        }
-        String exclude = g.getProperty("httrack.exclude", "");
-        if (!exclude.isEmpty()) {
-            for (String pattern : exclude.split("\\s+")) {
-                if (!pattern.isBlank()) {
-                    settings.addExcludePattern(pattern);
-                }
-            }
-        }
-
         applyNetworkPreferences(g, settings);
 
         return settings;
+    }
+
+    private static long mebibytes(int value) {
+        return Math.max(0L, value) * 1024L * 1024L;
+    }
+
+    private static int clamp(int value, int minimum, int maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    private static double nonNegativeDouble(GlobalSettings settings, String key,
+            double fallback) {
+        try {
+            double value = Double.parseDouble(settings.getProperty(key,
+                    Double.toString(fallback)));
+            return Double.isFinite(value) && value >= 0 ? value : fallback;
+        } catch (NumberFormatException invalid) {
+            return fallback;
+        }
     }
 
     /**

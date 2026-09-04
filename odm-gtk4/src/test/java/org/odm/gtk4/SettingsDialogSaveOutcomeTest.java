@@ -57,8 +57,10 @@ class SettingsDialogSaveOutcomeTest {
             "embed_thumbnail_check", "embed_metadata_check", "use_aria2_external_check",
             "honor_external_ytdlp_config_check",
             // HTTrack
-            "httrack_path_entry", "browse_httrack_button", "depth_spin", "include_entry",
-            "exclude_entry", "include_archives_check",
+            "httrack_path_entry", "browse_httrack_button", "httrack_max_total_size_spin",
+            "httrack_max_non_html_size_spin", "httrack_max_html_size_spin",
+            "httrack_max_duration_spin", "httrack_max_links_spin",
+            "httrack_connections_per_second_spin", "httrack_delay_between_files_spin",
             // Advanced
             "enable_scheduling_check", "retain_completed_canceled_history_check",
             "automatic_cleanup_check", "cleanup_interval_spin", "max_history_records_spin",
@@ -407,6 +409,49 @@ class SettingsDialogSaveOutcomeTest {
             GlobalSettings saved = settings.get();
             assertTrue(saved.getBooleanProperty("ytdlp.writeThumbnail", false));
             assertFalse(saved.getBooleanProperty("ytdlp.embedThumbnail", true));
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("HTTrack engine-wide safety and politeness defaults survive Preferences")
+    void httrackDefaultsRoundTripThroughDialog() throws Exception {
+        Path configHome = tempDir.resolve("httrack-feature-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setProperty("httrack.maxTotalSizeMb", "2048");
+            initial.setProperty("httrack.maxNonHtmlFileSizeMb", "200");
+            initial.setProperty("httrack.maxHtmlFileSizeMb", "20");
+            initial.setProperty("httrack.maxDurationMinutes", "90");
+            initial.setProperty("httrack.maxLinks", "250000");
+            initial.setProperty("httrack.connectionsPerSecond", "2.5");
+            initial.setProperty("httrack.delayBetweenFilesSeconds", "2");
+            initial.setProperty("httrack.additionalHeaders",
+                    "Accept-Language: fr\nX-ODM-Test: yes");
+            initial.setProperty("httrack.cookieFile", "/tmp/cookies.txt");
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            dialog.applySettings();
+
+            GlobalSettings saved = settings.get();
+            assertEquals("2048", saved.getProperty("httrack.maxTotalSizeMb", null));
+            assertEquals("200", saved.getProperty("httrack.maxNonHtmlFileSizeMb", null));
+            assertEquals("20", saved.getProperty("httrack.maxHtmlFileSizeMb", null));
+            assertEquals("90", saved.getProperty("httrack.maxDurationMinutes", null));
+            assertEquals("250000", saved.getProperty("httrack.maxLinks", null));
+            assertEquals(2.5, Double.parseDouble(saved.getProperty(
+                    "httrack.connectionsPerSecond", null)));
+            assertEquals("2", saved.getProperty(
+                    "httrack.delayBetweenFilesSeconds", null));
+            assertNull(saved.getProperty("httrack.additionalHeaders", null),
+                    "legacy global headers must be retired after moving them per record");
+            assertNull(saved.getProperty("httrack.cookieFile", null),
+                    "legacy global cookie files must be retired after moving them per record");
         });
     }
 

@@ -230,6 +230,8 @@ class GlobalSettingsJsonRoundTripTest {
         settings.setProperty("aria2.maxConnections", "8");
         settings.setProperty("aria2.maxTries", "5");
         settings.setProperty("ytdlp.format", "best");
+        settings.setProperty("httrack.additionalHeaders", "Authorization: old");
+        settings.setProperty("httrack.cookieFile", "/tmp/old-cookies.txt");
 
         settings.save(file);
 
@@ -238,6 +240,8 @@ class GlobalSettingsJsonRoundTripTest {
         assertFalse(saved.containsKey("aria2.maxConnections"));
         assertFalse(saved.containsKey("aria2.maxTries"));
         assertFalse(saved.containsKey("ytdlp.format"));
+        assertFalse(saved.containsKey("httrack.additionalHeaders"));
+        assertFalse(saved.containsKey("httrack.cookieFile"));
     }
 
     @Test

@@ -47,6 +47,11 @@ class HttrackSettingsTest {
         assertNull(settings.getOutputDirectory(), "Output directory should be null by default");
         assertEquals(5, settings.getDepth(), "Default depth should be 5");
         assertFalse(settings.isFollowExternalLinks(), "Should not follow external links by default");
+        assertEquals(HttrackSettings.CrawlScope.SAME_HOST, settings.getCrawlScope());
+        assertEquals(HttrackSettings.RunMode.MIRROR, settings.getRunMode());
+        assertEquals(-1, settings.getMaxLinks(), "-1 leaves HTTrack's native guard alone");
+        assertEquals(-1, settings.getConnectionsPerSecond(),
+                "-1 leaves HTTrack's native request rate alone");
         assertTrue(settings.isIncludeImages(), "Should include images by default");
         assertTrue(settings.isIncludeVideos(), "Should include videos by default");
         assertTrue(settings.isIncludeAudio(), "Should include audio by default");
@@ -395,6 +400,7 @@ class HttrackSettingsTest {
         assertFalse(commandLine.isEmpty(), "Command line should not be empty");
         assertTrue(commandLine.contains("https://example.com"), "Command line should contain URL");
         assertTrue(commandLine.contains("-r5"), "Command line should contain default depth");
+        assertTrue(commandLine.contains("-a"), "ODM's default scope must stay on one host");
         assertFalse(commandLine.contains("-F"),
                 "Default settings should preserve HTTrack's native identity");
         assertFalse(commandLine.stream().anyMatch(arg -> arg.startsWith("+*.")),
@@ -562,5 +568,98 @@ class HttrackSettingsTest {
         assertTrue(commandString.contains("proxy.test.com:3128"), "Should contain proxy address");
         assertTrue(commandString.contains("*.mp4"), "Should contain exclude pattern");
         assertTrue(commandString.contains("*.html"), "Should contain include pattern");
+    }
+
+    @Test
+    @DisplayName("bounded crawl scopes map to their native HTTrack controls")
+    void boundedCrawlScopesUseNativeFlags() {
+        settings.setUrl("https://example.test/");
+
+        settings.setCrawlScope(HttrackSettings.CrawlScope.SAME_DIRECTORY);
+        assertTrue(settings.buildCommandLine().contains("-S"));
+
+        settings.setCrawlScope(HttrackSettings.CrawlScope.SAME_HOST);
+        assertTrue(settings.buildCommandLine().contains("-a"));
+
+        settings.setCrawlScope(HttrackSettings.CrawlScope.SAME_DOMAIN);
+        assertTrue(settings.buildCommandLine().contains("-d"));
+
+        settings.setCrawlScope(HttrackSettings.CrawlScope.NEARBY_EXTERNAL_ASSETS);
+        assertTrue(settings.buildCommandLine().containsAll(List.of("-a", "-n")));
+
+        settings.setCrawlScope(HttrackSettings.CrawlScope.CUSTOM_EXTERNAL_DEPTH)
+                .setExternalDepth(2);
+        assertTrue(settings.buildCommandLine().contains("-%e2"));
+        assertThrows(IllegalArgumentException.class, () -> settings.setExternalDepth(0));
+        assertThrows(IllegalArgumentException.class, () -> settings.setExternalDepth(21));
+    }
+
+    @Test
+    @DisplayName("safety, shared HTTP, and politeness settings reach HTTrack")
+    void safetyHttpAndPolitenessUseNativeFlags() {
+        settings.setUrl("https://example.test/")
+                .setMaxTotalSizeBytes(1_073_741_824L)
+                .setMaxNonHtmlFileSizeBytes(104_857_600L)
+                .setMaxHtmlFileSizeBytes(10_485_760L)
+                .setMaxDurationSeconds(3_600)
+                .setMaxLinks(100_000)
+                .setConnectionsPerSecond(2.5)
+                .setDelayBetweenFilesSeconds(1)
+                .setAdditionalHttpHeaders(List.of("Accept-Language: en", "X-Test: one"))
+                .setCookieFile(tempDir.resolve("cookies.txt"));
+        settings.setMaxRetries(4);
+        settings.setReferer("https://referrer.test/");
+        settings.setCookieHeader("Cookie: session=abc");
+
+        List<String> command = settings.buildCommandLine();
+
+        assertTrue(command.contains("-M1073741824"));
+        assertTrue(command.contains("-m104857600,10485760"));
+        assertTrue(command.contains("-E3600"));
+        assertTrue(command.contains("-#L100000"));
+        assertTrue(command.contains("-%c2.5"));
+        assertTrue(command.contains("-%G1"));
+        assertTrue(command.contains("-R4"));
+        assertTrue(command.contains("https://referrer.test/"));
+        assertTrue(command.contains("Cookie: session=abc"));
+        assertTrue(command.contains("Accept-Language: en"));
+        assertTrue(command.contains(tempDir.resolve("cookies.txt").toString()));
+    }
+
+    @Test
+    @DisplayName("mirror update preserves old files unless purge is explicitly selected")
+    void updateAndContinueModesAreUnambiguous() {
+        settings.setUrl("https://example.test/")
+                .setRunMode(HttrackSettings.RunMode.CONTINUE);
+        assertTrue(settings.buildCommandLine().contains("--continue"));
+        assertFalse(settings.buildCommandLine().contains("--update"));
+
+        settings.setRunMode(HttrackSettings.RunMode.UPDATE).setPurgeOldFiles(false);
+        assertTrue(settings.buildCommandLine().containsAll(List.of("--update", "-X0")));
+        assertFalse(settings.buildCommandLine().contains("-X1"));
+
+        settings.setPurgeOldFiles(true);
+        assertTrue(settings.buildCommandLine().containsAll(List.of("--update", "-X1")));
+    }
+
+    @Test
+    @DisplayName("headers and crawl guards reject invalid values")
+    void newSettingsRejectInvalidValues() {
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.addAdditionalHttpHeader("not-a-header"));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.addAdditionalHttpHeader("X-Test: ok\r\nInjected: yes"));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setMaxTotalSizeBytes(-1));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setMaxLinks(-2));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setMaxDurationSeconds(-1));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setConnectionsPerSecond(Double.NaN));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setConnectionsPerSecond(-2));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setDelayBetweenFilesSeconds(-1));
     }
 }

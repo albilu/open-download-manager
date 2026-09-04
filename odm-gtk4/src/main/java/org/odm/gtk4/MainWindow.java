@@ -65,7 +65,8 @@ public class MainWindow {
     record DownloadSelectionCapabilities(boolean any, boolean single,
             boolean openFile, boolean openFolder, boolean pause, boolean resume,
             boolean start, boolean copyMagnet, boolean changeDestination,
-            boolean recheckData, boolean delete, boolean deleteWithFiles,
+            boolean recheckData, boolean updateMirror, boolean openHttrackLog,
+            boolean openHttrackErrorLog, boolean delete, boolean deleteWithFiles,
             boolean properties) {
     }
 
@@ -924,6 +925,14 @@ public class MainWindow {
                 .add("Copy Magnet URI", capabilities.copyMagnet(), this::copyMagnetUri)
                 .add("Change Destination…", capabilities.changeDestination(), this::changeDestination)
                 .add("Recheck Data", capabilities.recheckData(), this::recheckData)
+                .add("Update Website Mirror…", capabilities.updateMirror(),
+                        this::updateWebsiteMirror)
+                .add("Open HTTrack Log", capabilities.openHttrackLog(), () ->
+                        openHttrackDiagnostic(
+                                org.manager.download.HttrackMirrorSupport.DiagnosticLog.ACTIVITY))
+                .add("Open HTTrack Error Log", capabilities.openHttrackErrorLog(), () ->
+                        openHttrackDiagnostic(
+                                org.manager.download.HttrackMirrorSupport.DiagnosticLog.ERRORS))
                 .add("Properties", capabilities.properties(), this::onPropertiesClicked)
                 .separator()
                 .add("Delete", capabilities.delete(), this::onDeleteClicked)
@@ -1012,6 +1021,11 @@ public class MainWindow {
                 single && magnetUri(only) != null,
                 single && canChangeDestination(only),
                 allSelectedMatch(downloads, MainWindow::canRecheckData),
+                single && org.manager.download.HttrackMirrorSupport.canUpdate(only),
+                single && org.manager.download.HttrackMirrorSupport.hasDiagnostic(only,
+                        org.manager.download.HttrackMirrorSupport.DiagnosticLog.ACTIVITY),
+                single && org.manager.download.HttrackMirrorSupport.hasDiagnostic(only,
+                        org.manager.download.HttrackMirrorSupport.DiagnosticLog.ERRORS),
                 any,
                 any,
                 any);
@@ -1074,6 +1088,68 @@ public class MainWindow {
             })));
         }
         trackActivity(allOf(updates));
+    }
+
+    /** Updates one completed mirror, preserving local-only files by default. */
+    private void updateWebsiteMirror() {
+        onDownloadSelectionChanged();
+        Download target = selectedDownloads.size() == 1
+                ? selectedDownloads.getFirst() : null;
+        if (!org.manager.download.HttrackMirrorSupport.canUpdate(target)) {
+            return;
+        }
+
+        org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
+        confirmation.setTransientFor(window);
+        confirmation.setModal(true);
+        confirmation.setMarkup("<b>Update this website mirror?</b>");
+        confirmation.formatSecondaryText(
+                "HTTrack will revisit the remote site using the existing mirror cache. "
+                + "Keeping old files is safer and recommended.");
+        int cancelResponse = org.gnome.gtk.ResponseType.CANCEL.getValue();
+        int keepResponse = org.gnome.gtk.ResponseType.ACCEPT.getValue();
+        int purgeResponse = org.gnome.gtk.ResponseType.APPLY.getValue();
+        confirmation.addButton("Cancel", cancelResponse);
+        org.gnome.gtk.Widget keepButton = confirmation.addButton(
+                "Update and Keep Old Files", keepResponse);
+        keepButton.addCssClass("suggested-action");
+        org.gnome.gtk.Widget purgeButton = confirmation.addButton(
+                "Update and Remove Missing Files", purgeResponse);
+        purgeButton.addCssClass("destructive-action");
+        confirmation.setDefaultResponse(keepResponse);
+        confirmation.onResponse(response -> {
+            confirmation.close();
+            if (response != keepResponse && response != purgeResponse) {
+                return;
+            }
+            AccessibilitySupport.status(infoLabel,
+                    "Starting update for “" + target.getName() + "”…");
+            trackActivity(downloadManager.updateWebsiteMirror(
+                    target, response == purgeResponse)).whenComplete((ignored, error) ->
+                            UiThread.marshal(() -> {
+                                if (error != null) {
+                                    AccessibilitySupport.status(infoLabel,
+                                            "Could not update website mirror: "
+                                                    + failureMessage(error),
+                                            org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                                }
+                                refresh();
+                            }));
+        });
+        confirmation.present();
+    }
+
+    private void openHttrackDiagnostic(
+            org.manager.download.HttrackMirrorSupport.DiagnosticLog log) {
+        onDownloadSelectionChanged();
+        Download target = selectedDownloads.size() == 1
+                ? selectedDownloads.getFirst() : null;
+        Path path = org.manager.download.HttrackMirrorSupport.diagnosticPath(target, log);
+        if (!FileManagerSupport.open(path)) {
+            AccessibilitySupport.status(infoLabel,
+                    "Could not open " + (log == null ? "HTTrack log" : log.fileName()),
+                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+        }
     }
 
     /**
@@ -1142,6 +1218,9 @@ public class MainWindow {
         org.gnome.gio.Menu download = new org.gnome.gio.Menu();
         download.append("Open", "win.open-file");
         download.append("Open Folder", "win.open-folder");
+        download.append("Update Website Mirror…", "win.update-website-mirror");
+        download.append("Open HTTrack Log", "win.open-httrack-log");
+        download.append("Open HTTrack Error Log", "win.open-httrack-error-log");
         download.append("Force Download", "win.force-download");
         download.append("Pause All", "win.pause-all");
         download.append("Resume All", "win.resume-all");
@@ -1232,6 +1311,11 @@ public class MainWindow {
         // Download
         addAction("open-file", () -> openSelected("file"));
         addAction("open-folder", () -> openSelected("folder"));
+        addAction("update-website-mirror", this::updateWebsiteMirror);
+        addAction("open-httrack-log", () -> openHttrackDiagnostic(
+                org.manager.download.HttrackMirrorSupport.DiagnosticLog.ACTIVITY));
+        addAction("open-httrack-error-log", () -> openHttrackDiagnostic(
+                org.manager.download.HttrackMirrorSupport.DiagnosticLog.ERRORS));
         addAction("force-download", this::startSelectedDownloads);
         addAction("pause-all", () -> trackActivity(downloadManager.pauseAllDownloads())
                 .thenRun(() -> UiThread.marshal(this::refresh)));
@@ -1295,6 +1379,9 @@ public class MainWindow {
         DownloadSelectionCapabilities capabilities = selectionCapabilities(selectedDownloads);
         setMenuActionEnabled("open-file", capabilities.openFile());
         setMenuActionEnabled("open-folder", capabilities.openFolder());
+        setMenuActionEnabled("update-website-mirror", capabilities.updateMirror());
+        setMenuActionEnabled("open-httrack-log", capabilities.openHttrackLog());
+        setMenuActionEnabled("open-httrack-error-log", capabilities.openHttrackErrorLog());
         setMenuActionEnabled("force-download", capabilities.start());
         setMenuActionEnabled("delete", capabilities.delete());
         setMenuActionEnabled("delete-with-files", capabilities.deleteWithFiles());
@@ -1986,8 +2073,85 @@ public class MainWindow {
 
         org.gnome.gtk.Entry urlEntry = new org.gnome.gtk.Entry();
         urlEntry.setPlaceholderText("https://example.com/site");
+        AccessibilitySupport.label(urlEntry, "Website URL to mirror");
+        org.httrack.HttrackSettings httrackDefaults =
+                new org.manager.download.DownloadSettingsFactory(
+                        downloadManager.getGlobalSettings()).createHttrackSettings();
         org.gnome.gtk.SpinButton depthSpin = org.gnome.gtk.SpinButton.withRange(1, 20, 1);
-        depthSpin.setValue(org.manager.download.DownloadSettingsFactory.DEFAULT_HTTRACK_DEPTH);
+        depthSpin.setValue(httrackDefaults.getDepth());
+        depthSpin.setTooltipText("Maximum number of link levels to crawl for this website.");
+        AccessibilitySupport.label(depthSpin, "Website crawl depth");
+        String[] scopeLabels = {
+            "Same directory", "Same host", "Same domain",
+            "Include nearby external assets", "Custom external depth"
+        };
+        org.gnome.gtk.DropDown scopeDrop = org.gnome.gtk.DropDown.fromStrings(scopeLabels);
+        scopeDrop.setSelected(httrackDefaults.getCrawlScope().ordinal());
+        scopeDrop.setTooltipText(
+                "Boundary for this mirror. Nearby assets may come from other hosts.");
+        AccessibilitySupport.label(scopeDrop, "Website crawl scope");
+        org.gnome.gtk.SpinButton externalDepthSpin =
+                org.gnome.gtk.SpinButton.withRange(1, 20, 1);
+        externalDepthSpin.setValue(httrackDefaults.getExternalDepth());
+        externalDepthSpin.setTooltipText(
+                "External link levels followed when Custom external depth is selected.");
+        AccessibilitySupport.label(externalDepthSpin, "External website crawl depth");
+        Runnable updateExternalDepth = () -> externalDepthSpin.setSensitive(
+                scopeDrop.getSelected()
+                        == org.httrack.HttrackSettings.CrawlScope.CUSTOM_EXTERNAL_DEPTH.ordinal());
+        scopeDrop.onNotify("selected", ignored -> updateExternalDepth.run());
+        updateExternalDepth.run();
+
+        org.gnome.gtk.Entry includeEntry = new org.gnome.gtk.Entry();
+        includeEntry.setPlaceholderText("*.html *.css example.com/downloads/*");
+        includeEntry.setTooltipText(
+                "Whitespace-separated HTTrack wildcard patterns included in this mirror.");
+        AccessibilitySupport.label(includeEntry, "Included website URL patterns");
+        org.gnome.gtk.Entry excludeEntry = new org.gnome.gtk.Entry();
+        excludeEntry.setPlaceholderText("*/admin/* */logout/* *.tmp");
+        excludeEntry.setTooltipText(
+                "Whitespace-separated HTTrack wildcard patterns excluded from this mirror.");
+        AccessibilitySupport.label(excludeEntry, "Excluded website URL patterns");
+        org.gnome.gtk.CheckButton includeArchivesCheck = new org.gnome.gtk.CheckButton();
+        includeArchivesCheck.setLabel("Include archive files");
+        includeArchivesCheck.setActive(httrackDefaults.isIncludeArchives());
+        includeArchivesCheck.setTooltipText(
+                "Allow ZIP, RAR, TAR, and GZ files in this website mirror.");
+        AccessibilitySupport.label(includeArchivesCheck,
+                "Include archive files in this website mirror");
+
+        org.gnome.gtk.Entry additionalHeadersEntry = new org.gnome.gtk.Entry();
+        additionalHeadersEntry.setPlaceholderText(
+                "Accept-Language: en | X-Custom-Header: value");
+        additionalHeadersEntry.setTooltipText(
+                "Optional Name: value headers separated with |. They apply only to "
+                + "this mirror; avoid storing credentials unless required.");
+        AccessibilitySupport.label(additionalHeadersEntry,
+                "Additional HTTP headers for this website mirror");
+
+        org.gnome.gtk.Button cookieFileButton = new org.gnome.gtk.Button();
+        cookieFileButton.setLabel("None selected");
+        cookieFileButton.setHexpand(true);
+        org.gnome.gtk.Button clearCookieFileButton = new org.gnome.gtk.Button();
+        clearCookieFileButton.setLabel("Clear");
+        clearCookieFileButton.setSensitive(false);
+        PathChooserButton cookieFileChooser = PathChooserButton.forFile(
+                cookieFileButton, scraper, "Select Netscape cookie file", null,
+                ignored -> clearCookieFileButton.setSensitive(true));
+        cookieFileButton.setTooltipText(
+                "Optional Netscape-format cookie file used only by this mirror.");
+        clearCookieFileButton.setTooltipText(
+                "Do not use a cookie file for this mirror.");
+        clearCookieFileButton.onClicked(() -> {
+            cookieFileChooser.clear();
+            clearCookieFileButton.setSensitive(false);
+        });
+        AccessibilitySupport.label(cookieFileButton,
+                "Netscape cookie file for this website mirror");
+        org.gnome.gtk.Box cookieFileBox = new org.gnome.gtk.Box(
+                org.gnome.gtk.Orientation.HORIZONTAL, 6);
+        cookieFileBox.append(cookieFileButton);
+        cookieFileBox.append(clearCookieFileButton);
 
         org.gnome.gtk.Label statusLabel = new org.gnome.gtk.Label("");
 
@@ -2017,10 +2181,22 @@ public class MainWindow {
                     download = downloadManager.createWebsiteDownload(source,
                             java.nio.file.Path.of(downloadManager.getGlobalSettings()
                                     .getDefaultDownloadDirectory().toString()), null);
-                    if (download.getSettings() instanceof org.httrack.HttrackSettings settings) {
-                        settings.setDepth(Math.max(1, (int) depthSpin.getValue()));
-                    }
                     pendingDownload.set(download);
+                }
+                if (download.getSettings() instanceof org.httrack.HttrackSettings settings) {
+                    int selectedScope = scopeDrop.getSelected();
+                    org.httrack.HttrackSettings.CrawlScope[] scopes =
+                            org.httrack.HttrackSettings.CrawlScope.values();
+                    applyWebsiteScrapeOptions(settings,
+                            (int) depthSpin.getValue(),
+                            selectedScope >= 0 && selectedScope < scopes.length
+                                    ? scopes[selectedScope]
+                                    : org.httrack.HttrackSettings.CrawlScope.SAME_HOST,
+                            (int) externalDepthSpin.getValue(),
+                            includeEntry.getText(), excludeEntry.getText(),
+                            includeArchivesCheck.getActive(),
+                            additionalHeadersEntry.getText(),
+                            cookieFileChooser.getPath());
                 }
                 startButton.setSensitive(false);
                 AccessibilitySupport.status(statusLabel, "Adding website scrape to queue…");
@@ -2048,6 +2224,19 @@ public class MainWindow {
         box.append(urlEntry);
         box.append(new org.gnome.gtk.Label("Depth:"));
         box.append(depthSpin);
+        box.append(new org.gnome.gtk.Label("Crawl scope:"));
+        box.append(scopeDrop);
+        box.append(new org.gnome.gtk.Label("External depth:"));
+        box.append(externalDepthSpin);
+        box.append(new org.gnome.gtk.Label("Include URL patterns:"));
+        box.append(includeEntry);
+        box.append(new org.gnome.gtk.Label("Exclude URL patterns:"));
+        box.append(excludeEntry);
+        box.append(includeArchivesCheck);
+        box.append(new org.gnome.gtk.Label("Additional HTTP headers:"));
+        box.append(additionalHeadersEntry);
+        box.append(new org.gnome.gtk.Label("Netscape cookie file:"));
+        box.append(cookieFileBox);
         box.append(statusLabel);
         org.gnome.gtk.Box buttons = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.HORIZONTAL, 8);
         buttons.setHalign(org.gnome.gtk.Align.END);
@@ -2059,6 +2248,38 @@ public class MainWindow {
         scraper.present();
         ClipboardUrlPrefill.populate(scraper, urlEntry,
                 ClipboardUrlPrefill::isWebPage);
+    }
+
+    static void applyWebsiteScrapeOptions(org.httrack.HttrackSettings settings,
+            int depth, org.httrack.HttrackSettings.CrawlScope scope,
+            int externalDepth, String includePatterns, String excludePatterns,
+            boolean includeArchives, String additionalHeaders,
+            Path cookieFile) {
+        settings.setDepth(Math.max(1, depth));
+        settings.setCrawlScope(scope);
+        settings.setExternalDepth(externalDepth);
+        settings.setIncludePatterns(splitHttrackPatterns(includePatterns));
+        settings.setExcludePatterns(splitHttrackPatterns(excludePatterns));
+        settings.setIncludeArchives(includeArchives);
+        settings.setAdditionalHttpHeaders(splitHttrackHeaders(additionalHeaders));
+        settings.setCookieFile(cookieFile);
+    }
+
+    private static List<String> splitHttrackPatterns(String patterns) {
+        if (patterns == null || patterns.isBlank()) {
+            return List.of();
+        }
+        return List.of(patterns.trim().split("\\s+"));
+    }
+
+    private static List<String> splitHttrackHeaders(String headers) {
+        if (headers == null || headers.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(headers.split("[|\\r\\n]+"))
+                .map(String::strip)
+                .filter(header -> !header.isEmpty())
+                .toList();
     }
 
     private static String failureMessage(Throwable failure) {

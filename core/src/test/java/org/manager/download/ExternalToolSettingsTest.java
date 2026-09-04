@@ -92,6 +92,17 @@ class ExternalToolSettingsTest {
         assertEquals(128, s.getMaxRate(), "seam limit must reach the typed maxRate field");
         assertEquals(128, s.getDownloadLimitKB());
         assertEquals("ht-ua/4", s.getUserAgent());
+
+        assertTrue(s.supports(ExternalToolSettings.Capability.MAX_RETRIES));
+        assertTrue(s.supports(ExternalToolSettings.Capability.REFERER));
+        assertTrue(s.supports(ExternalToolSettings.Capability.COOKIE));
+        s.setUrl("https://example.test/");
+        s.setMaxRetries(3);
+        s.setReferer("https://referrer.test/");
+        s.setCookieHeader(COOKIE);
+        assertTrue(s.buildCommandLine().contains("-R3"));
+        assertTrue(s.buildCommandLine().contains("https://referrer.test/"));
+        assertTrue(s.buildCommandLine().contains(COOKIE));
     }
 
     @Test

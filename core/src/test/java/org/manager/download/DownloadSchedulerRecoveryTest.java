@@ -100,7 +100,8 @@ class DownloadSchedulerRecoveryTest {
 
             scheduler.checkDownloadScheduleNow(download.getId());
             assertTrue(await(() -> pauseAttempts.get() == 2
-                    && download.getStatus() == Download.Status.PAUSED));
+                    && download.getStatus() == Download.Status.PAUSED
+                    && pausedEvents.get() == 1));
             assertEquals(1, pausedEvents.get());
 
             ScheduleSettings allowed = ScheduleSettings.alwaysActive()
@@ -113,7 +114,8 @@ class DownloadSchedulerRecoveryTest {
 
             scheduler.checkDownloadScheduleNow(download.getId());
             assertTrue(await(() -> resumeAttempts.get() == 2
-                    && download.getStatus() == Download.Status.DOWNLOADING));
+                    && download.getStatus() == Download.Status.DOWNLOADING
+                    && resumedEvents.get() == 1));
             assertEquals(1, resumedEvents.get());
         } finally {
             scheduler.shutdown().join();

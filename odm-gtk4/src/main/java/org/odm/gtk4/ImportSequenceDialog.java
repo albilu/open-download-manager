@@ -131,7 +131,7 @@ public class ImportSequenceDialog {
         numModeCombo.onNotify("selected", pspec -> syncRangeMode(numModeCombo, charModeCombo));
         charModeCombo.onNotify("selected", pspec -> syncRangeMode(charModeCombo, numModeCombo));
 
-        Widgets.require(builder, "cancel_button", Button.class).onClicked(this::closeDialog);
+        Widgets.require(builder, "cancel_button", Button.class).onClicked(this::close);
         validateButton.onClicked(this::onImport);
         dialog.onCloseRequest(() -> {
             previewEpoch++;
@@ -284,7 +284,7 @@ public class ImportSequenceDialog {
                     if (onImportDone != null) {
                         onImportDone.run();
                     }
-                    closeDialog();
+                    close();
                 }));
     }
 
@@ -301,8 +301,8 @@ public class ImportSequenceDialog {
                 (int) Widgets.require(builder, "max_upload_speed_spin", SpinButton.class).getValue(),
                 (int) Widgets.require(builder, "retry_limit_spin", SpinButton.class).getValue(),
                 (int) Widgets.require(builder, "retry_after", SpinButton.class).getValue(),
-                Widgets.require(builder, "referrer", Entry.class).getText(),
-                Widgets.require(builder, "user_agent", Entry.class).getText(),
+                Widgets.require(builder, "referrer_entry", Entry.class).getText(),
+                Widgets.require(builder, "user_agent_entry", Entry.class).getText(),
                 Widgets.require(builder, "cookie_entry", Entry.class).getText());
     }
 
@@ -328,10 +328,14 @@ public class ImportSequenceDialog {
         return (int) admissions.stream().filter(CompletableFuture::join).count();
     }
 
-    private void closeDialog() {
+    void close() {
         previewEpoch++;
         activity.dispose();
         dialog.close();
+    }
+
+    boolean isVisible() {
+        return dialog.getVisible();
     }
 
     record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,
@@ -360,11 +364,11 @@ public class ImportSequenceDialog {
                 .setValue(network.maxRetries());
         Widgets.require(builder, "retry_after", SpinButton.class)
                 .setValue(network.retryDelaySeconds());
-        Widgets.require(builder, "referrer", Entry.class)
+        Widgets.require(builder, "referrer_entry", Entry.class)
                 .setText(network.referer());
         Widgets.require(builder, "cookie_entry", Entry.class)
                 .setText(network.cookie());
-        Widgets.require(builder, "user_agent", Entry.class)
+        Widgets.require(builder, "user_agent_entry", Entry.class)
                 .setText(network.userAgent());
         Widgets.require(builder, "tor_switch", Switch.class)
                 .setActive(settings.getBooleanProperty("tor.enabled", false));

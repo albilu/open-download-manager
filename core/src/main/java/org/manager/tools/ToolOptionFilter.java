@@ -92,7 +92,8 @@ public final class ToolOptionFilter {
             "w", "W", "v", "q", "i", "I", "r", "x", "s", "m", "c", "f", "n",
             "N", "P", "S", "K", "k", "A", "g", "G", "b", "d", "D", "j", "L",
             "a", "u", "%P", "%F", "%L", "%v", "%s", "p", "T", "C", "R", "M",
-            "t", "e", "z", "Z", "h", "B", "O", "o", "X", "Y");
+            "t", "e", "z", "Z", "h", "B", "O", "o", "X", "Y", "E", "%R",
+            "%X", "%K", "%c", "%G");
 
     private ToolOptionFilter() {
     }
@@ -118,6 +119,12 @@ public final class ToolOptionFilter {
         for (Map.Entry<String, String> entry : option.entrySet()) {
             String key = entry.getKey();
             String value = entry.getValue();
+            // Engine-neutral bridge values are intentionally stored beside
+            // native options; the engine-specific builder has already read
+            // them and they are never command-line candidates.
+            if (key != null && key.startsWith("odm.")) {
+                continue;
+            }
             if (key == null || !KEY_SYNTAX.matcher(key).matches() || !allowed.contains(key)) {
                 LOGGER.warn("Dropped untrusted " + tool + " option key '" + key
                         + "' (not on the allowlist)");
