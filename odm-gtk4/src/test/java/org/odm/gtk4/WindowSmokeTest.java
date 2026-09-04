@@ -366,7 +366,7 @@ class WindowSmokeTest {
                 "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
                 "move_to_trash_check",
                 "continue_download_check", "check_integrity_check", "enable_auto_save_check",
-                "enable_seeding_check", "honor_external_aria2_config_check",
+                "honor_external_aria2_config_check",
                 "write_thumbnail_check", "write_subtitles_check",
                 "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
                 "honor_external_ytdlp_config_check",
@@ -375,7 +375,8 @@ class WindowSmokeTest {
         }
         for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
                 "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "min_split_size_spin1",
-                "max_peers_spin", "peer_speed_limit_spin", "seed_time_spin", "aria2_rpc_port_spin",
+                "max_peers_spin", "peer_speed_limit_spin", "seed_ratio_spin", "seed_time_spin",
+                "aria2_rpc_port_spin",
                 "depth_spin", "proxy_port_spin",
                 "cleanup_interval_spin", "max_history_records_spin", "max_completed_records_spin",
                 "completed_retention_spin", "error_retention_spin",
@@ -386,6 +387,7 @@ class WindowSmokeTest {
         for (String id : new String[]{"aria2_path_entry", "ytdlp_path_entry", "httrack_path_entry",
                 "referer_entry", "cookie_entry", "user_agent_entry", "proxy_host_entry",
                 "proxy_username_entry", "proxy_password_entry",
+                "torrent_listen_ports_entry",
                 "subtitle_language_entry", "include_entry", "exclude_entry",
                 "proxychains_path_entry", "tor_path_entry", "curl_path_entry",
                 "subliminal_path_entry", "antivirus_command_entry"}) {
@@ -398,6 +400,11 @@ class WindowSmokeTest {
         Widgets.require(builder, "video_format_entry", DropDown.class);
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "seeding_policy_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "ipv6_dht_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "peer_exchange_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "local_peer_discovery_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "torrent_encryption_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "antivirus_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "antivirus_detection_label", Label.class);
         org.gnome.gtk.Switch settingsTor = Widgets.require(builder,
@@ -492,6 +499,8 @@ class WindowSmokeTest {
         Widgets.require(builder, "referrer", Entry.class);
         Widgets.require(builder, "cookie", Entry.class);
         Widgets.require(builder, "user_agent", Entry.class);
+        Widgets.require(builder, "sftp_host_key_label", Label.class);
+        Widgets.require(builder, "sftp_host_key_entry", Entry.class);
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "proxy_host_entry", Entry.class);
         Widgets.require(builder, "proxy_port_spin", SpinButton.class);

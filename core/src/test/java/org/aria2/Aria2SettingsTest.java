@@ -257,6 +257,38 @@ class Aria2SettingsTest {
     }
 
     @Test
+    @DisplayName("SFTP host key digests are normalized, forwarded, and validated")
+    void sftpHostKeyDigestValidation() {
+        settings.setSshHostKeyDigest(
+                "SHA1=01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67");
+
+        assertEquals("sha-1=0123456789abcdef0123456789abcdef01234567",
+                settings.toRpcOptions().get("ssh-host-key-md"));
+
+        settings.setSshHostKeyDigest("");
+        assertFalse(settings.toRpcOptions().containsKey("ssh-host-key-md"));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setSshHostKeyDigest("sha256=deadbeef"));
+        assertThrows(IllegalArgumentException.class,
+                () -> settings.setSshHostKeyDigest("md5=1234"));
+    }
+
+    @Test
+    @DisplayName("torrent discovery and encryption overrides reach aria2 RPC")
+    void torrentConnectivityOverridesReachRpc() {
+        settings.setPeerExchange(Aria2GlobalOptions.ToggleOverride.DISABLED)
+                .setLocalPeerDiscovery(Aria2GlobalOptions.ToggleOverride.ENABLED)
+                .setEncryptionPolicy(
+                        Aria2GlobalOptions.EncryptionPolicy.REQUIRE_OBFUSCATED_HANDSHAKE);
+
+        Map<String, Object> options = settings.toRpcOptions();
+        assertEquals("false", options.get("enable-peer-exchange"));
+        assertEquals("true", options.get("bt-enable-lpd"));
+        assertEquals("true", options.get("bt-require-crypto"));
+        assertEquals("plain", options.get("bt-min-crypto-level"));
+    }
+
+    @Test
     @DisplayName("Should convert to RPC options with proper types")
     void shouldConvertToRpcOptionsWithProperTypes() {
         settings.setMaxConnectionPerServer(8)

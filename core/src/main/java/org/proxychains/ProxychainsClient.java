@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
@@ -39,10 +40,13 @@ public class ProxychainsClient {
             ".*DL:([0-9]+(?:\\.[0-9]+)?)([KMGTkmgt]?i?)B(/s)?.*");
     private static final Pattern UPLOAD_SPEED_PATTERN = Pattern.compile(
             ".*UL:([0-9]+(?:\\.[0-9]+)?)([KMGTkmgt]?i?)B(/s)?.*");
+    private static final Set<String> PROXYCHAIN_OWNED_ARIA2_OPTIONS = Set.of(
+            "all-proxy", "dir", "out", "allow-overwrite", "file-allocation");
 
     private final String proxychainsPath;
     private final String configPath;
     private volatile boolean honorExternalAria2Configuration;
+    private volatile String torrentListenPorts = "";
     private final ExecutorService executorService;
     private final org.manager.tools.ExternalProcessRegistry activeProcesses;
     private final Map<String, String> gidMap; // Download ID -> aria2 GID
@@ -90,6 +94,10 @@ public class ProxychainsClient {
 
     public void setHonorExternalAria2Configuration(boolean honor) {
         this.honorExternalAria2Configuration = honor;
+    }
+
+    public void setTorrentListenPorts(String ports) {
+        this.torrentListenPorts = org.aria2.Aria2GlobalOptions.normalizeListenPorts(ports);
     }
 
     /**
@@ -468,6 +476,20 @@ public class ProxychainsClient {
             command.add("--header=" + common.getCookieHeader());
         }
 
+        // A SOCKS-routed record retains its original Aria2Settings even
+        // though the handler type becomes PROXYCHAINS. Carry the safe native
+        // options across that route boundary so seeding, encryption, file
+        // selection, and SFTP host-key verification do not silently vanish.
+        if (download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
+            Map<String, String> nativeOptions = new java.util.LinkedHashMap<>();
+            aria2Settings.toRpcOptions().forEach((key, value) -> {
+                if (!PROXYCHAIN_OWNED_ARIA2_OPTIONS.contains(key) && value != null) {
+                    nativeOptions.put(key, value.toString());
+                }
+            });
+            appendFilteredAria2Options(command, nativeOptions);
+        }
+
         // Set download directory and filename
         command.add("-d");
         command.add(outputFile.getParent().toString());
@@ -484,12 +506,21 @@ public class ProxychainsClient {
                     aria2Options.put(entry.getKey().substring(6), entry.getValue());
                 }
             }
-            for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
-                    .filter(org.manager.tools.ToolOptionFilter.Tool.ARIA2, aria2Options)
-                    .entrySet()) {
-                command.add("--" + entry.getKey() + "=" + entry.getValue());
-            }
+            appendFilteredAria2Options(command, aria2Options);
         }
+
+        String listenPorts = torrentListenPorts;
+        if (!listenPorts.isEmpty()) {
+            command.add("--listen-port=" + listenPorts);
+            command.add("--dht-listen-port=" + listenPorts);
+        }
+
+        // DHT, PEX and LPD bypass a TCP proxy. These final arguments must win
+        // over both an honored external config and per-download preferences.
+        command.add("--enable-dht=false");
+        command.add("--enable-dht6=false");
+        command.add("--enable-peer-exchange=false");
+        command.add("--bt-enable-lpd=false");
 
         // Add mirrors if any
         if (download.getMirrors() != null && !download.getMirrors().isEmpty()) {
@@ -502,6 +533,15 @@ public class ProxychainsClient {
         command.add(download.getUri().toString());
 
         return command;
+    }
+
+    private static void appendFilteredAria2Options(List<String> command,
+            Map<String, String> options) {
+        for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
+                .filter(org.manager.tools.ToolOptionFilter.Tool.ARIA2, options)
+                .entrySet()) {
+            command.add("--" + entry.getKey() + "=" + entry.getValue());
+        }
     }
 
     /**

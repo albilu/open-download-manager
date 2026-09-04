@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.aria2.Aria2Settings;
+import org.aria2.Aria2GlobalOptions;
 import org.curl.CurlSettings;
 import org.httrack.HttrackSettings;
 import org.manager.GlobalSettings;
@@ -106,6 +107,27 @@ class DownloadSettingsFactoryTest {
         assertTrue(settings.isCheckIntegrity());
         assertEquals(6815, settings.getRpcPort());
         assertEquals("33", settings.toRpcOptions().get("seed-time"));
+    }
+
+    @Test
+    @DisplayName("complete aria2 torrent policies flow into every new aria2 settings snapshot")
+    void completeAria2TorrentPolicyMapping() {
+        GlobalSettings global = new GlobalSettings();
+        global.setProperty(Aria2GlobalOptions.SEEDING_POLICY_KEY, "ratio-or-time");
+        global.setProperty(Aria2GlobalOptions.SEED_RATIO_KEY, "1.75");
+        global.setProperty(Aria2GlobalOptions.SEED_TIME_KEY, "120");
+        global.setProperty(Aria2GlobalOptions.PEER_EXCHANGE_KEY, "disabled");
+        global.setProperty(Aria2GlobalOptions.LOCAL_PEER_DISCOVERY_KEY, "enabled");
+        global.setProperty(Aria2GlobalOptions.ENCRYPTION_POLICY_KEY, "require-handshake");
+
+        Aria2Settings settings = new DownloadSettingsFactory(global).createAria2Settings();
+
+        assertEquals("1.75", settings.getOption("seed-ratio"));
+        assertEquals("120", settings.getOption("seed-time"));
+        assertEquals("false", settings.getOption("enable-peer-exchange"));
+        assertEquals("true", settings.getOption("bt-enable-lpd"));
+        assertEquals("true", settings.getOption("bt-require-crypto"));
+        assertEquals("plain", settings.getOption("bt-min-crypto-level"));
     }
 
     @Test

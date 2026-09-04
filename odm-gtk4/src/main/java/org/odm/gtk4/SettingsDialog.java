@@ -24,6 +24,7 @@ import org.gnome.gtk.Switch;
 import org.gnome.gtk.ToggleButton;
 import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
+import org.aria2.Aria2GlobalOptions;
 import org.manager.GlobalSettings;
 import org.manager.download.DownloadManager;
 import org.manager.download.DownloadSettingsFactory;
@@ -44,6 +45,15 @@ public class SettingsDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SettingsDialog.class);
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
+    private static final String[] SEEDING_POLICIES = {
+        "Disabled", "Ratio limit", "Time limit", "Ratio or time", "Unlimited"
+    };
+    private static final String[] NATIVE_TOGGLE_OVERRIDES = {
+        "Engine default", "Enabled", "Disabled"
+    };
+    private static final String[] TORRENT_ENCRYPTION_POLICIES = {
+        "Engine default", "Require obfuscated handshake", "Require encrypted payload"
+    };
     private record VideoFormatChoice(String label, String selector) {
     }
     private static final List<VideoFormatChoice> COMMON_VIDEO_FORMATS = List.of(
@@ -131,10 +141,22 @@ public class SettingsDialog {
                     "Maximum peers per BitTorrent download; 0 means unlimited."),
             Map.entry("peer_speed_limit_spin",
                     "Preferred BitTorrent speed threshold. When every torrent is slower, aria2 may temporarily request more peers; 0 disables the threshold."),
-            Map.entry("enable_seeding_check",
-                    "Keep completed BitTorrent downloads running so ODM can upload pieces to peers."),
+            Map.entry("seeding_policy_combo",
+                    "Choose whether completed torrents stop immediately, at a ratio, after a time, when either limit is reached, or never."),
+            Map.entry("seed_ratio_spin",
+                    "Upload-to-download share ratio at which aria2 stops seeding; used by ratio-based policies."),
             Map.entry("seed_time_spin",
-                    "Minutes to seed after completion; with seeding enabled, 0 leaves aria2's own stopping rule in effect."),
+                    "Minutes to seed after completion; used by time-based policies."),
+            Map.entry("torrent_listen_ports_entry",
+                    "TCP peer and UDP DHT listen port or range, such as 6881-6999. Blank keeps aria2's native setting; changes require restarting ODM."),
+            Map.entry("ipv6_dht_combo",
+                    "Override aria2's IPv6 DHT discovery policy. Engine default emits no ODM option; changes require restarting ODM."),
+            Map.entry("peer_exchange_combo",
+                    "Override BitTorrent Peer Exchange for new downloads. Private torrents still disable peer exchange."),
+            Map.entry("local_peer_discovery_combo",
+                    "Override local-network peer discovery for new torrents. aria2's native default is disabled."),
+            Map.entry("torrent_encryption_combo",
+                    "Keep aria2's native encryption policy, require an obfuscated handshake, or require ARC4 payload encryption."),
             Map.entry("tracker_refresh_spin",
                     "How often ODM reapplies the extra tracker list to active torrents; 0 disables periodic refresh."),
             Map.entry("tracker_list_entry",
@@ -343,6 +365,24 @@ public class SettingsDialog {
                 "Preferred subtitle languages, comma separated");
         AccessibilitySupport.label(spin("aria2_rpc_port_spin"),
                 "aria2 RPC port");
+        AccessibilitySupport.label(Widgets.require(builder,
+                "seeding_policy_combo", DropDown.class), "Torrent seeding policy");
+        AccessibilitySupport.label(spin("seed_ratio_spin"),
+                "Torrent seed ratio limit");
+        AccessibilitySupport.label(spin("seed_time_spin"),
+                "Torrent seed time limit in minutes");
+        AccessibilitySupport.label(entry("torrent_listen_ports_entry"),
+                "Torrent peer and DHT listen ports");
+        AccessibilitySupport.label(Widgets.require(builder,
+                "ipv6_dht_combo", DropDown.class), "IPv6 DHT policy");
+        AccessibilitySupport.label(Widgets.require(builder,
+                "peer_exchange_combo", DropDown.class), "Peer exchange policy");
+        AccessibilitySupport.label(Widgets.require(builder,
+                "local_peer_discovery_combo", DropDown.class),
+                "Local peer discovery policy");
+        AccessibilitySupport.label(Widgets.require(builder,
+                "torrent_encryption_combo", DropDown.class),
+                "BitTorrent encryption policy");
         AccessibilitySupport.label(entry("antivirus_command_entry"),
                 "Custom antivirus command including file placeholder");
         AccessibilitySupport.label(spin("antivirus_timeout_spin"),
@@ -352,6 +392,11 @@ public class SettingsDialog {
 
         initDropdown("proxy_type_combo", DialogOptions.PROXY_TYPES);
         initDropdown("file_allocation_combo", FILE_ALLOCATIONS);
+        initDropdown("seeding_policy_combo", SEEDING_POLICIES);
+        initDropdown("ipv6_dht_combo", NATIVE_TOGGLE_OVERRIDES);
+        initDropdown("peer_exchange_combo", NATIVE_TOGGLE_OVERRIDES);
+        initDropdown("local_peer_discovery_combo", NATIVE_TOGGLE_OVERRIDES);
+        initDropdown("torrent_encryption_combo", TORRENT_ENCRYPTION_POLICIES);
         initDropdown("antivirus_type_combo", new String[]{"Detecting installed scanners…"});
         Widgets.require(builder, "antivirus_type_combo", DropDown.class).setSensitive(false);
         AccessibilitySupport.label(Widgets.require(builder, "antivirus_type_combo", DropDown.class),
@@ -388,6 +433,7 @@ public class SettingsDialog {
         bindFolderMonitoringChildren();
         bindHistoryCleanupControls();
         bindAntivirusControls();
+        bindSeedingPolicyControls();
 
         dialog.onCloseRequest(() -> {
             closed.set(true);
@@ -689,6 +735,11 @@ public class SettingsDialog {
         Widgets.require(builder, id, DropDown.class).setModel(list);
     }
 
+    private <E extends Enum<E>> E selectedEnum(String id, E[] values, E fallback) {
+        long selected = Widgets.require(builder, id, DropDown.class).getSelected();
+        return selected >= 0 && selected < values.length ? values[(int) selected] : fallback;
+    }
+
     /** Selects a common policy while retaining an existing custom selector. */
     private void loadVideoFormat(String configuredSelector) {
         String selector = configuredSelector == null ? "" : configuredSelector.trim();
@@ -897,6 +948,24 @@ public class SettingsDialog {
         updateAntivirusControlSensitivity();
     }
 
+    private void bindSeedingPolicyControls() {
+        Widgets.require(builder, "seeding_policy_combo", DropDown.class)
+                .onNotify("selected", ignored -> updateSeedingControlSensitivity());
+        updateSeedingControlSensitivity();
+    }
+
+    private void updateSeedingControlSensitivity() {
+        Aria2GlobalOptions.SeedingPolicy policy = selectedEnum(
+                "seeding_policy_combo", Aria2GlobalOptions.SeedingPolicy.values(),
+                Aria2GlobalOptions.SeedingPolicy.DISABLED);
+        spin("seed_ratio_spin").setSensitive(
+                policy == Aria2GlobalOptions.SeedingPolicy.RATIO
+                || policy == Aria2GlobalOptions.SeedingPolicy.RATIO_OR_TIME);
+        spin("seed_time_spin").setSensitive(
+                policy == Aria2GlobalOptions.SeedingPolicy.TIME
+                || policy == Aria2GlobalOptions.SeedingPolicy.RATIO_OR_TIME);
+    }
+
     private void updateAntivirusControlSensitivity() {
         long selected = Widgets.require(builder, "antivirus_type_combo", DropDown.class)
                 .getSelected();
@@ -988,8 +1057,22 @@ public class SettingsDialog {
                 org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_MAX_PEERS));
         spin("peer_speed_limit_spin").setValue(s.getIntProperty("aria2.peerSpeedLimitKb",
                 org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB));
-        spin("seed_time_spin").setValue(s.getIntProperty("aria2.seedTimeMin",
-                org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_SEED_TIME_MIN));
+        Aria2GlobalOptions.SeedingPolicy seedingPolicy =
+                Aria2GlobalOptions.seedingPolicy(s);
+        Widgets.require(builder, "seeding_policy_combo", DropDown.class)
+                .setSelected(seedingPolicy.ordinal());
+        spin("seed_ratio_spin").setValue(Aria2GlobalOptions.seedRatio(s));
+        spin("seed_time_spin").setValue(Aria2GlobalOptions.seedTimeMinutes(s));
+        entry("torrent_listen_ports_entry").setText(
+                Aria2GlobalOptions.configuredListenPorts(s));
+        Widgets.require(builder, "ipv6_dht_combo", DropDown.class)
+                .setSelected(Aria2GlobalOptions.ipv6Dht(s).ordinal());
+        Widgets.require(builder, "peer_exchange_combo", DropDown.class)
+                .setSelected(Aria2GlobalOptions.peerExchange(s).ordinal());
+        Widgets.require(builder, "local_peer_discovery_combo", DropDown.class)
+                .setSelected(Aria2GlobalOptions.localPeerDiscovery(s).ordinal());
+        Widgets.require(builder, "torrent_encryption_combo", DropDown.class)
+                .setSelected(Aria2GlobalOptions.encryptionPolicy(s).ordinal());
         check("continue_download_check").setActive(s.getBooleanProperty("aria2.continueDownload", true));
         check("check_integrity_check").setActive(s.getBooleanProperty("aria2.checkIntegrity", false));
         spin("aria2_rpc_port_spin").setValue(s.getAria2RpcPort());
@@ -1000,7 +1083,6 @@ public class SettingsDialog {
         Widgets.require(builder, "file_allocation_combo", DropDown.class)
                 .setSelected(Math.max(0, allocationIndex));
         check("enable_auto_save_check").setActive(s.isOdmAutoSaveEnabled());
-        check("enable_seeding_check").setActive(s.getBooleanProperty("aria2.enableSeeding", false));
         entry("tracker_list_entry").setText(s.getProperty("tracker.list", ""));
         spin("tracker_refresh_spin").setValue(s.getIntProperty("tracker.refreshInterval", 0));
         // Yt-dlp
@@ -1064,6 +1146,7 @@ public class SettingsDialog {
         if (!antivirusChoices.isEmpty()) {
             applyAntivirusChoices(antivirusChoices, false);
         }
+        updateSeedingControlSensitivity();
     }
 
     private void onApply(boolean closeAfterSave) {
@@ -1174,7 +1257,30 @@ public class SettingsDialog {
         s.setProperty("aria2.minSplitSizeMb", String.valueOf((int) spin("min_split_size_spin1").getValue()));
         s.setProperty("aria2.maxPeers", String.valueOf((int) spin("max_peers_spin").getValue()));
         s.setProperty("aria2.peerSpeedLimitKb", String.valueOf((int) spin("peer_speed_limit_spin").getValue()));
-        s.setProperty("aria2.seedTimeMin", String.valueOf((int) spin("seed_time_spin").getValue()));
+        Aria2GlobalOptions.SeedingPolicy seedingPolicy = selectedEnum(
+                "seeding_policy_combo", Aria2GlobalOptions.SeedingPolicy.values(),
+                Aria2GlobalOptions.SeedingPolicy.DISABLED);
+        s.setProperty(Aria2GlobalOptions.SEEDING_POLICY_KEY,
+                seedingPolicy.settingValue());
+        s.setProperty(Aria2GlobalOptions.SEED_RATIO_KEY,
+                Double.toString(spin("seed_ratio_spin").getValue()));
+        s.setProperty(Aria2GlobalOptions.SEED_TIME_KEY,
+                Integer.toString((int) spin("seed_time_spin").getValue()));
+        s.setProperty(Aria2GlobalOptions.LISTEN_PORTS_KEY,
+                Aria2GlobalOptions.normalizeListenPorts(
+                        entry("torrent_listen_ports_entry").getText()));
+        s.setProperty(Aria2GlobalOptions.IPV6_DHT_KEY, selectedEnum(
+                "ipv6_dht_combo", Aria2GlobalOptions.ToggleOverride.values(),
+                Aria2GlobalOptions.ToggleOverride.ENGINE_DEFAULT).settingValue());
+        s.setProperty(Aria2GlobalOptions.PEER_EXCHANGE_KEY, selectedEnum(
+                "peer_exchange_combo", Aria2GlobalOptions.ToggleOverride.values(),
+                Aria2GlobalOptions.ToggleOverride.ENGINE_DEFAULT).settingValue());
+        s.setProperty(Aria2GlobalOptions.LOCAL_PEER_DISCOVERY_KEY, selectedEnum(
+                "local_peer_discovery_combo", Aria2GlobalOptions.ToggleOverride.values(),
+                Aria2GlobalOptions.ToggleOverride.ENGINE_DEFAULT).settingValue());
+        s.setProperty(Aria2GlobalOptions.ENCRYPTION_POLICY_KEY, selectedEnum(
+                "torrent_encryption_combo", Aria2GlobalOptions.EncryptionPolicy.values(),
+                Aria2GlobalOptions.EncryptionPolicy.ENGINE_DEFAULT).settingValue());
         s.setProperty("aria2.continueDownload", String.valueOf(check("continue_download_check").getActive()));
         s.setProperty("aria2.checkIntegrity", String.valueOf(check("check_integrity_check").getActive()));
         s.setAria2RpcPort((int) spin("aria2_rpc_port_spin").getValue());
@@ -1185,7 +1291,6 @@ public class SettingsDialog {
             s.setProperty("aria2.fileAllocation", FILE_ALLOCATIONS[(int) allocationIndex]);
         }
         s.setOdmAutoSaveEnabled(check("enable_auto_save_check").getActive());
-        s.setProperty("aria2.enableSeeding", String.valueOf(check("enable_seeding_check").getActive()));
         s.setProperty("tracker.list", entry("tracker_list_entry").getText().trim());
         s.setProperty("tracker.refreshInterval",
                 String.valueOf((int) spin("tracker_refresh_spin").getValue()));

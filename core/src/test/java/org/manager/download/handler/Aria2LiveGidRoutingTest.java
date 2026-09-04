@@ -232,6 +232,7 @@ class Aria2LiveGidRoutingTest {
     void disabledSeedingStopsLegacySeeder() {
         Download download = new Download(URI.create(
                 "magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        download.initSettings(new DownloadSettingsFactory(globalSettings));
         handler.registerTrackedDownload(download, List.of("payload-gid"));
         Map<String, Object> seeding = status("active", 1_000, 1_000);
         seeding.put("seeder", "true");
@@ -252,11 +253,12 @@ class Aria2LiveGidRoutingTest {
     }
 
     @Test
-    @DisplayName("Enabled seeding leaves an active local seeder running")
+    @DisplayName("The admitted download's seeding policy leaves an active seeder running")
     void enabledSeedingIsNotStopped() {
-        globalSettings.setProperty("aria2.enableSeeding", "true");
+        globalSettings.setProperty(org.aria2.Aria2GlobalOptions.SEEDING_POLICY_KEY, "ratio");
         Download download = new Download(URI.create(
                 "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc"));
+        download.initSettings(new DownloadSettingsFactory(globalSettings));
         handler.registerTrackedDownload(download, List.of("seed-gid"));
         Map<String, Object> seeding = status("active", 100, 100);
         seeding.put("seeder", "true");

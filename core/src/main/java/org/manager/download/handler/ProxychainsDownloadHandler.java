@@ -47,6 +47,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 proxychainsPath,
                 null,
                 globalSettings.isHonorExternalAria2Configuration());
+        refreshAria2LaunchPolicy();
         this.activeTasks = new ConcurrentHashMap<>();
         this.downloadOptions = new ConcurrentHashMap<>();
     }
@@ -204,8 +205,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
 
                 // This global policy can change while the handler remains
                 // alive, so take its current value for every new process.
-                proxychainsClient.setHonorExternalAria2Configuration(
-                        globalSettings.isHonorExternalAria2Configuration());
+                refreshAria2LaunchPolicy();
 
                 // The client spawns the transfer on its own (daemon) pool
                 // and returns immediately — one short pool task total. The
@@ -264,6 +264,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
     public CompletableFuture<Void> resumeDownload(Download download) {
         return CompletableFuture.runAsync(() -> {
             if (download != null && download.getStatus() == Download.Status.PAUSED) {
+                refreshAria2LaunchPolicy();
                 // Use this handler as the listener directly
 
                 // Get options for this download
@@ -348,11 +349,19 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 proxychainsClient.pauseDownload(download, this);
 
                 Map<String, String> options = getDownloadOptions(download.getId());
+                refreshAria2LaunchPolicy();
                 Future<?> resumeTask = executor.submit(() -> proxychainsClient.resumeDownload(download, this, options));
                 activeTasks.put(download.getId(), resumeTask);
             }
             // If not actively running, the new settings stay stored on the
             // Download and apply on (re)start.
         }, executor);
+    }
+
+    private void refreshAria2LaunchPolicy() {
+        proxychainsClient.setHonorExternalAria2Configuration(
+                globalSettings.isHonorExternalAria2Configuration());
+        proxychainsClient.setTorrentListenPorts(
+                org.aria2.Aria2GlobalOptions.configuredListenPorts(globalSettings));
     }
 }

@@ -52,6 +52,11 @@ class ToolOptionFilterTest {
         input.put("split", "16");
         input.put("min-split-size", "1M");
         input.put("all-proxy", "socks5://127.0.0.1:9050");
+        input.put("ssh-host-key-md", "sha-1=0123456789012345678901234567890123456789");
+        input.put("enable-peer-exchange", "false");
+        input.put("bt-enable-lpd", "false");
+        input.put("bt-require-crypto", "true");
+        input.put("bt-min-crypto-level", "arc4");
 
         Map<String, String> filtered = ToolOptionFilter.filter(
                 ToolOptionFilter.Tool.ARIA2, input);
@@ -62,6 +67,12 @@ class ToolOptionFilterTest {
         assertEquals("16", filtered.get("split"));
         assertEquals("1M", filtered.get("min-split-size"));
         assertEquals("socks5://127.0.0.1:9050", filtered.get("all-proxy"));
+        assertEquals("sha-1=0123456789012345678901234567890123456789",
+                filtered.get("ssh-host-key-md"));
+        assertEquals("false", filtered.get("enable-peer-exchange"));
+        assertEquals("false", filtered.get("bt-enable-lpd"));
+        assertEquals("true", filtered.get("bt-require-crypto"));
+        assertEquals("arc4", filtered.get("bt-min-crypto-level"));
     }
 
     @Test

@@ -60,6 +60,8 @@ public class NewDownloadDialog {
     private final Entry referrerEntry;
     private final Entry cookieEntry;
     private final Entry userAgentEntry;
+    private final Label sftpHostKeyLabel;
+    private final Entry sftpHostKeyEntry;
     private final DropDown proxyTypeCombo;
     private final Entry proxyHostEntry;
     private final SpinButton proxyPortSpin;
@@ -113,6 +115,8 @@ public class NewDownloadDialog {
         this.referrerEntry = Widgets.require(builder, "referrer", Entry.class);
         this.cookieEntry = Widgets.require(builder, "cookie", Entry.class);
         this.userAgentEntry = Widgets.require(builder, "user_agent", Entry.class);
+        this.sftpHostKeyLabel = Widgets.require(builder, "sftp_host_key_label", Label.class);
+        this.sftpHostKeyEntry = Widgets.require(builder, "sftp_host_key_entry", Entry.class);
         this.proxyTypeCombo = Widgets.require(builder, "proxy_type_combo", DropDown.class);
         this.proxyHostEntry = Widgets.require(builder, "proxy_host_entry", Entry.class);
         this.proxyPortSpin = Widgets.require(builder, "proxy_port_spin", SpinButton.class);
@@ -145,6 +149,10 @@ public class NewDownloadDialog {
         AccessibilitySupport.label(referrerEntry, "HTTP referrer");
         AccessibilitySupport.label(cookieEntry, "HTTP cookie header");
         AccessibilitySupport.label(userAgentEntry, "HTTP user agent");
+        AccessibilitySupport.label(sftpHostKeyEntry, "Expected SFTP host key digest");
+        sftpHostKeyEntry.setTooltipText(
+                "Expected server public-key digest: sha-1=<40 hex digits> or md5=<32 hex digits>. "
+                + "Leaving it blank disables aria2 host-key verification.");
         AccessibilitySupport.label(verifyChecksumCheck, "Verify checksum at completion");
 
         dialog.setTransientFor(parent);
@@ -204,7 +212,12 @@ public class NewDownloadDialog {
                 filenameEditedByUser = true;
             }
         });
-        urlEntry.onChanged(this::analyzeUrl);
+        sftpHostKeyEntry.onChanged(() ->
+                sftpHostKeyEntry.getStyleContext().removeClass("error"));
+        urlEntry.onChanged(() -> {
+            urlEntry.getStyleContext().removeClass("error");
+            analyzeUrl();
+        });
 
         Widgets.require(builder, "new_download_cancel_button", Button.class)
                 .onClicked(this::closeDialog);
@@ -248,6 +261,7 @@ public class NewDownloadDialog {
         }
         resetChecksumUi();
         if (url.isEmpty()) {
+            setSftpHostKeyVisible(false);
             filesStatusLabel.setLabel(
                     "Enter a torrent, magnet, or Metalink source to inspect its files.");
             return;
@@ -255,6 +269,7 @@ public class NewDownloadDialog {
         try {
             java.net.URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
             Download.Protocol protocol = Download.Protocol.fromUri(uri);
+            setSftpHostKeyVisible(protocol == Download.Protocol.SFTP);
             if (protocol == Download.Protocol.MAGNET) {
                 analyzeMagnet(url);
             }
@@ -280,8 +295,14 @@ public class NewDownloadDialog {
                 probeChecksumAsynchronously(uri);
             }
         } catch (Exception e) {
+            setSftpHostKeyVisible(false);
             filesStatusLabel.setLabel("Enter a valid download URL or magnet link.");
         }
+    }
+
+    private void setSftpHostKeyVisible(boolean visible) {
+        sftpHostKeyLabel.setVisible(visible);
+        sftpHostKeyEntry.setVisible(visible);
     }
 
     /**
@@ -584,7 +605,9 @@ public class NewDownloadDialog {
             submissionInFlight = false;
             refreshStartSensitivity();
             LOGGER.warn("New download rejected: " + e.getMessage());
-            urlEntry.getStyleContext().addClass("error");
+            if (!sftpHostKeyEntry.hasCssClass("error")) {
+                urlEntry.getStyleContext().addClass("error");
+            }
             AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + e.getMessage(),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
@@ -700,6 +723,16 @@ public class NewDownloadDialog {
                 (int) retryLimitSpin.getValue(),
                 (int) retryAfterSpin.getValue(),
                 referrerEntry.getText(), userAgentEntry.getText(), cookieEntry.getText());
+
+        if (download.getProtocol() == Download.Protocol.SFTP
+                && download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {
+            try {
+                aria2Settings.setSshHostKeyDigest(sftpHostKeyEntry.getText());
+            } catch (IllegalArgumentException invalidDigest) {
+                sftpHostKeyEntry.getStyleContext().addClass("error");
+                throw invalidDigest;
+            }
+        }
 
         applyFileChoices(download);
     }

@@ -607,6 +607,144 @@ public class Aria2Settings extends DownloadSettings {
         return this;
     }
 
+    /**
+     * Configures aria2's complete seeding policy without relying on its
+     * implicit 1.0 ratio. The option combinations mirror aria2 semantics:
+     * when both limits are present it stops at the first one reached, while
+     * ratio {@code 0.0} disables the ratio condition.
+     */
+    public Aria2Settings setSeedingPolicy(Aria2GlobalOptions.SeedingPolicy policy,
+            double ratio, double minutes) {
+        clearOption("seed-ratio");
+        clearOption("seed-time");
+        // Do not allow the older typed compatibility fields to overwrite the
+        // explicit policy in toMap().
+        this.seedRatio = false;
+        this.seedTime = 0.0;
+
+        Aria2GlobalOptions.SeedingPolicy effective = policy == null
+                ? Aria2GlobalOptions.SeedingPolicy.DISABLED : policy;
+        String positiveRatio = Double.toString(ratio > 0 && Double.isFinite(ratio)
+                ? ratio : Aria2GlobalOptions.DEFAULT_SEED_RATIO);
+        double normalizedMinutes = minutes > 0 && Double.isFinite(minutes)
+                ? minutes : Aria2GlobalOptions.DEFAULT_SEED_TIME_MINUTES;
+        String positiveMinutes = normalizedMinutes == Math.rint(normalizedMinutes)
+                ? Long.toString((long) normalizedMinutes)
+                : Double.toString(normalizedMinutes);
+        switch (effective) {
+            case DISABLED -> setOption("seed-time", "0");
+            case RATIO -> setOption("seed-ratio", positiveRatio);
+            case TIME -> {
+                setOption("seed-ratio", "0.0");
+                setOption("seed-time", positiveMinutes);
+            }
+            case RATIO_OR_TIME -> {
+                setOption("seed-ratio", positiveRatio);
+                setOption("seed-time", positiveMinutes);
+            }
+            case UNLIMITED -> setOption("seed-ratio", "0.0");
+        }
+        return this;
+    }
+
+    /** True when this settings snapshot explicitly tells aria2 not to seed. */
+    public boolean isSeedingDisabled() {
+        String value = getOption("seed-time");
+        if (value == null) {
+            return false;
+        }
+        try {
+            return Double.parseDouble(value) == 0.0;
+        } catch (NumberFormatException invalid) {
+            return false;
+        }
+    }
+
+    /** Applies or clears the per-torrent Peer Exchange override. */
+    public Aria2Settings setPeerExchange(Aria2GlobalOptions.ToggleOverride override) {
+        return setToggleOverride("enable-peer-exchange", override);
+    }
+
+    /** Applies or clears the per-torrent Local Peer Discovery override. */
+    public Aria2Settings setLocalPeerDiscovery(Aria2GlobalOptions.ToggleOverride override) {
+        return setToggleOverride("bt-enable-lpd", override);
+    }
+
+    private Aria2Settings setToggleOverride(String option,
+            Aria2GlobalOptions.ToggleOverride override) {
+        clearOption(option);
+        if (override != null && override != Aria2GlobalOptions.ToggleOverride.ENGINE_DEFAULT) {
+            setOption(option, String.valueOf(
+                    override == Aria2GlobalOptions.ToggleOverride.ENABLED));
+        }
+        return this;
+    }
+
+    /** Applies an explicit BitTorrent encryption requirement, or the native default. */
+    public Aria2Settings setEncryptionPolicy(Aria2GlobalOptions.EncryptionPolicy policy) {
+        clearOption("bt-require-crypto");
+        clearOption("bt-min-crypto-level");
+        switch (policy == null ? Aria2GlobalOptions.EncryptionPolicy.ENGINE_DEFAULT : policy) {
+            case ENGINE_DEFAULT -> {
+                // No override: aria2's own defaults or honored config prevail.
+            }
+            case REQUIRE_OBFUSCATED_HANDSHAKE -> {
+                setOption("bt-require-crypto", "true");
+                setOption("bt-min-crypto-level", "plain");
+            }
+            case REQUIRE_ENCRYPTED_PAYLOAD -> {
+                setOption("bt-require-crypto", "true");
+                setOption("bt-min-crypto-level", "arc4");
+            }
+        }
+        return this;
+    }
+
+    /**
+     * Sets the expected SFTP host public-key digest. Empty input restores
+     * aria2's default (no host-key verification); invalid values are rejected.
+     */
+    public Aria2Settings setSshHostKeyDigest(String value) {
+        String normalized = normalizeSshHostKeyDigest(value);
+        clearOption("ssh-host-key-md");
+        if (!normalized.isEmpty()) {
+            setOption("ssh-host-key-md", normalized);
+        }
+        return this;
+    }
+
+    /** Normalizes aria2's {@code sha-1=<hex>} or {@code md5=<hex>} syntax. */
+    public static String normalizeSshHostKeyDigest(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String compact = value.replaceAll("\\s+", "");
+        int equals = compact.indexOf('=');
+        if (equals <= 0 || equals == compact.length() - 1) {
+            throw invalidSshHostKeyDigest();
+        }
+        String algorithm = compact.substring(0, equals).toLowerCase(java.util.Locale.ROOT);
+        if ("sha1".equals(algorithm)) {
+            algorithm = "sha-1";
+        }
+        String digest = compact.substring(equals + 1).replace(":", "")
+                .toLowerCase(java.util.Locale.ROOT);
+        int expectedLength = switch (algorithm) {
+            case "sha-1" -> 40;
+            case "md5" -> 32;
+            default -> throw invalidSshHostKeyDigest();
+        };
+        if (digest.length() != expectedLength || !digest.matches("[0-9a-f]+")) {
+            throw invalidSshHostKeyDigest();
+        }
+        return algorithm + '=' + digest;
+    }
+
+    private static IllegalArgumentException invalidSshHostKeyDigest() {
+        return new IllegalArgumentException(
+                "SFTP host key must be sha-1=<40 hex digits> or md5=<32 hex digits>");
+    }
+
     @Override
     public Map<String, String> toMap() {
         // Start with base settings including any additional options

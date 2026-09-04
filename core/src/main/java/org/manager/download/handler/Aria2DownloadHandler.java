@@ -28,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.aria2.Aria2Client.Aria2RpcError;
 import org.aria2.Aria2Client.Aria2RpcException;
+import org.aria2.Aria2GlobalOptions;
 import org.aria2.Aria2NotificationListener;
 import org.aria2.Aria2Settings;
 import org.manager.GlobalSettings;
@@ -864,6 +865,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             extraArgs.add("--all-proxy=" + globalSettings.getGlobalProxyAddress());
         }
 
+        boolean strictProxyRouting = globalSettings.isGlobalProxyEnabled()
+                && DownloadHandlerFactory.isSocksProxyAddress(
+                        globalSettings.getGlobalProxyAddress());
+        extraArgs.addAll(Aria2GlobalOptions.daemonLaunchArguments(
+                globalSettings, strictProxyRouting));
+
         // Extra BitTorrent trackers (comma-separated announce URLs) and the
         // re-announce interval, when configured
         String trackerList = trackerListSetting();
@@ -1337,14 +1344,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
     /**
      * aria2 keeps a fully downloaded torrent active while it seeds toward its
-     * default share ratio. When ODM's seeding switch is off, explicitly set a
-     * zero seed time on an already-running legacy task; aria2 then emits its
+     * default share ratio. When this download's seeding policy is disabled,
+     * explicitly set a zero seed time on an already-running task; aria2 then emits its
      * normal complete transition and the manager releases the slot cleanly.
      */
     private void stopDisabledSeeding(Download download, String gid,
             String aria2Status, boolean seeder) {
         if (!"active".equals(aria2Status) || !seeder
-                || globalSettings.getBooleanProperty("aria2.enableSeeding", false)
+                || !seedingDisabled(download)
                 || !seedingStopRequests.add(gid)) {
             return;
         }
@@ -1356,6 +1363,17 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             seedingStopRequests.remove(gid);
             LOGGER.warn("Could not stop BitTorrent seeding for GID " + gid, e);
         }
+    }
+
+    private boolean seedingDisabled(Download download) {
+        if (download.getSettings() instanceof Aria2Settings settings
+                && settings.getOption("seed-time") != null) {
+            return settings.isSeedingDisabled();
+        }
+        // Rehydrated records created before per-download policy snapshots
+        // fall back to the current global preference.
+        return Aria2GlobalOptions.seedingPolicy(globalSettings)
+                == Aria2GlobalOptions.SeedingPolicy.DISABLED;
     }
 
     private void recordReportedOutputPaths(Download download, Map<String, Object> status) {

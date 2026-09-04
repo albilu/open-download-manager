@@ -1,6 +1,7 @@
 package org.manager.download;
 
 import java.util.Arrays;
+import org.aria2.Aria2GlobalOptions;
 import org.aria2.Aria2Settings;
 import org.curl.CurlSettings;
 import org.httrack.HttrackSettings;
@@ -22,7 +23,10 @@ public class DownloadSettingsFactory {
     public static final int DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB = 10;
     public static final int DEFAULT_ARIA2_MAX_PEERS = 55;
     public static final int DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB = 50;
-    public static final int DEFAULT_ARIA2_SEED_TIME_MIN = 60;
+    public static final int DEFAULT_ARIA2_SEED_TIME_MIN =
+            Aria2GlobalOptions.DEFAULT_SEED_TIME_MINUTES;
+    public static final double DEFAULT_ARIA2_SEED_RATIO =
+            Aria2GlobalOptions.DEFAULT_SEED_RATIO;
     public static final int DEFAULT_HTTRACK_DEPTH = 3;
 
     private static final String NETWORK_MAX_CONNECTIONS = "network.maxConnections";
@@ -232,15 +236,7 @@ public class DownloadSettingsFactory {
                 Math.max(0, g.getIntProperty("aria2.peerSpeedLimitKb",
                         DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB)));
 
-        int seedTimeMin = g.getIntProperty("aria2.seedTimeMin",
-                DEFAULT_ARIA2_SEED_TIME_MIN);
-        if (g.getBooleanProperty("aria2.enableSeeding", false) && seedTimeMin > 0) {
-            settings.setOption("seed-time", String.valueOf(seedTimeMin));
-        } else if (!g.getBooleanProperty("aria2.enableSeeding", false)) {
-            // aria2 otherwise seeds toward its default 1.0 share ratio. An
-            // explicit zero is the documented way to finish immediately.
-            settings.setOption("seed-time", "0");
-        }
+        Aria2GlobalOptions.applyDownloadOptions(g, settings);
         applyNetworkPreferences(g, settings);
 
         return settings;

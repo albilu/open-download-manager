@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.GlobalSettings;
+import org.aria2.Aria2GlobalOptions;
 import org.manager.download.DownloadManager;
 
 /**
@@ -46,7 +47,9 @@ class SettingsDialogSaveOutcomeTest {
             // aria2
             "aria2_path_entry", "browse_aria2_button", "min_split_size_spin1",
             "file_allocation_combo", "max_peers_spin", "peer_speed_limit_spin",
-            "enable_seeding_check", "seed_time_spin", "tracker_refresh_spin",
+            "seeding_policy_combo", "seed_ratio_spin", "seed_time_spin",
+            "torrent_listen_ports_entry", "ipv6_dht_combo", "peer_exchange_combo",
+            "local_peer_discovery_combo", "torrent_encryption_combo", "tracker_refresh_spin",
             "tracker_list_entry", "continue_download_check", "check_integrity_check",
             "aria2_rpc_port_spin", "honor_external_aria2_config_check",
             // yt-dlp
@@ -341,6 +344,47 @@ class SettingsDialogSaveOutcomeTest {
             assertEquals(6812, saved.getAria2RpcPort());
             assertTrue(saved.isHonorExternalAria2Configuration());
             assertTrue(saved.isHonorExternalYtDlpConfiguration());
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("aria2 torrent policies survive a Preferences round trip")
+    void aria2TorrentPoliciesRoundTripThroughDialog() throws Exception {
+        Path configHome = tempDir.resolve("aria2-torrent-policies");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setProperty(Aria2GlobalOptions.SEEDING_POLICY_KEY, "ratio-or-time");
+            initial.setProperty(Aria2GlobalOptions.SEED_RATIO_KEY, "1.75");
+            initial.setProperty(Aria2GlobalOptions.SEED_TIME_KEY, "90");
+            initial.setProperty(Aria2GlobalOptions.LISTEN_PORTS_KEY, "51413-51420");
+            initial.setProperty(Aria2GlobalOptions.IPV6_DHT_KEY, "enabled");
+            initial.setProperty(Aria2GlobalOptions.PEER_EXCHANGE_KEY, "disabled");
+            initial.setProperty(Aria2GlobalOptions.LOCAL_PEER_DISCOVERY_KEY, "enabled");
+            initial.setProperty(Aria2GlobalOptions.ENCRYPTION_POLICY_KEY, "require-payload");
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null);
+
+            dialog.applySettings();
+
+            GlobalSettings saved = settings.get();
+            assertEquals("ratio-or-time", saved.getProperty(
+                    Aria2GlobalOptions.SEEDING_POLICY_KEY, null));
+            assertEquals(1.75, Double.parseDouble(saved.getProperty(
+                    Aria2GlobalOptions.SEED_RATIO_KEY, null)));
+            assertEquals("90", saved.getProperty(Aria2GlobalOptions.SEED_TIME_KEY, null));
+            assertEquals("51413-51420", saved.getProperty(
+                    Aria2GlobalOptions.LISTEN_PORTS_KEY, null));
+            assertEquals("enabled", saved.getProperty(Aria2GlobalOptions.IPV6_DHT_KEY, null));
+            assertEquals("disabled", saved.getProperty(
+                    Aria2GlobalOptions.PEER_EXCHANGE_KEY, null));
+            assertEquals("enabled", saved.getProperty(
+                    Aria2GlobalOptions.LOCAL_PEER_DISCOVERY_KEY, null));
+            assertEquals("require-payload", saved.getProperty(
+                    Aria2GlobalOptions.ENCRYPTION_POLICY_KEY, null));
         });
     }
 

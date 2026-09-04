@@ -66,9 +66,11 @@ public final class ToolOptionFilter {
             "load-cookies", "check-certificate", "lowest-speed-limit",
             "max-connection", "piece-length", "optimize-concurrent-downloads",
             "file-allocation", "allow-overwrite", "auto-file-renaming",
-            "continue", "dir", "out", "max-file-not-found", "select-file",
+            "continue", "check-integrity", "dir", "out", "max-file-not-found", "select-file",
             "seed-ratio", "seed-time", "bt-max-peers", "bt-request-peer-speed-limit",
-            "bt-detach-seed-only", "follow-torrent", "follow-metalink",
+            "bt-detach-seed-only", "bt-enable-lpd", "enable-peer-exchange",
+            "bt-require-crypto", "bt-min-crypto-level", "bt-force-encryption",
+            "ssh-host-key-md", "follow-torrent", "follow-metalink",
             "metalink-preferred-protocol", "remote-time", "conditional-get");
 
     /** Safe curl option keys; excludes config/K, output/o, write-out, exec-adjacent flags. */
