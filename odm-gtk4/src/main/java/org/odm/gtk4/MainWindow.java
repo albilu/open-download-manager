@@ -1103,7 +1103,6 @@ public class MainWindow {
 
         // Edit
         org.gnome.gio.Menu edit = new org.gnome.gio.Menu();
-        edit.append("Select All", "win.select-all");
         edit.append("Clipboard Monitoring", "win.clipboard-monitoring");
         edit.append("Silent Mode", "win.clipboard-silent");
         org.gnome.gio.Menu completion = new org.gnome.gio.Menu();
@@ -1124,6 +1123,7 @@ public class MainWindow {
         schedule.append("Never (paused)", "win.schedule::never");
         edit.appendSubmenu("Schedule", schedule);
         edit.append("New Tor Identity", "win.tor-new-identity");
+        edit.append("Select All", "win.select-all");
         edit.append("Preferences", "win.preferences");
         menu.appendSubmenu("_Edit", edit);
 
