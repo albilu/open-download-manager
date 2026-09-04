@@ -341,7 +341,7 @@ public class MainWindow {
         AccessibilitySupport.label(statusTreeview, "Download status filters");
         AccessibilitySupport.label(categoryTreeview, "Download category filters");
         AccessibilitySupport.label(downloadsTreeview, "Downloads");
-        installDownloadNameTooltip(builder);
+        installDownloadTooltips(builder);
         AccessibilitySupport.label(searchEntry, "Search downloads");
         AccessibilitySupport.label(torSwitch, "Global Tor routing");
         AccessibilitySupport.label(menuBar, "Application menu");
@@ -797,12 +797,16 @@ public class MainWindow {
         return path.get();
     }
 
-    /** Shows the complete, unellipsized download name only over the Name cell. */
-    private void installDownloadNameTooltip(GtkBuilder builder) {
+    /** Shows row-specific text for the ellipsized Name and icon-only Type cells. */
+    private void installDownloadTooltips(GtkBuilder builder) {
         org.gnome.gtk.TreeViewColumn nameColumn = Widgets.require(
                 builder, "name_column", org.gnome.gtk.TreeViewColumn.class);
         org.gnome.gtk.CellRenderer nameRenderer = Widgets.require(
                 builder, "name_renderer", org.gnome.gtk.CellRenderer.class);
+        org.gnome.gtk.TreeViewColumn engineColumn = Widgets.require(
+                builder, "tor_icon_column", org.gnome.gtk.TreeViewColumn.class);
+        org.gnome.gtk.CellRenderer engineRenderer = Widgets.require(
+                builder, "engine_icon_renderer", org.gnome.gtk.CellRenderer.class);
         downloadsTreeview.setHasTooltip(true);
         downloadsTreeview.onQueryTooltip((x, y, keyboardMode, tooltip) -> {
             if (tooltip == null) {
@@ -825,14 +829,24 @@ public class MainWindow {
                 // when its current cursor column is not the Name column.
                 org.gnome.gtk.TreeViewColumn tooltipColumn = keyboardMode
                         ? nameColumn : hoveredColumn.get();
-                String fullName = downloadNameTooltip(
-                        downloadsStore, path, tooltipColumn, nameColumn);
-                if (fullName == null || fullName.isBlank()) {
+                boolean engineCell = !keyboardMode
+                        && tooltipColumn != null
+                        && tooltipColumn.handle().equals(engineColumn.handle());
+                Download download = engineCell ? downloadAt(path) : null;
+                String text = engineCell
+                        ? downloadEngineTooltip(
+                                download == null ? null : download.getType(),
+                                tooltipColumn, engineColumn)
+                        : downloadNameTooltip(
+                                downloadsStore, path, tooltipColumn, nameColumn);
+                if (text == null || text.isBlank()) {
                     return false;
                 }
-                tooltip.setText(fullName);
+                tooltip.setText(text);
                 downloadsTreeview.setTooltipCell(
-                        tooltip, path, nameColumn, nameRenderer);
+                        tooltip, path,
+                        engineCell ? engineColumn : nameColumn,
+                        engineCell ? engineRenderer : nameRenderer);
                 return true;
             } finally {
                 org.javagi.interop.MemoryCleaner.free(path.handle());
@@ -851,6 +865,16 @@ public class MainWindow {
         return store.getIter(iter, path)
                 ? ListStoreCells.getString(store, iter, 1)
                 : null;
+    }
+
+    static String downloadEngineTooltip(Download.Type type,
+            org.gnome.gtk.TreeViewColumn hoveredColumn,
+            org.gnome.gtk.TreeViewColumn engineColumn) {
+        if (type == null || hoveredColumn == null || engineColumn == null
+                || !hoveredColumn.handle().equals(engineColumn.handle())) {
+            return null;
+        }
+        return DownloadEnginePresentation.displayName(type);
     }
 
     private void showContextMenuForSelection() {
@@ -2399,7 +2423,7 @@ public class MainWindow {
         Path saveFolder = displayedSaveFolder(selectedDownload);
         folderValue.setLabel(saveFolder != null ? saveFolder.toString() : "—");
         folderOpenButton.setSensitive(saveFolder != null);
-        engineIcon.setFromIconName(DownloadEnginePresentation.iconName(selectedDownload.getType()));
+        engineIcon.setFromGicon(DownloadEnginePresentation.icon(selectedDownload.getType()));
         engineValue.setLabel(DownloadEnginePresentation.displayName(selectedDownload.getType()));
         etaValue.setLabel(DownloadFormats.eta(selectedDownload));
         downloadedValue.setLabel(DownloadFormats.size(selectedDownload.getDownloaded()));

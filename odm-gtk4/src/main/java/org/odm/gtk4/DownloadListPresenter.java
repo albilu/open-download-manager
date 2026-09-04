@@ -31,8 +31,8 @@ final class DownloadListPresenter {
     };
     static final String[] CATEGORIES = {"All", "Videos", "Audios", "Photos", "Programs", "Others"};
 
-    // Visible download_store columns. Number is gint; 1-11 are strings,
-    // progress is gint, and 13-14 are strings.
+    // Visible download_store columns. Number is gint; 1-10 are strings,
+    // 11 is the engine GIcon, progress is gint, and 13-14 are strings.
     private static final int COL_NUMBER = 0;
     private static final int COL_NAME = 1;
     private static final int COL_COMPLETE = 2;
@@ -44,7 +44,7 @@ final class DownloadListPresenter {
     private static final int COL_RETRY = 8;
     private static final int COL_START = 9;
     private static final int COL_END = 10;
-    private static final int COL_TOR_ICON = 11;
+    private static final int COL_ENGINE_ICON = 11;
     private static final int COL_PROGRESS = 12; // gint
     private static final int COL_STATUS_ICON = 13;
     private static final int COL_PROGRESS_TEXT = 14;
@@ -605,8 +605,8 @@ final class DownloadListPresenter {
                 download.getCompletedAt() != null
                         ? DownloadFormats.DATE_FORMAT.format(download.getCompletedAt())
                         : "—");
-        ListStoreCells.setString(store, iter, COL_TOR_ICON,
-                DownloadEnginePresentation.iconName(download.getType()));
+        ListStoreCells.setIcon(store, iter, COL_ENGINE_ICON,
+                DownloadEnginePresentation.icon(download.getType()));
 
         ListStoreCells.setString(store, iter, COL_DOWNLOAD_ID, download.getId());
         ListStoreCells.setInt(store, iter, COL_STATUS_SORT,

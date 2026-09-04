@@ -1,7 +1,9 @@
 package org.odm.gtk4;
 
+import org.gnome.gio.Icon;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.TreeIter;
+import org.gnome.gobject.GObject;
 import org.gnome.gobject.Value;
 import org.javagi.gobject.types.Types;
 
@@ -46,6 +48,13 @@ final class ListStoreCells {
     static void setBoolean(ListStore store, TreeIter iter, int column, boolean value) {
         Value v = new Value().init(Types.BOOLEAN);
         v.setBoolean(value);
+        store.setValue(iter, column, v);
+        v.unset();
+    }
+
+    static void setIcon(ListStore store, TreeIter iter, int column, Icon value) {
+        Value v = new Value().init(Icon.getType());
+        v.setObject((GObject) value);
         store.setValue(iter, column, v);
         v.unset();
     }

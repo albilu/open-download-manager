@@ -12,7 +12,7 @@
       <column type="gchararray"/><column type="gchararray"/><column type="gchararray"/>
       <column type="gchararray"/><column type="gchararray"/><column type="gchararray"/>
       <column type="gchararray"/><column type="gchararray"/><column type="gchararray"/>
-      <column type="gchararray"/><column type="gchararray"/>
+      <column type="gchararray"/><column type="GIcon"/>
       <column type="gint"/>
       <column type="gchararray"/><column type="gchararray"/><column type="gchararray"/>
       <column type="gint"/>
@@ -259,7 +259,7 @@
                                 <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title">Retry</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title">Start date</property><property name="sort-column-id">24</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title">End date</property><property name="sort-column-id">25</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Type</property><property name="sizing">fixed</property><property name="fixed-width">44</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf"/><attributes><attribute name="icon-name">11</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Type</property><property name="sizing">fixed</property><property name="fixed-width">44</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf" id="engine_icon_renderer"/><attributes><attribute name="gicon">11</attribute></attributes></child></object></child>
                               </object>
                             </child>
                           </object>

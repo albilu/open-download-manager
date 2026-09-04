@@ -215,6 +215,21 @@ class WindowSmokeTest {
                     id + " must expose a typed sort key");
         }
         assertEquals(28, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
+        for (org.manager.download.Download.Type type
+                : org.manager.download.Download.Type.values()) {
+            org.gnome.gio.Icon icon = DownloadEnginePresentation.icon(type);
+            assertNotNull(icon, type + " must have an engine icon");
+            if (type == org.manager.download.Download.Type.ARIA2) {
+                org.gnome.gio.ThemedIcon themedIcon = assertInstanceOf(
+                        org.gnome.gio.ThemedIcon.class, icon);
+                assertEquals("network-server-symbolic", themedIcon.getNames()[0]);
+            } else {
+                org.gnome.gdk.Texture texture = assertInstanceOf(
+                        org.gnome.gdk.Texture.class, icon);
+                assertTrue(texture.getWidth() <= DownloadEnginePresentation.ICON_SIZE);
+                assertTrue(texture.getHeight() <= DownloadEnginePresentation.ICON_SIZE);
+            }
+        }
         assertEquals(7, Widgets.require(builder,
                 "completion_details_store", ListStore.class).getNColumns());
         Widgets.require(builder, "completion_details_view", TreeView.class);
@@ -237,6 +252,7 @@ class WindowSmokeTest {
                         < treeColumnIndex(downloadTree, nameColumn),
                 "the lifecycle icon must appear before the download name");
         Widgets.require(builder, "status_icon_renderer", org.gnome.gtk.CellRendererPixbuf.class);
+        Widgets.require(builder, "engine_icon_renderer", org.gnome.gtk.CellRendererPixbuf.class);
         Widgets.require(builder, "download_progress_renderer", CellRendererProgress.class);
         assertTrue(nameColumn.getMinWidth() >= 200);
         assertTrue(nameColumn.getMaxWidth() >= 360 && nameColumn.getMaxWidth() <= 480,
@@ -372,6 +388,10 @@ class WindowSmokeTest {
                 "subliminal_path_entry", "antivirus_command_entry"}) {
             Widgets.require(builder, id, Entry.class);
         }
+        assertEquals("*.html *.css example.com/downloads/*",
+                Widgets.require(builder, "include_entry", Entry.class).getPlaceholderText());
+        assertEquals("*/admin/* */logout/* *.tmp",
+                Widgets.require(builder, "exclude_entry", Entry.class).getPlaceholderText());
         Widgets.require(builder, "video_format_entry", DropDown.class);
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
@@ -660,8 +680,8 @@ class WindowSmokeTest {
     }
 
     @Test
-    @DisplayName("download name tooltip uses the complete model value only for the Name cell")
-    void downloadNameTooltipUsesFullName() {
+    @DisplayName("download tooltips describe only the hovered Name or Type cell")
+    void downloadTooltipsDescribeHoveredCell() {
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
         ListStore store = Widgets.require(builder, "download_store", ListStore.class);
         TreeIter row = new TreeIter();
@@ -671,11 +691,17 @@ class WindowSmokeTest {
         TreePath path = TreePath.first();
         TreeViewColumn name = Widgets.require(builder, "name_column", TreeViewColumn.class);
         TreeViewColumn size = Widgets.require(builder, "size_column", TreeViewColumn.class);
+        TreeViewColumn engine = Widgets.require(builder, "tor_icon_column", TreeViewColumn.class);
 
         assertEquals(fullName,
                 MainWindow.downloadNameTooltip(store, path, name, name));
         assertNull(MainWindow.downloadNameTooltip(store, path, size, name),
                 "other columns must not display the download-name tooltip");
+        assertEquals("aria2", MainWindow.downloadEngineTooltip(
+                org.manager.download.Download.Type.ARIA2, engine, engine));
+        assertNull(MainWindow.downloadEngineTooltip(
+                org.manager.download.Download.Type.ARIA2, name, engine),
+                "other columns must not display the engine tooltip");
     }
 
     @Test
