@@ -109,7 +109,6 @@ class GlobalSettingsJsonRoundTripTest {
         assertEquals("https://referrer.test/", settings.getProperty("network.referer", null));
         assertEquals("ODM fixture", settings.getProperty("network.userAgent", null));
         assertEquals("session=fixture", settings.getProperty("network.cookie", null));
-        assertEquals("bestvideo+bestaudio", settings.getProperty("ytdlp.videoFormat", null));
         assertEquals("night", settings.getProperty("scheduler.preset", null));
         assertEquals("15", settings.getProperty("tracker.refreshInterval", null));
         assertEquals(300, settings.getIntProperty("antivirus.timeout", 0));
@@ -172,6 +171,28 @@ class GlobalSettingsJsonRoundTripTest {
         assertFalse(saved.containsKey("automaticCleanupEnabled"));
         assertFalse(saved.containsKey("paginationDefaultSize"));
         assertFalse(saved.containsKey("enableLazyLoading"));
+    }
+
+    @Test
+    @DisplayName("record-specific yt-dlp choices are removed from global settings")
+    void recordSpecificYtDlpChoicesAreNotPersistedGlobally() throws Exception {
+        Path file = tempDir.resolve("yt-dlp-settings.json");
+        GlobalSettings settings = new GlobalSettings();
+        for (String key : java.util.List.of(
+                "ytdlp.videoFormat", "ytdlp.containerProfile",
+                "ytdlp.subtitleLanguages", "ytdlp.writeSubtitles",
+                "ytdlp.extractAudio", "ytdlp.cookieBrowser",
+                "ytdlp.cookieBrowserProfile")) {
+            settings.setProperty(key, "former-global-value");
+        }
+        settings.setProperty("ytdlp.writeThumbnail", "true");
+
+        settings.save(file);
+
+        Map<String, String> saved = readJson(file);
+        assertTrue(saved.containsKey("ytdlp.writeThumbnail"));
+        assertFalse(saved.keySet().stream().anyMatch(key -> key.startsWith("ytdlp.")
+                && !java.util.Set.of("ytdlp.writeThumbnail").contains(key)));
     }
 
     @Test

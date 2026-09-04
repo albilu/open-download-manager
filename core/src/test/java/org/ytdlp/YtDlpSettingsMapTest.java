@@ -22,6 +22,7 @@ class YtDlpSettingsMapTest {
         assertFalse(map.containsKey("ytdlp.format"),
                 "automatic format selection should emit no override");
         assertFalse(map.containsKey("ytdlp.output-template"), "no template set by default");
+        assertFalse(map.containsKey("ytdlp.write-thumbnail"), "thumbnail file off by default");
         assertFalse(map.containsKey("ytdlp.embed-thumbnail"), "thumbnail embedding off by default");
         assertFalse(map.containsKey("ytdlp.embed-metadata"), "metadata embedding off by default");
         assertFalse(map.containsKey("ytdlp.fragment-retries"),
@@ -36,6 +37,7 @@ class YtDlpSettingsMapTest {
         YtDlpSettings settings = new YtDlpSettings()
                 .setFormat("worst")
                 .setOutputTemplate("%(title)s.%(ext)s")
+                .setWriteThumbnail(true)
                 .setEmbedThumbnail(true)
                 .setEmbedSubs(true)
                 .setWriteAutoSubs(true)
@@ -51,6 +53,9 @@ class YtDlpSettingsMapTest {
                 .setNoPlaylist(true)
                 .setPlaylistEnd(true)
                 .setPlaylistItems(3)
+                .setContainerProfile(YtDlpSettings.ContainerProfile.MKV)
+                .setSponsorBlockMode(YtDlpSettings.SponsorBlockMode.MARK)
+                .setSponsorBlockCategories("sponsor,intro")
                 .setGeoBypass(true)
                 .setCookieFile("/tmp/cookies.txt")
                 .setVerboseOutput(true)
@@ -59,6 +64,7 @@ class YtDlpSettingsMapTest {
         Map<String, String> map = settings.toMap();
         assertEquals("worst", map.get("ytdlp.format"));
         assertEquals("%(title)s.%(ext)s", map.get("ytdlp.output-template"));
+        assertEquals("true", map.get("ytdlp.write-thumbnail"));
         assertEquals("true", map.get("ytdlp.embed-thumbnail"));
         assertEquals("true", map.get("ytdlp.embed-subs"));
         assertEquals("true", map.get("ytdlp.write-auto-subs"));
@@ -72,7 +78,9 @@ class YtDlpSettingsMapTest {
                 "a disabled flag must be absent, not 'false'");
         assertNull(map.get("ytdlp.ignore-errors"));
         assertEquals("true", map.get("ytdlp.no-playlist"));
-        assertEquals("1-3", map.get("ytdlp.playlist-items"));
+        assertEquals("1:3", map.get("ytdlp.playlist-items"));
+        assertEquals("mkv", map.get("ytdlp.container-profile"));
+        assertEquals("sponsor,intro", map.get("ytdlp.sponsorblock-mark"));
         assertEquals("true", map.get("ytdlp.geo-bypass"));
         assertEquals("/tmp/cookies.txt", map.get("ytdlp.cookies"));
         assertEquals("true", map.get("ytdlp.verbose"));
@@ -84,5 +92,41 @@ class YtDlpSettingsMapTest {
     void limitRateRequiresPositiveRate() {
         YtDlpSettings settings = new YtDlpSettings().setLimitRate(true).setRateLimit(0);
         assertFalse(settings.toMap().containsKey("ytdlp.limit-rate"));
+    }
+
+    @Test
+    @DisplayName("browser cookie source is serialized unless a cookie file overrides it")
+    void browserCookiePrecedence() {
+        YtDlpSettings settings = new YtDlpSettings()
+                .setBrowserCookieSource(YtDlpSettings.BrowserCookieSource.FIREFOX)
+                .setBrowserCookieProfile("work");
+
+        assertEquals("firefox:work", settings.toMap().get("ytdlp.cookies-from-browser"));
+
+        settings.setCookieFile("/tmp/cookies.txt");
+        assertEquals("/tmp/cookies.txt", settings.toMap().get("ytdlp.cookies"));
+        assertFalse(settings.toMap().containsKey("ytdlp.cookies-from-browser"));
+    }
+
+    @Test
+    @DisplayName("playlist expressions and SponsorBlock categories are validated")
+    void selectionValidation() {
+        YtDlpSettings settings = new YtDlpSettings().setPlaylistItemSpec("1:10, 12, 15:20:2");
+        assertEquals("1:10,12,15:20:2", settings.getPlaylistItemSpec());
+        assertEquals("1:10,12,15:20:2", settings.toMap().get("ytdlp.playlist-items"));
+
+        settings.setPlaylistItemSpec("-1,-5::-2");
+        assertEquals("-1,-5::-2", settings.getPlaylistItemSpec());
+
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> settings.setPlaylistItemSpec("1,broken"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> settings.setPlaylistItemSpec("1:5:0"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> settings.setSponsorBlockCategories("sponsor,unknown"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new YtDlpSettings()
+                        .setSponsorBlockCategories("chapter")
+                        .setSponsorBlockMode(YtDlpSettings.SponsorBlockMode.REMOVE));
     }
 }

@@ -1,7 +1,6 @@
 package org.odm.gtk4;
 
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -54,21 +53,6 @@ public class SettingsDialog {
     private static final String[] TORRENT_ENCRYPTION_POLICIES = {
         "Engine default", "Require obfuscated handshake", "Require encrypted payload"
     };
-    private record VideoFormatChoice(String label, String selector) {
-    }
-    private static final List<VideoFormatChoice> COMMON_VIDEO_FORMATS = List.of(
-            new VideoFormatChoice("Automatic (yt-dlp default)", ""),
-            new VideoFormatChoice("Up to 2160p (4K)",
-                    "bestvideo*[height<=?2160]+bestaudio/best[height<=?2160]"),
-            new VideoFormatChoice("Up to 1440p (2K)",
-                    "bestvideo*[height<=?1440]+bestaudio/best[height<=?1440]"),
-            new VideoFormatChoice("Up to 1080p (Full HD)",
-                    "bestvideo*[height<=?1080]+bestaudio/best[height<=?1080]"),
-            new VideoFormatChoice("Up to 720p (HD)",
-                    "bestvideo*[height<=?720]+bestaudio/best[height<=?720]"),
-            new VideoFormatChoice("Up to 480p (SD)",
-                    "bestvideo*[height<=?480]+bestaudio/best[height<=?480]"),
-            new VideoFormatChoice("Best single-file video (no merge)", "best"));
     private static final Map<String, String> SETTING_TOOLTIPS = Map.ofEntries(
             // General
             Map.entry("default_download_folder_chooser",
@@ -175,18 +159,12 @@ public class SettingsDialog {
                     "Path to the yt-dlp executable; leave empty to discover it automatically."),
             Map.entry("browse_ytdlp_button",
                     "Choose the yt-dlp executable used by ODM."),
-            Map.entry("video_format_entry",
-                    "Common yt-dlp quality policy for new media downloads. Automatic lets yt-dlp choose the best format supported by each site."),
-            Map.entry("subtitle_language_entry",
-                    "Comma-separated language codes used by yt-dlp and the Download Subtitles completion action."),
             Map.entry("write_thumbnail_check",
-                    "Embed the media thumbnail in the output file when the selected format supports it."),
-            Map.entry("write_subtitles_check",
-                    "Download subtitle files for the configured subtitle languages."),
+                    "Save the media thumbnail as a separate image file next to the download."),
+            Map.entry("embed_thumbnail_check",
+                    "Embed the media thumbnail as cover art when the selected output supports it. This may require FFmpeg."),
             Map.entry("embed_metadata_check",
                     "Embed available title, artist, chapter, and other metadata in the media file."),
-            Map.entry("extract_audio_check",
-                    "Keep an audio-only output using yt-dlp post-processing."),
             Map.entry("use_aria2_external_check",
                     "Let yt-dlp use aria2 for supported media fragments and direct media URLs."),
             Map.entry("honor_external_ytdlp_config_check",
@@ -304,8 +282,6 @@ public class SettingsDialog {
     private java.util.List<AntivirusChoice> antivirusChoices = java.util.List.of();
     private static final String ANTIVIRUS_AUTO = "auto";
     private String requestedAntivirusKey = ANTIVIRUS_AUTO;
-    private List<VideoFormatChoice> videoFormatChoices = COMMON_VIDEO_FORMATS;
-
     private record SettingsApplication(GlobalSettings settings,
             boolean previousStartAtLogin, boolean requestedStartAtLogin,
             boolean schedulingEnabled, boolean[][] hourGrid, boolean torEnabled,
@@ -361,8 +337,6 @@ public class SettingsDialog {
         AccessibilitySupport.label(spin("proxy_port_spin"), "Global proxy port");
         AccessibilitySupport.label(entry("proxy_username_entry"), "Global proxy username");
         AccessibilitySupport.label(entry("proxy_password_entry"), "Global proxy password");
-        AccessibilitySupport.label(entry("subtitle_language_entry"),
-                "Preferred subtitle languages, comma separated");
         AccessibilitySupport.label(spin("aria2_rpc_port_spin"),
                 "aria2 RPC port");
         AccessibilitySupport.label(Widgets.require(builder,
@@ -434,7 +408,6 @@ public class SettingsDialog {
         bindHistoryCleanupControls();
         bindAntivirusControls();
         bindSeedingPolicyControls();
-
         dialog.onCloseRequest(() -> {
             closed.set(true);
             return false;
@@ -616,24 +589,9 @@ public class SettingsDialog {
         entry("user_agent_entry").setText(network.userAgent());
     }
 
-    int videoFormatChoiceCount() {
-        return videoFormatChoices.size();
-    }
-
-    String videoFormatChoiceLabel(int index) {
-        return videoFormatChoices.get(index).label();
-    }
-
-    void selectVideoFormatChoice(int index) {
-        Widgets.require(builder, "video_format_entry", DropDown.class).setSelected(index);
-    }
-
-    String selectedVideoFormat() {
-        long selected = Widgets.require(builder, "video_format_entry", DropDown.class)
-                .getSelected();
-        return selected >= 0 && selected < videoFormatChoices.size()
-                ? videoFormatChoices.get((int) selected).selector()
-                : "";
+    void setYtDlpOutputDefaults(boolean saveThumbnail, boolean embedThumbnail) {
+        check("write_thumbnail_check").setActive(saveThumbnail);
+        check("embed_thumbnail_check").setActive(embedThumbnail);
     }
 
     DownloadSettingsFactory.NetworkDefaults networkDefaultsFromControls() {
@@ -738,32 +696,6 @@ public class SettingsDialog {
     private <E extends Enum<E>> E selectedEnum(String id, E[] values, E fallback) {
         long selected = Widgets.require(builder, id, DropDown.class).getSelected();
         return selected >= 0 && selected < values.length ? values[(int) selected] : fallback;
-    }
-
-    /** Selects a common policy while retaining an existing custom selector. */
-    private void loadVideoFormat(String configuredSelector) {
-        String selector = configuredSelector == null ? "" : configuredSelector.trim();
-        List<VideoFormatChoice> choices = new ArrayList<>(COMMON_VIDEO_FORMATS);
-        int selected = -1;
-        for (int index = 0; index < choices.size(); index++) {
-            if (choices.get(index).selector().equals(selector)) {
-                selected = index;
-                break;
-            }
-        }
-        if (selected < 0) {
-            choices.add(new VideoFormatChoice("Custom — " + selector, selector));
-            selected = choices.size() - 1;
-        }
-        videoFormatChoices = List.copyOf(choices);
-
-        StringList model = new StringList(new String[0]);
-        for (VideoFormatChoice choice : videoFormatChoices) {
-            model.append(choice.label());
-        }
-        DropDown dropdown = Widgets.require(builder, "video_format_entry", DropDown.class);
-        dropdown.setModel(model);
-        dropdown.setSelected(selected);
     }
 
     private void configureSettingTooltips() {
@@ -1087,14 +1019,9 @@ public class SettingsDialog {
         spin("tracker_refresh_spin").setValue(s.getIntProperty("tracker.refreshInterval", 0));
         // Yt-dlp
         entry("ytdlp_path_entry").setText(s.getYtDlpPath() != null ? s.getYtDlpPath() : "");
-        loadVideoFormat(
-                org.manager.download.DownloadSettingsFactory.configuredYtDlpFormat(s));
-        entry("subtitle_language_entry").setText(
-                s.getProperty("ytdlp.subtitleLanguages", "en"));
         check("write_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.writeThumbnail", false));
-        check("write_subtitles_check").setActive(s.getBooleanProperty("ytdlp.writeSubtitles", false));
+        check("embed_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.embedThumbnail", false));
         check("embed_metadata_check").setActive(s.getBooleanProperty("ytdlp.embedMetadata", false));
-        check("extract_audio_check").setActive(s.getBooleanProperty("ytdlp.extractAudio", false));
         check("use_aria2_external_check").setActive(s.getBooleanProperty("ytdlp.useAria2External", false));
         check("honor_external_ytdlp_config_check").setActive(
                 s.isHonorExternalYtDlpConfiguration());
@@ -1198,9 +1125,6 @@ public class SettingsDialog {
     }
 
     private SettingsApplication collectSettings() {
-        String subtitleLanguages = String.join(",",
-                org.manager.download.action.SubtitleDownloadAction.parseLanguages(
-                        entry("subtitle_language_entry").getText()));
         GlobalSettings s = downloadManager.getGlobalSettings().copy();
         boolean previousStartAtLogin = s.getBooleanProperty("ui.startAtLogin", false);
         // tor proxy default
@@ -1296,12 +1220,9 @@ public class SettingsDialog {
                 String.valueOf((int) spin("tracker_refresh_spin").getValue()));
         // Yt-dlp
         s.setYtDlpPath(entry("ytdlp_path_entry").getText().trim());
-        s.setProperty("ytdlp.videoFormat", selectedVideoFormat());
-        s.setProperty("ytdlp.subtitleLanguages", subtitleLanguages);
         s.setProperty("ytdlp.writeThumbnail", String.valueOf(check("write_thumbnail_check").getActive()));
-        s.setProperty("ytdlp.writeSubtitles", String.valueOf(check("write_subtitles_check").getActive()));
+        s.setProperty("ytdlp.embedThumbnail", String.valueOf(check("embed_thumbnail_check").getActive()));
         s.setProperty("ytdlp.embedMetadata", String.valueOf(check("embed_metadata_check").getActive()));
-        s.setProperty("ytdlp.extractAudio", String.valueOf(check("extract_audio_check").getActive()));
         s.setProperty("ytdlp.useAria2External", String.valueOf(check("use_aria2_external_check").getActive()));
         s.setHonorExternalYtDlpConfiguration(
                 check("honor_external_ytdlp_config_check").getActive());

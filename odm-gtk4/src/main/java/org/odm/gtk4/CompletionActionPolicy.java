@@ -144,16 +144,9 @@ final class CompletionActionPolicy {
         return null;
     }
 
-    /** Subtitle action using the shared yt-dlp language preference. */
+    /** Subtitle action defaults to English; media records carry their own languages. */
     static SubtitleDownloadAction buildSubtitleAction(GlobalSettings settings) {
         SubliminalSettings subtitleSettings = new SubliminalSettings();
-        try {
-            subtitleSettings.setLanguages(SubliminalSettings.parseLanguages(
-                    settings.getProperty("ytdlp.subtitleLanguages", "en")));
-        } catch (IllegalArgumentException invalidLanguages) {
-            LOGGER.warn(invalidLanguages.getMessage() + "; using English");
-            subtitleSettings.setLanguages(java.util.List.of("en"));
-        }
         int timeoutSeconds = Math.max(1,
                 settings.getIntProperty("subtitles.timeoutSeconds", 300));
         subtitleSettings.setTimeout(java.time.Duration.ofSeconds(timeoutSeconds));

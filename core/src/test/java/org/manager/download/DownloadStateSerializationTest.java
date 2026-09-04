@@ -64,10 +64,33 @@ class DownloadStateSerializationTest {
     void youtubeDownloadRoundTripRestoresYtDlpSettings() throws Exception {
         Download original = new Download(URI.create("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
         assertNotNull(original.getSettings());
+        org.ytdlp.YtDlpSettings originalSettings =
+                assertInstanceOf(org.ytdlp.YtDlpSettings.class, original.getSettings());
+        originalSettings
+                .setWriteThumbnail(true)
+                .setEmbedThumbnail(true)
+                .setPlaylistItemSpec("1:10,12")
+                .setBrowserCookieSource(org.ytdlp.YtDlpSettings.BrowserCookieSource.FIREFOX)
+                .setBrowserCookieProfile("work")
+                .setContainerProfile(org.ytdlp.YtDlpSettings.ContainerProfile.MKV)
+                .setSponsorBlockMode(org.ytdlp.YtDlpSettings.SponsorBlockMode.MARK)
+                .setSponsorBlockCategories("sponsor,intro");
 
         Download restored = roundTrip(original);
-        assertInstanceOf(org.ytdlp.YtDlpSettings.class, restored.getSettings());
+        org.ytdlp.YtDlpSettings restoredSettings =
+                assertInstanceOf(org.ytdlp.YtDlpSettings.class, restored.getSettings());
         assertEquals(original.getId(), restored.getId());
+        assertEquals(originalSettings.isWriteThumbnail(), restoredSettings.isWriteThumbnail());
+        assertEquals(originalSettings.isEmbedThumbnail(), restoredSettings.isEmbedThumbnail());
+        assertEquals(originalSettings.getPlaylistItemSpec(), restoredSettings.getPlaylistItemSpec());
+        assertEquals(originalSettings.getBrowserCookieSource(),
+                restoredSettings.getBrowserCookieSource());
+        assertEquals(originalSettings.getBrowserCookieProfile(),
+                restoredSettings.getBrowserCookieProfile());
+        assertEquals(originalSettings.getContainerProfile(), restoredSettings.getContainerProfile());
+        assertEquals(originalSettings.getSponsorBlockMode(), restoredSettings.getSponsorBlockMode());
+        assertEquals(originalSettings.getSponsorBlockCategories(),
+                restoredSettings.getSponsorBlockCategories());
     }
 
     @Test

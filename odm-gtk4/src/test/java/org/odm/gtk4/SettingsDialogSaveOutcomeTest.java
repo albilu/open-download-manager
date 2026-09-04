@@ -53,9 +53,8 @@ class SettingsDialogSaveOutcomeTest {
             "tracker_list_entry", "continue_download_check", "check_integrity_check",
             "aria2_rpc_port_spin", "honor_external_aria2_config_check",
             // yt-dlp
-            "ytdlp_path_entry", "browse_ytdlp_button", "video_format_entry",
-            "subtitle_language_entry", "write_thumbnail_check", "write_subtitles_check",
-            "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
+            "ytdlp_path_entry", "browse_ytdlp_button", "write_thumbnail_check",
+            "embed_thumbnail_check", "embed_metadata_check", "use_aria2_external_check",
             "honor_external_ytdlp_config_check",
             // HTTrack
             "httrack_path_entry", "browse_httrack_button", "depth_spin", "include_entry",
@@ -390,9 +389,9 @@ class SettingsDialogSaveOutcomeTest {
 
     @Test
     @Timeout(60)
-    @DisplayName("yt-dlp video format offers common policies with Automatic selected by default")
-    void ytDlpVideoFormatUsesCommonDropdownChoices() throws Exception {
-        Path configHome = tempDir.resolve("ytdlp-format-config");
+    @DisplayName("yt-dlp engine-wide thumbnail defaults persist independently")
+    void ytDlpFeatureDefaultsPersist() throws Exception {
+        Path configHome = tempDir.resolve("ytdlp-feature-config");
         Files.createDirectories(configHome);
 
         SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
@@ -402,43 +401,12 @@ class SettingsDialogSaveOutcomeTest {
             SettingsDialog dialog = new SettingsDialog(null,
                     newStubManager(settings), null);
 
-            assertEquals(7, dialog.videoFormatChoiceCount());
-            assertEquals("Automatic (yt-dlp default)", dialog.videoFormatChoiceLabel(0));
-            assertEquals("", dialog.selectedVideoFormat());
-
-            dialog.selectVideoFormatChoice(3);
-            String selected = dialog.selectedVideoFormat();
-            assertTrue(selected.contains("height<=?1080"));
+            dialog.setYtDlpOutputDefaults(true, false);
             dialog.applySettings();
 
-            assertEquals(selected,
-                    settings.get().getProperty("ytdlp.videoFormat", null));
-        });
-    }
-
-    @Test
-    @Timeout(60)
-    @DisplayName("an existing custom yt-dlp selector survives opening and applying Settings")
-    void customYtDlpVideoFormatIsPreserved() throws Exception {
-        Path configHome = tempDir.resolve("ytdlp-custom-format-config");
-        Files.createDirectories(configHome);
-
-        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
-            String custom = "bestvideo[ext=webm]+bestaudio[ext=webm]/best";
-            GlobalSettings initial = new GlobalSettings();
-            initial.setDefaultDownloadDirectory(tempDir);
-            initial.setProperty("ytdlp.videoFormat", custom);
-            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
-            SettingsDialog dialog = new SettingsDialog(null,
-                    newStubManager(settings), null);
-
-            assertEquals(8, dialog.videoFormatChoiceCount());
-            assertTrue(dialog.videoFormatChoiceLabel(7).startsWith("Custom"));
-            assertEquals(custom, dialog.selectedVideoFormat());
-            dialog.applySettings();
-
-            assertEquals(custom,
-                    settings.get().getProperty("ytdlp.videoFormat", null));
+            GlobalSettings saved = settings.get();
+            assertTrue(saved.getBooleanProperty("ytdlp.writeThumbnail", false));
+            assertFalse(saved.getBooleanProperty("ytdlp.embedThumbnail", true));
         });
     }
 

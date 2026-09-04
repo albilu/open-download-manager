@@ -66,6 +66,27 @@ class YtDlpVideoInfoParsingTest {
     }
 
     @Test
+    @DisplayName("flat playlist JSON parses into selectable preview rows")
+    void playlistPreviewParses() throws Exception {
+        String playlistJson = "{\"id\":\"PL-odm\",\"title\":\"ODM Playlist\",\"entries\":["
+                + "{\"id\":\"one\",\"title\":\"First\",\"duration\":61,"
+                + "\"playlist_index\":1,\"webpage_url\":\"https://e.test/one\"},"
+                + "{\"id\":\"two\",\"title\":\"Second\",\"duration\":122,"
+                + "\"playlist_index\":2,\"url\":\"https://e.test/two\"}]}";
+        YtDlpClient client = new YtDlpClient(fakeYtDlp(playlistJson).toString());
+
+        YtDlpClient.VideoInfo info = client.previewMedia(
+                "https://e.test/playlist", new YtDlpSettings()).get(30, TimeUnit.SECONDS);
+
+        assertTrue(info.isPlaylist());
+        assertEquals(2, info.getEntries().size());
+        assertEquals(1, info.getEntries().getFirst().getIndex());
+        assertEquals("First", info.getEntries().getFirst().getTitle());
+        assertEquals(61, info.getEntries().getFirst().getDuration());
+        assertEquals("https://e.test/two", info.getEntries().getLast().getUrl());
+    }
+
+    @Test
     @DisplayName("a run without JSON metadata fails with a clear error")
     void missingJsonFails() throws Exception {
         YtDlpClient client = new YtDlpClient(

@@ -3,6 +3,8 @@ package org.ytdlp;
 import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import org.manager.ApplicationContext;
 import org.manager.download.DownloadSettings;
 import org.manager.tools.ToolManagerFactory;
@@ -14,6 +16,120 @@ import org.ytdlp.YtDlpToolManager;
  * supported platforms.
  */
 public class YtDlpSettings extends DownloadSettings {
+
+    /** Browser profiles supported by yt-dlp's --cookies-from-browser option. */
+    public enum BrowserCookieSource {
+        NONE("none", "None"),
+        BRAVE("brave", "Brave"),
+        CHROME("chrome", "Google Chrome"),
+        CHROMIUM("chromium", "Chromium"),
+        EDGE("edge", "Microsoft Edge"),
+        FIREFOX("firefox", "Firefox"),
+        OPERA("opera", "Opera"),
+        VIVALDI("vivaldi", "Vivaldi"),
+        WHALE("whale", "Whale");
+
+        private final String settingValue;
+        private final String displayName;
+
+        BrowserCookieSource(String settingValue, String displayName) {
+            this.settingValue = settingValue;
+            this.displayName = displayName;
+        }
+
+        public String settingValue() {
+            return settingValue;
+        }
+
+        public String displayName() {
+            return displayName;
+        }
+
+        public static BrowserCookieSource fromSetting(String value) {
+            String normalized = value == null ? "" : value.trim();
+            for (BrowserCookieSource source : values()) {
+                if (source.settingValue.equalsIgnoreCase(normalized)
+                        || source.name().equalsIgnoreCase(normalized)) {
+                    return source;
+                }
+            }
+            return NONE;
+        }
+    }
+
+    /** Understandable, no-transcode output policies for new media downloads. */
+    public enum ContainerProfile {
+        AUTOMATIC("automatic", "Automatic / best compatible"),
+        MP4_COMPATIBLE("mp4-compatible", "MP4 (prefer H.264/AAC)"),
+        MKV("mkv", "MKV"),
+        PRESERVE_NATIVE("preserve-native", "Preserve native formats");
+
+        private final String settingValue;
+        private final String displayName;
+
+        ContainerProfile(String settingValue, String displayName) {
+            this.settingValue = settingValue;
+            this.displayName = displayName;
+        }
+
+        public String settingValue() {
+            return settingValue;
+        }
+
+        public String displayName() {
+            return displayName;
+        }
+
+        public static ContainerProfile fromSetting(String value) {
+            String normalized = value == null ? "" : value.trim();
+            for (ContainerProfile profile : values()) {
+                if (profile.settingValue.equalsIgnoreCase(normalized)
+                        || profile.name().equalsIgnoreCase(normalized)) {
+                    return profile;
+                }
+            }
+            return AUTOMATIC;
+        }
+    }
+
+    /** SponsorBlock behavior is intentionally selected per download. */
+    public enum SponsorBlockMode {
+        OFF("off", "Off"),
+        MARK("mark", "Mark segments as chapters"),
+        REMOVE("remove", "Remove segments");
+
+        private final String settingValue;
+        private final String displayName;
+
+        SponsorBlockMode(String settingValue, String displayName) {
+            this.settingValue = settingValue;
+            this.displayName = displayName;
+        }
+
+        public String settingValue() {
+            return settingValue;
+        }
+
+        public String displayName() {
+            return displayName;
+        }
+
+        public static SponsorBlockMode fromSetting(String value) {
+            String normalized = value == null ? "" : value.trim();
+            for (SponsorBlockMode mode : values()) {
+                if (mode.settingValue.equalsIgnoreCase(normalized)
+                        || mode.name().equalsIgnoreCase(normalized)) {
+                    return mode;
+                }
+            }
+            return OFF;
+        }
+    }
+
+    private static final Set<String> SPONSOR_BLOCK_CATEGORIES = Set.of(
+            "sponsor", "intro", "outro", "selfpromo", "preview", "filler",
+            "interaction", "music_offtopic", "hook", "poi_highlight", "chapter",
+            "all", "default");
 
     @Override
     public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
@@ -27,6 +143,7 @@ public class YtDlpSettings extends DownloadSettings {
     /** Empty means yt-dlp's automatic, protocol-aware best-quality choice. */
     private String format = "";
     private String outputTemplate;
+    private boolean writeThumbnail = false;
     private boolean embedThumbnail = false;
     private boolean embedMetadata = false;
     private boolean embedSubs = false;
@@ -45,8 +162,14 @@ public class YtDlpSettings extends DownloadSettings {
     private boolean noPlaylist = false;
     private boolean playlistEnd = false;
     private int playlistItems = 0;
+    private String playlistItemSpec = null;
     private boolean geoBypass = true;
     private String cookieFile = null;
+    private BrowserCookieSource browserCookieSource = BrowserCookieSource.NONE;
+    private String browserCookieProfile = null;
+    private ContainerProfile containerProfile = ContainerProfile.AUTOMATIC;
+    private SponsorBlockMode sponsorBlockMode = SponsorBlockMode.OFF;
+    private String sponsorBlockCategories = "default";
     private boolean verboseOutput = false;
     private boolean useAria2c = false;
     private String aria2cPath = ApplicationContext.getToolPath("aria2");
@@ -87,6 +210,15 @@ public class YtDlpSettings extends DownloadSettings {
      */
     public YtDlpSettings setFormat(String format) {
         this.format = format;
+        return this;
+    }
+
+    public boolean isWriteThumbnail() {
+        return writeThumbnail;
+    }
+
+    public YtDlpSettings setWriteThumbnail(boolean writeThumbnail) {
+        this.writeThumbnail = writeThumbnail;
         return this;
     }
 
@@ -305,7 +437,7 @@ public class YtDlpSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public YtDlpSettings setFragmentRetries(int fragmentRetries) {
-        this.fragmentRetries = fragmentRetries;
+        this.fragmentRetries = Math.max(0, fragmentRetries);
         return this;
     }
 
@@ -366,6 +498,9 @@ public class YtDlpSettings extends DownloadSettings {
     public YtDlpSettings setMaxRetries(int maxRetries) {
         int normalized = Math.max(0, maxRetries);
         super.setMaxRetries(normalized);
+        // ODM exposes one retry policy. Keep every yt-dlp transfer retry
+        // class aligned when a caller edits the shared value.
+        setFragmentRetries(normalized);
         setAria2cMaxTries(normalized);
         return this;
     }
@@ -527,8 +662,56 @@ public class YtDlpSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public YtDlpSettings setPlaylistItems(int playlistItems) {
-        this.playlistItems = playlistItems;
+        this.playlistItems = Math.max(0, playlistItems);
         return this;
+    }
+
+    /**
+     * Gets the native yt-dlp playlist item expression, such as {@code 1:10}
+     * or {@code 1,3,8}. A blank value means every playlist entry.
+     */
+    public String getPlaylistItemSpec() {
+        return playlistItemSpec;
+    }
+
+    public YtDlpSettings setPlaylistItemSpec(String playlistItemSpec) {
+        String normalized = normalizePlaylistItemSpec(playlistItemSpec);
+        this.playlistItemSpec = normalized.isEmpty() ? null : normalized;
+        return this;
+    }
+
+    /** Retains the older first-N fields while exposing one effective value. */
+    public String getEffectivePlaylistItemSpec() {
+        if (playlistItemSpec != null && !playlistItemSpec.isBlank()) {
+            return playlistItemSpec;
+        }
+        return playlistEnd && playlistItems > 0 ? "1:" + playlistItems : null;
+    }
+
+    public static String normalizePlaylistItemSpec(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = value.replaceAll("\\s+", "");
+        for (String part : normalized.split(",", -1)) {
+            if (part.isEmpty()) {
+                throw new IllegalArgumentException("Playlist selection contains an empty item");
+            }
+            if (part.matches("-?[1-9]\\d*")) {
+                continue;
+            }
+            if (!part.matches("(?:-?[1-9]\\d*)?:(?:-?[1-9]\\d*)?"
+                    + "(?::-?[1-9]\\d*)?")) {
+                throw new IllegalArgumentException(
+                        "Playlist selection must use item numbers or ranges such as 1:10");
+            }
+            String[] range = part.split(":", -1);
+            if (range[0].isEmpty() && range[1].isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Playlist range must include a start or end item");
+            }
+        }
+        return normalized;
     }
 
     /**
@@ -567,8 +750,87 @@ public class YtDlpSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public YtDlpSettings setCookieFile(String cookieFile) {
-        this.cookieFile = cookieFile;
+        this.cookieFile = cookieFile == null || cookieFile.isBlank()
+                ? null : cookieFile.trim();
         return this;
+    }
+
+    public BrowserCookieSource getBrowserCookieSource() {
+        return browserCookieSource;
+    }
+
+    public YtDlpSettings setBrowserCookieSource(BrowserCookieSource browserCookieSource) {
+        this.browserCookieSource = browserCookieSource == null
+                ? BrowserCookieSource.NONE : browserCookieSource;
+        return this;
+    }
+
+    public String getBrowserCookieProfile() {
+        return browserCookieProfile;
+    }
+
+    public YtDlpSettings setBrowserCookieProfile(String browserCookieProfile) {
+        this.browserCookieProfile = browserCookieProfile == null
+                || browserCookieProfile.isBlank() ? null : browserCookieProfile.trim();
+        return this;
+    }
+
+    /** Value accepted by yt-dlp's --cookies-from-browser option. */
+    public String getBrowserCookieArgument() {
+        if (browserCookieSource == BrowserCookieSource.NONE) {
+            return null;
+        }
+        return browserCookieSource.settingValue()
+                + (browserCookieProfile == null ? "" : ":" + browserCookieProfile);
+    }
+
+    public ContainerProfile getContainerProfile() {
+        return containerProfile;
+    }
+
+    public YtDlpSettings setContainerProfile(ContainerProfile containerProfile) {
+        this.containerProfile = containerProfile == null
+                ? ContainerProfile.AUTOMATIC : containerProfile;
+        return this;
+    }
+
+    public SponsorBlockMode getSponsorBlockMode() {
+        return sponsorBlockMode;
+    }
+
+    public YtDlpSettings setSponsorBlockMode(SponsorBlockMode sponsorBlockMode) {
+        SponsorBlockMode normalized = sponsorBlockMode == null
+                ? SponsorBlockMode.OFF : sponsorBlockMode;
+        validateSponsorBlockCategories(sponsorBlockCategories, normalized);
+        this.sponsorBlockMode = normalized;
+        return this;
+    }
+
+    public String getSponsorBlockCategories() {
+        return sponsorBlockCategories;
+    }
+
+    public YtDlpSettings setSponsorBlockCategories(String categories) {
+        String normalized = categories == null || categories.isBlank()
+                ? "default" : categories.replaceAll("\\s+", "").toLowerCase(Locale.ROOT);
+        validateSponsorBlockCategories(normalized, sponsorBlockMode);
+        this.sponsorBlockCategories = normalized;
+        return this;
+    }
+
+    private static void validateSponsorBlockCategories(String normalized,
+            SponsorBlockMode mode) {
+        for (String category : normalized.split(",", -1)) {
+            String name = category.startsWith("-") ? category.substring(1) : category;
+            if (name.isBlank() || !SPONSOR_BLOCK_CATEGORIES.contains(name)) {
+                throw new IllegalArgumentException("Unsupported SponsorBlock category: " + category);
+            }
+            if (mode == SponsorBlockMode.REMOVE && !category.startsWith("-")
+                    && ("poi_highlight".equals(name) || "chapter".equals(name))) {
+                throw new IllegalArgumentException(
+                        "SponsorBlock cannot remove category: " + category);
+            }
+        }
     }
 
     /**
@@ -838,6 +1100,10 @@ public class YtDlpSettings extends DownloadSettings {
             map.put("ytdlp.output-template", outputTemplate);
         }
 
+        if (writeThumbnail) {
+            map.put("ytdlp.write-thumbnail", "true");
+        }
+
         if (embedThumbnail) {
             map.put("ytdlp.embed-thumbnail", "true");
         }
@@ -888,8 +1154,9 @@ public class YtDlpSettings extends DownloadSettings {
             map.put("ytdlp.no-playlist", "true");
         }
 
-        if (playlistEnd && playlistItems > 0) {
-            map.put("ytdlp.playlist-items", "1-" + playlistItems);
+        String effectivePlaylistItems = getEffectivePlaylistItemSpec();
+        if (effectivePlaylistItems != null) {
+            map.put("ytdlp.playlist-items", effectivePlaylistItems);
         }
 
         if (geoBypass) {
@@ -898,6 +1165,17 @@ public class YtDlpSettings extends DownloadSettings {
 
         if (cookieFile != null) {
             map.put("ytdlp.cookies", cookieFile);
+        } else if (getBrowserCookieArgument() != null) {
+            map.put("ytdlp.cookies-from-browser", getBrowserCookieArgument());
+        }
+
+        if (containerProfile != ContainerProfile.AUTOMATIC) {
+            map.put("ytdlp.container-profile", containerProfile.settingValue());
+        }
+
+        if (sponsorBlockMode != SponsorBlockMode.OFF) {
+            map.put("ytdlp.sponsorblock-" + sponsorBlockMode.settingValue(),
+                    sponsorBlockCategories);
         }
 
         if (verboseOutput) {
@@ -922,6 +1200,7 @@ public class YtDlpSettings extends DownloadSettings {
         // Copy YtDlp-specific settings
         copy.format = this.format;
         copy.outputTemplate = this.outputTemplate;
+        copy.writeThumbnail = this.writeThumbnail;
         copy.embedThumbnail = this.embedThumbnail;
         copy.embedMetadata = this.embedMetadata;
         copy.embedSubs = this.embedSubs;
@@ -939,8 +1218,14 @@ public class YtDlpSettings extends DownloadSettings {
         copy.noPlaylist = this.noPlaylist;
         copy.playlistEnd = this.playlistEnd;
         copy.playlistItems = this.playlistItems;
+        copy.playlistItemSpec = this.playlistItemSpec;
         copy.geoBypass = this.geoBypass;
         copy.cookieFile = this.cookieFile;
+        copy.browserCookieSource = this.browserCookieSource;
+        copy.browserCookieProfile = this.browserCookieProfile;
+        copy.containerProfile = this.containerProfile;
+        copy.sponsorBlockMode = this.sponsorBlockMode;
+        copy.sponsorBlockCategories = this.sponsorBlockCategories;
         copy.verboseOutput = this.verboseOutput;
         copy.useAria2c = this.useAria2c;
         copy.aria2cPath = this.aria2cPath;

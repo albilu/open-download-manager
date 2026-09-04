@@ -2,11 +2,20 @@
 <interface>
   <requires lib="gtk" version="4.0"/>
 
+  <object class="GtkListStore" id="playlist_store">
+    <columns>
+      <column type="gboolean"/>
+      <column type="gint"/>
+      <column type="gchararray"/>
+      <column type="gchararray"/>
+    </columns>
+  </object>
+
   <object class="GtkWindow" id="new_media_dialog">
     <property name="title">New Media Download</property>
     <property name="modal">true</property>
     <property name="default-width">620</property>
-    <property name="default-height">520</property>
+    <property name="default-height">720</property>
     <child>
       <object class="GtkBox" id="new_media_content">
         <property name="orientation">vertical</property>
@@ -17,7 +26,11 @@
         <property name="margin-bottom">12</property>
 
         <child>
-          <object class="GtkGrid" id="media_fields_grid">
+          <object class="GtkScrolledWindow" id="media_fields_scroller">
+            <property name="vexpand">true</property>
+            <property name="hscrollbar-policy">never</property>
+            <child>
+              <object class="GtkGrid" id="media_fields_grid">
             <property name="hexpand">true</property>
             <property name="vexpand">true</property>
             <property name="row-spacing">10</property>
@@ -39,30 +52,72 @@
             <child><object class="GtkLabel" id="media_format_label"><property name="label">Format:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
             <child><object class="GtkDropDown" id="format_drop"><property name="hexpand">true</property><property name="sensitive">false</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
 
-            <child><object class="GtkLabel" id="media_options_label"><property name="label">Options:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkLabel" id="media_container_label"><property name="label">Container:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkDropDown" id="media_container_profile_combo"><property name="hexpand">true</property><property name="tooltip-text">Choose an output compatibility policy. Profiles prefer or remux containers without transcoding.</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
+
+            <child><object class="GtkLabel" id="media_options_label"><property name="label">Options:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">5</property><property name="column">0</property></layout></object></child>
             <child>
-              <object class="GtkBox" id="media_options_box">
-                <property name="orientation">vertical</property><property name="spacing">6</property><property name="hexpand">true</property>
-                <layout><property name="row">4</property><property name="column">1</property></layout>
-                <child><object class="GtkCheckButton" id="audio_only_check"><property name="label">Audio only</property></object></child>
-                <child><object class="GtkCheckButton" id="playlist_check"><property name="label">Download whole playlist</property></object></child>
-                <child><object class="GtkCheckButton" id="subtitles_check"><property name="label">Subtitles</property></object></child>
+              <object class="GtkGrid" id="media_options_grid">
+                <property name="column-homogeneous">true</property><property name="row-spacing">6</property><property name="column-spacing">12</property><property name="hexpand">true</property>
+                <layout><property name="row">5</property><property name="column">1</property></layout>
+                <child><object class="GtkCheckButton" id="audio_only_check"><property name="label">Audio only</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkCheckButton" id="playlist_check"><property name="label">Download playlist</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkCheckButton" id="subtitles_check"><property name="label">Subtitles</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
               </object>
             </child>
 
-            <child><object class="GtkLabel" id="subtitle_languages_label"><property name="label">Subtitle languages:</property><property name="xalign">0</property><layout><property name="row">5</property><property name="column">0</property></layout></object></child>
-            <child><object class="GtkEntry" id="subtitle_lang_entry"><property name="hexpand">true</property><property name="placeholder-text">en,fr</property><property name="sensitive">false</property><layout><property name="row">5</property><property name="column">1</property></layout></object></child>
+            <child><object class="GtkLabel" id="playlist_items_label"><property name="label">Playlist items:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">6</property><property name="column">0</property></layout></object></child>
+            <child>
+              <object class="GtkBox" id="playlist_selection_box">
+                <property name="orientation">vertical</property><property name="spacing">6</property><property name="hexpand">true</property>
+                <layout><property name="row">6</property><property name="column">1</property></layout>
+                <child><object class="GtkEntry" id="playlist_items_entry"><property name="placeholder-text">All items, 1:10, or 1,3,8</property><property name="tooltip-text">Leave blank for all items, enter comma-separated item numbers, or use START:END:STEP ranges.</property><property name="sensitive">false</property></object></child>
+                <child><object class="GtkCheckButton" id="playlist_select_all_check"><property name="label">Select all previewed items</property><property name="active">true</property><property name="visible">false</property></object></child>
+                <child>
+                  <object class="GtkScrolledWindow" id="playlist_preview_scroller">
+                    <property name="visible">false</property><property name="vexpand">true</property><property name="min-content-height">170</property>
+                    <child>
+                      <object class="GtkTreeView" id="playlist_treeview">
+                        <property name="model">playlist_store</property>
+                        <property name="headers-visible">true</property>
+                        <child><object class="GtkTreeViewColumn" id="playlist_selected_column"><child><object class="GtkCellRendererToggle" id="playlist_selected_renderer"/><attributes><attribute name="active">0</attribute></attributes></child></object></child>
+                        <child><object class="GtkTreeViewColumn" id="playlist_index_column"><property name="title">#</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
+                        <child><object class="GtkTreeViewColumn" id="playlist_title_column"><property name="title">Title</property><property name="expand">true</property><child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+                        <child><object class="GtkTreeViewColumn" id="playlist_duration_column"><property name="title">Duration</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
 
-            <child><object class="GtkLabel" id="cookies_file_label"><property name="label">Cookies file:</property><property name="xalign">0</property><layout><property name="row">6</property><property name="column">0</property></layout></object></child>
-            <child><object class="GtkButton" id="cookie_file_chooser"><property name="label">None (no cookies)</property><property name="hexpand">true</property><layout><property name="row">6</property><property name="column">1</property></layout></object></child>
+            <child><object class="GtkLabel" id="subtitle_languages_label"><property name="label">Subtitle languages:</property><property name="xalign">0</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkEntry" id="subtitle_lang_entry"><property name="hexpand">true</property><property name="placeholder-text">en,fr</property><property name="sensitive">false</property><layout><property name="row">7</property><property name="column">1</property></layout></object></child>
 
-            <child><object class="GtkLabel" id="media_destination_label"><property name="label">Save to:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkLabel" id="cookie_browser_label"><property name="label">Load cookies from:</property><property name="xalign">0</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkDropDown" id="media_cookie_browser_combo"><property name="hexpand">true</property><property name="tooltip-text">Load cookies directly from a local browser for previewing and downloading this media.</property><layout><property name="row">8</property><property name="column">1</property></layout></object></child>
+
+            <child><object class="GtkLabel" id="cookie_browser_profile_label"><property name="label">Browser profile:</property><property name="xalign">0</property><layout><property name="row">9</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkEntry" id="media_cookie_browser_profile_entry"><property name="hexpand">true</property><property name="placeholder-text">Default profile (optional)</property><property name="tooltip-text">Optional browser profile name or path. Leave blank to use the browser's default profile.</property><layout><property name="row">9</property><property name="column">1</property></layout></object></child>
+
+            <child><object class="GtkLabel" id="cookies_file_label"><property name="label">Cookies file:</property><property name="xalign">0</property><layout><property name="row">10</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkButton" id="cookie_file_chooser"><property name="label">None (browser source applies)</property><property name="hexpand">true</property><property name="tooltip-text">A selected Netscape-format cookie file overrides the browser source for this download.</property><layout><property name="row">10</property><property name="column">1</property></layout></object></child>
+
+            <child><object class="GtkLabel" id="sponsorblock_label"><property name="label">SponsorBlock:</property><property name="xalign">0</property><layout><property name="row">11</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkDropDown" id="sponsorblock_mode_combo"><property name="hexpand">true</property><property name="tooltip-text">Mark matching segments as chapters, or explicitly remove them from the output file.</property><layout><property name="row">11</property><property name="column">1</property></layout></object></child>
+
+            <child><object class="GtkLabel" id="sponsorblock_categories_label"><property name="label">Segment categories:</property><property name="xalign">0</property><layout><property name="row">12</property><property name="column">0</property></layout></object></child>
+            <child><object class="GtkEntry" id="sponsorblock_categories_entry"><property name="text">default</property><property name="placeholder-text">default or sponsor,intro,outro</property><property name="tooltip-text">Comma-separated SponsorBlock categories. Prefix a category with '-' to exclude it.</property><property name="sensitive">false</property><property name="hexpand">true</property><layout><property name="row">12</property><property name="column">1</property></layout></object></child>
+
+            <child><object class="GtkLabel" id="media_destination_label"><property name="label">Save to:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">13</property><property name="column">0</property></layout></object></child>
             <child>
               <object class="GtkBox" id="media_destination_stack">
                 <property name="orientation">vertical</property><property name="spacing">2</property><property name="hexpand">true</property>
-                <layout><property name="row">7</property><property name="column">1</property></layout>
+                <layout><property name="row">13</property><property name="column">1</property></layout>
                 <child><object class="GtkMenuButton" id="media_folder_chooser"><property name="hexpand">true</property></object></child>
                 <child><object class="GtkLabel" id="media_disk_space_label"><property name="xalign">1</property><property name="halign">end</property></object></child>
+              </object>
+            </child>
               </object>
             </child>
           </object>

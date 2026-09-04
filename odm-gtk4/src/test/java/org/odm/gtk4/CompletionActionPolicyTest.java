@@ -37,6 +37,7 @@ class CompletionActionPolicyTest {
     @Test
     void knownChoicesMapToTheirActions() {
         GlobalSettings settings = new GlobalSettings();
+        // Record-specific subtitle languages no longer come from Preferences.
         settings.setProperty("ytdlp.subtitleLanguages", "fr,it");
         settings.setProperty("antivirus.scanner", "clamav");
 
@@ -50,7 +51,7 @@ class CompletionActionPolicyTest {
                 CompletionActionPolicy.forChoice("antivirus", settings));
         SubtitleDownloadAction subtitles = assertInstanceOf(SubtitleDownloadAction.class,
                 CompletionActionPolicy.forChoice("subtitles", settings));
-        assertEquals(java.util.List.of("fr", "it"), subtitles.getLanguages());
+        assertEquals(java.util.List.of("en"), subtitles.getLanguages());
     }
 
     @Test

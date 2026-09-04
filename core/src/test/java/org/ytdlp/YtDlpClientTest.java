@@ -343,16 +343,17 @@ class YtDlpClientTest {
     }
 
     @Test
-    @DisplayName("Configured shared retry policy reaches whole and fragment downloads")
-    void testSharedRetryPolicyIncludesFragments() {
+    @DisplayName("Configured shared retry policy reaches every yt-dlp retry class")
+    void testSharedRetryPolicyIncludesAllFailureClasses() {
         YtDlpSettings settings = new YtDlpSettings();
         settings.setMaxRetries(6);
-        settings.setFragmentRetries(6);
 
         List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
 
         assertCommandValue(command, "--retries", "6");
         assertCommandValue(command, "--fragment-retries", "6");
+        assertCommandValue(command, "--extractor-retries", "6");
+        assertCommandValue(command, "--file-access-retries", "6");
     }
 
     @Test
@@ -396,11 +397,96 @@ class YtDlpClientTest {
         assertCommandValue(command, "-o", "100%% complete.mp4");
         assertCommandValue(command, "--limit-rate", "320K");
         assertCommandValue(command, "--retries", "8");
-        assertCommandValue(command, "--retry-sleep", "4");
+        assertCommandValue(command, "--retry-sleep", "http:4");
         assertCommandValue(command, "--user-agent", "odm-yt");
         assertCommandValue(command, "--referer", "https://referrer.test/");
         assertCommandValue(command, "--add-header", "Cookie: session=abc");
         assertCommandValue(command, "--print", "after_move:|odmfile|%(filepath)s");
+    }
+
+    @Test
+    @DisplayName("thumbnail, playlist, container and SponsorBlock choices reach yt-dlp")
+    void mediaFeatureOptionsReachCommand() {
+        YtDlpSettings settings = new YtDlpSettings()
+                .setWriteThumbnail(true)
+                .setEmbedThumbnail(true)
+                .setNoPlaylist(false)
+                .setPlaylistItemSpec("1:5,8")
+                .setContainerProfile(YtDlpSettings.ContainerProfile.MP4_COMPATIBLE)
+                .setSponsorBlockMode(YtDlpSettings.SponsorBlockMode.MARK)
+                .setSponsorBlockCategories("sponsor,intro");
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        assertTrue(command.contains("--write-thumbnail"));
+        assertTrue(command.contains("--embed-thumbnail"));
+        assertCommandValue(command, "--playlist-items", "1:5,8");
+        assertCommandValue(command, "--merge-output-format", "mp4");
+        assertCommandValue(command, "--remux-video", "mp4");
+        assertCommandValue(command, "--format-sort",
+                "vcodec:h264,lang,quality,res,fps,hdr:12,acodec:aac");
+        assertCommandValue(command, "--sponsorblock-mark", "sponsor,intro");
+    }
+
+    @Test
+    @DisplayName("preserve-native profile avoids merging unless an exact format was selected")
+    void preserveNativeProfileUsesSingleNativeFormat() {
+        YtDlpSettings automaticFormat = new YtDlpSettings()
+                .setContainerProfile(YtDlpSettings.ContainerProfile.PRESERVE_NATIVE);
+        List<String> command = client.buildDownloadCommand(
+                TEST_URL, automaticFormat, tempOutputDir);
+
+        assertCommandValue(command, "-f", "best");
+        assertFalse(command.contains("--merge-output-format"));
+        assertFalse(command.contains("--remux-video"));
+
+        YtDlpSettings exactFormat = new YtDlpSettings()
+                .setFormat("22")
+                .setContainerProfile(YtDlpSettings.ContainerProfile.PRESERVE_NATIVE);
+        List<String> exactCommand = client.buildDownloadCommand(
+                TEST_URL, exactFormat, tempOutputDir);
+        assertEquals(1, java.util.Collections.frequency(exactCommand, "-f"));
+        assertCommandValue(exactCommand, "-f", "22");
+    }
+
+    @Test
+    @DisplayName("browser cookies apply to metadata, downloads and subtitles")
+    void browserCookiesApplyConsistently() {
+        YtDlpSettings settings = new YtDlpSettings()
+                .setBrowserCookieSource(YtDlpSettings.BrowserCookieSource.FIREFOX)
+                .setBrowserCookieProfile("work");
+        settings.setMaxRetries(7);
+        settings.setRetryDelaySeconds(2);
+
+        for (List<String> command : List.of(
+                client.buildMetadataCommand(TEST_URL, settings, null, false),
+                client.buildMetadataCommand(TEST_URL, settings, null, true),
+                client.buildFormatsCommand(TEST_URL, settings, null),
+                client.buildDownloadCommand(TEST_URL, settings, tempOutputDir),
+                client.buildSubtitleCommand(TEST_URL, settings, tempOutputDir))) {
+            assertCommandValue(command, "--cookies-from-browser", "firefox:work");
+            assertCommandValue(command, "--retries", "7");
+            assertCommandValue(command, "--fragment-retries", "7");
+            assertCommandValue(command, "--extractor-retries", "7");
+            assertCommandValue(command, "--file-access-retries", "7");
+            assertTrue(command.contains("http:2"));
+            assertTrue(command.contains("fragment:2"));
+            assertTrue(command.contains("file_access:2"));
+            assertTrue(command.contains("extractor:2"));
+        }
+    }
+
+    @Test
+    @DisplayName("an explicit cookie file overrides browser-cookie loading")
+    void cookieFileOverridesBrowserSource() {
+        YtDlpSettings settings = new YtDlpSettings()
+                .setBrowserCookieSource(YtDlpSettings.BrowserCookieSource.CHROME)
+                .setCookieFile("/tmp/odm-cookies.txt");
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+
+        assertCommandValue(command, "--cookies", "/tmp/odm-cookies.txt");
+        assertFalse(command.contains("--cookies-from-browser"));
     }
 
     @Test

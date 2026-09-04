@@ -75,6 +75,7 @@ class SubtitleDownloadActionTest {
         original.setUseProxy(true);
         original.setProxyAddress("socks5://127.0.0.1:1080");
         original.setCookieFile("/tmp/cookies.txt");
+        original.setSubtitleLanguages(List.of("fr", "it"));
         download.setSettings(original);
         RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
         RecordingYtDlpClient ytDlp = new RecordingYtDlpClient(true);

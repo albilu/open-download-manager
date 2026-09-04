@@ -148,6 +148,7 @@ public class YtDlpClient {
         private String thumbnail;
         private List<VideoFormat> formats;
         private List<Subtitle> subtitles;
+        private List<PlaylistEntry> entries;
 
         // Getters and setters
         public String getId() {
@@ -244,6 +245,68 @@ public class YtDlpClient {
 
         public void setSubtitles(List<Subtitle> subtitles) {
             this.subtitles = subtitles;
+        }
+
+        public List<PlaylistEntry> getEntries() {
+            return entries;
+        }
+
+        public void setEntries(List<PlaylistEntry> entries) {
+            this.entries = entries;
+        }
+
+        public boolean isPlaylist() {
+            return entries != null && !entries.isEmpty();
+        }
+    }
+
+    /** Lightweight playlist row returned by --flat-playlist preview. */
+    public static class PlaylistEntry {
+
+        private int index;
+        private String id;
+        private String title;
+        private long duration;
+        private String url;
+
+        public int getIndex() {
+            return index;
+        }
+
+        public void setIndex(int index) {
+            this.index = index;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        public String getTitle() {
+            return title;
+        }
+
+        public void setTitle(String title) {
+            this.title = title;
+        }
+
+        public long getDuration() {
+            return duration;
+        }
+
+        public void setDuration(long duration) {
+            this.duration = duration;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
         }
     }
 
@@ -507,19 +570,27 @@ public class YtDlpClient {
      * @return CompletableFuture containing video information
      */
     public CompletableFuture<VideoInfo> extractInfo(String url) {
-        return extractInfo(url, null);
+        return extractInfo(url, new YtDlpSettings(), null);
     }
 
     /** Extracts metadata through the supplied proxy when non-blank. */
     public CompletableFuture<VideoInfo> extractInfo(String url, String proxyAddress) {
+        return extractInfo(url, new YtDlpSettings(), proxyAddress);
+    }
+
+    /** Extracts metadata using the same authentication and retry policy as a download. */
+    public CompletableFuture<VideoInfo> extractInfo(String url, YtDlpSettings settings) {
+        return extractInfo(url, settings, configuredProxy(settings));
+    }
+
+    public CompletableFuture<VideoInfo> extractInfo(String url, YtDlpSettings settings,
+            String proxyAddress) {
         String processId = "metadata-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
             try {
-                List<String> command = command(
-                        "--dump-json", "--no-download", "--no-playlist");
-                addProxy(command, proxyAddress);
-                command.add(url);
+                List<String> command = buildMetadataCommand(url, settings,
+                        proxyAddress, false);
 
                 String output = runMetadataCommand(command, processId, launch);
                 String jsonLine = null;
@@ -555,25 +626,70 @@ public class YtDlpClient {
     }
 
     /**
+     * Fetches either full single-video metadata or a lightweight playlist
+     * tree. Playlist entries are not individually extracted.
+     */
+    public CompletableFuture<VideoInfo> previewMedia(String url, YtDlpSettings settings) {
+        return previewMedia(url, settings, configuredProxy(settings));
+    }
+
+    public CompletableFuture<VideoInfo> previewMedia(String url, YtDlpSettings settings,
+            String proxyAddress) {
+        String processId = "playlist-preview-" + UUID.randomUUID();
+        ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
+        CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
+            try {
+                List<String> command = buildMetadataCommand(url, settings,
+                        proxyAddress, true);
+                String output = runMetadataCommand(command, processId, launch);
+                String jsonLine = output.lines()
+                        .filter(line -> line.trim().startsWith("{"))
+                        .findFirst()
+                        .orElseThrow(() -> new RuntimeException(
+                                "yt-dlp produced no JSON media preview"));
+                return parseVideoInfo(OBJECT_MAPPER.readTree(jsonLine));
+            } catch (CancellationException e) {
+                throw e;
+            } catch (Exception e) {
+                LOGGER.error("Failed to preview media", e);
+                throw new RuntimeException("Failed to preview media: " + e.getMessage(), e);
+            }
+        }, executor);
+        result.whenComplete((ignored, failure) -> {
+            if (result.isCancelled()) {
+                activeProcesses.terminate(processId, 1);
+            }
+        });
+        return result;
+    }
+
+    /**
      * Lists available formats for a video.
      *
      * @param url The video URL
      * @return CompletableFuture containing list of available formats
      */
     public CompletableFuture<List<VideoFormat>> listFormats(String url) {
-        return listFormats(url, null);
+        return listFormats(url, new YtDlpSettings(), null);
     }
 
     /** Lists formats through the supplied proxy when non-blank. */
     public CompletableFuture<List<VideoFormat>> listFormats(String url, String proxyAddress) {
+        return listFormats(url, new YtDlpSettings(), proxyAddress);
+    }
+
+    public CompletableFuture<List<VideoFormat>> listFormats(String url,
+            YtDlpSettings settings) {
+        return listFormats(url, settings, configuredProxy(settings));
+    }
+
+    public CompletableFuture<List<VideoFormat>> listFormats(String url,
+            YtDlpSettings settings, String proxyAddress) {
         String processId = "formats-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<List<VideoFormat>> result = CompletableFuture.supplyAsync(() -> {
             try {
-                List<String> command = command(
-                        "-F", "--dump-json", "--no-playlist");
-                addProxy(command, proxyAddress);
-                command.add(url);
+                List<String> command = buildFormatsCommand(url, settings, proxyAddress);
 
                 List<String> lines = runMetadataCommand(command, processId, launch).lines().toList();
 
@@ -614,10 +730,90 @@ public class YtDlpClient {
         return result;
     }
 
+    List<String> buildFormatsCommand(String url, YtDlpSettings settings,
+            String proxyAddress) {
+        YtDlpSettings effective = settings != null ? settings : new YtDlpSettings();
+        List<String> formats = command("-F", "--dump-json", "--no-playlist");
+        addRequestOptions(formats, effective, proxyAddress);
+        formats.add(url);
+        return formats;
+    }
+
+    List<String> buildMetadataCommand(String url, YtDlpSettings settings,
+            String proxyAddress, boolean playlistPreview) {
+        YtDlpSettings effective = settings != null ? settings : new YtDlpSettings();
+        List<String> metadata = playlistPreview
+                ? command("--dump-single-json", "--flat-playlist", "--no-download")
+                : command("--dump-json", "--no-download", "--no-playlist");
+        addRequestOptions(metadata, effective, proxyAddress);
+        metadata.add(url);
+        return metadata;
+    }
+
+    private static String configuredProxy(YtDlpSettings settings) {
+        return settings != null && settings.isUseProxy()
+                ? settings.getProxyAddress() : null;
+    }
+
     private static void addProxy(List<String> command, String proxyAddress) {
         if (proxyAddress != null && !proxyAddress.isBlank()) {
             command.add("--proxy");
             command.add(proxyAddress);
+        }
+    }
+
+    private static void addRequestOptions(List<String> command,
+            YtDlpSettings settings, String proxyAddress) {
+        addProxy(command, proxyAddress);
+        addRetryOptions(command, settings);
+        if (settings.getReferer() != null && !settings.getReferer().isBlank()) {
+            command.add("--referer");
+            command.add(settings.getReferer());
+        }
+        if (settings.getUserAgent() != null && !settings.getUserAgent().isBlank()) {
+            command.add("--user-agent");
+            command.add(settings.getUserAgent());
+        }
+        addAuthenticationOptions(command, settings);
+    }
+
+    private static void addAuthenticationOptions(List<String> command,
+            YtDlpSettings settings) {
+        // An explicitly chosen Netscape cookie file is the per-download
+        // override. Never submit two mutable cookie stores to yt-dlp.
+        if (settings.getCookieFile() != null && !settings.getCookieFile().isBlank()) {
+            command.add("--cookies");
+            command.add(settings.getCookieFile());
+        } else if (settings.getBrowserCookieArgument() != null) {
+            command.add("--cookies-from-browser");
+            command.add(settings.getBrowserCookieArgument());
+        }
+        if (settings.getCookieHeader() != null && !settings.getCookieHeader().isBlank()) {
+            command.add("--add-header");
+            command.add(settings.getCookieHeader());
+        }
+    }
+
+    private static void addRetryOptions(List<String> command, YtDlpSettings settings) {
+        int retries = settings.getMaxRetries();
+        if (retries > 0) {
+            command.add("--retries");
+            command.add(String.valueOf(retries));
+            command.add("--extractor-retries");
+            command.add(String.valueOf(retries));
+            command.add("--file-access-retries");
+            command.add(String.valueOf(retries));
+        }
+        if (settings.getFragmentRetries() > 0) {
+            command.add("--fragment-retries");
+            command.add(String.valueOf(settings.getFragmentRetries()));
+        }
+        int delay = settings.getRetryDelaySeconds();
+        if (delay > 0) {
+            for (String retryType : List.of("http", "fragment", "file_access", "extractor")) {
+                command.add("--retry-sleep");
+                command.add(retryType + ":" + delay);
+            }
         }
     }
 
@@ -941,6 +1137,8 @@ public class YtDlpClient {
             command.add(settings.getFormat());
         }
 
+        addContainerProfileOptions(command, settings);
+
         // Audio extraction
         if (settings.isExtractAudio()) {
             command.add("-x");
@@ -955,6 +1153,9 @@ public class YtDlpClient {
         }
 
         // Metadata and thumbnails
+        if (settings.isWriteThumbnail()) {
+            command.add("--write-thumbnail");
+        }
         if (settings.isEmbedThumbnail()) {
             command.add("--embed-thumbnail");
         }
@@ -978,18 +1179,7 @@ public class YtDlpClient {
         }
 
         // Network settings
-        if (settings.getFragmentRetries() > 0) {
-            command.add("--fragment-retries");
-            command.add(String.valueOf(settings.getFragmentRetries()));
-        }
-        if (settings.getMaxRetries() > 0) {
-            command.add("--retries");
-            command.add(String.valueOf(settings.getMaxRetries()));
-        }
-        if (settings.getRetryDelaySeconds() > 0) {
-            command.add("--retry-sleep");
-            command.add(String.valueOf(settings.getRetryDelaySeconds()));
-        }
+        addRetryOptions(command, settings);
 
         if (settings.isLimitRate() && settings.getRateLimit() > 0) {
             command.add("--limit-rate");
@@ -1002,19 +1192,20 @@ public class YtDlpClient {
             command.add(settings.getProxyAddress());
         }
 
-        // Cookie file
-        if (settings.getCookieFile() != null) {
-            command.add("--cookies");
-            command.add(settings.getCookieFile());
-        }
-        if (settings.getCookieHeader() != null) {
-            command.add("--add-header");
-            command.add(settings.getCookieHeader());
-        }
+        addAuthenticationOptions(command, settings);
 
         // Playlist settings
         if (settings.isNoPlaylist()) {
             command.add("--no-playlist");
+        } else if (settings.getEffectivePlaylistItemSpec() != null) {
+            command.add("--playlist-items");
+            command.add(settings.getEffectivePlaylistItemSpec());
+        }
+
+        if (settings.getSponsorBlockMode() != YtDlpSettings.SponsorBlockMode.OFF) {
+            command.add(settings.getSponsorBlockMode() == YtDlpSettings.SponsorBlockMode.MARK
+                    ? "--sponsorblock-mark" : "--sponsorblock-remove");
+            command.add(settings.getSponsorBlockCategories());
         }
 
         // Error handling
@@ -1079,6 +1270,41 @@ public class YtDlpClient {
         return command;
     }
 
+    private static void addContainerProfileOptions(List<String> command,
+            YtDlpSettings settings) {
+        if (settings.isExtractAudio()) {
+            return;
+        }
+        switch (settings.getContainerProfile()) {
+            case AUTOMATIC -> {
+                // yt-dlp's own best-quality and compatibility policy.
+            }
+            case MP4_COMPATIBLE -> {
+                command.add("--merge-output-format");
+                command.add("mp4");
+                command.add("--remux-video");
+                command.add("mp4");
+                command.add("--format-sort");
+                command.add("vcodec:h264,lang,quality,res,fps,hdr:12,acodec:aac");
+            }
+            case MKV -> {
+                command.add("--merge-output-format");
+                command.add("mkv");
+                command.add("--remux-video");
+                command.add("mkv");
+            }
+            case PRESERVE_NATIVE -> {
+                // Prefer a source that already carries audio and video so
+                // yt-dlp does not invent a merged output container. An exact
+                // format picked after discovery remains authoritative.
+                if (settings.getFormat() == null || settings.getFormat().isBlank()) {
+                    command.add("-f");
+                    command.add("best");
+                }
+            }
+        }
+    }
+
     /** Builds a no-overwrite, subtitle-only yt-dlp invocation. */
     List<String> buildSubtitleCommand(String url, YtDlpSettings settings,
             Path outputDirectory) {
@@ -1112,6 +1338,7 @@ public class YtDlpClient {
             command.add("--proxy");
             command.add(settings.getProxyAddress());
         }
+        addRetryOptions(command, settings);
         if (settings.getReferer() != null && !settings.getReferer().isBlank()) {
             command.add("--referer");
             command.add(settings.getReferer());
@@ -1120,14 +1347,7 @@ public class YtDlpClient {
             command.add("--user-agent");
             command.add(settings.getUserAgent());
         }
-        if (settings.getCookieHeader() != null && !settings.getCookieHeader().isBlank()) {
-            command.add("--add-header");
-            command.add(settings.getCookieHeader());
-        }
-        if (settings.getCookieFile() != null && !settings.getCookieFile().isBlank()) {
-            command.add("--cookies");
-            command.add(settings.getCookieFile());
-        }
+        addAuthenticationOptions(command, settings);
         command.add(url);
         return command;
     }
@@ -1169,6 +1389,27 @@ public class YtDlpClient {
             info.setThumbnail(node.get("thumbnail").asText());
         }
 
+        if (node.has("entries") && node.get("entries").isArray()) {
+            List<PlaylistEntry> entries = new ArrayList<>();
+            int fallbackIndex = 1;
+            for (JsonNode entryNode : node.get("entries")) {
+                if (entryNode == null || entryNode.isNull()) {
+                    fallbackIndex++;
+                    continue;
+                }
+                PlaylistEntry entry = new PlaylistEntry();
+                entry.setIndex(entryNode.path("playlist_index").asInt(fallbackIndex));
+                entry.setId(textOrNull(entryNode, "id"));
+                entry.setTitle(textOrNull(entryNode, "title"));
+                entry.setDuration(entryNode.path("duration").asLong(0));
+                String entryUrl = textOrNull(entryNode, "webpage_url");
+                entry.setUrl(entryUrl != null ? entryUrl : textOrNull(entryNode, "url"));
+                entries.add(entry);
+                fallbackIndex++;
+            }
+            info.setEntries(entries);
+        }
+
         // Parse formats
         if (node.has("formats") && node.get("formats").isArray()) {
             List<VideoFormat> formats = new ArrayList<>();
@@ -1179,6 +1420,11 @@ public class YtDlpClient {
         }
 
         return info;
+    }
+
+    private static String textOrNull(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value == null || value.isNull() ? null : value.asText();
     }
 
     /**

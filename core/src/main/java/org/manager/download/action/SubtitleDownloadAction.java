@@ -133,9 +133,13 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
             return false;
         }
 
+        List<String> preferredLanguages = download.getSettings() instanceof YtDlpSettings media
+                && media.getSubtitleLanguages() != null
+                && !media.getSubtitleLanguages().isEmpty()
+                ? media.getSubtitleLanguages() : settings.getLanguages();
         LinkedHashSet<String> missing = new LinkedHashSet<>();
         for (Path output : outputs) {
-            missing.addAll(missingLanguages(output));
+            missing.addAll(missingLanguages(output, preferredLanguages));
         }
         if (missing.isEmpty()) {
             return true;
@@ -207,8 +211,13 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
     }
 
     private List<String> missingLanguages(Path mediaFile) {
+        return missingLanguages(mediaFile, settings.getLanguages());
+    }
+
+    private static List<String> missingLanguages(Path mediaFile,
+            List<String> preferredLanguages) {
         List<String> missing = new ArrayList<>();
-        for (String language : settings.getLanguages()) {
+        for (String language : preferredLanguages) {
             if (!hasSubtitle(mediaFile, language)) {
                 missing.add(language);
             }

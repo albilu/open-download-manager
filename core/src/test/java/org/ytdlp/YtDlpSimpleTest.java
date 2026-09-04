@@ -128,15 +128,29 @@ class YtDlpSimpleTest {
     void testSettingsCopy() {
         YtDlpSettings original = new YtDlpSettings()
             .setFormat("best")
+            .setWriteThumbnail(true)
             .setEmbedThumbnail(true)
-            .setExtractAudio(true);
+            .setExtractAudio(true)
+            .setPlaylistItemSpec("1:10,12")
+            .setBrowserCookieSource(YtDlpSettings.BrowserCookieSource.FIREFOX)
+            .setBrowserCookieProfile("work")
+            .setContainerProfile(YtDlpSettings.ContainerProfile.MKV)
+            .setSponsorBlockMode(YtDlpSettings.SponsorBlockMode.MARK)
+            .setSponsorBlockCategories("sponsor,intro");
 
         YtDlpSettings copy = (YtDlpSettings) original.copy();
 
         assertNotSame(original, copy);
         assertEquals(original.getFormat(), copy.getFormat());
+        assertEquals(original.isWriteThumbnail(), copy.isWriteThumbnail());
         assertEquals(original.isEmbedThumbnail(), copy.isEmbedThumbnail());
         assertEquals(original.isExtractAudio(), copy.isExtractAudio());
+        assertEquals(original.getPlaylistItemSpec(), copy.getPlaylistItemSpec());
+        assertEquals(original.getBrowserCookieSource(), copy.getBrowserCookieSource());
+        assertEquals(original.getBrowserCookieProfile(), copy.getBrowserCookieProfile());
+        assertEquals(original.getContainerProfile(), copy.getContainerProfile());
+        assertEquals(original.getSponsorBlockMode(), copy.getSponsorBlockMode());
+        assertEquals(original.getSponsorBlockCategories(), copy.getSponsorBlockCategories());
     }
 
     @Test

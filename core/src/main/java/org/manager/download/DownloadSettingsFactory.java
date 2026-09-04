@@ -1,6 +1,5 @@
 package org.manager.download;
 
-import java.util.Arrays;
 import org.aria2.Aria2GlobalOptions;
 import org.aria2.Aria2Settings;
 import org.curl.CurlSettings;
@@ -76,12 +75,6 @@ public class DownloadSettingsFactory {
             globalSettings = ApplicationContext.getGlobalSettings();
         }
         return globalSettings;
-    }
-
-    /** Reads the canonical yt-dlp format preference used by Preferences. */
-    public static String configuredYtDlpFormat(GlobalSettings settings) {
-        String value = settings.getProperty("ytdlp.videoFormat", "");
-        return value == null ? "" : value.trim();
     }
 
     /**
@@ -270,30 +263,25 @@ public class DownloadSettingsFactory {
         YtDlpSettings settings = new YtDlpSettings();
         GlobalSettings g = getGlobalSettings();
 
-        // Defaults, overridable from the Settings dialog (ytdlp.* properties).
-        // connections maps to yt-dlp's --concurrent-fragments; 1 (yt-dlp's
-        // own default) means the flag is omitted.
+        // Record-specific media choices are owned by NewMediaDialog. The
+        // factory supplies deterministic safe values for silent/background
+        // admission paths, while retaining only engine-wide preferences.
         settings.setConnections(1);
-        settings.setFormat(configuredYtDlpFormat(g));
-        settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.writeThumbnail", false));
-        settings.setWriteSubtitles(g.getBooleanProperty("ytdlp.writeSubtitles", false));
+        settings.setFormat("");
+        settings.setContainerProfile(YtDlpSettings.ContainerProfile.AUTOMATIC);
+        settings.setWriteSubtitles(false);
+        settings.setExtractAudio(false);
+        settings.setBrowserCookieSource(YtDlpSettings.BrowserCookieSource.NONE);
+        settings.setBrowserCookieProfile(null);
+        settings.setSubtitleLanguages(java.util.List.of("en"));
+        settings.setWriteThumbnail(g.getBooleanProperty("ytdlp.writeThumbnail", false));
+        settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.embedThumbnail", false));
         settings.setEmbedMetadata(g.getBooleanProperty("ytdlp.embedMetadata", false));
-        settings.setExtractAudio(g.getBooleanProperty("ytdlp.extractAudio", false));
         settings.setUseAria2c(g.getBooleanProperty("ytdlp.useAria2External", false));
         String aria2cPath = g.getAria2Path();
         settings.setAria2cPath(aria2cPath == null || aria2cPath.isBlank()
                 ? "aria2c" : aria2cPath);
-        String subLangs = g.getProperty("ytdlp.subtitleLanguages", "");
-        if (subLangs != null && !subLangs.isBlank()) {
-            settings.setSubtitleLanguages(Arrays.asList(subLangs.split("\\s*,\\s*")));
-        } else {
-            settings.setSubtitleLanguages(Arrays.asList("en"));
-        }
         applyNetworkPreferences(g, settings);
-        // One Retry limit governs both whole-download and fragment failures.
-        // Zero retains yt-dlp's native defaults because the client omits both
-        // options in that case.
-        settings.setFragmentRetries(settings.getMaxRetries());
 
         return settings;
     }

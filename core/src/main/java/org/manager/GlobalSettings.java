@@ -1027,9 +1027,10 @@ public class GlobalSettings {
         // that orphaned key now that the UI correctly configures curl instead.
         custom.remove("tools.axelPath");
         // Development builds briefly stored engine-neutral Network controls
-        // under aria2-specific names and treated ytdlp.format as a global
-        // preference. Keep one canonical schema; per-download YtDlpSettings
-        // may still use ytdlp.format in its own serialized option map.
+        // under aria2-specific names. Record-specific media choices also
+        // briefly lived in Preferences; they now belong exclusively to the
+        // New Media dialog. Keep one canonical schema; per-download
+        // YtDlpSettings may still serialize these values with the record.
         custom.remove("aria2.maxConnections");
         custom.remove("aria2.maxConnectionsPerServer");
         custom.remove("aria2.maxTries");
@@ -1040,6 +1041,13 @@ public class GlobalSettings {
         custom.remove("aria2.cookie");
         custom.remove("aria2.userAgent");
         custom.remove("ytdlp.format");
+        custom.remove("ytdlp.videoFormat");
+        custom.remove("ytdlp.containerProfile");
+        custom.remove("ytdlp.subtitleLanguages");
+        custom.remove("ytdlp.writeSubtitles");
+        custom.remove("ytdlp.extractAudio");
+        custom.remove("ytdlp.cookieBrowser");
+        custom.remove("ytdlp.cookieBrowserProfile");
 
         custom.set("history.retainCompletedAndCanceled",
                 String.valueOf(retainCompletedAndCanceledHistory));

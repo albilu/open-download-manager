@@ -186,13 +186,13 @@ class YtDlpDownloadTaskTest {
     void testExtractInfo() throws Exception {
         YtDlpClient.VideoInfo mockVideoInfo = mock(YtDlpClient.VideoInfo.class);
         CompletableFuture<YtDlpClient.VideoInfo> mockFuture = CompletableFuture.completedFuture(mockVideoInfo);
-        when(mockClient.extractInfo(TEST_URL)).thenReturn(mockFuture);
+        when(mockClient.extractInfo(TEST_URL, mockSettings)).thenReturn(mockFuture);
 
         CompletableFuture<YtDlpClient.VideoInfo> result = downloadTask.extractInfo();
 
         assertNotNull(result);
         assertSame(mockVideoInfo, result.get());
-        verify(mockClient).extractInfo(TEST_URL);
+        verify(mockClient).extractInfo(TEST_URL, mockSettings);
     }
 
     @Test
@@ -200,13 +200,13 @@ class YtDlpDownloadTaskTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testMultipleExtractInfoCalls() throws Exception {
         CompletableFuture<YtDlpClient.VideoInfo> mockFuture = new CompletableFuture<>();
-        when(mockClient.extractInfo(TEST_URL)).thenReturn(mockFuture);
+        when(mockClient.extractInfo(TEST_URL, mockSettings)).thenReturn(mockFuture);
 
         CompletableFuture<YtDlpClient.VideoInfo> future1 = downloadTask.extractInfo();
         CompletableFuture<YtDlpClient.VideoInfo> future2 = downloadTask.extractInfo();
 
         assertSame(future1, future2);
-        verify(mockClient, times(1)).extractInfo(TEST_URL);
+        verify(mockClient, times(1)).extractInfo(TEST_URL, mockSettings);
     }
 
     @Test

@@ -249,7 +249,7 @@ public class YtDlpDownloadTask {
                 return infoFuture;
             }
 
-            infoFuture = client.extractInfo(url);
+            infoFuture = client.extractInfo(url, settings);
             return infoFuture;
         }
     }

@@ -131,27 +131,39 @@ class DownloadSettingsFactoryTest {
     }
 
     @Test
-    @DisplayName("yt-dlp preference fields flow into new media downloads")
+    @DisplayName("yt-dlp factory keeps engine defaults and ignores record choices")
     void ytdlpPropertyMapping() {
         GlobalSettings global = new GlobalSettings();
+        // These former Preferences keys must not silently alter a new record.
         global.setProperty("ytdlp.videoFormat", "bestvideo+bestaudio/best");
         global.setProperty("ytdlp.subtitleLanguages", "fr, de");
-        global.setProperty("ytdlp.writeThumbnail", "true");
+        global.setProperty("ytdlp.containerProfile", "mp4-compatible");
+        global.setProperty("ytdlp.cookieBrowser", "firefox");
+        global.setProperty("ytdlp.cookieBrowserProfile", "work");
         global.setProperty("ytdlp.writeSubtitles", "true");
-        global.setProperty("ytdlp.embedMetadata", "false");
         global.setProperty("ytdlp.extractAudio", "true");
-        global.setProperty("ytdlp.useAria2External", "false");
+        // These remain engine-wide Preferences.
+        global.setProperty("ytdlp.writeThumbnail", "true");
+        global.setProperty("ytdlp.embedThumbnail", "true");
+        global.setProperty("ytdlp.embedMetadata", "true");
+        global.setProperty("ytdlp.useAria2External", "true");
         global.setAria2Path("/opt/odm-tools/aria2c");
 
         YtDlpSettings settings = new DownloadSettingsFactory(global).createYtDlpSettings();
 
-        assertEquals("bestvideo+bestaudio/best", settings.getFormat());
-        assertEquals(java.util.List.of("fr", "de"), settings.getSubtitleLanguages());
+        assertEquals("", settings.getFormat());
+        assertEquals(java.util.List.of("en"), settings.getSubtitleLanguages());
+        assertTrue(settings.isWriteThumbnail());
         assertTrue(settings.isEmbedThumbnail());
-        assertTrue(settings.isWriteSubtitles());
-        assertFalse(settings.isEmbedMetadata());
-        assertTrue(settings.isExtractAudio());
-        assertFalse(settings.isUseAria2c());
+        assertEquals(YtDlpSettings.ContainerProfile.AUTOMATIC,
+                settings.getContainerProfile());
+        assertEquals(YtDlpSettings.BrowserCookieSource.NONE,
+                settings.getBrowserCookieSource());
+        assertNull(settings.getBrowserCookieProfile());
+        assertFalse(settings.isWriteSubtitles());
+        assertTrue(settings.isEmbedMetadata());
+        assertFalse(settings.isExtractAudio());
+        assertTrue(settings.isUseAria2c());
         assertEquals("/opt/odm-tools/aria2c", settings.getAria2cPath());
     }
 

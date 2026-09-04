@@ -367,8 +367,8 @@ class WindowSmokeTest {
                 "move_to_trash_check",
                 "continue_download_check", "check_integrity_check", "enable_auto_save_check",
                 "honor_external_aria2_config_check",
-                "write_thumbnail_check", "write_subtitles_check",
-                "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
+                "write_thumbnail_check", "embed_thumbnail_check",
+                "embed_metadata_check", "use_aria2_external_check",
                 "honor_external_ytdlp_config_check",
                 "include_archives_check", "enable_scheduling_check"}) {
             Widgets.require(builder, id, CheckButton.class);
@@ -388,7 +388,7 @@ class WindowSmokeTest {
                 "referer_entry", "cookie_entry", "user_agent_entry", "proxy_host_entry",
                 "proxy_username_entry", "proxy_password_entry",
                 "torrent_listen_ports_entry",
-                "subtitle_language_entry", "include_entry", "exclude_entry",
+                "include_entry", "exclude_entry",
                 "proxychains_path_entry", "tor_path_entry", "curl_path_entry",
                 "subliminal_path_entry", "antivirus_command_entry"}) {
             Widgets.require(builder, id, Entry.class);
@@ -397,7 +397,6 @@ class WindowSmokeTest {
                 Widgets.require(builder, "include_entry", Entry.class).getPlaceholderText());
         assertEquals("*/admin/* */logout/* *.tmp",
                 Widgets.require(builder, "exclude_entry", Entry.class).getPlaceholderText());
-        Widgets.require(builder, "video_format_entry", DropDown.class);
         Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "file_allocation_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "seeding_policy_combo", org.gnome.gtk.DropDown.class);
@@ -442,6 +441,12 @@ class WindowSmokeTest {
                 "the global automatic-start policy must not be duplicated on Network");
         assertNull(builder.getObject("move_torrent_check2"),
                 "the global descriptor Trash policy must not be duplicated on Network");
+        for (String id : new String[]{"video_format_entry", "container_profile_combo",
+                "subtitle_language_entry", "write_subtitles_check", "extract_audio_check",
+                "cookie_browser_combo", "cookie_browser_profile_entry"}) {
+            assertNull(builder.getObject(id),
+                    id + " is a per-record choice owned by New Media");
+        }
         assertDownloadOptionsLayout(builder);
         for (String id : new String[]{"aria2_layout_grid", "ytdlp_layout_grid",
                 "httrack_layout_grid", "advanced_layout_grid"}) {
@@ -450,7 +455,7 @@ class WindowSmokeTest {
         assertEquals(1, gridColumn(Widgets.require(builder, "aria2_layout_grid", Grid.class),
                 Widgets.require(builder, "min_split_size_spin1", SpinButton.class)));
         assertEquals(1, gridColumn(Widgets.require(builder, "ytdlp_layout_grid", Grid.class),
-                Widgets.require(builder, "video_format_entry", DropDown.class)));
+                Widgets.require(builder, "ytdlp_path_box", Box.class)));
         assertEquals(1, gridColumn(Widgets.require(builder, "httrack_layout_grid", Grid.class),
                 Widgets.require(builder, "depth_spin", SpinButton.class)));
         assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
@@ -526,11 +531,21 @@ class WindowSmokeTest {
         Widgets.require(builder, "media_status_label", Label.class);
         Widgets.require(builder, "media_info_label", Label.class);
         Widgets.require(builder, "format_drop", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "media_container_profile_combo", DropDown.class);
         Widgets.require(builder, "audio_only_check", CheckButton.class);
         Widgets.require(builder, "playlist_check", CheckButton.class);
+        Widgets.require(builder, "playlist_items_entry", Entry.class);
+        Widgets.require(builder, "playlist_select_all_check", CheckButton.class);
+        Widgets.require(builder, "playlist_store", ListStore.class);
+        Widgets.require(builder, "playlist_treeview", TreeView.class);
+        Widgets.require(builder, "playlist_preview_scroller", ScrolledWindow.class);
         Widgets.require(builder, "subtitles_check", CheckButton.class);
         Widgets.require(builder, "subtitle_lang_entry", Entry.class);
+        Widgets.require(builder, "media_cookie_browser_combo", DropDown.class);
+        Widgets.require(builder, "media_cookie_browser_profile_entry", Entry.class);
         Widgets.require(builder, "cookie_file_chooser", Button.class);
+        Widgets.require(builder, "sponsorblock_mode_combo", DropDown.class);
+        Widgets.require(builder, "sponsorblock_categories_entry", Entry.class);
         Widgets.require(builder, "media_folder_chooser", MenuButton.class);
         Widgets.require(builder, "media_disk_space_label", Label.class);
         Widgets.require(builder, "media_cancel_button", Button.class);
@@ -543,6 +558,13 @@ class WindowSmokeTest {
                 Widgets.require(builder, "format_drop", org.gnome.gtk.DropDown.class)));
         assertEquals(1, gridColumn(fields,
                 Widgets.require(builder, "subtitle_lang_entry", Entry.class)));
+        Grid options = Widgets.require(builder, "media_options_grid", Grid.class);
+        assertEquals(0, gridRow(options,
+                Widgets.require(builder, "audio_only_check", CheckButton.class)));
+        assertEquals(0, gridRow(options,
+                Widgets.require(builder, "playlist_check", CheckButton.class)));
+        assertEquals(1, gridRow(options,
+                Widgets.require(builder, "subtitles_check", CheckButton.class)));
         assertDiskLabelBelowChooser(builder, "media_folder_chooser",
                 "media_disk_space_label");
     }
@@ -1103,6 +1125,12 @@ class WindowSmokeTest {
         Out<Integer> column = new Out<>();
         grid.queryChild(child, column, new Out<>(), new Out<>(), new Out<>());
         return column.get();
+    }
+
+    private static int gridRow(Grid grid, Widget child) {
+        Out<Integer> row = new Out<>();
+        grid.queryChild(child, new Out<>(), row, new Out<>(), new Out<>());
+        return row.get();
     }
 
     private static void drainGtkEvents() {
