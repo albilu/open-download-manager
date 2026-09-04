@@ -64,9 +64,20 @@ public class YtDlpToolManager extends AbstractToolManager {
         return COMMON_LOCATIONS;
     }
 
+    /** Shared prefix for every yt-dlp discovery and validation operation. */
+    private String[] command(String toolPath, String... arguments) {
+        java.util.ArrayList<String> command = new java.util.ArrayList<>();
+        command.add(toolPath);
+        if (!settings.isHonorExternalYtDlpConfiguration()) {
+            command.add("--ignore-config");
+        }
+        command.addAll(Arrays.asList(arguments));
+        return command.toArray(String[]::new);
+    }
+
     @Override
     protected String[] getVersionCommand(String toolPath) {
-        return new String[]{toolPath, "--version"};
+        return command(toolPath, "--version");
     }
 
     @Override
@@ -97,7 +108,7 @@ public class YtDlpToolManager extends AbstractToolManager {
 
         try {
             // Get help output to check available options
-            Process process = Runtime.getRuntime().exec(new String[]{toolPath, "--help"});
+            Process process = Runtime.getRuntime().exec(command(toolPath, "--help"));
             if (process.waitFor(15, TimeUnit.SECONDS)) {
                 String output = readProcessOutput(process);
                 String lowerOutput = output.toLowerCase();
@@ -163,9 +174,7 @@ public class YtDlpToolManager extends AbstractToolManager {
     protected boolean executeBasicCheck(String toolPath) {
         try {
             // Test basic functionality with version check
-            Process process = Runtime.getRuntime().exec(new String[]{
-                toolPath, "--version"
-            });
+            Process process = Runtime.getRuntime().exec(command(toolPath, "--version"));
 
             boolean completed = process.waitFor(10, TimeUnit.SECONDS);
             int exitCode = completed ? process.exitValue() : -1;
@@ -192,9 +201,8 @@ public class YtDlpToolManager extends AbstractToolManager {
      */
     private boolean testExtractorSupport(String toolPath, String extractorName) {
         try {
-            Process process = Runtime.getRuntime().exec(new String[]{
-                toolPath, "--list-extractors"
-            });
+            Process process = Runtime.getRuntime().exec(
+                    command(toolPath, "--list-extractors"));
 
             if (process.waitFor(10, TimeUnit.SECONDS)) {
                 String output = readProcessOutput(process);
@@ -234,9 +242,8 @@ public class YtDlpToolManager extends AbstractToolManager {
         }
 
         try {
-            Process process = Runtime.getRuntime().exec(new String[]{
-                toolPath, "--list-extractors"
-            });
+            Process process = Runtime.getRuntime().exec(
+                    command(toolPath, "--list-extractors"));
 
             if (process.waitFor(15, TimeUnit.SECONDS)) {
                 String output = readProcessOutput(process);
@@ -293,9 +300,9 @@ public class YtDlpToolManager extends AbstractToolManager {
 
         try {
             // Test with a simple info extraction (no actual download)
-            Process process = Runtime.getRuntime().exec(new String[]{
-                toolPath, "--simulate", "--get-title", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-            });
+            Process process = Runtime.getRuntime().exec(command(toolPath,
+                    "--simulate", "--get-title",
+                    "https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
 
             boolean completed = process.waitFor(30, TimeUnit.SECONDS);
             int exitCode = completed ? process.exitValue() : -1;

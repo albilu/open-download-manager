@@ -63,8 +63,12 @@ public class NewMediaDialog {
     public NewMediaDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
         this.downloadManager = downloadManager;
         this.onDownloadQueued = onDownloadQueued;
-        String ytDlpPath = downloadManager.getGlobalSettings().getYtDlpPath();
-        this.ytDlpClient = new YtDlpClient(ytDlpPath != null ? ytDlpPath : "yt-dlp");
+        org.manager.GlobalSettings globalSettings = downloadManager.getGlobalSettings();
+        String ytDlpPath = globalSettings.getYtDlpPath();
+        this.ytDlpClient = new YtDlpClient(
+                ytDlpPath != null ? ytDlpPath : "yt-dlp",
+                globalSettings.isHonorExternalYtDlpConfiguration(),
+                globalSettings.isHonorExternalAria2Configuration());
 
         GtkBuilder builder = UiLoader.load("/ui/new-media.ui");
         this.dialog = Widgets.require(builder, "new_media_dialog", Window.class);

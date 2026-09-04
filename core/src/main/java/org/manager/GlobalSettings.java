@@ -31,6 +31,13 @@ public class GlobalSettings {
     private static final String CONFIG_DIR = "odm";
     private static final String SETTINGS_FILE = "settings.json";
 
+    /** ODM avoids aria2's conventional RPC port so an independent daemon can use it. */
+    public static final int DEFAULT_ARIA2_RPC_PORT = 6801;
+    private static final String ARIA2_HONOR_EXTERNAL_CONFIG =
+            "aria2.honorExternalConfiguration";
+    private static final String YTDLP_HONOR_EXTERNAL_CONFIG =
+            "ytdlp.honorExternalConfiguration";
+
     /**
      * Resolves the settings file path: ${XDG_CONFIG_HOME:-~/.config}/odm/settings.json.
      *
@@ -857,6 +864,40 @@ public class GlobalSettings {
     /** Sets the ODM state-snapshot preference under its engine-neutral key. */
     public void setOdmAutoSaveEnabled(boolean enabled) {
         setProperty("odm.autoSave", String.valueOf(enabled));
+    }
+
+    /**
+     * RPC port used by ODM's aria2 client and self-managed daemon. Invalid
+     * manually edited values fall back to ODM's non-standard default instead
+     * of accidentally probing aria2's conventional port 6800.
+     */
+    public int getAria2RpcPort() {
+        int port = getIntProperty("aria2.rpcPort", DEFAULT_ARIA2_RPC_PORT);
+        return port >= 1 && port <= 65_535 ? port : DEFAULT_ARIA2_RPC_PORT;
+    }
+
+    public void setAria2RpcPort(int port) {
+        int validPort = port >= 1 && port <= 65_535
+                ? port : DEFAULT_ARIA2_RPC_PORT;
+        setProperty("aria2.rpcPort", String.valueOf(validPort));
+    }
+
+    /** Whether ODM-started aria2 processes may load aria2's external config. */
+    public boolean isHonorExternalAria2Configuration() {
+        return getBooleanProperty(ARIA2_HONOR_EXTERNAL_CONFIG, false);
+    }
+
+    public void setHonorExternalAria2Configuration(boolean honor) {
+        setProperty(ARIA2_HONOR_EXTERNAL_CONFIG, String.valueOf(honor));
+    }
+
+    /** Whether ODM-managed yt-dlp commands may load external config files. */
+    public boolean isHonorExternalYtDlpConfiguration() {
+        return getBooleanProperty(YTDLP_HONOR_EXTERNAL_CONFIG, false);
+    }
+
+    public void setHonorExternalYtDlpConfiguration(boolean honor) {
+        setProperty(YTDLP_HONOR_EXTERNAL_CONFIG, String.valueOf(honor));
     }
 
     // ------------------------------------------------------------------

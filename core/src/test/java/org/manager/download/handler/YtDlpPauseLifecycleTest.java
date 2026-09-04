@@ -49,7 +49,7 @@ class YtDlpPauseLifecycleTest {
     void setUp() throws Exception {
         Path fakeTool = tempDir.resolve("fake-yt-dlp");
         Files.writeString(fakeTool, "#!/bin/bash\n"
-                + "if [ \"$1\" = \"--version\" ]; then echo \"2024.01.01\"; exit 0; fi\n"
+                + "case \" $* \" in *\" --version \"*) echo \"2024.01.01\"; exit 0;; esac\n"
                 + "echo \"[download] Destination: video.mp4\"\n"
                 + "sleep 300\n");
         Files.setPosixFilePermissions(fakeTool, PosixFilePermissions.fromString("rwxr-xr-x"));

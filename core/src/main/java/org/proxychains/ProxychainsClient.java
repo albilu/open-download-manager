@@ -22,7 +22,6 @@ import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.manager.ApplicationContext;
 import org.manager.download.Download;
 import org.manager.download.DownloadListener;
 import org.manager.tools.ToolManagerFactory;
@@ -43,6 +42,7 @@ public class ProxychainsClient {
 
     private final String proxychainsPath;
     private final String configPath;
+    private volatile boolean honorExternalAria2Configuration;
     private final ExecutorService executorService;
     private final org.manager.tools.ExternalProcessRegistry activeProcesses;
     private final Map<String, String> gidMap; // Download ID -> aria2 GID
@@ -53,7 +53,7 @@ public class ProxychainsClient {
      * from ToolManagerFactory.
      */
     public ProxychainsClient() {
-        this(ToolPaths.proxychains(), null);
+        this(ToolPaths.proxychains(), null, false);
     }
 
 
@@ -66,8 +66,14 @@ public class ProxychainsClient {
      *                        use default
      */
     public ProxychainsClient(String proxychainsPath, String configPath) {
+        this(proxychainsPath, configPath, false);
+    }
+
+    public ProxychainsClient(String proxychainsPath, String configPath,
+            boolean honorExternalAria2Configuration) {
         this.proxychainsPath = proxychainsPath;
         this.configPath = configPath;
+        this.honorExternalAria2Configuration = honorExternalAria2Configuration;
         // Daemon threads: a missed shutdown() must never keep the JVM alive
         this.executorService = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "proxychains-client");
@@ -80,6 +86,10 @@ public class ProxychainsClient {
 
         // Validate that proxychains is available
         validateProxychainsInstallation();
+    }
+
+    public void setHonorExternalAria2Configuration(boolean honor) {
+        this.honorExternalAria2Configuration = honor;
     }
 
     /**
@@ -405,7 +415,7 @@ public class ProxychainsClient {
      * @param options    Additional aria2c options
      * @return List of command arguments
      */
-    private List<String> buildProxychainsCommand(Download download, Path outputFile, Path configPath,
+    List<String> buildProxychainsCommand(Download download, Path outputFile, Path configPath,
             Map<String, String> options) {
         List<String> command = new ArrayList<>();
 
@@ -419,7 +429,10 @@ public class ProxychainsClient {
         }
 
         // Add aria2c executable
-        command.add(ApplicationContext.getToolPath("aria2"));
+        command.add(ToolPaths.aria2c());
+        if (!honorExternalAria2Configuration) {
+            command.add("--no-conf");
+        }
 
         // Basic aria2c options
         command.add("--allow-overwrite=true");

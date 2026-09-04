@@ -366,14 +366,17 @@ class WindowSmokeTest {
                 "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
                 "move_to_trash_check",
                 "continue_download_check", "check_integrity_check", "enable_auto_save_check",
-                "enable_seeding_check", "write_thumbnail_check", "write_subtitles_check",
+                "enable_seeding_check", "honor_external_aria2_config_check",
+                "write_thumbnail_check", "write_subtitles_check",
                 "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
+                "honor_external_ytdlp_config_check",
                 "include_archives_check", "enable_scheduling_check"}) {
             Widgets.require(builder, id, CheckButton.class);
         }
         for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
                 "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "min_split_size_spin1",
-                "max_peers_spin", "peer_speed_limit_spin", "seed_time_spin", "depth_spin", "proxy_port_spin",
+                "max_peers_spin", "peer_speed_limit_spin", "seed_time_spin", "aria2_rpc_port_spin",
+                "depth_spin", "proxy_port_spin",
                 "cleanup_interval_spin", "max_history_records_spin", "max_completed_records_spin",
                 "completed_retention_spin", "error_retention_spin",
                 "max_import_urls_spin", "max_import_source_size_spin",

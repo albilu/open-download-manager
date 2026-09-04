@@ -48,10 +48,12 @@ class SettingsDialogSaveOutcomeTest {
             "file_allocation_combo", "max_peers_spin", "peer_speed_limit_spin",
             "enable_seeding_check", "seed_time_spin", "tracker_refresh_spin",
             "tracker_list_entry", "continue_download_check", "check_integrity_check",
+            "aria2_rpc_port_spin", "honor_external_aria2_config_check",
             // yt-dlp
             "ytdlp_path_entry", "browse_ytdlp_button", "video_format_entry",
             "subtitle_language_entry", "write_thumbnail_check", "write_subtitles_check",
             "embed_metadata_check", "extract_audio_check", "use_aria2_external_check",
+            "honor_external_ytdlp_config_check",
             // HTTrack
             "httrack_path_entry", "browse_httrack_button", "depth_spin", "include_entry",
             "exclude_entry", "include_archives_check",
@@ -289,6 +291,9 @@ class SettingsDialogSaveOutcomeTest {
             initial.setDefaultDownloadDirectory(tempDir);
             initial.setMaxConcurrentDownloads(17);
             initial.setAutomaticCleanupEnabled(true);
+            initial.setAria2RpcPort(6900);
+            initial.setHonorExternalAria2Configuration(true);
+            initial.setHonorExternalYtDlpConfiguration(true);
             new org.manager.download.DownloadSettingsFactory.NetworkDefaults(
                     16, 5, 0, 0, 0, "", "", "").saveTo(initial);
             AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
@@ -303,9 +308,39 @@ class SettingsDialogSaveOutcomeTest {
             GlobalSettings reset = settings.get();
             assertEquals(3, reset.getMaxConcurrentDownloads());
             assertFalse(reset.isAutomaticCleanupEnabled());
+            assertEquals(GlobalSettings.DEFAULT_ARIA2_RPC_PORT,
+                    reset.getAria2RpcPort());
+            assertFalse(reset.isHonorExternalAria2Configuration());
+            assertFalse(reset.isHonorExternalYtDlpConfiguration());
             assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS,
                     org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(reset)
                             .maxConnections());
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("engine configuration opt-ins survive a Preferences save")
+    void engineConfigurationOptInsRoundTripThroughDialog() throws Exception {
+        Path configHome = tempDir.resolve("engine-config-policy");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setAria2RpcPort(6812);
+            initial.setHonorExternalAria2Configuration(true);
+            initial.setHonorExternalYtDlpConfiguration(true);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            dialog.applySettings();
+
+            GlobalSettings saved = settings.get();
+            assertEquals(6812, saved.getAria2RpcPort());
+            assertTrue(saved.isHonorExternalAria2Configuration());
+            assertTrue(saved.isHonorExternalYtDlpConfiguration());
         });
     }
 

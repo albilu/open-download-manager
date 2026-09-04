@@ -46,6 +46,9 @@ class GlobalSettingsTest {
         assertEquals(30, globalSettings.getCompletedDownloadRetentionDays());
         assertEquals(7, globalSettings.getErrorDownloadRetentionDays());
         assertFalse(globalSettings.isAutomaticCleanupEnabled());
+        assertEquals(6801, globalSettings.getAria2RpcPort());
+        assertFalse(globalSettings.isHonorExternalAria2Configuration());
+        assertFalse(globalSettings.isHonorExternalYtDlpConfiguration());
     }
 
     @Test
@@ -446,6 +449,9 @@ class GlobalSettingsTest {
         globalSettings.setProxyRotationEnabled(true);
         globalSettings.setProxyRotationMaxRetries(7);
         globalSettings.setProxyListFilePath("/tmp/odm-test-proxies.txt");
+        globalSettings.setAria2RpcPort(6811);
+        globalSettings.setHonorExternalAria2Configuration(true);
+        globalSettings.setHonorExternalYtDlpConfiguration(true);
         globalSettings.setProperty("customKey", "customValue");
 
         assertTrue(globalSettings.save(configFile));
@@ -463,6 +469,21 @@ class GlobalSettingsTest {
         assertTrue(reloaded.isProxyRotationEnabled());
         assertEquals(7, reloaded.getProxyRotationMaxRetries());
         assertEquals("/tmp/odm-test-proxies.txt", reloaded.getProxyListFilePath());
+        assertEquals(6811, reloaded.getAria2RpcPort());
+        assertTrue(reloaded.isHonorExternalAria2Configuration());
+        assertTrue(reloaded.isHonorExternalYtDlpConfiguration());
         assertEquals("customValue", reloaded.getProperty("customKey", null));
+    }
+
+    @Test
+    @DisplayName("Invalid aria2 RPC ports fall back to ODM's safe default")
+    void invalidAria2RpcPortsUseSafeDefault() {
+        globalSettings.setProperty("aria2.rpcPort", "0");
+        assertEquals(GlobalSettings.DEFAULT_ARIA2_RPC_PORT,
+                globalSettings.getAria2RpcPort());
+
+        globalSettings.setProperty("aria2.rpcPort", "not-a-port");
+        assertEquals(GlobalSettings.DEFAULT_ARIA2_RPC_PORT,
+                globalSettings.getAria2RpcPort());
     }
 }

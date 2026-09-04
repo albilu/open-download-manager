@@ -51,9 +51,9 @@ class ToolManagerContractTest {
         Path tool = tempDir.resolve(name + "-" + System.nanoTime());
         // the full output block is echoed verbatim for --version, mimicking
         // the multi-line layout real tools use (version line, Features line, ...)
-        String script = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n"
+        String script = "#!/bin/sh\ncase \" $* \" in *\" --version \"*)\n"
                 + "cat <<'__EOF__'\n" + versionOutput + "\n__EOF__\n"
-                + "exit 0\nfi\nexit 0\n";
+                + "exit 0\n;; esac\nexit 0\n";
         Files.writeString(tool, script);
         Files.setPosixFilePermissions(tool, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
         return tool;

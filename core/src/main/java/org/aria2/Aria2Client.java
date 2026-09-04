@@ -28,8 +28,7 @@ import org.slf4j.LoggerFactory;
 
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
-import org.manager.ApplicationContext;
-import org.manager.tools.ToolManagerFactory;
+import org.manager.GlobalSettings;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -69,6 +68,8 @@ public class Aria2Client {
     private volatile DaemonOwnership daemonOwnership = DaemonOwnership.STOPPED;
     private String httpProxy;
     private String configFile;
+    /** False by default so an ODM-owned daemon cannot inherit hidden user policy. */
+    private volatile boolean honorExternalConfiguration;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     static {
@@ -107,7 +108,9 @@ public class Aria2Client {
 
 
     public Aria2Client(String aria2cPath) {
-        this(aria2cPath, "http://localhost:6800/jsonrpc", null);
+        this(aria2cPath,
+                "http://localhost:" + GlobalSettings.DEFAULT_ARIA2_RPC_PORT + "/jsonrpc",
+                null);
     }
 
     public Aria2Client(String aria2cPath, String rpcUrl, String rpcToken) {
@@ -402,22 +405,25 @@ public class Aria2Client {
      * against these so nothing can override the daemon's RPC binding,
      * port, secret, or enable-RPC state.
      */
-    private static final List<String> RESERVED_RPC_FLAGS = List.of(
+    private static final List<String> RESERVED_LAUNCH_FLAGS = List.of(
             "--rpc-secret",
             "--rpc-listen-port",
             "--rpc-listen-all",
             "--rpc-listen",
             "--enable-rpc",
-            "--disable-rpc");
+            "--disable-rpc",
+            "--conf-path",
+            "--no-conf");
 
     /**
      * Builds the command that launches the self-managed aria2 RPC daemon.
      * The daemon binds localhost only and requires an RPC secret: a random
      * one is generated when the caller did not configure a token. The
      * listen port is derived from this client's own RPC endpoint, and
-     * reserved RPC-control flags are stripped from {@code extraArgs} so
-     * ODM's values stay authoritative. Exposed package-private for the
-     * security contract tests.
+     * reserved RPC/configuration flags are stripped from {@code extraArgs} so
+     * ODM's values stay authoritative. Unless external configuration was
+     * explicitly enabled, the child receives {@code --no-conf}. Exposed
+     * package-private for the security contract tests.
      *
      * @param extraArgs additional aria2c arguments (can be null)
      * @return the full aria2c command line
@@ -448,8 +454,10 @@ public class Aria2Client {
         }
         if (configFile != null && !configFile.isEmpty()) {
             cmd.add("--conf-path=" + configFile);
+        } else if (!honorExternalConfiguration) {
+            cmd.add("--no-conf");
         }
-        List<String> filteredArgs = filterReservedRpcArgs(extraArgs);
+        List<String> filteredArgs = filterReservedLaunchArgs(extraArgs);
         cmd.addAll(filteredArgs);
         this.lastExtraArgs = new ArrayList<>(filteredArgs); // Store for restart
         return cmd;
@@ -470,17 +478,18 @@ public class Aria2Client {
      * consuming their following token would swallow the NEXT flag and leak
      * that flag's real value as a stray positional.
      */
-    private static final List<String> RESERVED_RPC_VALUE_FLAGS = List.of(
+    private static final List<String> RESERVED_LAUNCH_VALUE_FLAGS = List.of(
             "--rpc-secret",
-            "--rpc-listen-port");
+            "--rpc-listen-port",
+            "--conf-path");
 
     /**
-     * Drops reserved RPC-control arguments (both {@code --flag=value} and
+     * Drops reserved launch-control arguments (both {@code --flag=value} and
      * two-argument {@code --flag value} forms) so generic arguments can
-     * never override the RPC binding, port, secret, or enable-RPC state
-     * ODM owns.
+     * never override the RPC binding, authentication, or configuration-file
+     * policy ODM owns.
      */
-    private static List<String> filterReservedRpcArgs(List<String> extraArgs) {
+    private static List<String> filterReservedLaunchArgs(List<String> extraArgs) {
         if (extraArgs == null || extraArgs.isEmpty()) {
             return new ArrayList<>();
         }
@@ -488,15 +497,15 @@ public class Aria2Client {
         for (int i = 0; i < extraArgs.size(); i++) {
             String arg = extraArgs.get(i);
             String flagName = arg.contains("=") ? arg.substring(0, arg.indexOf('=')) : arg;
-            if (RESERVED_RPC_FLAGS.contains(flagName)) {
-                LOGGER.warn("Filtered reserved aria2 RPC argument \"" + arg
-                        + "\": RPC binding, port, secret, and enable-RPC are ODM-owned");
+            if (RESERVED_LAUNCH_FLAGS.contains(flagName)) {
+                LOGGER.warn("Filtered reserved aria2 launch argument \"" + arg
+                        + "\": RPC and configuration-file policy are ODM-owned");
                 // Only value-taking flags consume the next token
                 // unconditionally; a boolean-style reserved flag must never
                 // swallow a following FLAG (that would leak the next
                 // flag's real value as a stray positional), but a plain
                 // value token (e.g. "false") is still consumed with it
-                boolean valueTaking = RESERVED_RPC_VALUE_FLAGS.contains(flagName);
+                boolean valueTaking = RESERVED_LAUNCH_VALUE_FLAGS.contains(flagName);
                 if (!arg.contains("=") && i + 1 < extraArgs.size()
                         && (valueTaking || !extraArgs.get(i + 1).startsWith("--"))) {
                     i++; // also drop the value of the two-argument form
@@ -684,6 +693,15 @@ public class Aria2Client {
      */
     public void setConfigFile(String configFile) {
         this.configFile = configFile;
+    }
+
+    /**
+     * Allows the self-managed daemon to load aria2's normal external
+     * configuration file. Disabled by default; explicit {@link #setConfigFile}
+     * still selects that file regardless of this preference.
+     */
+    public void setHonorExternalConfiguration(boolean honor) {
+        this.honorExternalConfiguration = honor;
     }
 
     /**

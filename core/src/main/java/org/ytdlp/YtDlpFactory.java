@@ -116,7 +116,7 @@ public class YtDlpFactory {
         String managerPath = ytDlpManager != null ? ytDlpManager.getToolPath() : null;
         String ytDlpPath = managerPath != null && !managerPath.isBlank() ? managerPath : "yt-dlp";
 
-        YtDlpClient client = new YtDlpClient(ytDlpPath);
+        YtDlpClient client = configuredClient(ytDlpPath);
 
         // Store client for management
         String clientId = "client-" + System.currentTimeMillis() + "-" + Thread.currentThread().getId();
@@ -131,7 +131,7 @@ public class YtDlpFactory {
         YtDlpToolManager ytDlpManager = toolManagerFactory.getYtDlpManager();
         String managerPath = ytDlpManager != null ? ytDlpManager.getToolPath() : null;
         String ytDlpPath = managerPath != null && !managerPath.isBlank() ? managerPath : "yt-dlp";
-        return new YtDlpClient(ytDlpPath);
+        return configuredClient(ytDlpPath);
     }
 
     /**
@@ -145,7 +145,7 @@ public class YtDlpFactory {
             throw new IllegalStateException("YtDlpFactory has been shut down");
         }
 
-        YtDlpClient client = new YtDlpClient(ytDlpPath);
+        YtDlpClient client = configuredClient(ytDlpPath);
 
         // Store client for management
         String clientId = "client-" + System.currentTimeMillis() + "-" + Thread.currentThread().getId();
@@ -153,6 +153,12 @@ public class YtDlpFactory {
 
         LOGGER.info("Created YtDlpClient with custom path: " + ytDlpPath);
         return client;
+    }
+
+    private YtDlpClient configuredClient(String ytDlpPath) {
+        return new YtDlpClient(ytDlpPath,
+                globalSettings.isHonorExternalYtDlpConfiguration(),
+                globalSettings.isHonorExternalAria2Configuration());
     }
 
     /**

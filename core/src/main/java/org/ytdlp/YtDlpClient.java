@@ -25,8 +25,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.manager.ApplicationContext;
-import org.manager.tools.ToolManagerFactory;
 
 /**
  * Java client for yt-dlp command-line tool. Provides methods to extract video
@@ -55,6 +53,8 @@ public class YtDlpClient {
     }
 
     private final String ytDlpPath;
+    private final boolean honorExternalConfiguration;
+    private final boolean honorExternalAria2Configuration;
     private final ExecutorService executor;
     private final org.manager.tools.ExternalProcessRegistry activeProcesses;
 
@@ -63,7 +63,7 @@ public class YtDlpClient {
      * ToolManagerFactory.
      */
     public YtDlpClient() {
-        this(ToolPaths.ytDlp());
+        this(ToolPaths.ytDlp(), false, false);
     }
 
 
@@ -73,13 +73,62 @@ public class YtDlpClient {
      * @param ytDlpPath Path to the yt-dlp executable
      */
     public YtDlpClient(String ytDlpPath) {
+        this(ytDlpPath, false, false);
+    }
+
+    /**
+     * Creates a client with an explicit external-configuration policy.
+     *
+     * @param ytDlpPath path to the yt-dlp executable
+     * @param honorExternalConfiguration whether yt-dlp may load its normal
+     *        system and user configuration files
+     */
+    public YtDlpClient(String ytDlpPath, boolean honorExternalConfiguration) {
+        this(ytDlpPath, honorExternalConfiguration, false);
+    }
+
+    public YtDlpClient(String ytDlpPath, boolean honorExternalConfiguration,
+            boolean honorExternalAria2Configuration) {
         this.ytDlpPath = ytDlpPath;
+        this.honorExternalConfiguration = honorExternalConfiguration;
+        this.honorExternalAria2Configuration = honorExternalAria2Configuration;
         this.executor = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "YtDlpClient-" + System.currentTimeMillis());
             t.setDaemon(true);
             return t;
         });
         this.activeProcesses = new org.manager.tools.ExternalProcessRegistry("yt-dlp");
+    }
+
+    /** Builds the authoritative prefix shared by every yt-dlp operation. */
+    private List<String> command(String... arguments) {
+        List<String> command = new ArrayList<>();
+        command.add(ytDlpPath);
+        if (!honorExternalConfiguration) {
+            command.add("--ignore-config");
+        }
+        if (arguments != null) {
+            command.addAll(List.of(arguments));
+        }
+        return command;
+    }
+
+    boolean isHonoringExternalConfiguration() {
+        return honorExternalConfiguration;
+    }
+
+    boolean isHonoringExternalAria2Configuration() {
+        return honorExternalAria2Configuration;
+    }
+
+    private List<String> aria2Command(String aria2cPath, String... arguments) {
+        List<String> command = new ArrayList<>();
+        command.add(aria2cPath);
+        if (!honorExternalAria2Configuration) {
+            command.add("--no-conf");
+        }
+        command.addAll(List.of(arguments));
+        return command;
     }
 
     /**
@@ -344,7 +393,7 @@ public class YtDlpClient {
     public boolean isAvailable() {
         Process process = null;
         try {
-            ProcessBuilder pb = new ProcessBuilder(ytDlpPath, "--version");
+            ProcessBuilder pb = new ProcessBuilder(command("--version"));
             pb.redirectErrorStream(true);
             process = pb.start();
             // Bounded wait: this probe runs on startup paths where a hung
@@ -372,7 +421,7 @@ public class YtDlpClient {
      */
     public String getVersion() {
         try {
-            ProcessBuilder pb = new ProcessBuilder(ytDlpPath, "--version");
+            ProcessBuilder pb = new ProcessBuilder(command("--version"));
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
@@ -404,7 +453,7 @@ public class YtDlpClient {
      */
     public boolean isAria2cAvailable(String aria2cPath) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(aria2cPath, "--version");
+            ProcessBuilder pb = new ProcessBuilder(aria2Command(aria2cPath, "--version"));
             pb.redirectErrorStream(true);
             Process process = pb.start();
             int exitCode = process.waitFor();
@@ -432,7 +481,7 @@ public class YtDlpClient {
      */
     public String getAria2cVersion(String aria2cPath) {
         try {
-            ProcessBuilder pb = new ProcessBuilder(aria2cPath, "--version");
+            ProcessBuilder pb = new ProcessBuilder(aria2Command(aria2cPath, "--version"));
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
@@ -467,11 +516,8 @@ public class YtDlpClient {
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
             try {
-                List<String> command = new ArrayList<>();
-                command.add(ytDlpPath);
-                command.add("--dump-json");
-                command.add("--no-download");
-                command.add("--no-playlist");
+                List<String> command = command(
+                        "--dump-json", "--no-download", "--no-playlist");
                 addProxy(command, proxyAddress);
                 command.add(url);
 
@@ -524,11 +570,8 @@ public class YtDlpClient {
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<List<VideoFormat>> result = CompletableFuture.supplyAsync(() -> {
             try {
-                List<String> command = new ArrayList<>();
-                command.add(ytDlpPath);
-                command.add("-F");
-                command.add("--dump-json");
-                command.add("--no-playlist");
+                List<String> command = command(
+                        "-F", "--dump-json", "--no-playlist");
                 addProxy(command, proxyAddress);
                 command.add(url);
 
@@ -866,8 +909,7 @@ public class YtDlpClient {
      * Builds the yt-dlp command with settings.
      */
     List<String> buildDownloadCommand(String url, YtDlpSettings settings, Path outputPath) {
-        List<String> command = new ArrayList<>();
-        command.add(ytDlpPath);
+        List<String> command = command();
 
         // Output template
         String outputTemplate = settings.getOutputTemplate() != null
@@ -1005,6 +1047,10 @@ public class YtDlpClient {
                     ? org.manager.tools.ToolPaths.aria2c() : aria2cPath);
 
             String aria2cArgs = settings.buildAria2cArgs();
+            if (!honorExternalAria2Configuration) {
+                aria2cArgs = "--no-conf" + (aria2cArgs == null || aria2cArgs.isBlank()
+                        ? "" : " " + aria2cArgs);
+            }
             if (aria2cArgs != null && !aria2cArgs.isEmpty()) {
                 command.add("--external-downloader-args");
                 command.add(aria2cArgs);
@@ -1038,8 +1084,7 @@ public class YtDlpClient {
             Path outputDirectory) {
         java.util.Objects.requireNonNull(url, "url");
         java.util.Objects.requireNonNull(settings, "settings");
-        List<String> command = new ArrayList<>();
-        command.add(ytDlpPath);
+        List<String> command = command();
         command.add("--skip-download");
         if (settings.isWriteSubtitles()) {
             command.add("--write-subs");

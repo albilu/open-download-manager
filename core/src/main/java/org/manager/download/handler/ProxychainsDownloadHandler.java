@@ -45,7 +45,8 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
         String proxychainsPath = proxychainsManager != null ? proxychainsManager.getToolPath() : "proxychains4";
         this.proxychainsClient = new ProxychainsClient(
                 proxychainsPath,
-                null); // Config path will be handled by ProxychainsClient
+                null,
+                globalSettings.isHonorExternalAria2Configuration());
         this.activeTasks = new ConcurrentHashMap<>();
         this.downloadOptions = new ConcurrentHashMap<>();
     }
@@ -200,6 +201,11 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 // Use this handler as the listener directly
                 // Get any additional options for this download
                 Map<String, String> options = getDownloadOptions(download.getId());
+
+                // This global policy can change while the handler remains
+                // alive, so take its current value for every new process.
+                proxychainsClient.setHonorExternalAria2Configuration(
+                        globalSettings.isHonorExternalAria2Configuration());
 
                 // The client spawns the transfer on its own (daemon) pool
                 // and returns immediately — one short pool task total. The

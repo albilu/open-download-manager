@@ -159,6 +159,19 @@ class YtDlpFactoryTest {
     }
 
     @Test
+    @DisplayName("Created clients receive both external configuration policies")
+    void testCreateClientConfigurationPolicies() {
+        when(mockGlobalSettings.isHonorExternalYtDlpConfiguration()).thenReturn(true);
+        when(mockGlobalSettings.isHonorExternalAria2Configuration()).thenReturn(true);
+        factory = YtDlpFactory.getInstance(mockGlobalSettings);
+
+        YtDlpClient client = factory.createClient("yt-dlp");
+
+        assertTrue(client.isHonoringExternalConfiguration());
+        assertTrue(client.isHonoringExternalAria2Configuration());
+    }
+
+    @Test
     @DisplayName("Should fall back to system yt-dlp when no tool manager exists")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testCreateClientNullPath() {

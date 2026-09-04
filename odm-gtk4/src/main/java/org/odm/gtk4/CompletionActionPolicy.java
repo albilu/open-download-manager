@@ -12,7 +12,9 @@ import org.manager.download.action.PlayNotificationAction;
 import org.manager.download.action.ShutdownComputerAction;
 import org.manager.download.action.SubtitleDownloadAction;
 import org.manager.tools.ToolPaths;
+import org.subliminal.SubliminalClient;
 import org.subliminal.SubliminalSettings;
+import org.ytdlp.YtDlpClient;
 
 /**
  * Maps persisted completion-action checkbox keys to concrete actions. Plain
@@ -155,7 +157,14 @@ final class CompletionActionPolicy {
         int timeoutSeconds = Math.max(1,
                 settings.getIntProperty("subtitles.timeoutSeconds", 300));
         subtitleSettings.setTimeout(java.time.Duration.ofSeconds(timeoutSeconds));
-        return new SubtitleDownloadAction(subtitleSettings);
+        String ytDlpPath = settings.getYtDlpPath();
+        return new SubtitleDownloadAction(subtitleSettings,
+                new SubliminalClient(),
+                new YtDlpClient(
+                        ytDlpPath == null || ytDlpPath.isBlank()
+                                ? ToolPaths.ytDlp() : ytDlpPath,
+                        settings.isHonorExternalYtDlpConfiguration(),
+                        settings.isHonorExternalAria2Configuration()));
     }
 
     /** Suspends the machine on download completion (systemctl suspend). */

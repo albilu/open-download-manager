@@ -219,6 +219,7 @@ public class DownloadSettingsFactory {
 
         // aria2-only defaults. Shared transfer/header defaults are applied
         // through NetworkDefaults below.
+        settings.setRpcPort(g.getAria2RpcPort());
         settings.setContinueDownload(g.getBooleanProperty("aria2.continueDownload", true));
         settings.setMinSplitSize(g.getIntProperty("aria2.minSplitSizeMb",
                 DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB));

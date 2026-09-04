@@ -191,9 +191,12 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         if (configuredRpcSecret != null && configuredRpcSecret.isBlank()) {
             configuredRpcSecret = null;
         }
-        return configuredRpcSecret != null
-                ? new Aria2Client(aria2Path, "http://localhost:6800/jsonrpc", configuredRpcSecret)
-                : new Aria2Client(aria2Path);
+        int rpcPort = globalSettings.getAria2RpcPort();
+        Aria2Client client = new Aria2Client(aria2Path,
+                "http://localhost:" + rpcPort + "/jsonrpc", configuredRpcSecret);
+        client.setHonorExternalConfiguration(
+                globalSettings.isHonorExternalAria2Configuration());
+        return client;
     }
 
     @Override
@@ -834,15 +837,17 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         List<String> extraArgs = new ArrayList<>();
         extraArgs.add("--max-concurrent-downloads=" + globalSettings.getMaxConcurrentDownloads());
 
-        // Honor a configured RPC port (default 6800): the client's own RPC
+        // Honor a configured RPC port (ODM default 6801): the client's own RPC
         // endpoint is authoritative — the self-launched daemon derives its
         // --rpc-listen-port from it, and an external daemon must already
         // be listening there to be adopted
-        int rpcPort = globalSettings.getIntProperty("aria2.rpcPort", 6800);
-        if (rpcPort > 0 && rpcPort != 6800) {
-            aria2Client.setRpcUrl("http://localhost:" + rpcPort + "/jsonrpc");
+        int rpcPort = globalSettings.getAria2RpcPort();
+        aria2Client.setRpcUrl("http://localhost:" + rpcPort + "/jsonrpc");
+        if (rpcPort != GlobalSettings.DEFAULT_ARIA2_RPC_PORT) {
             LOGGER.info("aria2 RPC port overridden to " + rpcPort);
         }
+        aria2Client.setHonorExternalConfiguration(
+                globalSettings.isHonorExternalAria2Configuration());
 
         // Convert KB/s to B/s for aria2
         long speedLimitBytesPerSec = globalSettings.getGlobalSpeedLimit() * 1024L;

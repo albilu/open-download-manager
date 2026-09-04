@@ -20,7 +20,7 @@ public class Aria2Settings extends DownloadSettings {
     private int minSplitSize = 20; // in MB
     private String fileAllocation = "prealloc"; // prealloc, falloc, none, trunc
     private boolean enableRpc = true;
-    private int rpcPort = 6800;
+    private int rpcPort = org.manager.GlobalSettings.DEFAULT_ARIA2_RPC_PORT;
     private boolean checkIntegrity = false;
     private int retryWait = 0; // seconds; aria2's native default
     private int maxTries = 5;

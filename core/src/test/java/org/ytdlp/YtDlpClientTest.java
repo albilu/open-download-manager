@@ -99,6 +99,7 @@ class YtDlpClientTest {
         List<String> command = client.buildSubtitleCommand(TEST_URL, settings, tempOutputDir);
 
         assertEquals(TEST_YTDLP_PATH, command.getFirst());
+        assertEquals("--ignore-config", command.get(1));
         assertTrue(command.contains("--skip-download"));
         assertTrue(command.contains("--write-subs"));
         assertTrue(command.contains("--write-auto-subs"));
@@ -294,10 +295,51 @@ class YtDlpClientTest {
 
         assertFalse(command.contains("--external-downloader"));
         assertFalse(command.contains("--external-downloader-args"));
+        assertEquals("--ignore-config", command.get(1));
         assertFalse(command.contains("-f"), "automatic format must not be overridden");
         assertFalse(command.contains("--fragment-retries"),
                 "zero should retain yt-dlp's native fragment retry policy");
         assertFalse(command.contains("--ignore-errors"));
+    }
+
+    @Test
+    @DisplayName("External yt-dlp configuration is honored only when explicitly enabled")
+    void testExternalConfigurationIsOptIn() {
+        YtDlpClient honoringClient = new YtDlpClient(TEST_YTDLP_PATH, true);
+        try {
+            List<String> downloadCommand = honoringClient.buildDownloadCommand(
+                    TEST_URL, new YtDlpSettings(), tempOutputDir);
+            List<String> subtitleCommand = honoringClient.buildSubtitleCommand(
+                    TEST_URL, new YtDlpSettings(), tempOutputDir);
+
+            assertFalse(downloadCommand.contains("--ignore-config"));
+            assertFalse(subtitleCommand.contains("--ignore-config"));
+        } finally {
+            honoringClient.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("yt-dlp's aria2 external downloader follows the aria2 config policy")
+    void testExternalAria2DownloaderConfigurationIsOptIn() {
+        YtDlpSettings settings = new YtDlpSettings().setUseAria2c(true);
+
+        List<String> isolatedCommand = client.buildDownloadCommand(
+                TEST_URL, settings, tempOutputDir);
+        String isolatedArgs = isolatedCommand.get(
+                isolatedCommand.indexOf("--external-downloader-args") + 1);
+        assertTrue(isolatedArgs.startsWith("--no-conf"));
+
+        YtDlpClient honoringClient = new YtDlpClient(TEST_YTDLP_PATH, false, true);
+        try {
+            List<String> honoringCommand = honoringClient.buildDownloadCommand(
+                    TEST_URL, settings, tempOutputDir);
+            String honoringArgs = honoringCommand.get(
+                    honoringCommand.indexOf("--external-downloader-args") + 1);
+            assertFalse(honoringArgs.contains("--no-conf"));
+        } finally {
+            honoringClient.shutdown();
+        }
     }
 
     @Test

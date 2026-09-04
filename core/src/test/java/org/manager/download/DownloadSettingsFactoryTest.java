@@ -27,6 +27,7 @@ class DownloadSettingsFactoryTest {
         assertEquals(DownloadSettingsFactory.DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB,
                 settings.getMinSplitSize());
         assertTrue(settings.isContinueDownload(), "resume is on by default");
+        assertEquals(GlobalSettings.DEFAULT_ARIA2_RPC_PORT, settings.getRpcPort());
         assertFalse(settings.isCheckIntegrity(), "integrity check off by default");
         assertNull(settings.getOption("max-download-limit"), "no speed cap by default");
         assertEquals(String.valueOf(DownloadSettingsFactory.DEFAULT_NETWORK_MAX_RETRIES),
@@ -93,6 +94,7 @@ class DownloadSettingsFactoryTest {
         global.setProperty("aria2.checkIntegrity", "true");
         global.setProperty("aria2.enableSeeding", "true");
         global.setProperty("aria2.seedTimeMin", "33");
+        global.setAria2RpcPort(6815);
         DownloadSettingsFactory factory = new DownloadSettingsFactory(global);
         Aria2Settings settings = factory.createAria2Settings();
 
@@ -102,6 +104,7 @@ class DownloadSettingsFactoryTest {
         assertEquals(64, settings.getBtRequestPeerSpeedLimit());
         assertFalse(settings.isContinueDownload());
         assertTrue(settings.isCheckIntegrity());
+        assertEquals(6815, settings.getRpcPort());
         assertEquals("33", settings.toRpcOptions().get("seed-time"));
     }
 

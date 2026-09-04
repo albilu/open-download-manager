@@ -395,5 +395,13 @@ class Aria2DaemonOwnershipTest {
                 "the reserved --rpc-secret flag itself must be dropped");
         assertFalse(cmd3.stream().anyMatch("leaked-value"::equals),
                 "the secret value must not leak as a stray positional after consecutive reserved flags");
+
+        List<String> cmd4 = client.buildRpcLaunchCommand(Arrays.asList(
+                "--no-conf=false", "--conf-path", "/tmp/foreign.conf"));
+        assertTrue(cmd4.contains("--no-conf"),
+                "ODM's default configuration isolation must remain authoritative");
+        assertFalse(cmd4.contains("--no-conf=false"));
+        assertFalse(cmd4.contains("--conf-path"));
+        assertFalse(cmd4.contains("/tmp/foreign.conf"));
     }
 }

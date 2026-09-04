@@ -63,9 +63,20 @@ public class Aria2ToolManager extends AbstractToolManager {
         return COMMON_LOCATIONS;
     }
 
+    /** Shared prefix for every aria2 discovery and validation operation. */
+    private String[] command(String toolPath, String... arguments) {
+        java.util.ArrayList<String> command = new java.util.ArrayList<>();
+        command.add(toolPath);
+        if (!settings.isHonorExternalAria2Configuration()) {
+            command.add("--no-conf");
+        }
+        command.addAll(Arrays.asList(arguments));
+        return command.toArray(String[]::new);
+    }
+
     @Override
     protected String[] getVersionCommand(String toolPath) {
-        return new String[]{toolPath, "--version"};
+        return command(toolPath, "--version");
     }
 
     @Override
@@ -97,7 +108,7 @@ public class Aria2ToolManager extends AbstractToolManager {
 
         try {
             // Get help output to check available options
-            Process process = Runtime.getRuntime().exec(new String[]{toolPath, "--help"});
+            Process process = Runtime.getRuntime().exec(command(toolPath, "--help"));
             if (process.waitFor(10, TimeUnit.SECONDS)) {
                 String output = readProcessOutput(process);
                 String lowerOutput = output.toLowerCase();
@@ -151,9 +162,7 @@ public class Aria2ToolManager extends AbstractToolManager {
     protected boolean executeBasicCheck(String toolPath) {
         try {
             // Test basic functionality with a simple command
-            Process process = Runtime.getRuntime().exec(new String[]{
-                toolPath, "--version"
-            });
+            Process process = Runtime.getRuntime().exec(command(toolPath, "--version"));
 
             boolean completed = process.waitFor(5, TimeUnit.SECONDS);
             int exitCode = completed ? process.exitValue() : -1;
@@ -225,7 +234,8 @@ public class Aria2ToolManager extends AbstractToolManager {
         if (checkFeatureSupport("rpc")) {
             config.put("enable-rpc", "true");
             config.put("rpc-listen-all", "false");
-            config.put("rpc-listen-port", "6800");
+            config.put("rpc-listen-port",
+                    String.valueOf(GlobalSettings.DEFAULT_ARIA2_RPC_PORT));
         }
 
         return config;

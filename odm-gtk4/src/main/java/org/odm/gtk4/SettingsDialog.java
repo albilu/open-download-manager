@@ -143,6 +143,10 @@ public class SettingsDialog {
                     "Resume partial files instead of restarting them when a download is retried or resumed."),
             Map.entry("check_integrity_check",
                     "Ask aria2 to verify available checksums before accepting downloaded data."),
+            Map.entry("aria2_rpc_port_spin",
+                    "Local RPC port used by ODM's aria2 daemon. The default 6801 avoids aria2's conventional port 6800; changes apply after restarting ODM."),
+            Map.entry("honor_external_aria2_config_check",
+                    "Allow an aria2 daemon started by ODM to load the user's normal aria2 configuration file. Disabled keeps ODM settings authoritative."),
 
             // yt-dlp
             Map.entry("ytdlp_path_entry",
@@ -163,6 +167,8 @@ public class SettingsDialog {
                     "Keep an audio-only output using yt-dlp post-processing."),
             Map.entry("use_aria2_external_check",
                     "Let yt-dlp use aria2 for supported media fragments and direct media URLs."),
+            Map.entry("honor_external_ytdlp_config_check",
+                    "Allow ODM's yt-dlp commands to load system and user yt-dlp configuration files. Disabled keeps ODM settings authoritative."),
 
             // HTTrack
             Map.entry("httrack_path_entry",
@@ -335,6 +341,8 @@ public class SettingsDialog {
         AccessibilitySupport.label(entry("proxy_password_entry"), "Global proxy password");
         AccessibilitySupport.label(entry("subtitle_language_entry"),
                 "Preferred subtitle languages, comma separated");
+        AccessibilitySupport.label(spin("aria2_rpc_port_spin"),
+                "aria2 RPC port");
         AccessibilitySupport.label(entry("antivirus_command_entry"),
                 "Custom antivirus command including file placeholder");
         AccessibilitySupport.label(spin("antivirus_timeout_spin"),
@@ -984,6 +992,9 @@ public class SettingsDialog {
                 org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_SEED_TIME_MIN));
         check("continue_download_check").setActive(s.getBooleanProperty("aria2.continueDownload", true));
         check("check_integrity_check").setActive(s.getBooleanProperty("aria2.checkIntegrity", false));
+        spin("aria2_rpc_port_spin").setValue(s.getAria2RpcPort());
+        check("honor_external_aria2_config_check").setActive(
+                s.isHonorExternalAria2Configuration());
         String fileAllocation = s.getProperty("aria2.fileAllocation", "prealloc");
         int allocationIndex = java.util.Arrays.asList(FILE_ALLOCATIONS).indexOf(fileAllocation);
         Widgets.require(builder, "file_allocation_combo", DropDown.class)
@@ -1003,6 +1014,8 @@ public class SettingsDialog {
         check("embed_metadata_check").setActive(s.getBooleanProperty("ytdlp.embedMetadata", false));
         check("extract_audio_check").setActive(s.getBooleanProperty("ytdlp.extractAudio", false));
         check("use_aria2_external_check").setActive(s.getBooleanProperty("ytdlp.useAria2External", false));
+        check("honor_external_ytdlp_config_check").setActive(
+                s.isHonorExternalYtDlpConfiguration());
         // HTTrack
         entry("httrack_path_entry").setText(s.getHttrackPath() != null ? s.getHttrackPath() : "");
         spin("depth_spin").setValue(s.getIntProperty("httrack.depth",
@@ -1164,6 +1177,9 @@ public class SettingsDialog {
         s.setProperty("aria2.seedTimeMin", String.valueOf((int) spin("seed_time_spin").getValue()));
         s.setProperty("aria2.continueDownload", String.valueOf(check("continue_download_check").getActive()));
         s.setProperty("aria2.checkIntegrity", String.valueOf(check("check_integrity_check").getActive()));
+        s.setAria2RpcPort((int) spin("aria2_rpc_port_spin").getValue());
+        s.setHonorExternalAria2Configuration(
+                check("honor_external_aria2_config_check").getActive());
         long allocationIndex = Widgets.require(builder, "file_allocation_combo", DropDown.class).getSelected();
         if (allocationIndex >= 0 && allocationIndex < FILE_ALLOCATIONS.length) {
             s.setProperty("aria2.fileAllocation", FILE_ALLOCATIONS[(int) allocationIndex]);
@@ -1182,6 +1198,8 @@ public class SettingsDialog {
         s.setProperty("ytdlp.embedMetadata", String.valueOf(check("embed_metadata_check").getActive()));
         s.setProperty("ytdlp.extractAudio", String.valueOf(check("extract_audio_check").getActive()));
         s.setProperty("ytdlp.useAria2External", String.valueOf(check("use_aria2_external_check").getActive()));
+        s.setHonorExternalYtDlpConfiguration(
+                check("honor_external_ytdlp_config_check").getActive());
         // HTTrack
         s.setHttrackPath(entry("httrack_path_entry").getText().trim());
         s.setProperty("httrack.depth", String.valueOf((int) spin("depth_spin").getValue()));

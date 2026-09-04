@@ -34,7 +34,8 @@ class Aria2SettingsTest {
         assertEquals(20, settings.getMinSplitSize());
         assertEquals("prealloc", settings.getFileAllocation());
         assertTrue(settings.isEnableRpc());
-        assertEquals(6800, settings.getRpcPort());
+        assertEquals(org.manager.GlobalSettings.DEFAULT_ARIA2_RPC_PORT,
+                settings.getRpcPort());
         assertFalse(settings.isCheckIntegrity());
         assertEquals(0, settings.getRetryWait());
         assertEquals(5, settings.getMaxTries());

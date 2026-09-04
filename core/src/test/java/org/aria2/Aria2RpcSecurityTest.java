@@ -51,4 +51,31 @@ class Aria2RpcSecurityTest {
         assertTrue(payload.contains("token:test-secret-123"),
                 "configured token must be sent with every RPC payload");
     }
+
+    @Test
+    @DisplayName("Self-launched daemon ignores external configuration by default")
+    void externalConfigurationIsOptIn() {
+        Aria2Client isolated = new Aria2Client("aria2c",
+                "http://localhost:6801/jsonrpc", null);
+        List<String> isolatedCommand = isolated.buildRpcLaunchCommand(null);
+
+        assertTrue(isolatedCommand.contains("--no-conf"));
+        assertTrue(isolatedCommand.contains("--rpc-listen-port=6801"));
+
+        isolated.setHonorExternalConfiguration(true);
+        List<String> honoringCommand = isolated.buildRpcLaunchCommand(null);
+        assertFalse(honoringCommand.contains("--no-conf"));
+    }
+
+    @Test
+    @DisplayName("An explicit configuration path replaces default isolation")
+    void explicitConfigurationPathIsHonored() {
+        Aria2Client client = new Aria2Client("aria2c");
+        client.setConfigFile("/tmp/odm-explicit-aria2.conf");
+
+        List<String> command = client.buildRpcLaunchCommand(null);
+
+        assertTrue(command.contains("--conf-path=/tmp/odm-explicit-aria2.conf"));
+        assertFalse(command.contains("--no-conf"));
+    }
 }
