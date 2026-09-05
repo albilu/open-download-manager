@@ -613,7 +613,7 @@ final class DownloadListPresenter {
         ListStoreCells.setInt(store, iter, COL_NUMBER, row + 1);
         ListStoreCells.setString(store, iter, COL_NAME, download.getName());
         ListStoreCells.setString(store, iter, COL_COMPLETE, DownloadFormats.size(download.getDownloaded()));
-        ListStoreCells.setString(store, iter, COL_SIZE, DownloadFormats.size(download.getSize()));
+        ListStoreCells.setString(store, iter, COL_SIZE, DownloadFormats.totalSize(download));
         boolean finalizing = download.hasRunningProgressCompletionActions();
         ListStoreCells.setInt(store, iter, COL_PROGRESS, finalizing
                 ? 100 : ProgressPresentation.wholePercentage(download.getProgress()));
@@ -625,7 +625,7 @@ final class DownloadListPresenter {
                 statusIconName(download.getStatus()));
         ListStoreCells.setString(store, iter, COL_ELAPSED, DownloadFormats.elapsed(download));
         ListStoreCells.setString(store, iter, COL_LEFT,
-                DownloadFormats.size(Math.max(0, download.getSize() - download.getDownloaded())));
+                DownloadFormats.remainingSize(download));
         ListStoreCells.setString(store, iter, COL_SPEED,
                 DownloadFormats.rate((long) download.getSpeed()));
         ListStoreCells.setString(store, iter, COL_UP_SPEED,

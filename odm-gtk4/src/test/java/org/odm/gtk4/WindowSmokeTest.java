@@ -351,13 +351,13 @@ class WindowSmokeTest {
 
     @Test
     @DisplayName("context menu presentation waits until pointer dispatch completes")
-    void contextMenuPresentationIsDeferred() {
+    void contextMenuPresentationIsDeferred() throws InterruptedException {
         AtomicBoolean presented = new AtomicBoolean();
 
         MainWindow.deferContextMenuPopup(() -> presented.set(true));
 
         assertFalse(presented.get());
-        drainGtkEvents();
+        awaitGtk(presented::get, "deferred context menu callback was not dispatched");
         assertTrue(presented.get());
     }
 

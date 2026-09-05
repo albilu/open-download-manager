@@ -696,14 +696,8 @@ class Aria2IntegrationTest {
 
             handler.changeSettings(download).get(30, TimeUnit.SECONDS);
 
-            // Verify the change reached the active aria2 download. The
-            // handler's self-launched daemon requires its generated RPC
-            // secret, so the verifier must share it.
-            Aria2Client verifier = new Aria2Client(
-                    ApplicationContext.getToolPath("aria2"),
-                    "http://localhost:6800/jsonrpc",
-                    handler.getAria2Client().getRpcSecret());
-            Map<String, Object> options = verifier.getOption(gid);
+            // Query the running handler so endpoint and credentials stay aligned.
+            Map<String, Object> options = handler.getAria2Client().getOption(gid);
             assertEquals("102400", options.get("max-download-limit"));
 
             handler.cancelDownload(download, true).get(30, TimeUnit.SECONDS);

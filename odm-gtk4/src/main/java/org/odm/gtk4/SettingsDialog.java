@@ -231,7 +231,7 @@ public class SettingsDialog {
             Map.entry("antivirus_type_combo",
                     "Scanner used by Antivirus Scan completion actions; Automatic chooses the first validated installed scanner."),
             Map.entry("antivirus_command_entry",
-                    "Command used when Antivirus type is Custom; include {file} where the downloaded file path belongs."),
+                    "Custom file scanner command; include {file} as an argument. Quotes group arguments. Exit 0 means the command completed; inspect its output for the verdict."),
             Map.entry("antivirus_timeout_spin",
                     "Maximum antivirus scan duration in seconds; 0 waits without a timeout."));
 

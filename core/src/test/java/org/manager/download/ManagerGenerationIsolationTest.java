@@ -309,4 +309,5 @@ class ManagerGenerationIsolationTest {
         assertEquals(1, manager.getRunningDownloadCount());
     }
 
+
 }

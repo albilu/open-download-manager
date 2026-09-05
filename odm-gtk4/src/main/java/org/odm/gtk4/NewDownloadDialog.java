@@ -23,7 +23,6 @@ import org.gnome.gtk.TreeRowReference;
 import org.gnome.gtk.TreeStore;
 import org.gnome.gtk.TreeView;
 import org.gnome.gtk.Window;
-import org.manager.download.DescriptorImport;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 
@@ -58,8 +57,7 @@ public class NewDownloadDialog {
     private final CheckButton verifyChecksumCheck;
     private final Button startButton;
     private final SpinnerActivity activity;
-    /** Reused after a queue rejection so Retry cannot create duplicate rows. */
-    private Download pendingDownload;
+    private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
 
     private Path selectedTorrentFile;
     private Path destinationFolder;
@@ -193,6 +191,7 @@ public class NewDownloadDialog {
         Widgets.require(builder, "new_download_cancel_button", Button.class)
                 .onClicked(this::closeDialog);
         dialog.onCloseRequest(() -> {
+            synchronized (closed) { closed.set(true); }
             checksumProbeGeneration++;
             releaseFilePreviewRows();
             activity.dispose();
@@ -558,46 +557,49 @@ public class NewDownloadDialog {
     }
 
     private void onStart() {
+        if (submissionInFlight || closed.get()) {
+            return;
+        }
         try {
-            Download download = pendingDownload;
-            if (download == null) {
-                download = createDownload();
-                applyRequestedFilename(download);
-                applyOptions(download);
-                registerChecksumVerification(download);
-            }
-            pendingDownload = download;
+            Download download = createDownload();
+            applyRequestedFilename(download);
+            applyOptions(download);
+            registerChecksumVerification(download);
             submissionInFlight = true;
             refreshStartSensitivity();
             AccessibilitySupport.status(diskSpaceLabel, "Adding download to queue…");
-            Download submitted = download;
-            CompletableFuture<Void> submission = DialogOptions.ensureTorAvailable(
-                    networkOptions.isTorSelected(), torService)
-                    .thenCompose(ignored -> downloadManager.queueDownload(submitted));
-            activity.track(submission).whenComplete((ignored, error) ->
-                    UiThread.marshal(() -> {
-                        if (error == null) {
-                            pendingDownload = null;
-                            submissionInFlight = false;
-                            finishSubmission(submitted);
-                        } else {
-                            submissionInFlight = false;
-                            refreshStartSensitivity();
-                            AccessibilitySupport.status(diskSpaceLabel,
-                                    "Could not add to queue: " + rootMessage(error)
-                                            + ". Press Start to retry.",
-                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                            LOGGER.warn("Queue rejected new download", error);
-                        }
-                    }));
-        } catch (IllegalArgumentException e) {
+            Path originalToTrash = selectedTorrentFile != null && downloadManager.getGlobalSettings()
+                    .getBooleanProperty("ui.moveTorrent", false) ? selectedTorrentFile : null;
+            activity.track(DownloadSubmission.submit(downloadManager, download,
+                    DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService),
+                    closed, originalToTrash)).whenComplete((warning, error) -> UiThread.marshal(() -> {
+                if (closed.get()) { return; }
+                if (error == null) {
+                    if (warning == null) {
+                        finishSubmission(download);
+                    } else {
+                        if (onDownloadQueued != null) { onDownloadQueued.run(); }
+                        AccessibilitySupport.status(diskSpaceLabel, warning);
+                    }
+                } else {
+                    submissionInFlight = downloadManager.getDownload(download.getId()) != null;
+                    refreshStartSensitivity();
+                    AccessibilitySupport.status(diskSpaceLabel,
+                            "Could not add to queue: " + rootMessage(error)
+                                    + (submissionInFlight ? ". This download remains in Downloads; manage it there."
+                                            : ". Press Start to retry."),
+                            org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                    LOGGER.warn("Queue rejected new download", error);
+                }
+            }));
+        } catch (Exception e) {
             submissionInFlight = false;
             refreshStartSensitivity();
             LOGGER.warn("New download rejected: " + e.getMessage());
             if (!sftpHostKeyEntry.hasCssClass("error")) {
                 urlEntry.getStyleContext().addClass("error");
             }
-            AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + e.getMessage(),
+            AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + rootMessage(e),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
@@ -655,18 +657,16 @@ public class NewDownloadDialog {
                 : Path.of(currentDefaultDirectory());
 
         if (selectedTorrentFile != null) {
-            boolean trashOriginal = downloadManager.getGlobalSettings()
-                    .getBooleanProperty("ui.moveTorrent", false);
-            return DescriptorImport.create(downloadManager, selectedTorrentFile,
-                    destination, trashOriginal);
+            return DownloadSubmission.draft(downloadManager, selectedTorrentFile.toUri(),
+                    destination, Download.Type.ARIA2);
         }
 
         String url = urlEntry.getText().trim();
         if (url.isEmpty()) {
             throw new IllegalArgumentException("Enter a URL or choose a torrent/metalink file.");
         }
-        return downloadManager.createDownload(
-                org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
+        return DownloadSubmission.draft(downloadManager,
+                org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination, null);
     }
 
     private void applyOptions(Download download) {

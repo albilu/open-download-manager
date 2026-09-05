@@ -119,9 +119,7 @@ class CurlIntegrationTest {
         CompletableFuture<Void> downloadComplete = new CompletableFuture<>();
         listener.onCompleteCallback = (d) -> downloadComplete.complete(null);
 
-        client.startDownload(download, listener);
-
-        CompletableFuture<String> downloadFuture = handler.startDownload(download);
+        CompletableFuture<String> downloadFuture = client.startDownload(download, listener);
 
         // Wait for download to complete
         assertDoesNotThrow(() -> {
@@ -312,26 +310,26 @@ class CurlIntegrationTest {
     @DisplayName("Should integrate error handling across components")
     @Timeout(30)
     void shouldIntegrateErrorHandlingAcrossComponents() throws Exception {
-        // Use invalid URL to trigger error
-        String invalidUrl = "https://invalid-domain-that-does-not-exist-12345.com/file.txt";
-        Download download = createTestDownload(URI.create(invalidUrl));
-        download.setDestination(tempDir);
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.enqueue(new okhttp3.mockwebserver.MockResponse().setResponseCode(404));
+            server.start();
+            Download download = createTestDownload(server.url("/missing.bin").uri());
+            download.setDestination(tempDir);
+            download.setSettings(new CurlSettings().setConnectTimeout(2)
+                    .setRetryCount(0).setFailOnHttpError(true));
 
-        TestDownloadListener listener = new TestDownloadListener();
-        CompletableFuture<Void> errorReceived = new CompletableFuture<>();
+            TestDownloadListener listener = new TestDownloadListener();
+            CompletableFuture<Void> errorReceived = new CompletableFuture<>();
+            listener.onErrorCallback = (d, error) -> errorReceived.complete(null);
+            handler.addDownloadListener(listener);
+            handler.startDownload(download).get(10, TimeUnit.SECONDS);
+            errorReceived.get(10, TimeUnit.SECONDS);
 
-        listener.onErrorCallback = (d, error) -> errorReceived.complete(null);
-
-        handler.addDownloadListener(listener);
-        CompletableFuture<String> downloadFuture = handler.startDownload(download);
-
-        // Wait for error to be reported
-        assertDoesNotThrow(() -> errorReceived.get(25, TimeUnit.SECONDS));
-
-        // Verify error handling integration
-        assertEquals(Download.Status.ERROR, download.getStatus());
-        assertTrue(listener.errorReceived.get());
-        assertNotNull(listener.errorMessage.get());
+            assertEquals("/missing.bin", server.takeRequest(2, TimeUnit.SECONDS).getPath());
+            assertEquals(Download.Status.ERROR, download.getStatus());
+            assertTrue(listener.errorReceived.get());
+            assertNotNull(listener.errorMessage.get());
+        }
     }
 
     @Test

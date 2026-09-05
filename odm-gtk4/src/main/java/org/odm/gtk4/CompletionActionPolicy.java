@@ -67,7 +67,7 @@ final class CompletionActionPolicy {
 
     /**
      * Builds the antivirus completion action from persisted settings:
-     * {@code antivirus.scanner} (auto|clamav|chkrootkit|rkhunter|custom,
+     * {@code antivirus.scanner} (auto|clamav|custom,
      * default auto), {@code antivirus.command} for the custom scanner, and
      * {@code antivirus.timeout} seconds (default 600, 0 = no timeout).
      */
@@ -79,14 +79,12 @@ final class CompletionActionPolicy {
         }
         AntivirusCheckAction.AntivirusType type = switch (scanner.toLowerCase()) {
             case "clamav" -> AntivirusCheckAction.AntivirusType.CLAMAV;
-            case "chkrootkit" -> AntivirusCheckAction.AntivirusType.CHKROOTKIT;
-            case "rkhunter" -> AntivirusCheckAction.AntivirusType.RKHUNTER;
             case "custom" -> AntivirusCheckAction.AntivirusType.CUSTOM;
             default -> null;
         };
         if (type == null) {
-            LOGGER.warn("No usable antivirus scanner is configured");
-            return null;
+            return AntivirusCheckAction.unavailable(
+                    "Unsupported file scanner: " + scanner + ". Select ClamAV or a custom file scanner.", timeout);
         }
         if (type == AntivirusCheckAction.AntivirusType.CUSTOM) {
             String command = settings.getProperty("antivirus.command", "");
@@ -98,8 +96,6 @@ final class CompletionActionPolicy {
         }
         String executable = switch (type) {
             case CLAMAV -> ToolPaths.resolve("antivirus-clamav", "clamscan");
-            case CHKROOTKIT -> ToolPaths.resolve("antivirus-chkrootkit", "chkrootkit");
-            case RKHUNTER -> ToolPaths.resolve("antivirus-rkhunter", "rkhunter");
             case CUSTOM -> throw new IllegalStateException("Handled above");
         };
         return new AntivirusCheckAction(type, executable, timeout);
@@ -130,8 +126,6 @@ final class CompletionActionPolicy {
                 }
                 AntivirusCheckAction.AntivirusType type = switch (manager.getScanner()) {
                     case CLAMAV -> AntivirusCheckAction.AntivirusType.CLAMAV;
-                    case CHKROOTKIT -> AntivirusCheckAction.AntivirusType.CHKROOTKIT;
-                    case RKHUNTER -> AntivirusCheckAction.AntivirusType.RKHUNTER;
                 };
                 return new AntivirusCheckAction(type, executable, timeout);
             } catch (org.manager.tools.ToolManager.ToolException

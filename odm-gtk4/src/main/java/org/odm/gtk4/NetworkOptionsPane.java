@@ -140,7 +140,7 @@ final class NetworkOptionsPane {
                 (int) proxyPort.getValue(), proxyUsername.getText(),
                 proxyPassword.getText());
         if (!isTorSelected() && proxyType.getSelected() > 0 && address == null) {
-            throw new IllegalArgumentException("Complete the selected proxy address before fetching metadata");
+            throw new IllegalArgumentException("Complete the selected proxy address");
         }
         return address;
     }
@@ -160,6 +160,7 @@ final class NetworkOptionsPane {
     }
 
     void applyTo(Download download) {
+        selectedProxyAddress(); // Reject incomplete selected routes before applying any settings.
         boolean inherited = !proxyChanged && download.getSettings().isProxyInherited();
         String inheritedAddress = download.getProxyAddress();
         values().applyTo(download);

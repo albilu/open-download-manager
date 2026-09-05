@@ -50,7 +50,7 @@ class PersistedPauseOwnershipTest {
                             download.setPauseReason(null);
                             yield CompletableFuture.completedFuture(null);
                         }
-                        case "saveState" -> {
+                        case "saveState", "reconsiderQueuedDownloads" -> {
                             afterRestart.save(restored, Set.of());
                             yield CompletableFuture.completedFuture(null);
                         }

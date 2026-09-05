@@ -26,7 +26,7 @@ import org.manager.download.Download;
  * data directory. The same root holds unique copies of manually selected
  * descriptors when the user enables the XDG Trash policy. Containment beneath
  * this root is the ownership marker: only staged paths are automatically
- * deleted (by the aria2 handler, after successful ingestion), so no
+ * deleted when the history record is removed, so no
  * download-model or persistence-schema field is required. Non-staged source
  * files always remain user-owned.
  *
@@ -62,7 +62,7 @@ public final class DescriptorStaging {
      * Staging root for user-selected descriptors whose originals are moved to
      * Trash. Keeping these copies in a subdirectory excludes them from folder
      * monitor reconciliation while retaining the shared ownership marker used
-     * by aria2 cleanup.
+     * by download history cleanup.
      *
      * @return {@code <odm data dir>/descriptor-staging/manual}
      */
@@ -264,9 +264,23 @@ public final class DescriptorStaging {
         return !normalizedFile.equals(normalizedRoot) && normalizedFile.startsWith(normalizedRoot);
     }
 
+    /** History pruning releases only descriptor copies owned by ODM. */
+    public static void deleteForRemovedDownload(Download download) {
+        var uri = download.getUri();
+        if (uri != null && "file".equalsIgnoreCase(uri.getScheme())
+                && (download.getProtocol() == Download.Protocol.TORRENT
+                    || download.getProtocol() == Download.Protocol.METALINK)) {
+            try {
+                deleteIfStaged(Path.of(uri));
+            } catch (RuntimeException invalidPath) {
+                LOGGER.warn("Could not resolve descriptor for removed download " + download.getId(), invalidPath);
+            }
+        }
+    }
+
     /**
      * Deletes a descriptor only when it is ODM-managed (beneath the default
-     * staging root). Called after aria2 successfully consumed the bytes;
+     * staging root). Called when its history entry is removed;
      * manually selected files are never removed by this method.
      *
      * @param file the descriptor file considered for deletion
@@ -278,8 +292,8 @@ public final class DescriptorStaging {
 
     /**
      * Deletes a descriptor only when it lies beneath the given staging root.
-     * Failures are logged and swallowed: ingestion already succeeded, so a
-     * cleanup failure must not fail the download. A manually selected
+     * Failures are logged and swallowed so a cleanup failure does not undo
+     * history removal. A manually selected
      * descriptor's managed copy can be removed here; its non-staged original
      * is always outside this ownership boundary.
      *

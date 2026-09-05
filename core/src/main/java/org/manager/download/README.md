@@ -216,7 +216,7 @@ This download engine requires:
 2. aria2c executable in the system PATH
 3. yt-dlp executable in the system PATH (for YouTube downloads)
 4. httrack executable in the system PATH (for website scraping)
-5. Optional: antivirus tools (ClamAV, chkrootkit, rkhunter) for scan actions
+5. Optional: file scanners (ClamAV or a custom scanner command) for scan actions
 
 ## Persistent State
 

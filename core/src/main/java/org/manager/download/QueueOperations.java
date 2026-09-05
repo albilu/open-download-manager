@@ -8,6 +8,9 @@ import java.util.concurrent.CompletableFuture;
  */
 public interface QueueOperations {
 
+    /** Rechecks queued work after an admission restriction has been lifted. */
+    CompletableFuture<Void> reconsiderQueuedDownloads();
+
     /**
      * Moves a queued download one position up in the queue.
      *

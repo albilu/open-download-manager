@@ -50,6 +50,8 @@ public final class OfflineModeController {
             LOGGER.warn("Offline Mode changed for this session but could not be persisted");
         }
         return (offline ? pauseActiveDownloads() : resumeOwnedDownloads())
+                .thenCompose(ignored -> offline ? CompletableFuture.completedFuture(null)
+                        : downloadManager.reconsiderQueuedDownloads())
                 .thenCompose(ignored -> downloadManager.saveState());
     }
 

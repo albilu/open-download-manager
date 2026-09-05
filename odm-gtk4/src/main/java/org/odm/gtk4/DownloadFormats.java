@@ -33,6 +33,20 @@ final class DownloadFormats {
         return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
     }
 
+    /** HTTrack may know transferred bytes without knowing the final mirror size. */
+    static String totalSize(Download download) {
+        return unknownWebsiteSize(download) ? "—" : size(download.getSize());
+    }
+
+    static String remainingSize(Download download) {
+        return unknownWebsiteSize(download) ? "—"
+                : size(Math.max(0, download.getSize() - download.getDownloaded()));
+    }
+
+    private static boolean unknownWebsiteSize(Download download) {
+        return download.getType() == Download.Type.WEBSITE_SCRAPING && download.getSize() <= 0;
+    }
+
     /** Human-readable transfer rate, including an explicit zero value. */
     static String rate(long bytesPerSecond) {
         return size(Math.max(0, bytesPerSecond)) + "/s";

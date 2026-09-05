@@ -120,4 +120,17 @@ class CompletionActionPolicyTest {
             factory.cleanup();
         }
     }
+    @org.junit.jupiter.api.Test
+    void obsoleteRootkitSettingsReportUnsupportedFileScanner() {
+        var settings = new org.manager.GlobalSettings();
+        for (String key : java.util.List.of("chkrootkit", "rkhunter")) {
+            settings.setProperty("antivirus.scanner", key);
+            var action = CompletionActionPolicy.buildAntivirusAction(settings);
+            org.junit.jupiter.api.Assertions.assertNotNull(action);
+            org.junit.jupiter.api.Assertions.assertFalse(action.execute(
+                    new org.manager.download.Download(java.net.URI.create("http://example.test/file"))));
+            org.junit.jupiter.api.Assertions.assertTrue(action.getFailureMessage().contains("Unsupported file scanner"));
+        }
+    }
+
 }

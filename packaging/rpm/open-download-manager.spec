@@ -18,7 +18,7 @@ Recommends:     proxychains-ng
 Recommends:     tor
 Recommends:     ffmpeg
 Recommends:     python3-subliminal
-Recommends:     (clamav or chkrootkit or rkhunter)
+Recommends:     clamav
 
 %description
 Open Download Manager (ODM) is a comprehensive download manager for Linux

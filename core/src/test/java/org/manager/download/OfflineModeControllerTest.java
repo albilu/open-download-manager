@@ -181,7 +181,7 @@ class OfflineModeControllerTest {
                     resumeCalls.add(download);
                     yield resume.apply(download).thenRun(() -> download.setPauseReason(null));
                 }
-                case "saveState" -> CompletableFuture.completedFuture(null);
+                case "saveState", "reconsiderQueuedDownloads" -> CompletableFuture.completedFuture(null);
                 case "toString" -> "OfflineModeControllerTest.ManagerStub";
                 default -> throw new UnsupportedOperationException(method.getName());
             };

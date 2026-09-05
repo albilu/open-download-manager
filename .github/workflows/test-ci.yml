@@ -1,19 +1,25 @@
 name: Test CI
 
 on:
+    workflow_call:
     push:
         branches: [main]
     pull_request:
         branches: [main]
+
+permissions:
+    contents: read
 
 jobs:
     test:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.sha }}
 
             - name: Build Docker image
-              run: docker build -t odm-dev .
+              run: ./docker-build.sh build
 
             # Hermetic unit suite (integration/E2E suites are excluded from
             # the default run by core/pom.xml). Tests require aria2, yt-dlp,

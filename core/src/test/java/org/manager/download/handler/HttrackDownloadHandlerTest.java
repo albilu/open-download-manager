@@ -120,10 +120,18 @@ class HttrackDownloadHandlerTest {
         assertNotNull(job);
         Path project = job.getSettings().getOutputDirectory();
         download.setUseProxy(true).setProxyAddress("socks5h://127.0.0.1:1");
+        HttrackSettings changed = (HttrackSettings) download.getSettings();
+        changed.setDepth(7).setMaxRate(53).setAdditionalHttpHeaders(List.of("X-Resume: updated"));
+        Path cache = Files.createDirectories(project.resolve("hts-cache"));
+        Path marker = Files.writeString(cache.resolve("odm-test-marker"), "preserve");
         handler.changeSettings(download).join();
         handler.resumeDownload(download).get(10, TimeUnit.SECONDS);
         assertTrue(job.getSettings().isUseProxy());
         assertEquals("socks5h://127.0.0.1:1", job.getSettings().getProxyAddress());
+        assertEquals(7, job.getSettings().getDepth());
+        assertEquals(53, job.getSettings().getMaxRate());
+        assertEquals(List.of("X-Resume: updated"), job.getSettings().getAdditionalHttpHeaders());
+        assertTrue(Files.exists(marker));
         assertEquals(project, job.getSettings().getOutputDirectory());
         assertEquals(org.httrack.HttrackSettings.RunMode.CONTINUE, job.getSettings().getRunMode());
     }
@@ -264,4 +272,62 @@ class HttrackDownloadHandlerTest {
             return false;
         }
     }
+    @Test
+    void completedAndRecoveredMirrorsDeleteTheirOwnedTreeWithoutFollowingLinks() throws Exception {
+        Path external = Files.createDirectory(tempDir.resolve("unrelated"));
+        Path protectedFile = Files.writeString(external.resolve("keep.txt"), "keep");
+        for (Download.Status status : List.of(Download.Status.COMPLETED, Download.Status.PAUSED)) {
+            Download download = scrapingDownload();
+            Path mirror = Files.createDirectory(tempDir.resolve(status.name()));
+            Files.writeString(Files.createDirectory(mirror.resolve("hts-cache")).resolve("cache"), "cache");
+            Files.createSymbolicLink(mirror.resolve("outside-link"), external);
+            download.setOutputPaths(List.of(mirror));
+            download.setStatus(status);
+            handler.cancelDownload(download, true).join();
+            assertFalse(Files.exists(mirror));
+            assertTrue(Files.exists(protectedFile));
+        }
+    }
+
+    @Test
+    void historyOnlyRemovalKeepsMirrorAndUnsafeDeletionFails() throws Exception {
+        Download download = scrapingDownload();
+        Path mirror = Files.createDirectory(tempDir.resolve("owned"));
+        download.setOutputPaths(List.of(mirror));
+        download.setStatus(Download.Status.COMPLETED);
+        handler.cancelDownload(download, false).join();
+        assertTrue(Files.isDirectory(mirror));
+        download.setOutputPaths(List.of(tempDir));
+        assertThrows(java.util.concurrent.CompletionException.class,
+                () -> handler.cancelDownload(download, true).join());
+        assertTrue(Files.isDirectory(mirror));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fileCountersNeverBecomeByteCountersInProgressOrCompletion() throws Exception {
+        Download download = scrapingDownload();
+        org.httrack.HttrackJob job = new org.httrack.HttrackJob("progress-fixture", new HttrackSettings());
+        var mapField = HttrackDownloadHandler.class.getDeclaredField("jobToDownloadMap");
+        mapField.setAccessible(true);
+        ((java.util.Map<String, Download>) mapField.get(handler)).put(job.getJobId(), download);
+        var clientField = HttrackDownloadHandler.class.getDeclaredField("httrackClient");
+        clientField.setAccessible(true);
+        var listenersField = org.httrack.HttrackClient.class.getDeclaredField("listeners");
+        listenersField.setAccessible(true);
+        var listeners = (List<org.httrack.HttrackClient.HttrackNotificationListener>)
+                listenersField.get(clientField.get(handler));
+        job.setTotalFiles(123);
+        job.setFilesDownloaded(42);
+        job.setBytesDownloaded(4096);
+        listeners.forEach(listener -> listener.onJobProgress(job));
+        assertEquals(4096, download.getDownloaded());
+        assertEquals(0, download.getSize(), "unknown total bytes remain unknown");
+        job.setTotalBytes(8192);
+        job.setBytesDownloaded(8192);
+        listeners.forEach(listener -> listener.onJobCompleted(job));
+        assertEquals(8192, download.getSize());
+        assertEquals(8192, download.getDownloaded());
+    }
+
 }

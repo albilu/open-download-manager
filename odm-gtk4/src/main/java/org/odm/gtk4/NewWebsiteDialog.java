@@ -51,8 +51,7 @@ public final class NewWebsiteDialog {
     private final Label statusLabel;
     private final Button startButton;
 
-    /** Reused after queue rejection so retrying cannot create duplicate records. */
-    private Download pendingDownload;
+    private boolean submissionInFlight;
 
     public NewWebsiteDialog(Window parent, DownloadManager downloadManager,
             Runnable onDownloadQueued) {
@@ -134,7 +133,7 @@ public final class NewWebsiteDialog {
         startButton.onClicked(this::onStart);
         urlEntry.onActivate(this::onStart);
         dialog.onCloseRequest(() -> {
-            closed.set(true);
+            synchronized (closed) { closed.set(true); }
             activity.dispose();
             return false;
         });
@@ -147,24 +146,19 @@ public final class NewWebsiteDialog {
     }
 
     private void onStart() {
+        if (closed.get() || submissionInFlight) { return; }
         String url = urlEntry.getText().trim();
         if (url.isEmpty()) {
             AccessibilitySupport.status(statusLabel, "Enter a URL");
             return;
         }
         try {
-            Download download = pendingDownload;
-            if (download == null) {
-                java.net.URI source = org.manager.clipboard.UrlDetector
-                        .requireValidDownloadUrl(url);
-                if (!ClipboardUrlPrefill.isWebPage(source)) {
-                    throw new IllegalArgumentException(
-                            "Website scraping requires an HTTP(S) URL");
-                }
-                download = downloadManager.createWebsiteDownload(source,
-                        defaultDestination(), null);
-                pendingDownload = download;
+            java.net.URI source = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
+            if (!ClipboardUrlPrefill.isWebPage(source)) {
+                throw new IllegalArgumentException("Website scraping requires an HTTP(S) URL");
             }
+            Download download = DownloadSubmission.draft(downloadManager, source,
+                    defaultDestination(), Download.Type.WEBSITE_SCRAPING);
             if (!(download.getSettings() instanceof HttrackSettings settings)) {
                 throw new IllegalStateException(
                         "Website download does not have HTTrack settings");
@@ -177,31 +171,33 @@ public final class NewWebsiteDialog {
             networkOptions.applyTo(download);
 
             Download submitted = download;
+            submissionInFlight = true;
             startButton.setSensitive(false);
             AccessibilitySupport.status(statusLabel, "Adding website scrape to queue…");
-            activity.track(DialogOptions.ensureTorAvailable(
-                    networkOptions.isTorSelected(), torService)
-                    .thenCompose(ignored -> downloadManager.queueDownload(submitted)))
+            activity.track(DownloadSubmission.submit(downloadManager, submitted,
+                    DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService), closed, null))
                     .whenComplete((ignored, error) -> UiThread.marshal(() -> {
                         if (closed.get()) {
                             return;
                         }
                         if (error == null) {
-                            pendingDownload = null;
                             if (onDownloadQueued != null) {
                                 onDownloadQueued.run();
                             }
                             dialog.close();
                         } else {
-                            startButton.setSensitive(true);
+                            submissionInFlight = downloadManager.getDownload(submitted.getId()) != null;
+                            startButton.setSensitive(!submissionInFlight);
                             AccessibilitySupport.status(statusLabel,
                                     "Could not add to queue: " + rootMessage(error)
-                                            + ". Press Start Scrape to retry.",
+                                            + (submissionInFlight ? ". This download remains in Downloads; manage it there."
+                                                    : ". Press Start Scrape to retry."),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             LOGGER.warn("Queue rejected website scrape", error);
                         }
                     }));
         } catch (Exception e) {
+            submissionInFlight = false;
             startButton.setSensitive(true);
             AccessibilitySupport.status(statusLabel,
                     "Invalid request: " + rootMessage(e),

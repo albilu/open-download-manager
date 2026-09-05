@@ -160,4 +160,41 @@ class DownloadSchedulerRecoveryTest {
             scheduler.shutdown().join();
         }
     }
+    @Test
+    void removingGlobalRestrictionsResumesOnlyScheduleOwnedPauses() throws Exception {
+        DownloadManager manager = mock(DownloadManager.class);
+        Download automatic = new Download(URI.create("https://example.test/automatic"));
+        Download manual = new Download(URI.create("https://example.test/manual"));
+        automatic.setStatus(Download.Status.DOWNLOADING);
+        manual.setStatus(Download.Status.PAUSED);
+        manual.setPauseReason(Download.PauseReason.USER);
+        when(manager.getAllDownloads()).thenReturn(List.of(automatic, manual));
+        when(manager.getDownload(automatic.getId())).thenReturn(automatic);
+        when(manager.getDownload(manual.getId())).thenReturn(manual);
+        when(manager.saveState()).thenReturn(CompletableFuture.completedFuture(null));
+        when(manager.pauseDownload(automatic, Download.PauseReason.SCHEDULE)).thenAnswer(ignored -> {
+            automatic.setStatus(Download.Status.PAUSED);
+            automatic.setPauseReason(Download.PauseReason.SCHEDULE);
+            return CompletableFuture.completedFuture(null);
+        });
+        when(manager.resumeDownload(automatic)).thenAnswer(ignored -> {
+            automatic.setStatus(Download.Status.DOWNLOADING);
+            automatic.setPauseReason(null);
+            return CompletableFuture.completedFuture(null);
+        });
+        DownloadScheduler scheduler = new DownloadScheduler(manager);
+        try {
+            scheduler.setGlobalSchedule(ScheduleSettings.neverActive()
+                    .setPolicy(ScheduleSettings.SchedulePolicy.STRICT));
+            scheduler.start().join();
+            assertTrue(await(() -> automatic.getStatus() == Download.Status.PAUSED));
+            scheduler.setGlobalSchedule(ScheduleSettings.alwaysActive());
+            assertTrue(await(() -> automatic.getStatus() == Download.Status.DOWNLOADING));
+            assertEquals(Download.Status.PAUSED, manual.getStatus());
+            assertEquals(Download.PauseReason.USER, manual.getPauseReason());
+        } finally {
+            scheduler.shutdown().join();
+        }
+    }
+
 }

@@ -14,9 +14,7 @@ public final class AntivirusToolManager extends AbstractToolManager {
 
     /** Supported scanners and their stable settings/tool identifiers. */
     public enum Scanner {
-        CLAMAV("clamav", "ClamAV", "clamscan", "--version"),
-        CHKROOTKIT("chkrootkit", "chkrootkit", "chkrootkit", "-V"),
-        RKHUNTER("rkhunter", "rkhunter", "rkhunter", "--version");
+        CLAMAV("clamav", "ClamAV", "clamscan", "--version");
 
         private final String key;
         private final String label;
@@ -112,8 +110,7 @@ public final class AntivirusToolManager extends AbstractToolManager {
     @Override
     protected Map<String, Boolean> detectFeatures() {
         return getToolPath() == null ? Map.of() : Map.of(
-                "malware-scan", scanner == Scanner.CLAMAV,
-                "rootkit-scan", scanner != Scanner.CLAMAV);
+                "malware-scan", true);
     }
 
     @Override

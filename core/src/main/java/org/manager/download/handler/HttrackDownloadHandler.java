@@ -226,17 +226,26 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
         return CompletableFuture.runAsync(() -> {
             String jobId = downloadToJobMap.get(download.getId());
             if (jobId != null) {
-                httrackClient.cancelJob(jobId, deleteFiles).join();
+                httrackClient.cancelJob(jobId, false).join();
 
                 // Clean up mappings
                 downloadToJobMap.remove(download.getId());
                 jobToDownloadMap.remove(jobId);
 
-                download.setStatus(Download.Status.CANCELED);
-                notifyDownloadCanceled(download);
-
                 LOGGER.info("Canceled httrack job " + jobId + " for download " + download.getId());
             }
+            if (deleteFiles) {
+                Path mirror = org.manager.download.HttrackMirrorSupport.mirrorDirectory(download);
+                if (mirror != null) {
+                    try {
+                        org.manager.util.PathSafety.deleteTreeConfined(mirror, download.getDestination());
+                    } catch (java.io.IOException e) {
+                        throw new java.util.concurrent.CompletionException("Could not delete website output", e);
+                    }
+                }
+            }
+            download.setStatus(Download.Status.CANCELED);
+            notifyDownloadCanceled(download);
         }, executor);
     }
 
@@ -310,12 +319,12 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                 if (download != null) {
                     // Update download progress information
                     download.setSpeed(job.getTransferRate());
-                    download.setSize(job.getTotalFiles()); // Use files as proxy for size
-                    download.setDownloaded(job.getFilesDownloaded());
+                    download.setSize(job.getTotalBytes());
+                    download.setDownloaded(job.getBytesDownloaded());
 
                     // Notify progress
                     notifyDownloadProgress(download, job.getProgress(),
-                            job.getFilesDownloaded(), job.getTotalFiles(),
+                            job.getBytesDownloaded(), job.getTotalBytes(),
                             job.getTransferRate());
                 }
             }
@@ -325,7 +334,8 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
                     download.setStatus(Download.Status.COMPLETED);
-                    download.setDownloaded(job.getTotalFiles());
+                    download.setDownloaded(job.getBytesDownloaded());
+                    download.setSize(job.getTotalBytes());
                     notifyDownloadComplete(download);
 
                     // Clean up mappings

@@ -565,6 +565,13 @@ public class PaginatedDownloadRepository {
      * @return The number of removed downloads
      */
     public int removeDownloadsMatching(Predicate<Download> predicate) {
+        return removeDownloadsMatching(predicate, ignored -> { });
+    }
+
+    /** Runs cleanup for exactly the removed rows, after releasing the repository lock. */
+    public int removeDownloadsMatching(Predicate<Download> predicate,
+            java.util.function.Consumer<Download> afterRemoval) {
+        List<Download> removedDownloads = new java.util.ArrayList<>();
         lock.writeLock().lock();
         try {
             List<Download> downloadsToRemove = downloads.values().stream()
@@ -577,6 +584,7 @@ public class PaginatedDownloadRepository {
                 if (removed != null) {
                     removeFromIndices(removed);
                     removedCount++;
+                    removedDownloads.add(removed);
                 }
             }
 
@@ -585,10 +593,11 @@ public class PaginatedDownloadRepository {
                 LOGGER.info("Removed " + removedCount + " downloads matching predicate");
             }
 
-            return removedCount;
         } finally {
             lock.writeLock().unlock();
         }
+        removedDownloads.forEach(afterRemoval);
+        return removedDownloads.size();
     }
 
     /**

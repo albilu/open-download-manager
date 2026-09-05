@@ -64,14 +64,15 @@ class AntivirusCheckActionTest {
     }
 
     @Test
-    @DisplayName("output containing threat keywords flags a threat")
-    void threatKeywordsAreDetected() throws Exception {
+    @DisplayName("custom command output does not invent a scanner verdict")
+    void arbitraryCustomOutputIsNotAThreatVerdict() throws Exception {
         Path file = Files.writeString(tempDir.resolve("sample.txt"), "hello");
         Path script = scannerScript("#!/bin/sh\necho \"sample.txt: EICAR-TROJAN Found\"\nexit 0\n");
         AntivirusCheckAction action = new AntivirusCheckAction(script + " {file}", 30);
 
         assertTrue(action.execute(completedDownload(file)), "exit code is 0, so the scan itself succeeded");
-        assertTrue(action.isThreatDetected(), "'Found' + 'TROJAN' in output must set the threat flag");
+        assertFalse(action.isThreatDetected());
+        assertTrue(action.getResultMessage().contains("inspect its output"));
         assertTrue(action.getScanResult().contains("EICAR"));
     }
 
@@ -83,8 +84,7 @@ class AntivirusCheckActionTest {
         AntivirusCheckAction action = new AntivirusCheckAction(script + " {file}", 30);
 
         assertFalse(action.execute(completedDownload(file)));
-        assertTrue(action.isThreatDetected(),
-                "threat keywords must be flagged even on failure, got scanResult=" + action.getScanResult());
+        assertFalse(action.isThreatDetected(), "scanner failure is not a threat verdict");
     }
 
     @Test
@@ -206,4 +206,33 @@ class AntivirusCheckActionTest {
         AntivirusCheckAction action = new AntivirusCheckAction("true", -10);
         assertEquals(0, action.getTimeoutSeconds());
     }
+    @Test
+    void clamavExitCodesDistinguishCleanThreatAndFailureRegardlessOfFilenames() throws Exception {
+        Path file = Files.writeString(tempDir.resolve("antivirus-found-rootkit.txt"), "clean");
+        for (int code : new int[]{0, 1, 2}) {
+            Path scanner = scannerScript("#!/bin/sh\necho 'antivirus-found-rootkit.txt: OK'\nexit " + code + "\n");
+            AntivirusCheckAction action = new AntivirusCheckAction(
+                    AntivirusCheckAction.AntivirusType.CLAMAV, scanner.toString(), 5);
+            assertEquals(code != 2, action.execute(completedDownload(file)));
+            assertEquals(code == 1, action.isThreatDetected());
+            assertEquals(code == 0 ? "No threats detected" : code == 1 ? "Threats detected"
+                    : "Antivirus scanner exited with code 2", action.getResultMessage());
+        }
+    }
+
+    @Test
+    void customArgumentsPreserveSpacesQuotesAndLiteralShellText() throws Exception {
+        Path file = Files.writeString(tempDir.resolve("file with 'quotes' $dollar; text.txt"), "safe");
+        Path scanner = tempDir.resolve("scanner with spaces.sh");
+        Files.writeString(scanner, "#!/bin/sh\n[ \"$#\" -eq 2 ] && [ \"$1\" = 'fixed argument' ] && [ -f \"$2\" ]\n");
+        scanner.toFile().setExecutable(true);
+        for (String placeholder : List.of("{file}", "\"{file}\"", "'{file}'")) {
+            AntivirusCheckAction action = new AntivirusCheckAction(
+                    "\"" + scanner + "\" 'fixed argument' " + placeholder, 5);
+            assertTrue(action.execute(completedDownload(file)), action.getFailureMessage());
+        }
+        AntivirusCheckAction malformed = new AntivirusCheckAction("'unterminated", 5);
+        assertFalse(malformed.execute(completedDownload(file)));
+    }
+
 }

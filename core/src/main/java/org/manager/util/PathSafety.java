@@ -102,4 +102,24 @@ public final class PathSafety {
             return false;
         }
     }
+
+    /** Removes an owned output tree without following symlinks or deleting its destination. */
+    public static void deleteTreeConfined(Path candidate, Path base) throws IOException {
+        if (candidate == null || base == null || !isConfined(candidate, base)) {
+            throw new IOException("Output directory is outside the download destination");
+        }
+        if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) return;
+        Path root = candidate.toAbsolutePath().normalize();
+        Path realBase = base.toRealPath();
+        try (var paths = Files.walk(root)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                // Delete a link itself, never its target. Recheck its parent
+                // immediately before deletion in case a directory was replaced.
+                if (!path.getParent().toRealPath().startsWith(realBase)) {
+                    throw new IOException("Output path escaped the download destination");
+                }
+                Files.deleteIfExists(path);
+            }
+        }
+    }
 }

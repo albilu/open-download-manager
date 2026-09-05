@@ -82,8 +82,8 @@ public class NewMediaDialog {
     private String previewUrl;
     private Path destinationFolder;
     private Path cookieFile;
-    /** Reused after queue rejection so Retry cannot create duplicate rows. */
-    private Download pendingDownload;
+    private boolean submissionInFlight;
+    private long metadataGeneration;
 
     public NewMediaDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
         this(parent, downloadManager, onDownloadQueued, null);
@@ -177,7 +177,7 @@ public class NewMediaDialog {
 
         destinationFolder = Path.of(currentDefaultDirectory());
         this.cookieFileChooser = PathChooserButton.forFile(cookieFileButton, dialog,
-                "Select cookies file", null, path -> cookieFile = path);
+                "Select cookies file", null, path -> { cookieFile = path; invalidateMetadata(); });
         this.folderChooser = PathChooserButton.forFolder(folderButton, dialog,
                 "Select destination folder", destinationFolder,
                 path -> {
@@ -188,11 +188,15 @@ public class NewMediaDialog {
 
         // Enable Download once a URL is present; info fetch is optional
         urlEntry.onChanged(() -> {
+            invalidateMetadata();
             if (previewUrl != null && !previewUrl.equals(urlEntry.getText().trim())) {
                 clearPlaylistPreview();
             }
-            startButton.setSensitive(!urlEntry.getText().isBlank());
+            refreshButtons();
         });
+        networkOptions.onProxyChanged(this::invalidateMetadata);
+        browserProfileEntry.onChanged(this::invalidateMetadata);
+        browserCookieDrop.onNotify("selected", ignored -> invalidateMetadata());
         urlEntry.onActivate(this::onFetchInfo);
         fetchInfoButton.onClicked(this::onFetchInfo);
         subtitlesCheck.onToggled(() ->
@@ -223,53 +227,62 @@ public class NewMediaDialog {
     }
 
     /** Triggers asynchronous metadata/format discovery for the entered URL. */
+    private void refreshButtons() {
+        boolean available = !closed.get() && !submissionInFlight
+                && (metadataFuture == null || metadataFuture.isDone());
+        fetchInfoButton.setSensitive(available);
+        startButton.setSensitive(available && !urlEntry.getText().isBlank());
+    }
+
+    private void invalidateMetadata() {
+        metadataGeneration++;
+        var previous = metadataFuture;
+        metadataFuture = null;
+        if (previous != null) { previous.cancel(true); }
+        refreshButtons();
+    }
+
     private void onFetchInfo() {
+        if (closed.get() || submissionInFlight) { return; }
         String url = urlEntry.getText().trim();
-        if (url.isBlank()) {
+        if (url.isBlank()) { return; }
+        invalidateMetadata();
+        final YtDlpSettings previewSettings;
+        try {
+            URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
+            previewSettings = (YtDlpSettings) defaultSettings.copy();
+            applyAuthenticationOptions(previewSettings);
+            Download previewDownload = new Download(uri);
+            previewDownload.setType(Download.Type.YOUTUBE);
+            previewDownload.setSettings(previewSettings);
+            networkOptions.applyTo(previewDownload);
+        } catch (Exception failure) {
+            AccessibilitySupport.status(statusLabel, "Could not fetch info: " + rootMessage(failure));
+            refreshButtons();
             return;
         }
-        fetchInfoButton.setSensitive(false);
-        startButton.setSensitive(false);
+        long generation = metadataGeneration;
         AccessibilitySupport.status(statusLabel, "Fetching media info…");
-
-        java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> previous = metadataFuture;
-        if (previous != null && !previous.isDone()) {
-            previous.cancel(true);
-        }
-        YtDlpSettings previewSettings = (YtDlpSettings) defaultSettings.copy();
-        applyAuthenticationOptions(previewSettings);
-        Download previewDownload = new Download(java.net.URI.create(url));
-        previewDownload.setType(Download.Type.YOUTUBE);
-        previewDownload.setSettings(previewSettings);
-        networkOptions.applyTo(previewDownload);
-        metadataFuture = DialogOptions.ensureTorAvailable(
-                networkOptions.isTorSelected(), torService)
+        metadataFuture = DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService)
                 .thenCompose(ignored -> ytDlpClient.previewMedia(url, previewSettings));
-        metadataFuture.thenAccept(info -> UiThread.marshal(() -> {
-                    if (!closed.get() && url.equals(urlEntry.getText().trim())) {
-                        onInfoFetched(url, info);
-                    }
-                }))
-                .exceptionally(e -> {
-                    UiThread.marshal(() -> {
-                        if (closed.get()) {
-                            return;
-                        }
-                        AccessibilitySupport.status(statusLabel, "Could not fetch info: "
-                                + rootMessage(e)
-                                + " — you can still download with the default best format.",
-                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                        fetchInfoButton.setSensitive(true);
-                        startButton.setSensitive(true);
-                    });
-                    return null;
-                });
+        refreshButtons();
+        metadataFuture.whenComplete((info, failure) -> UiThread.marshal(() -> {
+            if (closed.get() || generation != metadataGeneration) { return; }
+            metadataFuture = null;
+            refreshButtons();
+            if (failure == null) {
+                onInfoFetched(url, info);
+            } else {
+                AccessibilitySupport.status(statusLabel, "Could not fetch info: " + rootMessage(failure)
+                        + " — you can still download with the default best format.",
+                        org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+            }
+        }));
     }
 
     private void onInfoFetched(String url, YtDlpClient.VideoInfo info) {
         previewUrl = url;
-        fetchInfoButton.setSensitive(true);
-        startButton.setSensitive(true);
+        refreshButtons();
         int playlistSize = info.getEntries() == null ? 0 : info.getEntries().size();
         AccessibilitySupport.status(statusLabel, playlistSize > 0
                 ? "Playlist preview fetched — " + playlistSize + " item(s)"
@@ -296,45 +309,45 @@ public class NewMediaDialog {
     }
 
     private void onStart() {
+        if (closed.get() || submissionInFlight) { return; }
         try {
-            Download download = pendingDownload;
-            if (download == null) {
-                URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
-                        urlEntry.getText());
-                download = downloadManager.createYoutubeDownload(uri, destinationFolder, null);
-            }
+            URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(urlEntry.getText());
+            Download download = DownloadSubmission.draft(downloadManager, uri, destinationFolder,
+                    Download.Type.YOUTUBE);
             applyMediaOptions(download);
             networkOptions.applyTo(download);
-            pendingDownload = download;
-            startButton.setSensitive(false);
+            submissionInFlight = true;
+            invalidateMetadata();
             AccessibilitySupport.status(statusLabel, "Adding media download to queue…");
             Download submitted = download;
-            DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService)
-                    .thenCompose(ignored -> downloadManager.queueDownload(submitted))
+            DownloadSubmission.submit(downloadManager, submitted,
+                    DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService), closed, null)
                     .whenComplete((ignored, error) ->
                     UiThread.marshal(() -> {
                         if (closed.get()) {
                             return;
                         }
                         if (error == null) {
-                            pendingDownload = null;
                             LOGGER.info("Queued media download: " + submitted.getName());
                             if (onDownloadQueued != null) {
                                 onDownloadQueued.run();
                             }
                             dialog.close();
                         } else {
-                            startButton.setSensitive(true);
+                            submissionInFlight = downloadManager.getDownload(submitted.getId()) != null;
+                            refreshButtons();
                             AccessibilitySupport.status(statusLabel,
                                     "Could not add to queue: " + rootMessage(error)
-                                            + ". Press Download to retry.",
+                                            + (submissionInFlight ? ". This download remains in Downloads; manage it there."
+                                                    : ". Press Download to retry."),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             LOGGER.warn("Queue rejected media download", error);
                         }
                     }));
         } catch (Exception e) {
             LOGGER.warn("Media download rejected: " + e.getMessage(), e);
-            startButton.setSensitive(true);
+            submissionInFlight = false;
+            refreshButtons();
             AccessibilitySupport.status(statusLabel, "Cannot start: " + e.getMessage(),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
@@ -620,8 +633,8 @@ public class NewMediaDialog {
     }
 
     private void closeMetadataClient() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
+        synchronized (closed) {
+            if (!closed.compareAndSet(false, true)) { return; }
         }
         java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> pending = metadataFuture;
         if (pending != null) {

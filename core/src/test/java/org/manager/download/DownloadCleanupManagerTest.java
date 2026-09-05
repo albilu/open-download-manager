@@ -234,4 +234,28 @@ class DownloadCleanupManagerTest {
         manager.updateAutomaticCleanupConfig();
         manager.shutdown().join();
     }
+    @Test
+    void pruningHistoryReleasesStagedDescriptorsButPreservesOriginalsAndActiveCopies(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var original = java.nio.file.Files.writeString(directory.resolve("original.meta4"), "descriptor");
+        var staged = org.manager.util.DescriptorStaging.stageManualFile(original);
+        var activeCopy = org.manager.util.DescriptorStaging.stageManualFile(original);
+        try {
+            Download completed = Download.fromMetaLink(staged, directory);
+            completed.setStatus(Download.Status.COMPLETED);
+            completed.setCompletedAt(Instant.now().minus(Duration.ofDays(40)));
+            repository.addDownload(completed);
+            Download active = Download.fromMetaLink(activeCopy, directory);
+            active.setStatus(Download.Status.PAUSED);
+            repository.addDownload(active);
+            assertEquals(1, manager.pruneCompletedDownloadsByAge(Duration.ofDays(30)));
+            assertFalse(java.nio.file.Files.exists(staged));
+            assertTrue(java.nio.file.Files.exists(original));
+            assertTrue(java.nio.file.Files.exists(activeCopy));
+        } finally {
+            org.manager.util.DescriptorStaging.deleteIfStaged(staged);
+            org.manager.util.DescriptorStaging.deleteIfStaged(activeCopy);
+        }
+    }
+
 }

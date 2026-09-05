@@ -27,14 +27,8 @@ class SettingsAntivirusDiscoveryTest {
                     java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
             clamav.setToolPath(valid.toString());
 
-            for (String key : java.util.List.of("chkrootkit", "rkhunter")) {
-                AntivirusToolManager broken = factory.getAntivirusManager(key);
-                Path invalid = tempDir.resolve(key);
-                Files.writeString(invalid, "#!/bin/sh\nexit 3\n");
-                Files.setPosixFilePermissions(invalid,
-                        java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
-                broken.setToolPath(invalid.toString());
-            }
+            assertEquals(java.util.List.of(AntivirusToolManager.Scanner.CLAMAV),
+                    java.util.List.of(AntivirusToolManager.Scanner.values()));
 
             var choices = SettingsDialog.discoverAvailableAntiviruses(factory).join();
             assertEquals(java.util.List.of("auto", "clamav", "custom"),

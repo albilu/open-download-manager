@@ -953,7 +953,7 @@ public class FolderMonitorServiceImpl implements FolderMonitorService {
                 }
                 if (DescriptorStaging.isDispatched(staged)) {
                     // The download queue already owns these bytes; the
-                    // entry will be deleted after ingestion
+                    // entry remains until its history record is removed
                     continue;
                 }
                 if (!isStagedForFolder(staged, originalName, folderPath)) {

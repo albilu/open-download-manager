@@ -52,4 +52,18 @@ class DownloadFormatsTest {
         created.setStatus(Download.Status.PAUSED);
         assertEquals("1m 30s", DownloadFormats.elapsed(created));
     }
+    @Test
+    void unknownWebsiteTotalsStayUnknownWhileKnownBytesAndEmptyFilesRemainSizes() {
+        Download website = new Download(URI.create("https://example.test/site"));
+        website.setType(Download.Type.WEBSITE_SCRAPING);
+        website.setDownloaded(4096);
+        assertEquals("—", DownloadFormats.totalSize(website));
+        assertEquals("—", DownloadFormats.remainingSize(website));
+        website.setSize(8192);
+        assertEquals("8 KB", DownloadFormats.totalSize(website));
+        assertEquals("4 KB", DownloadFormats.remainingSize(website));
+        Download empty = new Download(URI.create("https://example.test/empty.bin"));
+        assertEquals("0 B", DownloadFormats.totalSize(empty));
+    }
+
 }

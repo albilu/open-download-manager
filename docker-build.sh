@@ -3,7 +3,7 @@
 set -e
 
 PROJECT_NAME="open-download-manager"
-IMAGE_NAME="odm-dev"
+IMAGE_NAME="${ODM_IMAGE_NAME:-odm-dev}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -14,16 +14,9 @@ log() {
     echo -e "${GREEN}[ODM]${NC} $1"
 }
 
-# Ensure the shared Maven cache directory is writable by the container's
-# developer user (uid 1000). Docker resolves bind-mount sources on the host,
-# so on fresh CI runners (and under nested Docker/CI) the source is
-# auto-created root-owned, making Maven fail with "Could not create local
-# repository at /home/developer/.m2/repository". Normalize permissions through
-# Docker itself so the path the daemon actually mounts is writable.
+# The image uses the caller's UID/GID, so ordinary private cache permissions work.
 prepare_m2() {
     mkdir -p "$HOME/.m2"
-    docker run --rm -u 0 -v "$HOME/.m2:/m2" "$IMAGE_NAME" chmod 0777 /m2 2>/dev/null || true
-    chmod 0777 "$HOME/.m2" 2>/dev/null || true
 }
 
 # X11 authentication forwarder. Wayland/Xwayland sessions gate the display
@@ -79,7 +72,7 @@ debug() {
 # Build the Docker image
 build() {
     log "Building Docker image..."
-    docker build -t $IMAGE_NAME .
+    docker build --build-arg "ODM_UID=$(id -u)" --build-arg "ODM_GID=$(id -g)" -t "$IMAGE_NAME" .
 }
 
 # Start development container

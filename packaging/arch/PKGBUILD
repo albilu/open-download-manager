@@ -19,8 +19,6 @@ optdepends=(
     'ffmpeg: video processing'
     'python-subliminal: generic subtitle downloads'
     'clamav: completion-time malware scanning'
-    'chkrootkit: completion-time rootkit scanning (where available)'
-    'rkhunter: completion-time rootkit scanning'
 )
 source=("opt-open-download-manager.tar")
 noextract=()

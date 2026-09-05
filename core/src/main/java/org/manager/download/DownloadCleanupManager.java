@@ -330,7 +330,8 @@ public class DownloadCleanupManager {
      * @return The number of removed downloads
      */
     private int pruneDownloadsByCondition(java.util.function.Predicate<Download> condition) {
-        return downloadRepository.removeDownloadsMatching(condition);
+        return downloadRepository.removeDownloadsMatching(condition,
+                org.manager.util.DescriptorStaging::deleteForRemovedDownload);
     }
 
     /**
@@ -340,7 +341,7 @@ public class DownloadCleanupManager {
      * @return The number of actually removed downloads
      */
     private int removeDownloadsByIds(Set<String> idsToRemove) {
-        return downloadRepository.removeDownloadsMatching(download -> idsToRemove.contains(download.getId()));
+        return pruneDownloadsByCondition(download -> idsToRemove.contains(download.getId()));
     }
 
     /**

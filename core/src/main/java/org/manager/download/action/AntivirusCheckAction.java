@@ -15,8 +15,7 @@ import org.manager.download.Download;
 
 /**
  * After completion action that performs an antivirus check on the downloaded
- * file. This action supports multiple Linux antivirus tools like ClamAV,
- * chkrootkit, and rkhunter.
+ * file using ClamAV or a custom file-scanning command.
  */
 public class AntivirusCheckAction implements AfterCompletionAction {
 
@@ -24,8 +23,6 @@ public class AntivirusCheckAction implements AfterCompletionAction {
 
     public enum AntivirusType {
         CLAMAV, // ClamAV scanner
-        CHKROOTKIT, // chkrootkit rootkit scanner
-        RKHUNTER, // rkhunter rootkit scanner
         CUSTOM // Custom command
     }
 
@@ -35,7 +32,8 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     private Process scanProcess;
     private CompletableFuture<Void> scanFuture;
     private final int timeoutSeconds;
-    private boolean isScanning;
+    private volatile boolean isScanning;
+    private String unavailableReason;
     private String scanResult;
     private boolean threatDetected;
     private String outcomeMessage = "Antivirus scan did not complete";
@@ -83,6 +81,13 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         this.threatDetected = false;
     }
 
+    /** Keeps an obsolete configured scanner visible as a failed action. */
+    public static AntivirusCheckAction unavailable(String reason, int timeoutSeconds) {
+        AntivirusCheckAction action = new AntivirusCheckAction((String) null, timeoutSeconds);
+        action.unavailableReason = java.util.Objects.requireNonNull(reason);
+        return action;
+    }
+
     @Override
     public boolean execute(Download download) {
         // One settings-backed action instance may be reused for multiple
@@ -95,6 +100,11 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         scanResult = null;
         threatDetected = false;
         outcomeMessage = "Antivirus scan did not complete";
+
+        if (unavailableReason != null) {
+            outcomeMessage = unavailableReason;
+            return false;
+        }
 
         // If no download destination is set, we can't scan the file
         if (download.getDestination() == null) {
@@ -141,16 +151,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                     while ((line = reader.readLine()) != null) {
                         output.append(line).append("\n");
 
-                        // Check for threat indicators in the output
-                        if (line.toLowerCase().contains("found")
-                                || line.toLowerCase().contains("infected")
-                                || line.toLowerCase().contains("virus")
-                                || line.toLowerCase().contains("malware")
-                                || line.toLowerCase().contains("trojan")
-                                || line.toLowerCase().contains("rootkit")
-                                || line.toLowerCase().contains("suspicious")) {
-                            threatDetected = true;
-                        }
+
                     }
                 } catch (IOException e) {
                     LOGGER.warn("Error reading scan output", e);
@@ -192,17 +193,19 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             int exitValue = scanProcess.exitValue();
             boolean success = exitValue == 0 || (antivirusType == AntivirusType.CLAMAV && exitValue == 1);
 
+            threatDetected = antivirusType == AntivirusType.CLAMAV && exitValue == 1;
             if (success) {
-                outcomeMessage = threatDetected ? "Threats detected" : "No threats detected";
-                LOGGER.info("Antivirus scan completed successfully"
-                        + (threatDetected ? ". THREATS DETECTED!" : ". No threats detected."));
+                outcomeMessage = antivirusType == AntivirusType.CUSTOM
+                        ? "Custom scanner command completed; inspect its output"
+                        : threatDetected ? "Threats detected" : "No threats detected";
+                LOGGER.info("Antivirus scan finished: {}", outcomeMessage);
             } else {
                 outcomeMessage = "Antivirus scanner exited with code " + exitValue;
                 LOGGER.warn("Antivirus scan failed with exit code: " + exitValue);
             }
 
             return success;
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             LOGGER.error("Failed to execute antivirus scan: " + e.getMessage(), e);
             isScanning = false;
             outcomeMessage = "Could not run antivirus scanner: " + e.getMessage();
@@ -225,25 +228,11 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                 command.add("--no-summary");
                 command.add(sourceFile.toString());
             }
-            case CHKROOTKIT -> {
-                command.add(executablePath);
-                command.add("-p");
-                command.add(sourceFile.getParent().toString());
-            }
-            case RKHUNTER -> {
-                command.add(executablePath);
-                command.add("--checkall");
-                command.add("--skip-keypress");
-                command.add("--no-mail-on-warning");
-                command.add("--pkgmgr");
-                command.add(sourceFile.toString());
-            }
             case CUSTOM -> {
                 if (customCommand != null && !customCommand.isEmpty()) {
                     // Parse the custom command and replace {file} placeholder
-                    String[] parts = customCommand.replace("{file}", sourceFile.toString()).split("\\s+");
-                    for (String part : parts) {
-                        command.add(part);
+                    for (String argument : ExecuteCommandAction.tokenize(customCommand)) {
+                        command.add(argument.replace("{file}", sourceFile.toString()));
                     }
                 }
             }
@@ -259,8 +248,6 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     private static String defaultExecutable(AntivirusType antivirusType) {
         return switch (antivirusType) {
             case CLAMAV -> "clamscan";
-            case CHKROOTKIT -> "chkrootkit";
-            case RKHUNTER -> "rkhunter";
             case CUSTOM -> throw new IllegalArgumentException(
                     "CUSTOM antivirus type has no fixed executable");
         };
@@ -301,10 +288,6 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         return switch (antivirusType) {
             case CLAMAV ->
                 "ClamAV";
-            case CHKROOTKIT ->
-                "chkrootkit";
-            case RKHUNTER ->
-                "rkhunter";
             case CUSTOM ->
                 "custom command";
             default ->

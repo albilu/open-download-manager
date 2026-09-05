@@ -2533,7 +2533,7 @@ public class MainWindow {
         }
         infoProgressBar.setFraction(ProgressPresentation.fraction(selectedDownload.getProgress()));
         infoProgressBar.setText(ProgressPresentation.percentage(selectedDownload.getProgress()));
-        totalSizeValue.setLabel(DownloadFormats.size(selectedDownload.getSize()));
+        totalSizeValue.setLabel(DownloadFormats.totalSize(selectedDownload));
         addedOnValue.setLabel(selectedDownload.getCreatedAt() != null
                 ? DownloadFormats.DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
         infoHashValue.setLabel(selectedDownload.getInfoHash() != null ? selectedDownload.getInfoHash() : "—");

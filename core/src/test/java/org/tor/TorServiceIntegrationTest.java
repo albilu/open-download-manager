@@ -5,7 +5,6 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -35,15 +34,19 @@ import org.manager.GlobalSettings;
  * Integration tests for TorService. These tests require an actual Tor
  * executable to be available in the system.
  */
+@org.junit.jupiter.api.parallel.Execution(org.junit.jupiter.api.parallel.ExecutionMode.SAME_THREAD)
+@Timeout(90) // Tor operations allow 60 seconds; leave headroom for observation.
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class TorServiceIntegrationTest {
 
     private static String TOR_EXECUTABLE_PATH;
-    private static final int BASE_SOCKS_PORT = 19050;
-    private static final int BASE_CONTROL_PORT = 19051;
+    // The first test cold-bootstraps real Tor. Later lifecycle tests reuse
+    // its cached consensus/guards, as application restarts do, while still
+    // creating a fresh daemon and requiring a complete circuit each time.
+    @org.junit.jupiter.api.io.TempDir
+    static Path testDataDir;
 
     private TorService torService;
-    private Path testDataDir;
     private int testSocksPort;
     private int testControlPort;
     private String testDataDirPath;
@@ -57,23 +60,13 @@ class TorServiceIntegrationTest {
         ApplicationContext.initialize();
         TOR_EXECUTABLE_PATH = ApplicationContext.getToolPath("tor");
 
-        // Generate unique ports and data directory for this test instance
-        // Use a combination of current time, thread ID, and random number for
-        // uniqueness
-        long uniqueId = System.currentTimeMillis() + Thread.currentThread().getId();
-        testSocksPort = BASE_SOCKS_PORT + (int) (uniqueId % 1000) + (int) (Math.random() * 100);
-        testControlPort = BASE_CONTROL_PORT + (int) (uniqueId % 1000) + (int) (Math.random() * 100);
-
-        // Ensure ports don't conflict with each other
-        if (testControlPort == testSocksPort) {
-            testControlPort += 1;
+        try (java.net.ServerSocket socks = new java.net.ServerSocket(0);
+                java.net.ServerSocket control = new java.net.ServerSocket(0)) {
+            testSocksPort = socks.getLocalPort();
+            testControlPort = control.getLocalPort();
         }
-
-        testDataDirPath = System.getProperty("java.io.tmpdir") + "/tor-test-"
-                + uniqueId + "-" + (int) (Math.random() * 10000);
-
-        testDataDir = Paths.get(testDataDirPath);
-        Files.createDirectories(testDataDir);
+        testDataDirPath = testDataDir.resolve("tor").toString();
+        Files.createDirectories(Path.of(testDataDirPath));
 
         Map<String, String> config = createTestConfig();
         torService = new TorService(TOR_EXECUTABLE_PATH, config, null);
@@ -120,22 +113,7 @@ class TorServiceIntegrationTest {
             }
         }
 
-        // Clean up test directory
-        if (testDataDir != null && Files.exists(testDataDir)) {
-            try {
-                Files.walk(testDataDir)
-                        .sorted((a, b) -> b.compareTo(a)) // Reverse order to delete files before directories
-                        .forEach(path -> {
-                            try {
-                                Files.deleteIfExists(path);
-                            } catch (IOException e) {
-                                // Ignore cleanup errors
-                            }
-                        });
-            } catch (IOException e) {
-                // Ignore cleanup errors
-            }
-        }
+        // JUnit releases the class-owned directory after every daemon has stopped.
     }
 
     @Test
@@ -331,20 +309,24 @@ class TorServiceIntegrationTest {
         AtomicBoolean hasFailures = new AtomicBoolean(false);
 
         // Start the service first to have a consistent initial state
-        torService.start().get(60, TimeUnit.SECONDS);
+        assertTrue(torService.start().get(60, TimeUnit.SECONDS), "Initial Tor bootstrap should complete");
         assertTrue(torService.isHealthy(), "Service should be healthy before concurrent operations");
 
         // Start multiple concurrent operations (reduced from 10 to 5 for stability)
         for (int i = 0; i < 5; i++) {
+            boolean requestStart = i % 2 == 0;
             CompletableFuture.runAsync(() -> {
                 try {
                     // Just check health and start (which should return immediately)
-                    if (Math.random() > 0.3) {
+                    if (requestStart) {
                         // Try to start (should return immediately since already started)
-                        torService.start().get(10, TimeUnit.SECONDS);
+                        if (!torService.start().get(10, TimeUnit.SECONDS)) {
+                            hasFailures.set(true);
+                        }
                     } else {
-                        // Just check health
-                        torService.isHealthy();
+                        if (!torService.isHealthy()) {
+                            hasFailures.set(true);
+                        }
                     }
                 } catch (Exception e) {
                     hasFailures.set(true);

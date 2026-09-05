@@ -1463,6 +1463,12 @@ public class DownloadManagerImpl implements DownloadManager {
         }
     }
 
+    @Override
+    public CompletableFuture<Void> reconsiderQueuedDownloads() {
+        return CompletableFuture.runAsync(this::startNextQueuedDownload,
+                executorManager.getGeneralExecutor());
+    }
+
     private void startNextQueuedDownload() {
         if (isShuttingDown.get() || bulkPauseOperations.get() > 0) {
             return;

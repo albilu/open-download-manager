@@ -4,13 +4,22 @@ on:
     push:
         tags: ['v*']
 
+permissions:
+    contents: read
+
 jobs:
+    validation:
+        uses: ./.github/workflows/test-ci.yml
+
     release:
+        needs: validation
         runs-on: ubuntu-latest
         permissions:
             contents: write
         steps:
             - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.sha }}
 
             - name: Extract version from tag
               id: version
@@ -28,12 +37,17 @@ jobs:
                   printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
             - name: Build Docker image
-              run: docker build -t odm-dev .
+              run: ./docker-build.sh build
 
             - name: Build packages (.deb/.rpm/.pkg.tar.zst)
               env:
                   VERSION: ${{ steps.version.outputs.version }}
               run: ./docker-build.sh package "$VERSION"
+
+            - name: Verify every package and bundled runtime
+              env:
+                  VERSION: ${{ steps.version.outputs.version }}
+              run: docker run --rm -v "$(pwd):/app:ro" odm-dev /app/packaging/verify-packages.sh "$VERSION"
 
             - name: Install test (.deb on clean Ubuntu)
               env:
@@ -52,6 +66,6 @@ jobs:
                       - `open-download-manager-${{ steps.version.outputs.version }}-1.x86_64.rpm` — Fedora/RHEL
                       - `open-download-manager-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst` — Arch Linux
                   files: |
-                      packaging/*.deb
-                      packaging/*.rpm
-                      packaging/*.pkg.tar.zst
+                      packaging/open-download-manager_${{ steps.version.outputs.version }}_amd64.deb
+                      packaging/open-download-manager-${{ steps.version.outputs.version }}-1.x86_64.rpm
+                      packaging/open-download-manager-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst

@@ -68,8 +68,6 @@ class ToolManagerContractTest {
                 new ProxychainsToolManager(settings, EXECUTOR),
                 new TorToolManager(settings, EXECUTOR),
                 new AntivirusToolManager(AntivirusToolManager.Scanner.CLAMAV, settings, EXECUTOR),
-                new AntivirusToolManager(AntivirusToolManager.Scanner.CHKROOTKIT, settings, EXECUTOR),
-                new AntivirusToolManager(AntivirusToolManager.Scanner.RKHUNTER, settings, EXECUTOR),
         };
     }
 
@@ -84,10 +82,7 @@ class ToolManagerContractTest {
         assertEquals("tor", TorToolManager.TOOL_ID);
         assertEquals("antivirus-clamav",
                 AntivirusToolManager.Scanner.CLAMAV.toolId());
-        assertEquals("antivirus-chkrootkit",
-                AntivirusToolManager.Scanner.CHKROOTKIT.toolId());
-        assertEquals("antivirus-rkhunter",
-                AntivirusToolManager.Scanner.RKHUNTER.toolId());
+
 
         for (AbstractToolManager manager : allManagers()) {
             assertNotNull(manager.getToolId());
