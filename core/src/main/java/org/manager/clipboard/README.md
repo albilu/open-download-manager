@@ -150,13 +150,13 @@ ClipboardService service = ClipboardFactory.builder()
     - Magnet links (`magnet:?xt=urn:btih:...`)
     - Torrent files (`.torrent` extension)
 
-4. **FTP URLs**
+4. **FTP-family URLs**
 
-    - Direct FTP downloads
+    - Direct FTP, FTPS, and SFTP downloads
     - Anonymous FTP access
 
 5. **Local Files**
-    - Local torrent files (`file://...torrent`)
+    - Local descriptor files (`.torrent`, `.metalink`, and `.meta4`)
 
 ### Detection Logic
 
@@ -177,10 +177,11 @@ boolean isTorrent = UrlDetector.isTorrentFile(uri);
 
 URLs are validated based on:
 
--   Protocol support (http, https, ftp, magnet, file)
--   File extensions for downloadable content
--   Magnet link format validation
--   General downloadability heuristics
+-   Supported protocols (`http`, `https`, `ftp`, `ftps`, `sftp`, `magnet`, and `file`)
+-   Valid hosts, ports, URI escapes, and local descriptor-file paths
+-   Valid BTIH or BTMH exact-topic identifiers for magnet links
+-   Conservative bare-domain recognition that rejects e-mail addresses, filenames,
+    filesystem paths, malformed URLs, unsupported schemes, and ordinary prose
 
 Known media-platform pages and HLS/DASH stream URLs use yt-dlp. Explicit file
 URLs, including direct media files, continue through aria2.

@@ -1,19 +1,22 @@
 package org.manager.clipboard;
 
+import java.net.IDN;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.manager.download.Download;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Utility class for detecting and extracting URLs from text content. Supports
@@ -24,39 +27,65 @@ public class UrlDetector {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(UrlDetector.class);
 
-    // Comprehensive URL regex pattern that matches various protocols. The
-    // path/query/fragment sections use a single flat character class (one
-    // iterative star) to avoid nested-quantifier recursion, which caused
-    // StackOverflowError on long URLs. The last alternative matches bare
-    // domains so protocol-less URLs can be normalized.
-    private static final String URL_REGEX = """
-            (?i)\\b(?:
-            (?:https?|ftps?|sftp)://[-\\w.]+(?::\\d+)?[\\w._~!$&'()*+,;=:@%/?#-]*
-            |magnet:\\?xt=urn:[a-z0-9]+:[a-zA-Z0-9]{32,40}[&\\w\\d%+/=.]*
-            |file://[^\\s]*\\.torrent
-            |(?:[\\w-]+\\.)+[a-z]{2,}(?::\\d+)?[\\w._~!$&'()*+,;=:@%/?#-]*
-            )\\b"""
-            .replaceAll("\\s+", "");
+    /** Generous ceiling that also bounds parser/regex work on hostile clipboard data. */
+    private static final int MAX_URL_LENGTH = 65_536;
 
-    private static final Pattern URL_PATTERN = Pattern.compile(URL_REGEX);
+    /*
+     * Find only a supported scheme marker here, then scan the surrounding token
+     * iteratively. Keeping host/path grammar out of this regex is intentional:
+     * repeated DNS-label regex groups can overflow the Java regex stack on a
+     * long dotted clipboard value.
+     *
+     * The left boundary prevents a URL-looking suffix from being salvaged out
+     * of values such as javascript:https://..., git+https://..., an email, or a
+     * local filesystem path.
+     */
+    private static final Pattern SUPPORTED_SCHEME_START = Pattern.compile(
+            "(?iu)(?<![\\p{L}\\p{N}_+.:@/\\\\-])"
+            + "(?:https?://|ftps?://|sftp://|file:/+|magnet:\\?)");
 
-    // Pattern for magnet links
-    private static final Pattern MAGNET_PATTERN = Pattern.compile("(?i)^magnet:\\?xt=urn:");
+    private static final Pattern SUPPORTED_SCHEME_PREFIX = Pattern.compile(
+            "(?iu)^(?:https?://|ftps?://|sftp://|file:/+|magnet:\\?)");
 
-    // RFC 3986 scheme syntax. An explicitly supplied but unsupported scheme
-    // must never be reinterpreted as a protocol-less HTTPS hostname.
-    private static final Pattern EXPLICIT_SCHEME_PATTERN = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:");
+    private static final Pattern EXPLICIT_SCHEME_PREFIX = Pattern.compile(
+            "(?iu)^[a-z][a-z0-9+.-]*:");
 
-    // Common download file extensions
-    private static final Set<String> DOWNLOAD_EXTENSIONS = new HashSet<>(Arrays.asList(
-            "zip", "rar", "7z", "tar", "gz", "bz2", "xz",
-            "exe", "msi", "dmg", "pkg", "deb", "rpm",
-            "iso", "img", "bin",
-            "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm",
-            "mp3", "flac", "wav", "ogg", "aac",
-            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-            "apk", "ipa",
-            "torrent"));
+    private static final Pattern DNS_LABEL_PATTERN = Pattern.compile(
+            "(?i)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
+
+    private static final Pattern HEX_BT_INFO_HASH = Pattern.compile("(?i)[0-9a-f]{40}");
+    private static final Pattern BASE32_BT_INFO_HASH = Pattern.compile("(?i)[a-z2-7]{32}");
+    private static final Pattern BTMH_INFO_HASH = Pattern.compile("(?i)1220[0-9a-f]{64}");
+
+    /*
+     * A bare two-label token is inherently ambiguous (example.com is a URL,
+     * README.md is normally a filename). Common web suffixes are accepted;
+     * uncommon suffixes need another URL signal such as www, a port, or a
+     * path/query. Explicitly schemed URLs are never subject to this heuristic.
+     */
+    private static final Set<String> COMMON_BARE_TLDS = Set.of(
+            "aero", "ai", "app", "asia", "biz", "blog", "cat", "cloud",
+            "club", "co", "com", "coop", "dev", "digital", "edu", "email",
+            "gov", "info", "int", "io", "jobs", "live", "me", "mil", "mobi",
+            "museum", "net", "news", "online", "onion", "org", "pro", "shop", "site",
+            "software", "space", "store", "systems", "tech", "tel", "top",
+            "travel", "tv", "website", "world", "xyz");
+
+    private static final Set<String> AMBIGUOUS_FILE_SUFFIXES = Set.of(
+            "7z", "a", "aac", "apk", "avi", "bak", "bash", "bat", "bin",
+            "bz", "bz2", "c", "cc", "cfg", "class", "cmd", "conf", "cpp",
+            "cs", "css", "csv", "dart", "db", "deb", "dll", "dmg", "doc",
+            "docx", "dylib", "exe", "fish", "flac", "flv", "fs", "gif", "go",
+            "gradle", "groovy", "gz", "h", "hpp", "htm", "html", "ico", "img",
+            "ini", "ipa", "iso", "jar", "java", "jpeg", "jpg", "js", "json",
+            "jsx", "kt", "kts", "less", "lock", "log", "lua", "map", "md",
+            "mkv", "mov", "mp3", "mp4", "msi", "name", "o", "obj", "ogg",
+            "old", "pdf", "php", "pkg", "pl", "png", "ppt", "pptx",
+            "properties", "ps1", "py", "rar", "rb", "rpm", "rs", "sass",
+            "scala", "scss", "sh", "so", "sql", "sqlite", "svelte", "svg",
+            "swift", "tar", "tmp", "toml", "torrent", "ts", "tsx", "txt", "vb",
+            "vue", "war", "wasm", "wav", "webm", "webp", "wmv", "xls", "xlsx",
+            "xml", "xz", "yaml", "yml", "zip", "zsh");
 
     /**
      * Extracts all valid URLs from the given text.
@@ -65,26 +94,138 @@ public class UrlDetector {
      * @return A list of valid URIs found in the text
      */
     public static List<URI> extractUrls(String text) {
-        if (text == null || text.trim().isEmpty()) {
+        if (text == null || text.isBlank()) {
             return new ArrayList<>();
         }
 
         List<URI> urls = new ArrayList<>();
         Set<String> seen = new HashSet<>();
 
-        Matcher matcher = URL_PATTERN.matcher(text);
-        while (matcher.find()) {
-            String urlString = matcher.group().trim();
+        int cursor = 0;
+        while (cursor < text.length()) {
+            while (cursor < text.length() && isTokenBoundary(text.charAt(cursor))) {
+                cursor++;
+            }
+            if (cursor >= text.length()) {
+                break;
+            }
 
-            normalizeAndValidate(urlString).ifPresent(uri -> {
-                if (seen.add(uri.toString())) {
-                    urls.add(uri);
-                    LOGGER.debug("Detected a valid URL");
-                }
-            });
+            int tokenStart = cursor;
+            while (cursor < text.length() && !isTokenBoundary(text.charAt(cursor))) {
+                cursor++;
+            }
+            inspectToken(text.substring(tokenStart, cursor), urls, seen);
         }
 
         return urls;
+    }
+
+    private static void inspectToken(String token, List<URI> urls, Set<String> seen) {
+        String wholeCandidate = unwrapBareCandidate(token);
+        if (addIfValid(wholeCandidate, urls, seen)) {
+            return;
+        }
+        // Once a token explicitly starts as a URL, failure applies to the whole
+        // token. Do not rescue an embedded URL from its malformed path/query.
+        if (EXPLICIT_SCHEME_PREFIX.matcher(wholeCandidate).find()) {
+            return;
+        }
+
+        Matcher schemeMatcher = SUPPORTED_SCHEME_START.matcher(token);
+        boolean containedSupportedScheme = false;
+        while (schemeMatcher.find()) {
+            containedSupportedScheme = true;
+            String candidate = trimTrailingDelimiters(token.substring(schemeMatcher.start()));
+            addIfValid(candidate, urls, seen);
+        }
+
+        if (containedSupportedScheme) {
+            return;
+        }
+
+        addIfValid(wholeCandidate, urls, seen);
+    }
+
+    private static boolean addIfValid(String candidate, List<URI> urls, Set<String> seen) {
+        Optional<URI> normalized = normalizeAndValidate(candidate);
+        if (normalized.isEmpty()) {
+            return false;
+        }
+        URI uri = normalized.orElseThrow();
+        if (seen.add(uri.toString())) {
+            urls.add(uri);
+            LOGGER.debug("Detected a valid URL");
+        }
+        return true;
+    }
+
+    private static String unwrapBareCandidate(String token) {
+        int markdownTarget = token.lastIndexOf("](");
+        String candidate = markdownTarget >= 0
+                ? token.substring(markdownTarget + 2)
+                : token;
+        int start = 0;
+        while (start < candidate.length() && isOpeningWrapper(candidate.charAt(start))) {
+            start++;
+        }
+        return trimTrailingDelimiters(candidate.substring(start));
+    }
+
+    private static boolean isOpeningWrapper(char value) {
+        return value == '(' || value == '[' || value == '{' || value == '\'';
+    }
+
+    private static boolean isTokenBoundary(char value) {
+        return Character.isWhitespace(value)
+                || Character.isISOControl(value)
+                || value == '<' || value == '>' || value == '"' || value == '`'
+                || value == '\u2018' || value == '\u2019'
+                || value == '\u201c' || value == '\u201d';
+    }
+
+    private static String trimTrailingDelimiters(String candidate) {
+        int end = candidate.length();
+        int parentheses = delimiterBalance(candidate, '(', ')');
+        int brackets = delimiterBalance(candidate, '[', ']');
+        int braces = delimiterBalance(candidate, '{', '}');
+        while (end > 0) {
+            char last = candidate.charAt(end - 1);
+            if (last == '.' || last == ',' || last == ';' || last == ':'
+                    || last == '!' || last == '?' || last == '\'' || last == '\u2026') {
+                end--;
+                continue;
+            }
+            if (last == ')' && parentheses < 0) {
+                end--;
+                parentheses++;
+                continue;
+            }
+            if (last == ']' && brackets < 0) {
+                end--;
+                brackets++;
+                continue;
+            }
+            if (last == '}' && braces < 0) {
+                end--;
+                braces++;
+                continue;
+            }
+            break;
+        }
+        return candidate.substring(0, end);
+    }
+
+    private static int delimiterBalance(String value, char opening, char closing) {
+        int balance = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+            if (current == opening) {
+                balance++;
+            } else if (current == closing) {
+                balance--;
+            }
+        }
+        return balance;
     }
 
     /**
@@ -104,39 +245,156 @@ public class UrlDetector {
      * @return A normalized URI, or null if invalid
      */
     private static URI normalizeUrl(String urlString) {
-        try {
-            // Handle magnet links directly
-            if (MAGNET_PATTERN.matcher(urlString).find()) {
-                return new URI(urlString);
-            }
-
-            // For HTTP/HTTPS URLs, ensure they're properly formed. The scheme
-            // comparison is case-insensitive so HTTP:// URLs are not
-            // double-prefixed.
-            String lowerCaseUrl = urlString.toLowerCase(java.util.Locale.ROOT);
-            if (!lowerCaseUrl.startsWith("http://") && !lowerCaseUrl.startsWith("https://")
-                    && !lowerCaseUrl.startsWith("ftp://") && !lowerCaseUrl.startsWith("ftps://")
-                    && !lowerCaseUrl.startsWith("sftp://") && !lowerCaseUrl.startsWith("file://")
-                    && !EXPLICIT_SCHEME_PATTERN.matcher(urlString).find()) {
-                // Try adding https:// prefix for URLs that look like web URLs
-                if (urlString.contains(".") && !urlString.contains(" ")) {
-                    urlString = "https://" + urlString;
-                }
-            }
-
-            // java.net.URI (unlike URL) accepts sftp and preserves the
-            // file:/// empty authority, so round-trip through it instead of
-            // URL.toURI() which mangles both.
-            URI uri = new URI(urlString);
-            if (uri.getScheme() != null
-                    && !uri.getScheme().equals(uri.getScheme().toLowerCase(java.util.Locale.ROOT))) {
-                uri = new URI(uri.getScheme().toLowerCase(java.util.Locale.ROOT)
-                        + urlString.substring(uri.getScheme().length()));
-            }
-            return uri;
-        } catch (URISyntaxException e) {
+        if (urlString == null || urlString.isEmpty() || urlString.length() > MAX_URL_LENGTH) {
             return null;
         }
+        try {
+            if (!SUPPORTED_SCHEME_PREFIX.matcher(urlString).find()) {
+                if (!looksLikeBareWebUrl(urlString)) {
+                    return null;
+                }
+                urlString = "https://" + urlString;
+            }
+
+            int schemeEnd = urlString.indexOf(':');
+            if (schemeEnd <= 0) {
+                return null;
+            }
+            String normalized = urlString.substring(0, schemeEnd).toLowerCase(Locale.ROOT)
+                    + urlString.substring(schemeEnd);
+            if (normalized.regionMatches(true, 0, "http://", 0, 7)
+                    || normalized.regionMatches(true, 0, "https://", 0, 8)
+                    || normalized.regionMatches(true, 0, "ftp://", 0, 6)
+                    || normalized.regionMatches(true, 0, "ftps://", 0, 7)
+                    || normalized.regionMatches(true, 0, "sftp://", 0, 7)) {
+                normalized = normalizeNetworkAuthority(normalized);
+            }
+            return new URI(normalized);
+        } catch (URISyntaxException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static String normalizeNetworkAuthority(String url) {
+        int authorityStart = url.indexOf("://") + 3;
+        int authorityEnd = url.length();
+        for (int i = authorityStart; i < url.length(); i++) {
+            char value = url.charAt(i);
+            if (value == '/' || value == '?' || value == '#') {
+                authorityEnd = i;
+                break;
+            }
+        }
+
+        String authority = url.substring(authorityStart, authorityEnd);
+        int at = authority.lastIndexOf('@');
+        String userInfo = at >= 0 ? authority.substring(0, at + 1) : "";
+        String hostAndPort = at >= 0 ? authority.substring(at + 1) : authority;
+        if (hostAndPort.isEmpty()) {
+            throw new IllegalArgumentException("missing host");
+        }
+
+        String host;
+        String port = "";
+        if (hostAndPort.charAt(0) == '[') {
+            int closing = hostAndPort.indexOf(']');
+            if (closing < 0) {
+                throw new IllegalArgumentException("invalid IP literal");
+            }
+            host = hostAndPort.substring(0, closing + 1).toLowerCase(Locale.ROOT);
+            port = hostAndPort.substring(closing + 1);
+        } else {
+            int colon = hostAndPort.lastIndexOf(':');
+            if (colon >= 0) {
+                host = hostAndPort.substring(0, colon);
+                port = hostAndPort.substring(colon);
+            } else {
+                host = hostAndPort;
+            }
+            host = IDN.toASCII(host, IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
+        }
+
+        return url.substring(0, authorityStart) + userInfo + host + port
+                + url.substring(authorityEnd);
+    }
+
+    private static boolean looksLikeBareWebUrl(String candidate) {
+        if (candidate.isEmpty() || candidate.length() > MAX_URL_LENGTH
+                || candidate.indexOf('@') >= 0 || candidate.indexOf('\\') >= 0
+                || candidate.charAt(0) == '/' || candidate.charAt(0) == '.'
+                || candidate.charAt(0) == '-') {
+            return false;
+        }
+        for (int i = 0; i < candidate.length(); i++) {
+            if (Character.isWhitespace(candidate.charAt(i))
+                    || Character.isISOControl(candidate.charAt(i))) {
+                return false;
+            }
+        }
+
+        int authorityEnd = candidate.length();
+        for (int i = 0; i < candidate.length(); i++) {
+            char value = candidate.charAt(i);
+            if (value == '/' || value == '?' || value == '#') {
+                authorityEnd = i;
+                break;
+            }
+        }
+        String authority = candidate.substring(0, authorityEnd);
+        if (authority.isEmpty() || authority.charAt(0) == '[') {
+            return false; // IP literals require an explicit scheme.
+        }
+
+        boolean explicitPort = false;
+        int colon = authority.lastIndexOf(':');
+        if (colon >= 0) {
+            if (authority.indexOf(':') != colon) {
+                return false;
+            }
+            String rawPort = authority.substring(colon + 1);
+            if (rawPort.isEmpty() || !rawPort.chars().allMatch(Character::isDigit)) {
+                return false;
+            }
+            try {
+                int port = Integer.parseInt(rawPort);
+                if (port < 1 || port > 65_535) {
+                    return false;
+                }
+            } catch (NumberFormatException invalidPort) {
+                return false;
+            }
+            authority = authority.substring(0, colon);
+            explicitPort = true;
+        }
+
+        final String asciiHost;
+        try {
+            asciiHost = IDN.toASCII(authority, IDN.USE_STD3_ASCII_RULES)
+                    .toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException invalidHost) {
+            return false;
+        }
+        if (!isValidDnsHost(asciiHost) || asciiHost.matches("[0-9.]+")) {
+            return false; // bare numeric text is too ambiguous for clipboard admission.
+        }
+
+        String hostWithoutDot = asciiHost.endsWith(".")
+                ? asciiHost.substring(0, asciiHost.length() - 1)
+                : asciiHost;
+        int lastDot = hostWithoutDot.lastIndexOf('.');
+        if (lastDot <= 0 || lastDot == hostWithoutDot.length() - 1) {
+            return false;
+        }
+        String tld = hostWithoutDot.substring(lastDot + 1);
+        if (AMBIGUOUS_FILE_SUFFIXES.contains(tld)) {
+            return false;
+        }
+
+        boolean strongerUrlSignal = candidate.regionMatches(true, 0, "www.", 0, 4)
+                || authorityEnd < candidate.length()
+                || explicitPort
+                || tld.startsWith("xn--");
+        return tld.length() == 2 || COMMON_BARE_TLDS.contains(tld) || strongerUrlSignal;
     }
 
     /** Normalizes user input and returns it only when it is a supported URL. */
@@ -172,7 +430,7 @@ public class UrlDetector {
      * @return true if it's a valid download URL, false otherwise
      */
     public static boolean isValidDownloadUrl(URI uri) {
-        if (uri == null) {
+        if (uri == null || uri.toString().length() > MAX_URL_LENGTH) {
             return false;
         }
 
@@ -192,149 +450,189 @@ public class UrlDetector {
 
             // Magnet links require an exact-topic parameter.
             if (scheme.equals("magnet")) {
-                // Magnet URIs are opaque (magnet:?xt=...), so URI#getRawQuery
-                // is normally null. Inspect the raw scheme-specific part and
-                // treat its leading '?' as the query delimiter.
-                String query = uri.getRawQuery();
-                if (query == null) {
-                    query = uri.getRawSchemeSpecificPart();
-                    if (query != null && query.startsWith("?")) {
-                        query = query.substring(1);
-                    }
-                }
-                return query != null && Pattern.compile("(?i)(?:^|&)xt=urn:[^&]+")
-                        .matcher(query).find();
+                return hasValidMagnetExactTopic(uri);
             }
 
             // Local URLs are valid only for aria2 descriptor files.
             if (scheme.equals("file")) {
-                Download.Protocol protocol = Download.Protocol.fromUri(uri);
-                return protocol == Download.Protocol.TORRENT
-                        || protocol == Download.Protocol.METALINK;
+                return isValidLocalDescriptor(uri);
             }
 
-            if (uri.getHost() == null || uri.getHost().isBlank()) {
+            if (!isValidNetworkUri(uri)) {
                 return false;
             }
 
-            // For HTTP/HTTPS/FTP, check various criteria
-            return isLikelyDownloadableContent(uri);
+            // Any structurally valid URL using a supported network scheme is a
+            // candidate; the remote response determines its eventual content.
+            return true;
         }
 
         return false;
     }
 
-    /**
-     * Determines if a URI is likely to point to downloadable content.
-     *
-     * @param uri The URI to check
-     * @return true if it's likely downloadable content
-     */
-    private static boolean isLikelyDownloadableContent(URI uri) {
-        String path = uri.getPath();
-        if (path == null) {
-            path = "";
+    private static boolean hasValidMagnetExactTopic(URI uri) {
+        String query = uri.getRawQuery();
+        if (query == null) {
+            query = uri.getRawSchemeSpecificPart();
+            if (query != null && query.startsWith("?")) {
+                query = query.substring(1);
+            }
+        }
+        if (query == null || query.isEmpty()) {
+            return false;
         }
 
-        String query = uri.getQuery();
-        String fullUrl = uri.toString().toLowerCase();
+        for (String parameter : query.split("&")) {
+            int equals = parameter.indexOf('=');
+            if (equals <= 0 || !parameter.substring(0, equals).equalsIgnoreCase("xt")) {
+                continue;
+            }
+            try {
+                String topic = URLDecoder.decode(parameter.substring(equals + 1),
+                        StandardCharsets.UTF_8);
+                if (isSupportedMagnetTopic(topic)) {
+                    return true;
+                }
+            } catch (IllegalArgumentException invalidEscape) {
+                return false;
+            }
+        }
+        return false;
+    }
 
-        // Check for direct file downloads by extension
-        if (hasDownloadableExtension(path)) {
+    private static boolean isSupportedMagnetTopic(String topic) {
+        if (topic.regionMatches(true, 0, "urn:btih:", 0, 9)) {
+            String hash = topic.substring(9);
+            return HEX_BT_INFO_HASH.matcher(hash).matches()
+                    || BASE32_BT_INFO_HASH.matcher(hash).matches();
+        }
+        if (topic.regionMatches(true, 0, "urn:btmh:", 0, 9)) {
+            return BTMH_INFO_HASH.matcher(topic.substring(9)).matches();
+        }
+        return false;
+    }
+
+    private static boolean isValidNetworkUri(URI uri) {
+        if (uri.isOpaque() || uri.getRawAuthority() == null
+                || uri.getHost() == null || uri.getHost().isBlank()) {
+            return false;
+        }
+        return hasValidPort(uri) && isValidHost(uri.getHost());
+    }
+
+    private static boolean isValidLocalDescriptor(URI uri) {
+        Download.Protocol protocol = Download.Protocol.fromUri(uri);
+        if (uri.isOpaque() || uri.getPath() == null || !uri.getPath().startsWith("/")
+                || uri.getRawAuthority() != null || uri.getRawQuery() != null
+                || uri.getRawFragment() != null
+                || (protocol != Download.Protocol.TORRENT
+                && protocol != Download.Protocol.METALINK)) {
+            return false;
+        }
+        try {
+            Path.of(uri);
             return true;
+        } catch (IllegalArgumentException invalidPath) {
+            return false;
         }
+    }
 
-        // Check for torrent files
-        if (Download.Protocol.fromUri(uri) == Download.Protocol.TORRENT) {
-            return true;
-        }
+    private static boolean hasValidPort(URI uri) {
+        String authority = uri.getRawAuthority();
+        int at = authority.lastIndexOf('@');
+        String hostAndPort = at >= 0 ? authority.substring(at + 1) : authority;
+        String rawPort = null;
 
-        // Check for common download URL patterns
-        if (containsDownloadIndicators(fullUrl)) {
-            return true;
-        }
-
-        // Check for URLs with download-related query parameters
-        if (query != null && hasDownloadQueryParams(query)) {
-            return true;
-        }
-
-        // If it's a direct link to a file (has extension), it's probably downloadable
-        if (path.contains(".") && !path.endsWith("/")) {
-            String extension = getFileExtension(path);
-            if (extension != null && extension.length() <= 5) {
-                return true;
+        if (hostAndPort.startsWith("[")) {
+            int closing = hostAndPort.indexOf(']');
+            if (closing < 0) {
+                return false;
+            }
+            String suffix = hostAndPort.substring(closing + 1);
+            if (!suffix.isEmpty()) {
+                if (suffix.charAt(0) != ':') {
+                    return false;
+                }
+                rawPort = suffix.substring(1);
+            }
+        } else {
+            int colon = hostAndPort.lastIndexOf(':');
+            if (colon >= 0) {
+                if (hostAndPort.indexOf(':') != colon) {
+                    return false;
+                }
+                rawPort = hostAndPort.substring(colon + 1);
             }
         }
 
-        // For URLs without clear indicators, we'll be permissive
-        // The user can decide whether to download or not
+        if (rawPort == null) {
+            return uri.getPort() == -1;
+        }
+        if (rawPort.isEmpty() || !rawPort.chars().allMatch(Character::isDigit)) {
+            return false;
+        }
+        try {
+            int port = Integer.parseInt(rawPort);
+            return port >= 1 && port <= 65_535 && uri.getPort() == port;
+        } catch (NumberFormatException invalidPort) {
+            return false;
+        }
+    }
+
+    private static boolean isValidHost(String host) {
+        if (host.startsWith("[") && host.endsWith("]")) {
+            return host.length() > 2; // URI has already validated the IP literal grammar.
+        }
+        final String asciiHost;
+        try {
+            asciiHost = IDN.toASCII(host, IDN.USE_STD3_ASCII_RULES)
+                    .toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException invalidHost) {
+            return false;
+        }
+        if (asciiHost.matches("[0-9.]+")) {
+            return isIpv4Address(asciiHost);
+        }
+        return isValidDnsHost(asciiHost);
+    }
+
+    private static boolean isValidDnsHost(String host) {
+        String withoutTrailingDot = host.endsWith(".")
+                ? host.substring(0, host.length() - 1)
+                : host;
+        if (withoutTrailingDot.isEmpty() || withoutTrailingDot.length() > 253) {
+            return false;
+        }
+        String[] labels = withoutTrailingDot.split("\\.", -1);
+        for (String label : labels) {
+            if (!DNS_LABEL_PATTERN.matcher(label).matches()) {
+                return false;
+            }
+        }
         return true;
     }
 
-    /**
-     * Checks if a path has a downloadable file extension.
-     *
-     * @param path The file path
-     * @return true if it has a downloadable extension
-     */
-    private static boolean hasDownloadableExtension(String path) {
-        String extension = getFileExtension(path);
-        return extension != null && DOWNLOAD_EXTENSIONS.contains(extension.toLowerCase());
-    }
-
-    /**
-     * Extracts the file extension from a path.
-     *
-     * @param path The file path
-     * @return The file extension without the dot, or null if none
-     */
-    private static String getFileExtension(String path) {
-        if (path == null || path.isEmpty()) {
-            return null;
+    private static boolean isIpv4Address(String host) {
+        if (!host.matches("[0-9.]+")) {
+            return false;
         }
-
-        int lastDot = path.lastIndexOf('.');
-        int lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-
-        if (lastDot > lastSlash && lastDot < path.length() - 1) {
-            return path.substring(lastDot + 1);
+        String[] octets = host.split("\\.", -1);
+        if (octets.length != 4) {
+            return false;
         }
-
-        return null;
-    }
-
-    /**
-     * Checks if the URL contains download-related indicators.
-     *
-     * @param url The URL to check
-     * @return true if it contains download indicators
-     */
-    private static boolean containsDownloadIndicators(String url) {
-        String lowerUrl = url.toLowerCase();
-        return lowerUrl.contains("download")
-                || lowerUrl.contains("get")
-                || lowerUrl.contains("file")
-                || lowerUrl.contains("attachment")
-                || lowerUrl.contains("releases")
-                || lowerUrl.contains("dist")
-                || lowerUrl.contains("mirror")
-                || lowerUrl.contains("cdn");
-    }
-
-    /**
-     * Checks if query parameters indicate a download.
-     *
-     * @param query The query string
-     * @return true if it has download-related parameters
-     */
-    private static boolean hasDownloadQueryParams(String query) {
-        String lowerQuery = query.toLowerCase();
-        return lowerQuery.contains("download")
-                || lowerQuery.contains("attachment")
-                || lowerQuery.contains("dl=")
-                || lowerQuery.contains("file=")
-                || lowerQuery.contains("export");
+        for (String octet : octets) {
+            if (octet.isEmpty() || octet.length() > 3) {
+                return false;
+            }
+            try {
+                if (Integer.parseInt(octet) > 255) {
+                    return false;
+                }
+            } catch (NumberFormatException invalidOctet) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
