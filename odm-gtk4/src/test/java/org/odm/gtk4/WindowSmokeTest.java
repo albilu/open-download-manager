@@ -260,10 +260,11 @@ class WindowSmokeTest {
         assertEquals(TreeViewColumnSizing.FIXED, statusIconColumn.getSizing());
         assertEquals(32, statusIconColumn.getFixedWidth(),
                 "the status column should remain close to the icon's natural width");
-        assertEquals("Result", resultIconColumn.getTitle());
+        assertEquals("Res.", resultIconColumn.getTitle());
         assertEquals(TreeViewColumnSizing.FIXED, resultIconColumn.getSizing());
         assertTrue(resultIconColumn.getFixedWidth() <= 48,
                 "the Result column should remain icon-sized");
+        assertEquals(40, resultIconColumn.getMaxWidth());
         assertTrue(treeColumnIndex(downloadTree, statusIconColumn)
                         < treeColumnIndex(downloadTree, nameColumn),
                 "the lifecycle icon must appear before the download name");
@@ -1207,6 +1208,41 @@ class WindowSmokeTest {
         assertEquals("All after-completion actions succeeded (1/1)",
                 MainWindow.downloadResultTooltip(completed, result, result));
         assertNull(MainWindow.downloadResultTooltip(completed, name, result));
+    }
+
+    @Test
+    @DisplayName("Result remains icon-sized in a wide table and after visibility changes")
+    void resultColumnDoesNotAbsorbSpareWidth() throws Exception {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ApplicationWindow window = Widgets.require(builder, "main_window", ApplicationWindow.class);
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        TreeViewColumn result = Widgets.require(builder, "tor_icon_column", TreeViewColumn.class);
+        Widgets.require(builder, "download_store", ListStore.class).append(new TreeIter());
+        window.setDefaultSize(1000, 640);
+        window.present();
+        try {
+            awaitGtk(() -> tree.getWidth() > 600 && result.getWidth() > 0,
+                    "GTK did not allocate the wide download table");
+            assertEquals(40, result.getWidth(), "Result must not fill unused space at the right edge");
+            for (TreeViewColumn column : tree.getColumns()) {
+                if (!column.handle().equals(result.handle()) && column.getSortColumnId() >= 0) {
+                    column.setVisible(false);
+                }
+            }
+            // Force another layout after the visibility updates have settled.
+            for (int i = 0; i < 10; i++) {
+                drainGtkEvents();
+                Thread.sleep(10);
+            }
+            assertEquals(40, result.getWidth());
+            assertTrue(tree.getWidth() > result.getWidth() + 400,
+                    "the test must leave spare space that could otherwise stretch Result");
+            assertEquals("Result", MainWindow.downloadColumnLabels().get(13),
+                    "the visibility selector must keep the full label");
+        } finally {
+            window.destroy();
+            drainGtkEvents();
+        }
     }
 
     @Test

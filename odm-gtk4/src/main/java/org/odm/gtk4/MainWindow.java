@@ -1538,7 +1538,8 @@ public class MainWindow {
         addStatefulAction("left-panel", true, leftPanelWidget::setVisible);
         addStatefulAction("info-panel", true, infoPanelWidget::setVisible);
         var columns = downloadsTreeview.getColumns();
-        for (int i = 0; i < columns.size(); i++) {
+        // The trailing layout spacer is not a user-selectable data column.
+        for (int i = 0; i < DOWNLOAD_COLUMN_LABELS.size(); i++) {
             final int index = i;
             addStatefulAction("col-" + i, true, active -> columns.get(index).setVisible(active));
         }
