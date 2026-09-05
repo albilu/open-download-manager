@@ -17,7 +17,6 @@ import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.PropagationPhase;
-import org.gnome.gtk.ProgressBar;
 import org.gnome.gtk.SelectionMode;
 import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.Spinner;
@@ -115,7 +114,8 @@ public class MainWindow {
     private final Label dhtStatusLabel;
     private final Spinner activitySpinner;
     private final SpinnerActivity activity;
-    private final ProgressBar infoProgressBar;
+    private final DownloadProgressGraph infoProgressGraph;
+    private final DownloadSpeedHistory speedHistory = new DownloadSpeedHistory();
     private final Label totalSizeValue;
     private final Label addedOnValue;
     private final Label infoHashValue;
@@ -233,7 +233,7 @@ public class MainWindow {
         this.dhtStatusLabel = Widgets.require(builder, "dht_status_label", Label.class);
         this.activitySpinner = Widgets.require(builder, "activity_spinner", Spinner.class);
         this.activity = new SpinnerActivity(activitySpinner);
-        this.infoProgressBar = Widgets.require(builder, "info_progress_bar", ProgressBar.class);
+        this.infoProgressGraph = new DownloadProgressGraph(builder);
         this.totalSizeValue = Widgets.require(builder, "total_size_value", Label.class);
         this.addedOnValue = Widgets.require(builder, "added_on_value", Label.class);
         this.trackersStore = Widgets.require(builder, "trackers_store", ListStore.class);
@@ -410,7 +410,6 @@ public class MainWindow {
         AccessibilitySupport.label(searchEntry, "Search downloads");
         AccessibilitySupport.label(torSwitch, "Global Tor routing");
         AccessibilitySupport.label(menuBar, "Application menu");
-        AccessibilitySupport.label(infoProgressBar, "Selected download progress");
         AccessibilitySupport.label(folderOpenButton, "Open displayed save folder");
         Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
         Widgets.require(builder, "category_label", Label.class).setMnemonicWidget(categoryTreeview);
@@ -418,6 +417,7 @@ public class MainWindow {
         windowDownloadListener = new DownloadListener() {
             @Override public void onDownloadStart(Download d) { listPresenter.scheduleRefresh(); }
             @Override public void onDownloadProgress(Download d, float p, long db, long tb, float s) {
+                speedHistory.record(d, db, s);
                 listPresenter.scheduleRefresh();
             }
             @Override public void onDownloadStatusChanged(Download d,
@@ -659,6 +659,7 @@ public class MainWindow {
             contextMenu = null;
         }
         detailTabsPresenter.shutdown();
+        infoProgressGraph.dispose();
         activity.dispose();
         backgroundExecutor.shutdown();
     }
@@ -2588,9 +2589,8 @@ public class MainWindow {
     }
 
     private void updateInfoPanel() {
+        infoProgressGraph.update(selectedDownload, speedHistory.snapshot(selectedDownload));
         if (selectedDownload == null) {
-            infoProgressBar.setFraction(0);
-            infoProgressBar.setText(ProgressPresentation.percentage(0));
             totalSizeValue.setLabel("—");
             addedOnValue.setLabel("—");
             infoHashValue.setLabel("—");
@@ -2605,8 +2605,6 @@ public class MainWindow {
             detailTabsPresenter.load();
             return;
         }
-        infoProgressBar.setFraction(ProgressPresentation.fraction(selectedDownload.getProgress()));
-        infoProgressBar.setText(ProgressPresentation.percentage(selectedDownload.getProgress()));
         totalSizeValue.setLabel(DownloadFormats.totalSize(selectedDownload));
         addedOnValue.setLabel(selectedDownload.getCreatedAt() != null
                 ? DownloadFormats.DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");

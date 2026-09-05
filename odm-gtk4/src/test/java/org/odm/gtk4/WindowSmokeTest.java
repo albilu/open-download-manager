@@ -26,6 +26,7 @@ import org.gnome.gtk.CellRendererCombo;
 import org.gnome.gtk.CellRendererText;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
+import org.gnome.gtk.DrawingArea;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.EventControllerMotion;
 import org.gnome.gtk.Frame;
@@ -208,6 +209,8 @@ class WindowSmokeTest {
         assertTrue(contentPaned.getVexpand());
         assertTrue(contentPaned.getResizeStartChild());
         assertTrue(contentPaned.getResizeEndChild());
+        assertFalse(contentPaned.getShrinkEndChild(),
+                "the detail-tab buttons must remain visible when the pane is compressed");
         Box downloadList = Widgets.require(builder, "download_list_container", Box.class);
         ScrolledWindow downloadScrolled = Widgets.require(builder,
                 "download_scrolled_window", ScrolledWindow.class);
@@ -282,21 +285,35 @@ class WindowSmokeTest {
         // info panel
         Box infoPanel = Widgets.require(builder, "info_panel_box", Box.class);
         Notebook infoNotebook = Widgets.require(builder, "info_notebook", Notebook.class);
-        ProgressBar infoProgress = Widgets.require(builder, "info_progress_bar", ProgressBar.class);
+        DrawingArea infoProgress = Widgets.require(builder, "info_progress_bar", DrawingArea.class);
         assertTrue(infoPanel.getVexpand());
         assertTrue(infoNotebook.getVexpand());
         assertEquals(PositionType.BOTTOM, infoNotebook.getTabPos());
         assertTrue(infoProgress.getHexpand());
-        assertTrue(infoProgress.getShowText(),
-                "selected-download progress must expose its precise percentage");
+        assertTrue(infoProgress.getContentHeight() >= 80,
+                "the speed graph needs enough height to show rate variations");
+        Widgets.require(builder, "info_progress_value", Label.class);
+        Widgets.require(builder, "info_speed_value", Label.class);
+        Widgets.require(builder, "info_average_speed_value", Label.class);
         Box generalColumns = Widgets.require(builder, "general_columns", Box.class);
+        Box generalTab = Widgets.require(builder, "general_tab", Box.class);
+        ScrolledWindow generalScrolled = Widgets.require(builder, "general_scrolled", ScrolledWindow.class);
+        assertSame(generalScrolled, infoNotebook.getNthPage(0));
+        assertFalse(generalScrolled.getPropagateNaturalHeight(),
+                "the full General layout must not impose its height on the split pane");
+        Frame progressFrame = Widgets.require(builder, "progress_frame", Frame.class);
+        assertSame(generalColumns, generalTab.getFirstChild());
+        assertSame(progressFrame, generalColumns.getNextSibling(),
+                "the full-width progress graph belongs below Information and Transfer");
+        assertSame(progressFrame, generalTab.getLastChild());
+        assertSame(Widgets.require(builder, "progress_container", Box.class), infoProgress.getParent());
         assertEquals(Orientation.HORIZONTAL, generalColumns.getOrientation());
         assertTrue(generalColumns.getHomogeneous());
         assertSame(Widgets.require(builder, "information_frame", org.gnome.gtk.Frame.class),
                 generalColumns.getFirstChild());
         assertSame(Widgets.require(builder, "transfer_frame", org.gnome.gtk.Frame.class),
                 generalColumns.getLastChild());
-        assertBoldFrameTitles(builder, "information_frame", "transfer_frame");
+        assertBoldFrameTitles(builder, "information_frame", "transfer_frame", "progress_frame");
         for (String id : new String[]{"total_size_value", "added_on_value", "info_hash_v1_value",
                 "folder_value", "engine_value", "eta_value", "downloaded_value",
                 "connections_value", "seeds_peers_value"}) {

@@ -207,6 +207,7 @@
                     <property name="position">240</property>
                     <property name="resize-start-child">true</property>
                     <property name="resize-end-child">true</property>
+                    <property name="shrink-end-child">false</property>
                     <property name="start-child">
                       <object class="GtkBox" id="download_list_container">
                         <property name="orientation">vertical</property>
@@ -275,75 +276,110 @@
                             <property name="vexpand">true</property>
                             <property name="tab-pos">bottom</property>
                             <child>
-                              <object class="GtkBox" id="general_tab">
-                                <property name="orientation">vertical</property>
-                                <property name="spacing">6</property>
-                                <property name="margin-start">8</property>
-                                <property name="margin-end">8</property>
-                                <property name="margin-top">8</property>
-                                <property name="margin-bottom">8</property>
+                              <object class="GtkScrolledWindow" id="general_scrolled">
+                                <property name="hexpand">true</property>
+                                <property name="vexpand">true</property>
+                                <property name="hscrollbar-policy">never</property>
+                                <property name="vscrollbar-policy">automatic</property>
+                                <property name="min-content-height">48</property>
+                                <property name="propagate-natural-height">false</property>
                                 <child>
-                                  <object class="GtkBox" id="progress_container">
-                                    <child><object class="GtkProgressBar" id="info_progress_bar"><property name="hexpand">true</property><property name="show-text">true</property></object></child>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkBox" id="general_columns">
-                                    <property name="orientation">horizontal</property>
-                                    <property name="homogeneous">true</property>
-                                    <property name="spacing">8</property>
+                                  <object class="GtkBox" id="general_tab">
+                                    <property name="orientation">vertical</property>
+                                    <property name="spacing">6</property>
+                                    <property name="margin-start">8</property>
+                                    <property name="margin-end">8</property>
+                                    <property name="margin-top">8</property>
+                                    <property name="margin-bottom">8</property>
                                     <child>
-                                      <object class="GtkFrame" id="information_frame">
-                                        <property name="hexpand">true</property>
-                                        <child type="label">
-                                          <object class="GtkLabel">
-                                            <property name="label">&lt;b&gt;Information&lt;/b&gt;</property>
-                                            <property name="use-markup">true</property>
-                                            <property name="xalign">0</property>
+                                      <object class="GtkBox" id="general_columns">
+                                        <property name="orientation">horizontal</property>
+                                        <property name="homogeneous">true</property>
+                                        <property name="spacing">8</property>
+                                        <child>
+                                          <object class="GtkFrame" id="information_frame">
+                                            <property name="hexpand">true</property>
+                                            <child type="label">
+                                              <object class="GtkLabel">
+                                                <property name="label">&lt;b&gt;Information&lt;/b&gt;</property>
+                                                <property name="use-markup">true</property>
+                                                <property name="xalign">0</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkGrid" id="general_info_grid">
+                                                <property name="row-spacing">4</property>
+                                                <property name="column-spacing">12</property>
+                                                <property name="margin-start">8</property>
+                                                <property name="margin-end">8</property>
+                                                <property name="margin-top">8</property>
+                                                <property name="margin-bottom">8</property>
+                                                <child><object class="GtkLabel"><property name="label">Engine:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                                                <child>
+                                                  <object class="GtkBox" id="engine_value_box">
+                                                    <property name="orientation">horizontal</property>
+                                                    <property name="spacing">6</property>
+                                                    <property name="hexpand">true</property>
+                                                    <layout><property name="row">0</property><property name="column">1</property></layout>
+                                                    <child><object class="GtkImage" id="engine_icon"/></child>
+                                                    <child><object class="GtkLabel" id="engine_value"><property name="label">—</property><property name="xalign">0</property><property name="selectable">true</property></object></child>
+                                                  </object>
+                                                </child>
+                                                <child><object class="GtkLabel"><property name="label">Total size:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel" id="total_size_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label">Added on:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel" id="added_on_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label">Info hash:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel" id="info_hash_v1_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label">Save folder:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+                                                <child>
+                                                  <object class="GtkButton" id="folder_open_button">
+                                                    <property name="sensitive">false</property>
+                                                    <property name="hexpand">true</property>
+                                                    <property name="halign">fill</property>
+                                                    <property name="tooltip-text">Open the download folder</property>
+                                                    <style><class name="flat"/></style>
+                                                    <layout><property name="row">4</property><property name="column">1</property></layout>
+                                                    <child>
+                                                      <object class="GtkBox" id="folder_open_content">
+                                                        <property name="orientation">horizontal</property>
+                                                        <property name="spacing">6</property>
+                                                        <child><object class="GtkImage"><property name="icon-name">folder-open-symbolic</property></object></child>
+                                                        <child><object class="GtkLabel" id="folder_value"><property name="label">—</property><property name="xalign">0</property><property name="hexpand">true</property><property name="ellipsize">end</property></object></child>
+                                                      </object>
+                                                    </child>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
                                           </object>
                                         </child>
                                         <child>
-                                          <object class="GtkGrid" id="general_info_grid">
-                                            <property name="row-spacing">4</property>
-                                            <property name="column-spacing">12</property>
-                                            <property name="margin-start">8</property>
-                                            <property name="margin-end">8</property>
-                                            <property name="margin-top">8</property>
-                                            <property name="margin-bottom">8</property>
-                                            <child><object class="GtkLabel"><property name="label">Engine:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
-                                            <child>
-                                              <object class="GtkBox" id="engine_value_box">
-                                                <property name="orientation">horizontal</property>
-                                                <property name="spacing">6</property>
-                                                <property name="hexpand">true</property>
-                                                <layout><property name="row">0</property><property name="column">1</property></layout>
-                                                <child><object class="GtkImage" id="engine_icon"/></child>
-                                                <child><object class="GtkLabel" id="engine_value"><property name="label">—</property><property name="xalign">0</property><property name="selectable">true</property></object></child>
+                                          <object class="GtkFrame" id="transfer_frame">
+                                            <property name="hexpand">true</property>
+                                            <child type="label">
+                                              <object class="GtkLabel">
+                                                <property name="label">&lt;b&gt;Transfer&lt;/b&gt;</property>
+                                                <property name="use-markup">true</property>
+                                                <property name="xalign">0</property>
                                               </object>
                                             </child>
-                                            <child><object class="GtkLabel"><property name="label">Total size:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                                            <child><object class="GtkLabel" id="total_size_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
-                                            <child><object class="GtkLabel"><property name="label">Added on:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
-                                            <child><object class="GtkLabel" id="added_on_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
-                                            <child><object class="GtkLabel"><property name="label">Info hash:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
-                                            <child><object class="GtkLabel" id="info_hash_v1_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
-                                            <child><object class="GtkLabel"><property name="label">Save folder:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
                                             <child>
-                                              <object class="GtkButton" id="folder_open_button">
-                                                <property name="sensitive">false</property>
-                                                <property name="hexpand">true</property>
-                                                <property name="halign">fill</property>
-                                                <property name="tooltip-text">Open the download folder</property>
-                                                <style><class name="flat"/></style>
-                                                <layout><property name="row">4</property><property name="column">1</property></layout>
-                                                <child>
-                                                  <object class="GtkBox" id="folder_open_content">
-                                                    <property name="orientation">horizontal</property>
-                                                    <property name="spacing">6</property>
-                                                    <child><object class="GtkImage"><property name="icon-name">folder-open-symbolic</property></object></child>
-                                                    <child><object class="GtkLabel" id="folder_value"><property name="label">—</property><property name="xalign">0</property><property name="hexpand">true</property><property name="ellipsize">end</property></object></child>
-                                                  </object>
-                                                </child>
+                                              <object class="GtkGrid" id="transfer_info_grid">
+                                                <property name="row-spacing">4</property>
+                                                <property name="column-spacing">12</property>
+                                                <property name="margin-start">8</property>
+                                                <property name="margin-end">8</property>
+                                                <property name="margin-top">8</property>
+                                                <property name="margin-bottom">8</property>
+                                                <child><object class="GtkLabel"><property name="label">ETA:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel" id="eta_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label">Downloaded:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel" id="downloaded_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label">Connections:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel" id="connections_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label">Seeds/peers:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel" id="seeds_peers_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
                                               </object>
                                             </child>
                                           </object>
@@ -351,31 +387,40 @@
                                       </object>
                                     </child>
                                     <child>
-                                      <object class="GtkFrame" id="transfer_frame">
+                                      <object class="GtkFrame" id="progress_frame">
                                         <property name="hexpand">true</property>
-                                        <child type="label">
-                                          <object class="GtkLabel">
-                                            <property name="label">&lt;b&gt;Transfer&lt;/b&gt;</property>
-                                            <property name="use-markup">true</property>
-                                            <property name="xalign">0</property>
-                                          </object>
-                                        </child>
+                                        <property name="vexpand">true</property>
+                                        <child type="label"><object class="GtkLabel"><property name="label">&lt;b&gt;Progress&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property></object></child>
                                         <child>
-                                          <object class="GtkGrid" id="transfer_info_grid">
-                                            <property name="row-spacing">4</property>
-                                            <property name="column-spacing">12</property>
+                                          <object class="GtkBox" id="progress_container">
+                                            <property name="orientation">vertical</property>
+                                            <property name="spacing">4</property>
                                             <property name="margin-start">8</property>
                                             <property name="margin-end">8</property>
-                                            <property name="margin-top">8</property>
-                                            <property name="margin-bottom">8</property>
-                                            <child><object class="GtkLabel"><property name="label">ETA:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
-                                            <child><object class="GtkLabel" id="eta_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
-                                            <child><object class="GtkLabel"><property name="label">Downloaded:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                                            <child><object class="GtkLabel" id="downloaded_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
-                                            <child><object class="GtkLabel"><property name="label">Connections:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
-                                            <child><object class="GtkLabel" id="connections_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
-                                            <child><object class="GtkLabel"><property name="label">Seeds/peers:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
-                                            <child><object class="GtkLabel" id="seeds_peers_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                                            <property name="margin-top">6</property>
+                                            <property name="margin-bottom">6</property>
+                                            <child>
+                                              <object class="GtkBox" id="progress_summary">
+                                                <property name="spacing">16</property>
+                                                <child><object class="GtkLabel" id="info_progress_value"><property name="label">—</property><property name="xalign">0</property><property name="hexpand">true</property><property name="selectable">true</property><attributes><attribute name="weight" value="bold"/></attributes></object></child>
+                                                <child><object class="GtkLabel" id="info_speed_value"><property name="label">Speed: —</property><property name="selectable">true</property></object></child>
+                                                <child><object class="GtkLabel" id="info_average_speed_value"><property name="label">Average: —</property><property name="selectable">true</property><property name="tooltip-text">Time-weighted average of recorded download speeds, excluding paused time. Shown by the dashed line.</property></object></child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkDrawingArea" id="info_progress_bar">
+                                                <property name="hexpand">true</property>
+                                                <property name="vexpand">true</property>
+                                                <property name="content-height">88</property>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkBox" id="progress_axis">
+                                                <child><object class="GtkLabel" id="progress_axis_start"><property name="label">0%</property><style><class name="dim-label"/></style></object></child>
+                                                <child><object class="GtkLabel" id="progress_axis_label"><property name="label">Download progress</property><property name="hexpand">true</property><style><class name="dim-label"/></style></object></child>
+                                                <child><object class="GtkLabel" id="progress_axis_end"><property name="label">100%</property><style><class name="dim-label"/></style></object></child>
+                                              </object>
+                                            </child>
                                           </object>
                                         </child>
                                       </object>
