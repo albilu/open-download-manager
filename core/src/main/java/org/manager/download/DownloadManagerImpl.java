@@ -1384,6 +1384,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     // is emitted by the handler — notifying here as well
                     // would deliver every cancel twice.
                     cleanupDownloadResources(download.getId(), download.getAttemptGeneration());
+                    servicesScheduler.requestStateSnapshot();
                 } else {
                     // A failed launch may have reached ERROR precisely because
                     // no handler exists. It no longer owns a process or slot,
@@ -2300,15 +2301,20 @@ public class DownloadManagerImpl implements DownloadManager {
 
     private void notifyDownloadProgress(Download download, float progress, long downloadedBytes, long totalBytes,
             float speed) {
+        download.recordSpeedSample(downloadedBytes, speed);
         fireEvent(l -> l.onDownloadProgress(download, progress, downloadedBytes, totalBytes, speed));
     }
 
     private void notifyDownloadStatusChanged(Download download,
             Download.Status previousStatus, Download.Status currentStatus) {
+        if (currentStatus == Download.Status.SEEDING || currentStatus == Download.Status.PAUSED) {
+            servicesScheduler.requestStateSnapshot();
+        }
         fireEvent(l -> l.onDownloadStatusChanged(download, previousStatus, currentStatus));
     }
 
     private void notifyDownloadPause(Download download) {
+        servicesScheduler.requestStateSnapshot();
         fireEvent(l -> l.onDownloadPause(download));
     }
 
@@ -2317,14 +2323,17 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private void notifyDownloadComplete(Download download) {
+        servicesScheduler.requestStateSnapshot();
         fireEvent(l -> l.onDownloadComplete(download));
     }
 
     private void notifyDownloadError(Download download, String errorMessage) {
+        servicesScheduler.requestStateSnapshot();
         fireEvent(l -> l.onDownloadError(download, errorMessage));
     }
 
     private void notifyDownloadCanceled(Download download) {
+        servicesScheduler.requestStateSnapshot();
         fireEvent(l -> l.onDownloadCanceled(download));
     }
 

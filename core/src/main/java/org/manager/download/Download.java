@@ -161,6 +161,7 @@ public class Download {
     private volatile long size; // total size in bytes
     private volatile long downloaded; // downloaded bytes
     private volatile float speed; // current speed in bytes/second
+    private final DownloadSpeedHistory speedHistory = new DownloadSpeedHistory();
     private volatile float progress; // 0-100
     private volatile float uploadSpeed; // current upload speed in bytes/second (BitTorrent)
     private volatile int connections; // current connection count (aria2)
@@ -615,6 +616,9 @@ public class Download {
 
     /** Applies one lifecycle transition and maintains active elapsed time. */
     private void applyStatusTransition(Status replacement, Instant now) {
+        if (!isSpeedSamplingStatus(this.status) && isSpeedSamplingStatus(replacement)) {
+            speedHistory.startSegment();
+        }
         boolean wasActive = isElapsedActiveStatus(this.status);
         boolean willBeActive = isElapsedActiveStatus(replacement);
         if (wasActive && !willBeActive) {
@@ -665,6 +669,9 @@ public class Download {
 
     public void setDownloaded(long downloaded) {
         synchronized (lock) {
+            if (downloaded < this.downloaded) {
+                speedHistory.clear();
+            }
             this.downloaded = downloaded;
             // Update progress when downloaded bytes change
             updateProgress();
@@ -718,6 +725,44 @@ public class Download {
         synchronized (lock) {
             this.speed = speed;
         }
+    }
+
+    /** Immutable graph data, safe to read from a UI or background snapshot. */
+    @JsonIgnore
+    public DownloadSpeedHistory.Snapshot getSpeedHistory() {
+        return speedHistory.snapshot();
+    }
+
+    public DownloadSpeedHistory.State getSpeedHistoryState() {
+        return speedHistory.state();
+    }
+
+    public void setSpeedHistoryState(DownloadSpeedHistory.State state) {
+        speedHistory.restore(state);
+    }
+
+    record ProgressState(long size, long downloaded, float speed, long activeElapsedMillis,
+            DownloadSpeedHistory.State speedHistory) { }
+
+    /** Keep persisted counters at least as recent as the samples saved with them. */
+    ProgressState snapshotProgress() {
+        synchronized (lock) {
+            return new ProgressState(size, downloaded, speed, getActiveElapsedMillis(), speedHistory.state());
+        }
+    }
+
+    void recordSpeedSample(long downloadedBytes, double sampleSpeed) {
+        synchronized (lock) {
+            // Keep final positive telemetry even if the handler has already
+            // reported completion. Idle zero-speed notifications add no history.
+            if (isSpeedSamplingStatus(status) || sampleSpeed > 0) {
+                speedHistory.record(getActiveElapsedMillis(), downloadedBytes, sampleSpeed);
+            }
+        }
+    }
+
+    private static boolean isSpeedSamplingStatus(Status status) {
+        return status == Status.STARTING || status == Status.CONNECTING || status == Status.DOWNLOADING;
     }
 
     public float getUploadSpeed() {

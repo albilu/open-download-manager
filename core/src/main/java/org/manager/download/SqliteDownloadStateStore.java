@@ -79,6 +79,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 active_elapsed_millis INTEGER NOT NULL DEFAULT 0,
                 completion_action_results TEXT,
                 operation_results TEXT,
+                speed_history TEXT,
                 active_before_exit INTEGER NOT NULL DEFAULT 0,
                 pause_reason TEXT
             )
@@ -93,8 +94,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, manual_start_required,
                 active_elapsed_millis, completion_action_results, operation_results,
-                active_before_exit, pause_reason
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                active_before_exit, pause_reason, speed_history
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -237,6 +238,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             ensureColumn("active_elapsed_millis", "INTEGER NOT NULL DEFAULT 0");
             ensureColumn("completion_action_results", "TEXT");
             ensureColumn("operation_results", "TEXT");
+            ensureColumn("speed_history", "TEXT");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
@@ -415,6 +417,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 new TypeReference<List<DownloadOperationResult>>() {
                 });
         download.setOperationResults(operationResults);
+        download.setSpeedHistoryState(readJson(rs, "speed_history",
+                new TypeReference<DownloadSpeedHistory.State>() { }));
         try {
             DownloadSettings settings = mapper.readValue(rs.getString("settings"), DownloadSettings.class);
             if (settings != null) {
@@ -455,6 +459,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
 
     private void bindDownload(PreparedStatement insert, Download download, boolean activeBeforeExit)
             throws SQLException, IOException {
+        Download.ProgressState progress = download.snapshotProgress();
         insert.setString(1, download.getId());
         insert.setString(2, download.getGid());
         insert.setString(3, download.getName());
@@ -472,9 +477,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(10, download.getDestination() == null ? null : download.getDestination().toString());
         insert.setString(11, download.getType().name());
         insert.setString(12, download.getStatus().name());
-        insert.setLong(13, download.getSize());
-        insert.setLong(14, download.getDownloaded());
-        insert.setFloat(15, download.getSpeed());
+        insert.setLong(13, progress.size());
+        insert.setLong(14, progress.downloaded());
+        insert.setFloat(15, progress.speed());
         insert.setFloat(16, download.getUploadSpeed());
         insert.setInt(17, download.getConnections());
         insert.setInt(18, download.getSeeders());
@@ -490,13 +495,15 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(27, download.getChecksumAlgorithm());
         insert.setString(28, download.getExpectedChecksum());
         insert.setInt(29, download.isManualStartRequired() ? 1 : 0);
-        insert.setLong(30, download.getActiveElapsedMillis());
+        insert.setLong(30, progress.activeElapsedMillis());
         insert.setString(31, download.getCompletionActionResults().isEmpty()
                 ? null : mapper.writeValueAsString(download.getCompletionActionResults()));
         insert.setString(32, download.getOperationResults().isEmpty()
                 ? null : mapper.writeValueAsString(download.getOperationResults()));
         insert.setInt(33, activeBeforeExit ? 1 : 0);
         insert.setString(34, download.getPauseReason() == null ? null : download.getPauseReason().name());
+        DownloadSpeedHistory.State history = progress.speedHistory();
+        insert.setString(35, history == null ? null : mapper.writeValueAsString(history));
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

@@ -4,6 +4,8 @@ import java.lang.foreign.Arena;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Set;
 import org.gnome.glib.MainContext;
 import org.gnome.graphene.Rect;
 import org.gnome.gtk.ApplicationWindow;
@@ -22,6 +24,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.download.Download;
+import org.manager.download.DownloadSpeedHistory;
+import org.manager.download.SqliteDownloadStateStore;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DownloadProgressGraphGtkTest {
@@ -41,10 +45,11 @@ class DownloadProgressGraphGtkTest {
             download.setDownloaded(4267);
             download.setStatus(Download.Status.DOWNLOADING);
             download.setSpeed(2048);
-            var snapshot = new DownloadSpeedHistory.Snapshot(List.of(
+            var state = new DownloadSpeedHistory.State(1, List.of(
                     new DownloadSpeedHistory.Sample(1000, 1000, 1024),
-                    new DownloadSpeedHistory.Sample(2000, 4267, 2048)), 1536);
-            graph.update(download, snapshot);
+                    new DownloadSpeedHistory.Sample(2000, 4267, 2048)), 1000, 1_536_000);
+            download.setSpeedHistoryState(state);
+            graph.update(download);
             assertEquals("42.67%", label(builder, "info_progress_value"));
             assertEquals("Speed: 2 KB/s", label(builder, "info_speed_value"));
             assertEquals("Average: 1 KB/s", label(builder, "info_average_speed_value"));
@@ -52,16 +57,45 @@ class DownloadProgressGraphGtkTest {
                     .getTooltipText().contains("Dashed line: average speed"));
 
             download.setStatus(Download.Status.PAUSED);
-            graph.update(download, snapshot);
+            graph.update(download);
             assertEquals("Speed: 0 B/s", label(builder, "info_speed_value"));
             assertEquals("Average: 1 KB/s", label(builder, "info_average_speed_value"));
 
-            graph.update(download(), DownloadSpeedHistory.Snapshot.EMPTY);
+            graph.update(download());
             assertEquals("Average: —", label(builder, "info_average_speed_value"));
-            graph.update(null, DownloadSpeedHistory.Snapshot.EMPTY);
+            graph.update(null);
             assertEquals("—", label(builder, "info_progress_value"));
             assertEquals("Speed: —", label(builder, "info_speed_value"));
             assertEquals("Average: —", label(builder, "info_average_speed_value"));
+        } finally {
+            graph.dispose();
+        }
+    }
+
+    @Test
+    void completedDownloadDisplaysHistoryLoadedFromDisk(@TempDir Path directory) {
+        Download original = download();
+        original.setSize(4267);
+        original.setDownloaded(4267);
+        original.setStatus(Download.Status.COMPLETED);
+        original.setSpeedHistoryState(new DownloadSpeedHistory.State(1, List.of(
+                new DownloadSpeedHistory.Sample(1000, 1000, 1024),
+                new DownloadSpeedHistory.Sample(2000, 4267, 2048)), 1000, 1_536_000));
+        Path database = directory.resolve("history.db");
+        Path legacy = directory.resolve("history.json");
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        try (var store = new SqliteDownloadStateStore(database, legacy, mapper)) {
+            store.save(List.of(original), Set.of());
+        }
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        var graph = new DownloadProgressGraph(builder);
+        try (var store = new SqliteDownloadStateStore(database, legacy, mapper)) {
+            Download restored = store.load().downloads().getFirst();
+            graph.update(restored);
+            assertEquals(original.getSpeedHistory(), restored.getSpeedHistory());
+            assertEquals("100.00%", label(builder, "info_progress_value"));
+            assertEquals("Speed: 0 B/s", label(builder, "info_speed_value"));
+            assertEquals("Average: 1 KB/s", label(builder, "info_average_speed_value"));
         } finally {
             graph.dispose();
         }
@@ -73,16 +107,16 @@ class DownloadProgressGraphGtkTest {
         var graph = new DownloadProgressGraph(builder);
         try {
             Download download = download();
-            var snapshot = new DownloadSpeedHistory.Snapshot(List.of(
+            download.setSpeedHistoryState(new DownloadSpeedHistory.State(1, List.of(
                     new DownloadSpeedHistory.Sample(10_000, 1000, 1024),
-                    new DownloadSpeedHistory.Sample(13_000, 4267, 2048)), 1536);
-            graph.update(download, snapshot);
+                    new DownloadSpeedHistory.Sample(13_000, 4267, 2048)), 3000, 4_608_000));
+            graph.update(download);
             assertEquals("Size unknown", label(builder, "info_progress_value"));
             assertEquals("Active transfer time", label(builder, "progress_axis_label"));
             assertEquals("0s", label(builder, "progress_axis_start"));
             assertEquals("3s", label(builder, "progress_axis_end"));
             download.setStatus(Download.Status.COMPLETED);
-            graph.update(download, snapshot);
+            graph.update(download);
             assertEquals("100.00%", label(builder, "info_progress_value"));
             assertEquals("Speed: 0 B/s", label(builder, "info_speed_value"));
         } finally {
@@ -103,12 +137,13 @@ class DownloadProgressGraphGtkTest {
             download.setDownloaded(65_000);
             download.setStatus(Download.Status.DOWNLOADING);
             download.setSpeed(3072);
-            var history = new DownloadSpeedHistory();
+            var samples = new ArrayList<DownloadSpeedHistory.Sample>();
             for (int i = 0; i <= 65; i++) {
-                history.record(download, i * 1000L, i * 1000L,
-                        2048 + 1024 * Math.sin(i * 0.4));
+                samples.add(new DownloadSpeedHistory.Sample(i * 1000L, i * 1000L,
+                        2048 + 1024 * Math.sin(i * 0.4)));
             }
-            graph.update(download, history.snapshot(download));
+            download.setSpeedHistoryState(new DownloadSpeedHistory.State(1, samples, 65_000, 65_000 * 2048.0));
+            graph.update(download);
             window.setDefaultSize(1100, 800);
             window.present();
             // Allow the native draw callback to run before taking the GTK snapshot.

@@ -1,6 +1,7 @@
 package org.manager.download;
 
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
@@ -35,6 +36,8 @@ class DownloadServicesScheduler {
     private ScheduledFuture<?> trackerRefreshTask;
     /** Periodic state snapshot so a crash never loses the whole session. */
     private ScheduledFuture<?> stateSnapshotTask;
+    /** Coalesces bursts such as pause-all and several simultaneous completions. */
+    private ScheduledFuture<?> requestedStateSnapshotTask;
 
     DownloadServicesScheduler(ExecutorServiceManager executorManager,
             Supplier<GlobalSettings> settings,
@@ -89,11 +92,10 @@ class DownloadServicesScheduler {
     }
 
     /**
-     * Starts the periodic state snapshot job. Downloads are otherwise only
-     * persisted at shutdown, so a crash would silently discard the whole
-     * session.
+     * Starts periodic snapshots for active transfers, complementing saves at
+     * lifecycle changes and shutdown.
      */
-    void startStateSnapshotJob() {
+    synchronized void startStateSnapshotJob() {
         stopStateSnapshotJob();
         if (!settings.get().isOdmAutoSaveEnabled()) {
             LOGGER.info("Periodic state snapshots disabled by settings");
@@ -108,7 +110,7 @@ class DownloadServicesScheduler {
 
     /** One state snapshot tick; failures never kill the schedule. */
     private void runStateSnapshot() {
-        if (isShuttingDown.getAsBoolean()) {
+        if (isShuttingDown.getAsBoolean() || !settings.get().isOdmAutoSaveEnabled()) {
             return;
         }
         try {
@@ -118,11 +120,36 @@ class DownloadServicesScheduler {
         }
     }
 
+    /** Save lifecycle changes promptly without writing on every progress event. */
+    synchronized void requestStateSnapshot() {
+        if (isShuttingDown.getAsBoolean() || !settings.get().isOdmAutoSaveEnabled()
+                || requestedStateSnapshotTask != null) {
+            return;
+        }
+        try {
+            requestedStateSnapshotTask = executorManager.getScheduledExecutor().schedule(() -> {
+                synchronized (DownloadServicesScheduler.this) {
+                    requestedStateSnapshotTask = null;
+                }
+                runStateSnapshot();
+            }, 1, TimeUnit.SECONDS);
+        } catch (RejectedExecutionException e) {
+            // Coordinated shutdown saves the final state itself.
+            if (!isShuttingDown.getAsBoolean()) {
+                LOGGER.warn("Could not schedule download state snapshot", e);
+            }
+        }
+    }
+
     /** Cancels the state snapshot job, if scheduled. */
-    void stopStateSnapshotJob() {
+    synchronized void stopStateSnapshotJob() {
         if (stateSnapshotTask != null) {
             stateSnapshotTask.cancel(false);
             stateSnapshotTask = null;
+        }
+        if (requestedStateSnapshotTask != null) {
+            requestedStateSnapshotTask.cancel(false);
+            requestedStateSnapshotTask = null;
         }
     }
 }

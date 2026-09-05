@@ -8,6 +8,7 @@ import org.gnome.gtk.DrawingArea;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.manager.download.Download;
+import org.manager.download.DownloadSpeedHistory;
 
 /** Draws speed history inside the selected download's percentage fill. GTK thread only. */
 final class DownloadProgressGraph {
@@ -34,11 +35,11 @@ final class DownloadProgressGraph {
         axisStart = Widgets.require(builder, "progress_axis_start", Label.class);
         axisEnd = Widgets.require(builder, "progress_axis_end", Label.class);
         area.setDrawFunc(this::draw);
-        update(null, DownloadSpeedHistory.Snapshot.EMPTY);
+        update(null);
     }
 
-    void update(Download download, DownloadSpeedHistory.Snapshot snapshot) {
-        history = download == null ? DownloadSpeedHistory.Snapshot.EMPTY : snapshot;
+    void update(Download download) {
+        history = download == null ? DownloadSpeedHistory.Snapshot.EMPTY : download.getSpeedHistory();
         totalBytes = download == null ? 0 : download.getSize();
         boolean complete = download != null && (download.getStatus() == Download.Status.COMPLETED
                 || download.getStatus() == Download.Status.SEEDING);

@@ -115,7 +115,6 @@ public class MainWindow {
     private final Spinner activitySpinner;
     private final SpinnerActivity activity;
     private final DownloadProgressGraph infoProgressGraph;
-    private final DownloadSpeedHistory speedHistory = new DownloadSpeedHistory();
     private final Label totalSizeValue;
     private final Label addedOnValue;
     private final Label infoHashValue;
@@ -417,7 +416,6 @@ public class MainWindow {
         windowDownloadListener = new DownloadListener() {
             @Override public void onDownloadStart(Download d) { listPresenter.scheduleRefresh(); }
             @Override public void onDownloadProgress(Download d, float p, long db, long tb, float s) {
-                speedHistory.record(d, db, s);
                 listPresenter.scheduleRefresh();
             }
             @Override public void onDownloadStatusChanged(Download d,
@@ -2590,7 +2588,7 @@ public class MainWindow {
     }
 
     private void updateInfoPanel() {
-        infoProgressGraph.update(selectedDownload, speedHistory.snapshot(selectedDownload));
+        infoProgressGraph.update(selectedDownload);
         if (selectedDownload == null) {
             totalSizeValue.setLabel("—");
             addedOnValue.setLabel("—");
