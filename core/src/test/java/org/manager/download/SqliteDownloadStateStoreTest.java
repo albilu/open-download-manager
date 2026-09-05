@@ -55,6 +55,28 @@ class SqliteDownloadStateStoreTest {
     }
 
     @Test
+    void torServiceHoldAndCurlSocksRouteSurviveRestart() {
+        Download original = new Download(URI.create("sftp://user:secret@host.invalid/file.bin"));
+        original.setType(Download.Type.CURL);
+        original.setSettings(new org.curl.CurlSettings());
+        original.setUseProxy(true);
+        original.setProxyAddress("socks5h://127.0.0.1:9050");
+        original.setPauseReason(Download.PauseReason.TOR_SERVICE);
+        original.setStatus(Download.Status.PAUSED);
+        original.getSettings().setOption("ssh-host-key-md", "md5=" + "a".repeat(32));
+        try (SqliteDownloadStateStore store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            store.save(List.of(original), Set.of());
+            Download restored = store.load().downloads().getFirst();
+            assertEquals(Download.PauseReason.TOR_SERVICE, restored.getPauseReason());
+            assertEquals(Download.Status.PAUSED, restored.getStatus());
+            assertEquals(Download.Type.CURL, restored.getType());
+            assertEquals(original.getProxyAddress(), restored.getProxyAddress());
+            assertEquals(original.getSettings().getOption("ssh-host-key-md"),
+                    restored.getSettings().getOption("ssh-host-key-md"));
+        }
+    }
+
+    @Test
     void aria2DownloadRoundTripsThroughSqlite() {
         Download original = new Download(URI.create("https://example.com/file.iso"));
         original.setName("file.iso");

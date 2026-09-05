@@ -229,4 +229,7 @@ public interface DownloadOperations {
      * @param gate the gate predicate, or null to allow all starts
      */
     void setDownloadGate(java.util.function.Predicate<String> gate);
+
+    /** Pauses managed Tor routes while unavailable, and resumes only those service-held records. */
+    CompletableFuture<Void> setTorServiceAvailable(boolean available, int socksPort);
 }

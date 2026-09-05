@@ -201,19 +201,13 @@ final class DialogOptions {
         }
     }
 
-    /** Starts ODM's Tor service when a per-record Tor option requires it. */
+    /** Only the toolbar starts the service; previews must wait until it is available. */
     static CompletableFuture<Void> ensureTorAvailable(boolean requested, TorService torService) {
         if (!requested || (torService != null && torService.isRunning())) {
             return CompletableFuture.completedFuture(null);
         }
-        if (torService == null) {
-            return CompletableFuture.failedFuture(new IllegalStateException(
-                    "Tor is selected, but the ODM Tor service is unavailable"));
-        }
-        return torService.start().thenCompose(started -> Boolean.TRUE.equals(started)
-                ? CompletableFuture.completedFuture(null)
-                : CompletableFuture.failedFuture(new IllegalStateException(
-                        "Could not start the ODM Tor service")));
+        return CompletableFuture.failedFuture(new IllegalStateException(
+                "Tor is selected. Start the Tor service using the toolbar first."));
     }
 
     /**

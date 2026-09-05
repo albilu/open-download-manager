@@ -71,6 +71,17 @@ class ProxyRotationSupportTest {
     }
 
     @Test
+    void selectedSocksRouteIsNeverReplacedByRotationAfterCurlFallback() throws IOException {
+        GlobalSettings settings = new GlobalSettings().setProxyRotationEnabled(true)
+                .setProxyListFilePath(proxyListFile("http://1.2.3.4:8080").toString());
+        Download download = newDownload(Download.Type.CURL);
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
+        assertSame(baseHandler, newSupport(settings).maybeWrap(baseHandler, download));
+        assertEquals("socks5h://127.0.0.1:9050", download.getProxyAddress());
+    }
+
+    @Test
     @DisplayName("an empty proxy pool leaves the handler unwrapped")
     void emptyPoolLeavesHandlerUnwrapped() throws IOException {
         GlobalSettings settings = new GlobalSettings().setProxyRotationEnabled(true)

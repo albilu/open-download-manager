@@ -21,7 +21,13 @@ import org.manager.download.DownloadManager;
 
 class ChecksumPreviewRoutingTest {
     @TempDir Path directory;
-    @BeforeAll static void initGtk() { Gtk.init(); }
+    @BeforeAll static void initGtk() throws Exception {
+        // Initialize both registries before GTK objects can reach Java-GI's
+        // Cleaner thread, avoiding their circular class-initialization wait.
+        Class.forName("org.gnome.glib.GLib");
+        Class.forName("org.gnome.glib.MainContext");
+        Gtk.init();
+    }
 
     private static <T> T field(Object owner, String name, Class<T> type) throws Exception {
         var field = owner.getClass().getDeclaredField(name);

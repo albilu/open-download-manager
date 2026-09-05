@@ -252,10 +252,11 @@ public class DownloadHandlerFactory {
         // magnets and Metalinks) therefore tries proxychains first. Plain
         // URL transfers may use Curl's native SOCKS support as a secondary
         // route; aria2-only torrent-like work must never reach Curl.
-        // Downloads already typed PROXYCHAINS/CURL keep their handler so
-        // routing remains stable across later lookups.
+        // Restored PROXYCHAINS records need the same availability check as
+        // fresh aria2 records. A previous Curl fallback stays on Curl.
         String effectiveProxy = effectiveProxyAddress(download);
-        boolean socksRoutingRequired = download.getType() == Download.Type.ARIA2
+        boolean socksRoutingRequired = (download.getType() == Download.Type.ARIA2
+                || download.getType() == Download.Type.PROXYCHAINS)
                 && isSocksProxyAddress(effectiveProxy);
         if (socksRoutingRequired) {
             // This method owns the complete privacy-preserving fallback
@@ -284,7 +285,7 @@ public class DownloadHandlerFactory {
     }
 
     /**
-     * Routes fresh ARIA2 downloads with an effective SOCKS proxy through
+     * Routes ARIA2 and restored PROXYCHAINS downloads with a SOCKS proxy through
      * proxychains first. When proxychains is unavailable, a plain URL may
      * fall back to Curl with the same SOCKS proxy. Torrent, magnet and
      * Metalink work remains proxychains-only because Curl cannot execute
@@ -433,10 +434,11 @@ public class DownloadHandlerFactory {
         return protocol != null && protocol.isDirectTransfer();
     }
 
-    /** SFTP, torrent descriptors, magnets and Metalinks require aria2 semantics. */
+    /** Torrent descriptors, magnets and Metalinks cannot be executed by Curl. */
     private static boolean isAria2OnlyDownload(Download download) {
         Download.Protocol protocol = download != null ? download.getProtocol() : null;
-        return protocol != null && protocol.requiresAria2();
+        return protocol != null && (protocol.supportsPeerDetails()
+                || protocol == Download.Protocol.METALINK);
     }
 
     /**

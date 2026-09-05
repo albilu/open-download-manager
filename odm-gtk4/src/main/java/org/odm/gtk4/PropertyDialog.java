@@ -50,6 +50,7 @@ public class PropertyDialog {
         this.applyButton = Widgets.require(builder, "apply_button", Button.class);
         this.okButton = Widgets.require(builder, "ok_button", Button.class);
         this.networkOptions = new NetworkOptionsPane(this.downloads);
+        networkOptions.bindTorService(torService);
         Widgets.require(builder, "property_network_options_host", Box.class)
                 .append(networkOptions.widget());
 

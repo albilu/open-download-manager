@@ -132,7 +132,7 @@ public class Download {
         }
     }
 
-    public enum PauseReason { USER, SCHEDULE, OFFLINE }
+    public enum PauseReason { USER, SCHEDULE, OFFLINE, TOR_SERVICE }
 
     public enum Type {
         ARIA2,

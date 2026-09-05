@@ -83,6 +83,8 @@ class DescriptorImportTest {
                 URI source, String proxyAddress) { throw unsupported(); }
         @Override public List<List<String>> getDownloadTrackers(Download download) { throw unsupported(); }
         @Override public void setDownloadGate(java.util.function.Predicate<String> gate) { throw unsupported(); }
+        @Override public CompletableFuture<Void> setTorServiceAvailable(
+                boolean available, int socksPort) { throw unsupported(); }
 
         private static UnsupportedOperationException unsupported() {
             return new UnsupportedOperationException("not used by this test");

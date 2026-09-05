@@ -106,6 +106,7 @@ public final class NewWebsiteDialog {
 
         this.networkOptions = new NetworkOptionsPane(downloadManager.getGlobalSettings(),
                 Download.Type.WEBSITE_SCRAPING, Download.Protocol.HTTPS);
+        networkOptions.bindTorService(torService);
         Widgets.require(builder, "website_network_options_host", Box.class)
                 .append(networkOptions.widget());
 

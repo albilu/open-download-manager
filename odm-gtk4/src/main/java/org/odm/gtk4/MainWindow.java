@@ -185,6 +185,7 @@ public class MainWindow {
     private final ListStore completionDetailsStore;
     private final ListStore globalProgressStore;
     private final org.tor.TorService torService;
+    private final TorServiceController torServiceController;
     private final org.manager.schedule.ScheduleManager scheduleManager;
     private final java.util.concurrent.atomic.AtomicLong torToggleEpoch =
             new java.util.concurrent.atomic.AtomicLong();
@@ -202,6 +203,7 @@ public class MainWindow {
             org.manager.schedule.ScheduleManager scheduleManager) {
         this.downloadManager = downloadManager;
         this.torService = torService;
+        this.torServiceController = new TorServiceController(downloadManager, torService);
         this.scheduleManager = scheduleManager;
 
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
@@ -382,6 +384,7 @@ public class MainWindow {
         searchEntry.onSearchChanged(this::onSearchChanged);
         // tor_switch: wired below
         this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        torDesiredRunning.set(torService.isRunning());
         torSwitchSet(torService.isRunning());
         torSwitch.onStateSet(this::onTorToggled);
         this.menuBar = Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
@@ -561,6 +564,7 @@ public class MainWindow {
      * I/O). Idempotent; part of every real teardown path.
      */
     private void shutdownBackgroundWork() {
+        torServiceController.cancelPending();
         torDesiredRunning.set(false);
         torToggleEpoch.incrementAndGet();
         shutdownTorLeakChecker();
@@ -659,7 +663,6 @@ public class MainWindow {
 
     private void onSettingsClicked() {
         new SettingsDialog(window, downloadManager, scheduleManager, active -> {
-            applyTorPreference(active);
             if (trayPreferenceHandler != null) {
                 trayPreferenceHandler.accept(downloadManager.getGlobalSettings()
                         .getBooleanProperty("ui.systemTray", false));
@@ -668,22 +671,7 @@ public class MainWindow {
             // Rebuild settings-backed actions (subtitles, antivirus, custom)
             // so changes apply without requiring a restart or re-selection.
             installCompletionActions();
-        }).present();
-    }
-
-    /** Applies a Tor preference changed in Settings while preserving any explicit proxy selected there. */
-    private void applyTorPreference(boolean active) {
-        torSwitchSet(active);
-        if (active) {
-            onTorToggled(true);
-        } else {
-            torDesiredRunning.set(false);
-            torToggleEpoch.incrementAndGet();
-            shutdownTorLeakChecker();
-            torService.stop();
-            downloadManager.applyGlobalSettingsToActiveDownloads();
-            LOGGER.info("Tor stopped; Settings proxy preference retained");
-        }
+        }, torService).present();
     }
 
     private void onSearchChanged() {
@@ -1986,57 +1974,28 @@ public class MainWindow {
     private boolean onTorToggled(boolean active) {
         long epoch = torToggleEpoch.incrementAndGet();
         torDesiredRunning.set(active);
-        if (active) {
-            // Tor temporarily owns the active global route. Preserve any
-            // explicit proxy so switching Tor off restores it instead of
-            // silently forcing direct networking.
-            DialogOptions.rememberActiveManualProxy(downloadManager.getGlobalSettings());
-            trackActivity(torService.start()).whenComplete((ok, error) -> {
-                if (epoch != torToggleEpoch.get() || !torDesiredRunning.get()) {
-                    // The user switched Tor off while startup was pending.
-                    // A late successful start must not resurrect the proxy.
-                    if (Boolean.TRUE.equals(ok)) {
-                        torService.stop();
-                    }
-                    return;
-                }
-                if (Boolean.TRUE.equals(ok)) {
-                    LOGGER.info("Tor started; downloads can route via SOCKS5 127.0.0.1:9050");
-                    downloadManager.getGlobalSettings().setGlobalProxyEnabled(true);
-                    downloadManager.getGlobalSettings().setGlobalProxyAddress(
-                            "socks5h://127.0.0.1:" + torService.getSocksPort());
-                    downloadManager.getGlobalSettings().setProperty("tor.enabled", "true");
-                    downloadManager.getGlobalSettings().save();
-                    // Reconfigure running downloads to use the new proxy
-                    downloadManager.applyGlobalSettingsToActiveDownloads();
-                    verifyTorCircuit(epoch);
-                } else {
-                    LOGGER.warn("Tor failed to start"
-                            + (error != null ? ": " + error.getMessage() : ""));
-                    downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
-                    // Keep the dead SOCKS endpoint enabled so a failed Tor
-                    // launch cannot turn an intended private transfer into a
-                    // direct one.
-                    downloadManager.getGlobalSettings().setGlobalProxyEnabled(true);
-                    downloadManager.getGlobalSettings().setGlobalProxyAddress(
-                            "socks5h://127.0.0.1:" + torService.getSocksPort());
-                    downloadManager.getGlobalSettings().save();
-                    downloadManager.applyGlobalSettingsToActiveDownloads();
-                    torSwitchSet(false);
-                }
-            });
-        } else {
+        if (!active) {
             shutdownTorLeakChecker();
-            DialogOptions.restoreManualProxy(downloadManager.getGlobalSettings());
-            downloadManager.getGlobalSettings().setProperty("tor.enabled", "false");
-            downloadManager.getGlobalSettings().save();
-            // Restore the user's explicit proxy (or direct route) on running
-            // downloads now that the managed Tor route is gone.
-            downloadManager.applyGlobalSettingsToActiveDownloads();
-            torService.stop();
-            LOGGER.info("Tor stopped");
         }
-        return false; // let the switch apply its new state
+        trackActivity(torServiceController.setEnabled(active)).whenComplete((running, error) -> {
+            if (epoch != torToggleEpoch.get()) {
+                return;
+            }
+            if (active && Boolean.TRUE.equals(running)) {
+                LOGGER.info("Tor service started; saved download routes retained");
+                verifyTorCircuit(epoch);
+            } else if (active) {
+                LOGGER.warn("Tor failed to start" + (error != null ? ": " + error.getMessage() : ""));
+                torDesiredRunning.set(false);
+                torSwitchSet(false);
+            } else if (error != null) {
+                LOGGER.warn("Tor service shutdown failed", error);
+                torSwitchSet(torService.isRunning());
+            } else {
+                LOGGER.info("Tor service stopped; Tor downloads are paused");
+            }
+        });
+        return false;
     }
 
     /**

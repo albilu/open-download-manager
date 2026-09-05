@@ -1231,7 +1231,18 @@ public class YtDlpClient {
         // useAria2c flag is authoritative: the old wiring consulted the
         // additional-options map ("use-aria2c"), which setUseAria2c(true)
         // never populated, so the external downloader never engaged.
-        if (settings.isUseAria2c()) {
+        boolean nativeSocks = settings.isUseProxy()
+                && org.manager.download.handler.DownloadHandlerFactory
+                        .isSocksProxyAddress(settings.getProxyAddress());
+        if (nativeSocks) {
+            // yt-dlp passes --proxy to external aria2 as --all-proxy, which
+            // cannot accept SOCKS. Explicitly select native to also override
+            // an external downloader from an opted-in yt-dlp config file.
+            command.add("--external-downloader");
+            command.add("native");
+            command.add("--external-downloader");
+            command.add("http,ftp,m3u8,dash:native");
+        } else if (settings.isUseAria2c()) {
             command.add("--external-downloader");
             String aria2cPath = settings.getAria2cPath();
             command.add(aria2cPath == null || aria2cPath.isBlank()

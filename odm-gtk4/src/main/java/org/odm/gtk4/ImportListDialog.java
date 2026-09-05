@@ -129,6 +129,7 @@ public class ImportListDialog {
                 Widgets.require(builder, "proxy_username_entry", Entry.class),
                 Widgets.require(builder, "proxy_password_entry", Entry.class),
                 Widgets.require(builder, "tor_switch", Switch.class));
+        networkControls.bindTorService(dialog, torService);
         loadGlobalDefaults();
 
         MenuButton folderButton = Widgets.require(builder, "folder_destination", MenuButton.class);

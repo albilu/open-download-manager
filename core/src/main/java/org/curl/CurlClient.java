@@ -473,6 +473,22 @@ public class CurlClient {
             command.add("--insecure");
         }
 
+        // The aria2/proxychains SFTP fallback must retain an explicit host-key
+        // pin. Curl supports MD5 pins, but has no SHA-1 pin option.
+        if (download.getProtocol() == Download.Protocol.SFTP) {
+            String pin = org.aria2.Aria2Settings.normalizeSshHostKeyDigest(
+                    settings.getOption("ssh-host-key-md"));
+            if (pin.startsWith("sha-1=")) {
+                throw new IllegalArgumentException(
+                        "Curl cannot enforce an SFTP SHA-1 host-key pin; restore proxychains "
+                        + "or configure an MD5 host-key pin to use Curl fallback");
+            }
+            if (pin.startsWith("md5=")) {
+                command.add("--hostpubmd5");
+                command.add(pin.substring(4));
+            }
+        }
+
         // For backward compatibility, also check legacy options
         // But skip if we already have CurlSettings to avoid duplicates
         if (!(download.getSettings() instanceof CurlSettings)) {

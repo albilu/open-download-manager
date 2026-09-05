@@ -137,6 +137,7 @@ public class NewMediaDialog {
         this.startButton = Widgets.require(builder, "media_start_button", Button.class);
         this.networkOptions = new NetworkOptionsPane(globalSettings,
                 Download.Type.YOUTUBE, Download.Protocol.HTTPS);
+        networkOptions.bindTorService(torService);
         Widgets.require(builder, "media_network_options_host", Box.class)
                 .append(networkOptions.widget());
 

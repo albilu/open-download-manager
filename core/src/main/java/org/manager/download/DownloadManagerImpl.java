@@ -506,6 +506,12 @@ public class DownloadManagerImpl implements DownloadManager {
             if (download == null) {
                 throw new IllegalArgumentException("Download cannot be null");
             }
+            if (holdForUnavailableTor(download)) {
+                if (admissionAlreadyClaimed) {
+                    releaseRunningSlot(download.getId());
+                }
+                return;
+            }
             if (!isStartAllowedBySchedule(download)) {
                 if (admissionAlreadyClaimed) {
                     releaseRunningSlot(download.getId());
@@ -843,6 +849,82 @@ public class DownloadManagerImpl implements DownloadManager {
     /** Schedule gate: consulted before starting a download (null = allow all). */
     private volatile java.util.function.Predicate<String> downloadGate;
 
+    private volatile boolean torServiceAvailable = true;
+    private volatile int torSocksPort = 9050;
+    private CompletableFuture<Void> torAvailabilityUpdate = CompletableFuture.completedFuture(null);
+
+    @Override
+    public synchronized CompletableFuture<Void> setTorServiceAvailable(boolean available, int socksPort) {
+        if (socksPort < 1 || socksPort > 65535) {
+            throw new IllegalArgumentException("Invalid Tor SOCKS port: " + socksPort);
+        }
+        torSocksPort = socksPort;
+        // Close admission immediately, including recovery and queued work.
+        torServiceAvailable = available;
+        torAvailabilityUpdate = torAvailabilityUpdate.handleAsync((ignored, priorFailure) -> {
+            for (Download download : getAllDownloads()) {
+                if (available != torServiceAvailable || isShuttingDown.get()) {
+                    break;
+                }
+                try {
+                    if (available) {
+                        if (download.getStatus() == Download.Status.PAUSED
+                                && download.getPauseReason() == Download.PauseReason.TOR_SERVICE) {
+                            resumeDownloadInternal(download);
+                        }
+                    } else if (usesManagedTor(download)
+                            && (download.getStatus() == Download.Status.STARTING
+                            || download.getStatus() == Download.Status.CONNECTING
+                            || download.getStatus() == Download.Status.DOWNLOADING
+                            || download.getStatus() == Download.Status.SEEDING
+                            || download.getStatus() == Download.Status.QUEUED
+                                && !download.isManualStartRequired())) {
+                        pauseDownload(download, Download.PauseReason.TOR_SERVICE).join();
+                    }
+                } catch (RuntimeException failure) {
+                    // A failing engine must not prevent other Tor records
+                    // from being paused or resumed during this transition.
+                    LOGGER.warn("Failed to update Tor service hold for " + download.getId(), failure);
+                }
+            }
+            return null;
+        }, executorManager.getGeneralExecutor());
+        return torAvailabilityUpdate;
+    }
+
+    private boolean usesManagedTor(Download download) {
+        String proxy = effectiveProxyAddress(download);
+        if (!org.manager.download.handler.DownloadHandlerFactory.isSocksProxyAddress(proxy)) {
+            return false;
+        }
+        try {
+            URI endpoint = URI.create(proxy);
+            return endpoint.getPort() == torSocksPort
+                    && Set.of("127.0.0.1", "localhost", "[::1]", "::1")
+                            .contains(endpoint.getHost());
+        } catch (IllegalArgumentException | NullPointerException invalid) {
+            return false;
+        }
+    }
+
+    private boolean holdForUnavailableTor(Download download) {
+        if (torServiceAvailable || !usesManagedTor(download)) {
+            return false;
+        }
+        boolean admitted;
+        synchronized (admissionLock) {
+            admitted = runningDownloadIds.contains(download.getId());
+        }
+        if (admitted) {
+            pauseDownload(download, Download.PauseReason.TOR_SERVICE, true).join();
+            return true;
+        }
+        download.setPauseReason(Download.PauseReason.TOR_SERVICE);
+        downloadRepository.updateDownloadStatus(download, Download.Status.PAUSED);
+        notifyDownloadPause(download);
+        return true;
+    }
+
     @Override
     public void setDownloadGate(java.util.function.Predicate<String> gate) {
         this.downloadGate = gate;
@@ -953,6 +1035,9 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private void resumeDownloadInternal(Download download) {
+        if (holdForUnavailableTor(download)) {
+            return;
+        }
         // Resume is also an explicit user/startup action and therefore releases
         // a manual-start hold before schedule/concurrency admission is checked.
         Download.PauseReason pauseReason = download.getPauseReason();
@@ -2530,7 +2615,13 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
 
                 int resumedCount = 0;
-                for (String downloadId : activeDownloadsBeforeExit) {
+                Set<String> resumableIds = new java.util.HashSet<>(activeDownloadsBeforeExit);
+                if (torServiceAvailable) {
+                    getDownloadsByStatus(Download.Status.PAUSED).stream()
+                            .filter(d -> d.getPauseReason() == Download.PauseReason.TOR_SERVICE)
+                            .map(Download::getId).forEach(resumableIds::add);
+                }
+                for (String downloadId : resumableIds) {
                     try {
                         Download download = getDownload(downloadId);
                         if (download != null && download.getStatus() == Download.Status.PAUSED) {

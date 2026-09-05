@@ -177,22 +177,21 @@ public final class OdmApplication {
             ApplicationContext.initialize();
             DownloadManager manager = ApplicationContext.getDownloadManager();
 
-            // Make persisted privacy state effective before manager.initialize
-            // can auto-resume anything. Failure is fail-closed: startup stops
-            // instead of allowing a direct recovery window.
+            // The toolbar service state and Network route preference are
+            // independent. Close Tor admission before recovery, even when
+            // the saved service state is off or startup fails.
             org.tor.TorService torService = createTorService();
-            if (manager.getGlobalSettings().getBooleanProperty("tor.enabled", false)) {
-                manager.getGlobalSettings().setGlobalProxyEnabled(true);
-                manager.getGlobalSettings().setGlobalProxyAddress(
-                        "socks5h://127.0.0.1:" + torService.getSocksPort());
+            manager.setTorServiceAvailable(false, torService.getSocksPort()).join();
+            if (TorServiceController.isEnabledAtStartup(manager.getGlobalSettings())) {
                 try {
-                    if (!Boolean.TRUE.equals(torService.start().get(40, TimeUnit.SECONDS))) {
-                        throw new IllegalStateException("Persisted Tor mode could not start");
+                    boolean started = Boolean.TRUE.equals(torService.start().get(40, TimeUnit.SECONDS));
+                    manager.setTorServiceAvailable(started, torService.getSocksPort()).join();
+                    if (!started) {
+                        LOGGER.warn("Tor service could not start; Tor downloads will remain paused");
                     }
                 } catch (Exception e) {
-                    torService.shutdown();
-                    throw new IllegalStateException(
-                            "Tor is enabled, so recovery was stopped to prevent direct traffic", e);
+                    torService.stop();
+                    LOGGER.warn("Tor service startup failed; Tor downloads will remain paused", e);
                 }
             }
 

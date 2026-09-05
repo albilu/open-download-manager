@@ -47,6 +47,7 @@ final class NetworkOptionControls {
 
     private boolean plainProxySupported;
     private boolean socksProxySupported;
+    private boolean torAvailable;
     private boolean adjustingProxyType;
 
     NetworkOptionControls(SpinButton connections, SpinButton downloadLimit,
@@ -107,8 +108,22 @@ final class NetworkOptionControls {
         boolean anyProxy = plainProxySupported || socksProxySupported;
         proxyType.setSensitive(anyProxy);
         proxyType.setTooltipText(proxyTooltip());
-        setSupported(tor, socksProxySupported);
+        refreshTorSensitivity();
         refreshProxySensitivity();
+    }
+
+    void bindTorService(Widget owner, org.tor.TorService service) {
+        TorControlBinding.bind(owner, service, available -> {
+            torAvailable = available;
+            refreshTorSensitivity();
+        });
+    }
+
+    private void refreshTorSensitivity() {
+        tor.setSensitive(socksProxySupported && torAvailable);
+        tor.setTooltipText(!socksProxySupported ? UNSUPPORTED
+                : !torAvailable ? "Start Tor using the toolbar to change this option."
+                : originalTooltips.get(tor));
     }
 
     boolean isSensitive(ExternalToolSettings.Capability capability) {

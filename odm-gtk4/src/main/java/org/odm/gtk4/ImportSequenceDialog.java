@@ -130,6 +130,7 @@ public class ImportSequenceDialog {
                 Widgets.require(builder, "proxy_username_entry", Entry.class),
                 Widgets.require(builder, "proxy_password_entry", Entry.class),
                 Widgets.require(builder, "tor_switch", Switch.class));
+        networkControls.bindTorService(dialog, torService);
         loadGlobalDefaults();
 
         MenuButton destinationButton = Widgets.require(builder, "destination_folder", MenuButton.class);

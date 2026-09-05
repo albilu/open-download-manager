@@ -131,7 +131,13 @@ final class NetworkOptionsPane {
     }
 
     boolean isTorSelected() {
-        return tor.getSensitive() && tor.getActive();
+        // Service availability disables editing, not the saved route.
+        return controls.isSensitive(ExternalToolSettings.Capability.SOCKS_PROXY)
+                && tor.getActive();
+    }
+
+    void bindTorService(org.tor.TorService service) {
+        controls.bindTorService(root, service);
     }
 
     String selectedProxyAddress() {

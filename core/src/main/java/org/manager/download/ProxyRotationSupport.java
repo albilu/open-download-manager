@@ -59,6 +59,12 @@ class ProxyRotationSupport {
         if (!current.isProxyRotationEnabled()) {
             return handler;
         }
+        // In particular, a Curl fallback must retain the SOCKS/Tor route
+        // selected before proxychains failed; a pool entry cannot replace it.
+        if (download.isUseProxy() && org.manager.download.handler.DownloadHandlerFactory
+                .isSocksProxyAddress(download.getProxyAddress())) {
+            return handler;
+        }
         if (download.getType() != Download.Type.ARIA2 && download.getType() != Download.Type.CURL) {
             return handler;
         }

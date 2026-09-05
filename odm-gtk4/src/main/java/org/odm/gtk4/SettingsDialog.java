@@ -311,6 +311,13 @@ public class SettingsDialog {
     public SettingsDialog(Window parent, DownloadManager downloadManager,
             org.manager.schedule.ScheduleManager scheduleManager,
             java.util.function.Consumer<Boolean> torPreferenceHandler) {
+        this(parent, downloadManager, scheduleManager, torPreferenceHandler, null);
+    }
+
+    public SettingsDialog(Window parent, DownloadManager downloadManager,
+            org.manager.schedule.ScheduleManager scheduleManager,
+            java.util.function.Consumer<Boolean> torPreferenceHandler,
+            org.tor.TorService torService) {
         this.downloadManager = downloadManager;
         this.scheduleManager = scheduleManager;
         this.torPreferenceHandler = torPreferenceHandler;
@@ -426,6 +433,12 @@ public class SettingsDialog {
 
         configureSettingTooltips();
         load();
+        Switch torControl = Widgets.require(builder, "tor_switch", Switch.class);
+        TorControlBinding.bind(dialog, torService, available -> {
+            torControl.setSensitive(available);
+            torControl.setTooltipText(available ? SETTING_TOOLTIPS.get("tor_switch")
+                    : "Start Tor using the toolbar to change this option.");
+        });
         discoverAvailableAntiviruses();
         bindFolderMonitoringChildren();
         bindHistoryCleanupControls();

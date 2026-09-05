@@ -26,6 +26,7 @@ class ManagerProxychainsCurlFallbackTest {
         private final Download.Type type;
         private final AtomicInteger starts = new AtomicInteger();
         private final AtomicInteger routeStops = new AtomicInteger();
+        private final AtomicInteger resumes = new AtomicInteger();
         private volatile boolean failStart;
 
         FakeHandler(Download.Type type) {
@@ -69,6 +70,7 @@ class ManagerProxychainsCurlFallbackTest {
 
         @Override
         public CompletableFuture<Void> resumeDownload(Download download) {
+            resumes.incrementAndGet();
             return CompletableFuture.completedFuture(null);
         }
 
@@ -140,9 +142,11 @@ class ManagerProxychainsCurlFallbackTest {
         }
     }
 
-    @Test
-    void runtimeProxychainsErrorFallsBackToCurlWithSameSocksProxy() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"https", "sftp"})
+    void runtimeProxychainsErrorFallsBackToCurlWithSameSocksProxy(String scheme) throws Exception {
         Download download = plainSocksDownload("runtime-fallback");
+        download.setUri(URI.create(scheme + "://example.test/file.bin"));
 
         manager.queueDownload(download).join();
         assertTrue(awaitTrue(() -> proxychains.starts.get() == 1));
@@ -177,6 +181,56 @@ class ManagerProxychainsCurlFallbackTest {
 
         curl.fireComplete(download);
         assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 0));
+    }
+
+    @Test
+    void torServiceOffPausesOnlyTorRecordsAndOnResumesOnlyServiceHolds() throws Exception {
+        manager.getGlobalSettings().setMaxConcurrentDownloads(8);
+        Download tor = plainSocksDownload("tor-active");
+        Download manual = plainSocksDownload("tor-user-paused");
+        Download direct = new Download(URI.create("https://example.test/direct.bin"));
+        manager.queueDownload(tor).join();
+        manager.queueDownload(manual).join();
+        manager.queueDownload(direct).join();
+        assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 3));
+        manager.pauseDownload(manual).join();
+        try {
+            manager.setTorServiceAvailable(false, 9050).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            assertEquals(Download.Status.PAUSED, tor.getStatus());
+            assertEquals(Download.PauseReason.TOR_SERVICE, tor.getPauseReason());
+            assertEquals(Download.PauseReason.USER, manual.getPauseReason());
+            assertEquals(Download.Status.DOWNLOADING, direct.getStatus());
+            assertEquals("socks5h://127.0.0.1:9050", tor.getProxyAddress());
+            assertEquals(1, manager.getRunningDownloadCount());
+            manager.resumeDownload(tor).join();
+            assertEquals(Download.Status.PAUSED, tor.getStatus());
+            assertEquals(0, proxychains.resumes.get());
+            manager.setTorServiceAvailable(true, 9050).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            assertEquals(Download.Status.DOWNLOADING, tor.getStatus());
+            assertEquals(1, proxychains.resumes.get());
+            assertEquals(Download.Status.PAUSED, manual.getStatus());
+        } finally {
+            manager.setTorServiceAvailable(true, 9050).join();
+        }
+    }
+
+    @Test
+    void torRecordsQueuedWhileOffWaitWithoutConsumingSlots() throws Exception {
+        manager.setTorServiceAvailable(false, 9050).join();
+        try {
+            Download tor = plainSocksDownload("tor-queued-while-off");
+            manager.queueDownload(tor).join();
+            assertTrue(awaitTrue(() -> tor.getStatus() == Download.Status.PAUSED));
+            assertEquals(Download.PauseReason.TOR_SERVICE, tor.getPauseReason());
+            assertEquals(0, proxychains.starts.get());
+            assertEquals(0, curl.starts.get());
+            assertEquals(0, manager.getRunningDownloadCount());
+            manager.setTorServiceAvailable(true, 9050).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            assertEquals(1, proxychains.starts.get());
+            assertEquals(Download.Status.DOWNLOADING, tor.getStatus());
+        } finally {
+            manager.setTorServiceAvailable(true, 9050).join();
+        }
     }
 
     @Test

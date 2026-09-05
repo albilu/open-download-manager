@@ -533,7 +533,7 @@ class WindowSmokeTest {
         assertFalse(retryDelay.getSensitive());
         assertTrue(referer.getSensitive());
         assertTrue(proxyType.getSensitive());
-        assertTrue(tor.getSensitive());
+        assertFalse(tor.getSensitive(), "Tor service was not supplied");
         assertFalse(proxyHost.getSensitive(),
                 "proxy details remain disabled while proxy type is None");
         proxyType.setSelected(1);
@@ -546,7 +546,7 @@ class WindowSmokeTest {
         assertFalse(connections.getSensitive());
         assertTrue(uploadLimit.getSensitive());
         assertFalse(referer.getSensitive());
-        assertTrue(tor.getSensitive());
+        assertFalse(tor.getSensitive(), "Tor service was not supplied");
     }
 
     @Test

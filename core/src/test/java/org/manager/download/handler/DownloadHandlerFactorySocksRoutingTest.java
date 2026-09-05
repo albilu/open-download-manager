@@ -107,6 +107,44 @@ class DownloadHandlerFactorySocksRoutingTest {
         assertEquals("socks5://127.0.0.1:1080", download.getSettings().getProxyAddress());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"https", "ftp", "sftp"})
+    void restoredProxychainsRecordFallsBackWhenProxychainsIsMissing(String scheme) {
+        DownloadHandlerFactory restoredFactory = new DownloadHandlerFactory(
+                new GlobalSettings(), new DownloadSettingsFactory(), executor,
+                mock(ToolManagerFactory.class));
+        when(curl.canHandle(any())).thenAnswer(call ->
+                ((Download) call.getArgument(0)).getType() == Download.Type.CURL);
+        restoredFactory.registerHandler(Download.Type.CURL, curl);
+        Download download = new Download(URI.create(scheme + "://user:secret@example.test/file.bin"));
+        download.setType(Download.Type.PROXYCHAINS);
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://proxy-user:proxy-secret@127.0.0.1:9050");
+        download.getSettings().setProxyInherited(true);
+        download.getSettings().setOption("ssh-host-key-md", "md5=0123456789abcdef0123456789abcdef");
+
+        assertSame(curl, restoredFactory.getHandler(download));
+        assertEquals(Download.Type.CURL, download.getType());
+        assertTrue(download.getSettings() instanceof CurlSettings);
+        assertTrue(download.getSettings().isProxyInherited());
+        assertEquals("socks5h://proxy-user:proxy-secret@127.0.0.1:9050", download.getProxyAddress());
+        assertEquals("user:secret", download.getUri().getUserInfo());
+        assertEquals("md5=0123456789abcdef0123456789abcdef",
+                download.getSettings().getOption("ssh-host-key-md"));
+        assertSame(curl, restoredFactory.getHandler(download), "later lookups retain the Curl fallback");
+    }
+
+    @Test
+    void freshSftpUsesProxychainsThenCurlWhenRejected() {
+        Download download = new Download(URI.create("sftp://user:secret@example.test/file.bin"));
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
+        assertSame(proxychains, factory.getHandler(download));
+        when(proxychains.canHandle(any())).thenThrow(new IllegalStateException("tool unavailable"));
+        assertSame(curl, factory.getHandler(download));
+        assertEquals(Download.Type.CURL, download.getType());
+    }
+
     @Test
     void missingProxychainsNeverFallsBackTorrentMagnetOrMetalinkToCurl() {
         DownloadHandlerFactory withoutProxychains = new DownloadHandlerFactory(
@@ -127,6 +165,9 @@ class DownloadHandlerFactorySocksRoutingTest {
 
             assertNull(withoutProxychains.getHandler(download), uri.toString());
             assertEquals(Download.Type.ARIA2, download.getType(), uri.toString());
+            download.setType(Download.Type.PROXYCHAINS);
+            assertNull(withoutProxychains.getHandler(download), "restored " + uri);
+            assertEquals(Download.Type.PROXYCHAINS, download.getType());
         }
         verify(aria2, never()).canHandle(any());
         verify(curl, never()).canHandle(any());

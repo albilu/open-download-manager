@@ -102,6 +102,7 @@ public class NewDownloadDialog {
         this.sftpHostKeyEntry = Widgets.require(builder, "sftp_host_key_entry", Entry.class);
         this.networkOptions = new NetworkOptionsPane(downloadManager.getGlobalSettings(),
                 Download.Type.ARIA2, Download.Protocol.HTTPS);
+        networkOptions.bindTorService(torService);
         Widgets.require(builder, "new_download_network_options_host", Box.class)
                 .append(networkOptions.widget());
         this.checksumLabel = Widgets.require(builder, "checksum_label", Label.class);
