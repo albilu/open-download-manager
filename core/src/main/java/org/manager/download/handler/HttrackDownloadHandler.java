@@ -269,7 +269,10 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
         };
 
         // Apply global proxy settings if enabled and not overridden
-        if (!settings.isUseProxy() && globalSettings.isGlobalProxyEnabled()) {
+        if (!settings.isUseProxy() && globalSettings.isGlobalProxyEnabled()
+                && org.manager.download.DownloadNetworkCapabilities.supportsProxy(
+                        settings, Download.Type.WEBSITE_SCRAPING,
+                        download.getProtocol(), globalSettings.getGlobalProxyAddress())) {
             settings.setUseProxy(true)
                     .setProxyAddress(globalSettings.getGlobalProxyAddress());
         }

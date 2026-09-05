@@ -54,7 +54,8 @@ class ImportSequenceDialogTest {
         Aria2Settings settings = (Aria2Settings) download.getSettings();
         assertEquals(7, settings.getMaxConnections());
         assertEquals(300, settings.getDownloadLimitKB());
-        assertEquals(40, settings.getUploadLimitKB());
+        assertEquals(0, settings.getUploadLimitKB(),
+                "upload limits are irrelevant for an HTTP record");
         assertEquals(6, settings.getMaxRetries());
         assertEquals(2, settings.getRetryDelaySeconds());
         assertEquals("https://referrer.test/", settings.getReferer());

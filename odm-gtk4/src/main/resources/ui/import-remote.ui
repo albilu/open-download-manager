@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+
+  <object class="GtkWindow" id="remote_import_dialog">
+    <property name="title">Import Links from Remote</property>
+    <property name="modal">true</property>
+    <property name="default-width">560</property>
+    <child>
+      <object class="GtkBox" id="remote_import_content">
+        <property name="orientation">vertical</property>
+        <property name="spacing">10</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">12</property>
+        <property name="margin-bottom">12</property>
+        <child>
+          <object class="GtkLabel" id="remote_import_help_label">
+            <property name="xalign">0</property>
+            <property name="wrap">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="remote_import_url_entry">
+            <property name="placeholder-text">https://example.com/downloads.html</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="remote_import_status_label">
+            <property name="accessible-role">status</property>
+            <property name="xalign">0</property>
+            <property name="wrap">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="remote_import_actions">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">8</property>
+            <property name="halign">end</property>
+            <child><object class="GtkButton" id="remote_import_cancel_button"><property name="label">Cancel</property></object></child>
+            <child><object class="GtkButton" id="remote_import_start_button"><property name="label">Import Links</property><property name="css-classes">['suggested-action']</property></object></child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

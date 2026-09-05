@@ -21,7 +21,11 @@ public interface ExternalToolSettings {
         RETRY_DELAY,
         REFERER,
         USER_AGENT,
-        COOKIE
+        COOKIE,
+        /** HTTP/HTTPS-style proxy support, either native or through ODM routing. */
+        PROXY,
+        /** SOCKS proxy support, either native or through ODM routing. */
+        SOCKS_PROXY
     }
 
     /** Whether this engine actually maps the setting to its native command. */

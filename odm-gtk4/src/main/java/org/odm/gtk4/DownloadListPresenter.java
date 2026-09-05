@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -8,9 +9,12 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.gnome.gtk.ListStore;
+import org.gnome.gtk.SortType;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeRowReference;
+import org.gnome.gtk.TreeSelection;
+import org.gnome.gtk.TreeSortable;
 import org.gnome.gtk.TreeView;
 import org.javagi.interop.MemoryCleaner;
 import org.manager.download.Download;
@@ -206,6 +210,40 @@ final class DownloadListPresenter {
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList();
+    }
+
+    /**
+     * Restores download selection after a structural ListStore rebuild. Stable
+     * ids are used because every former TreePath becomes invalid after clear().
+     *
+     * @return the number of visible records reselected
+     */
+    int restoreSelection(TreeSelection selection, Collection<String> downloadIds) {
+        if (selection == null || downloadIds == null || downloadIds.isEmpty()) {
+            return 0;
+        }
+        int restored = 0;
+        for (String id : new java.util.LinkedHashSet<>(downloadIds)) {
+            TreeRowReference reference = rowReferences.get(id);
+            TreePath path = reference == null ? null : reference.getPath();
+            if (path == null) {
+                continue;
+            }
+            try {
+                selection.selectPath(path);
+                restored++;
+            } finally {
+                MemoryCleaner.free(path.handle());
+            }
+        }
+        return restored;
+    }
+
+    /** Clears an explicit column sort so queue-position ordering is visible. */
+    void useQueueOrder() {
+        // GTK_TREE_SORTABLE_UNSORTED_SORT_COLUMN_ID is -2. Gtk exposes the
+        // constant in C but java-gi currently does not generate it.
+        ((TreeSortable) downloadsStore).setSortColumnId(-2, SortType.ASCENDING);
     }
 
     /** Schedules one coalesced refresh on the GTK main loop. Any thread. */

@@ -25,6 +25,7 @@ class ManagerProxychainsCurlFallbackTest {
 
         private final Download.Type type;
         private final AtomicInteger starts = new AtomicInteger();
+        private final AtomicInteger routeStops = new AtomicInteger();
         private volatile boolean failStart;
 
         FakeHandler(Download.Type type) {
@@ -61,6 +62,12 @@ class ManagerProxychainsCurlFallbackTest {
         }
 
         @Override
+        public CompletableFuture<Void> stopForRouteChange(Download download) {
+            routeStops.incrementAndGet();
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
         public CompletableFuture<Void> resumeDownload(Download download) {
             return CompletableFuture.completedFuture(null);
         }
@@ -86,6 +93,7 @@ class ManagerProxychainsCurlFallbackTest {
     }
 
     private DownloadManagerImpl manager;
+    private FakeHandler aria2;
     private FakeHandler proxychains;
     private FakeHandler curl;
     private final List<String> errorEvents = new CopyOnWriteArrayList<>();
@@ -94,10 +102,12 @@ class ManagerProxychainsCurlFallbackTest {
     void setUp() {
         ApplicationContext.initialize();
         manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
+        aria2 = new FakeHandler(Download.Type.ARIA2);
         proxychains = new FakeHandler(Download.Type.PROXYCHAINS);
         curl = new FakeHandler(Download.Type.CURL);
         DownloadHandlerFactory factory = DownloadManagerFactory.getContainer()
                 .getRequired(DownloadHandlerFactory.class);
+        factory.registerHandler(Download.Type.ARIA2, aria2);
         factory.registerHandler(Download.Type.PROXYCHAINS, proxychains);
         factory.registerHandler(Download.Type.CURL, curl);
         ApplicationContext.getGlobalSettings().setMaxConcurrentDownloads(2);
@@ -200,6 +210,33 @@ class ManagerProxychainsCurlFallbackTest {
         assertEquals(0, curl.starts.get());
         assertTrue(awaitTrue(() -> errorEvents.contains(download.getId())));
         assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 0));
+    }
+
+    @Test
+    void livePropertyProxyChangeHandsAria2ToProxychainsAndBack() throws Exception {
+        Download download = new Download(URI.create(
+                "https://example.test/live-route.bin"));
+        download.setName("live-route");
+
+        manager.queueDownload(download).join();
+        assertTrue(awaitTrue(() -> aria2.starts.get() == 1));
+        assertEquals(Download.Type.ARIA2, download.getType());
+
+        download.getSettings().setUseProxy(true);
+        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        manager.changeSettings(download).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertTrue(awaitTrue(() -> proxychains.starts.get() == 1));
+        assertEquals(1, aria2.routeStops.get());
+        assertEquals(Download.Type.PROXYCHAINS, download.getType());
+
+        download.getSettings().setUseProxy(false);
+        download.getSettings().setProxyAddress(null);
+        manager.changeSettings(download).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertTrue(awaitTrue(() -> aria2.starts.get() == 2));
+        assertEquals(1, proxychains.routeStops.get());
+        assertEquals(Download.Type.ARIA2, download.getType());
     }
 
     private Download plainSocksDownload(String name) {

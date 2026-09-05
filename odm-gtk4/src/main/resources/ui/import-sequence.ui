@@ -58,19 +58,19 @@
         <child>
           <object class="GtkNotebook" id="main_notebook">
             <property name="vexpand">true</property>
-            <property name="margin-start">10</property>
-            <property name="margin-end">10</property>
-            <property name="margin-top">10</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
 
             <!-- SEQUENCE TAB -->
             <child>
-              <object class="GtkBox">
+              <object class="GtkBox" id="sequence_page">
                 <property name="orientation">vertical</property>
                 <property name="spacing">10</property>
-                <property name="margin-start">8</property>
-                <property name="margin-end">8</property>
-                <property name="margin-top">8</property>
-                <property name="margin-bottom">8</property>
+                <property name="margin-start">12</property>
+                <property name="margin-end">12</property>
+                <property name="margin-top">12</property>
+                <property name="margin-bottom">12</property>
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">horizontal</property><property name="spacing">8</property>

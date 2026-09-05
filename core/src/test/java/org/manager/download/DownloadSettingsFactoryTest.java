@@ -295,8 +295,8 @@ class DownloadSettingsFactoryTest {
     }
 
     @Test
-    @DisplayName("the typed global speed limit overrides the Network default for every supporting engine")
-    void globalSpeedLimitWins() {
+    @DisplayName("the Network limit is the sole per-record download limit default")
+    void networkLimitWinsOverLegacyGlobalLimit() {
         GlobalSettings global = new GlobalSettings().setGlobalSpeedLimit(128);
         new DownloadSettingsFactory.NetworkDefaults(8, 5, 512, 0, 0,
                 "", "", "").saveTo(global);
@@ -305,8 +305,8 @@ class DownloadSettingsFactoryTest {
         for (Download.Type type : Download.Type.values()) {
             ExternalToolSettings settings = factory.createSettings(type);
             if (settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
-                assertEquals(128, settings.getDownloadLimitKB(),
-                        type + " must honor the stronger global limit");
+                assertEquals(512, settings.getDownloadLimitKB(),
+                        type + " must use the visible Network default");
             }
         }
     }
@@ -324,8 +324,8 @@ class DownloadSettingsFactoryTest {
     }
 
     @Test
-    @DisplayName("the global proxy is injected into every settings object when enabled")
-    void globalProxyInjection() {
+    @DisplayName("the global proxy is injected only into supporting engine routes")
+    void globalProxyInjectionHonorsCapabilities() {
         GlobalSettings global = new GlobalSettings()
                 .setGlobalProxyEnabled(true)
                 .setGlobalProxyAddress("socks5h://127.0.0.1:9050");
@@ -333,6 +333,11 @@ class DownloadSettingsFactoryTest {
 
         for (Download.Type type : Download.Type.values()) {
             DownloadSettings settings = factory.createSettings(type);
+            if (type == Download.Type.WEBSITE_SCRAPING) {
+                assertFalse(settings.isUseProxy(),
+                        "HTTrack does not support a native SOCKS proxy");
+                continue;
+            }
             assertTrue(settings.isUseProxy(), type + " must use the global proxy");
             assertEquals("socks5h://127.0.0.1:9050", settings.getProxyAddress());
         }
@@ -353,8 +358,11 @@ class DownloadSettingsFactoryTest {
     @DisplayName("the factory picks up a later settings swap")
     void settingsSwapIsHonored() {
         DownloadSettingsFactory factory = new DownloadSettingsFactory();
-        factory.setGlobalSettings(new GlobalSettings().setGlobalSpeedLimit(64));
-        Aria2Settings settings = factory.createAria2Settings();
-        assertEquals(64, settings.getDownloadLimitKB());
+        GlobalSettings global = new GlobalSettings().setGlobalSpeedLimit(64);
+        new DownloadSettingsFactory.NetworkDefaults(4, 5, 96, 0, 0,
+                "", "", "").saveTo(global);
+        factory.setGlobalSettings(global);
+        Aria2Settings aria2 = factory.createAria2Settings();
+        assertEquals(96, aria2.getDownloadLimitKB());
     }
 }

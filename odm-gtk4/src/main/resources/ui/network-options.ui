@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+
+  <object class="GtkAdjustment" id="network_connections_adjustment">
+    <property name="lower">1</property>
+    <property name="upper">16</property>
+    <property name="value">4</property>
+    <property name="step-increment">1</property>
+  </object>
+  <object class="GtkAdjustment" id="network_retry_limit_adjustment">
+    <property name="lower">0</property>
+    <property name="upper">50</property>
+    <property name="value">5</property>
+    <property name="step-increment">1</property>
+  </object>
+  <object class="GtkAdjustment" id="network_retry_delay_adjustment">
+    <property name="lower">0</property>
+    <property name="upper">600</property>
+    <property name="value">0</property>
+    <property name="step-increment">1</property>
+  </object>
+  <object class="GtkAdjustment" id="network_download_limit_adjustment">
+    <property name="lower">0</property>
+    <property name="upper">1048576</property>
+    <property name="value">0</property>
+    <property name="step-increment">100</property>
+  </object>
+  <object class="GtkAdjustment" id="network_upload_limit_adjustment">
+    <property name="lower">0</property>
+    <property name="upper">1048576</property>
+    <property name="value">0</property>
+    <property name="step-increment">100</property>
+  </object>
+  <object class="GtkAdjustment" id="network_proxy_port_adjustment">
+    <property name="lower">0</property>
+    <property name="upper">65535</property>
+    <property name="value">0</property>
+    <property name="step-increment">1</property>
+  </object>
+
+  <object class="GtkStringList" id="network_plain_proxy_types">
+    <items>
+      <item>None</item>
+      <item>HTTP</item>
+      <item>HTTPS</item>
+    </items>
+  </object>
+  <object class="GtkStringList" id="network_all_proxy_types">
+    <items>
+      <item>None</item>
+      <item>HTTP</item>
+      <item>HTTPS</item>
+      <item>SOCKS4</item>
+      <item>SOCKS5</item>
+    </items>
+  </object>
+
+  <object class="GtkBox" id="network_options_root">
+    <property name="orientation">vertical</property>
+    <property name="vexpand">true</property>
+    <child>
+      <object class="GtkGrid" id="network_options_columns">
+        <property name="hexpand">true</property>
+        <property name="vexpand">true</property>
+        <property name="column-homogeneous">true</property>
+        <property name="column-spacing">20</property>
+        <property name="margin-start">12</property>
+        <property name="margin-end">12</property>
+        <property name="margin-top">14</property>
+        <property name="margin-bottom">14</property>
+        <child>
+          <object class="GtkBox" id="network_options_left_column">
+            <property name="orientation">vertical</property>
+            <property name="spacing">10</property>
+            <property name="hexpand">true</property>
+            <layout>
+              <property name="row">0</property>
+              <property name="column">0</property>
+            </layout>
+            <child>
+              <object class="GtkLabel" id="network_transfer_heading">
+                <property name="label">&lt;b&gt;Transfer Settings&lt;/b&gt;</property>
+                <property name="use-markup">true</property>
+                <property name="xalign">0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkGrid" id="network_transfer_grid">
+                <property name="hexpand">true</property>
+                <property name="column-homogeneous">true</property>
+                <property name="row-spacing">8</property>
+                <property name="column-spacing">12</property>
+                <child><object class="GtkLabel"><property name="label">Max connections:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkSpinButton" id="network_connections_spin"><property name="adjustment">network_connections_adjustment</property><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Retry limit:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkSpinButton" id="network_retry_limit_spin"><property name="adjustment">network_retry_limit_adjustment</property><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Retry after (s):</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkSpinButton" id="network_retry_delay_spin"><property name="adjustment">network_retry_delay_adjustment</property><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Max download speed (KiB/s):</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkSpinButton" id="network_download_limit_spin"><property name="adjustment">network_download_limit_adjustment</property><property name="hexpand">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Max upload speed (KiB/s):</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkSpinButton" id="network_upload_limit_spin"><property name="adjustment">network_upload_limit_adjustment</property><property name="hexpand">true</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="network_http_heading">
+                <property name="label">&lt;b&gt;HTTP Settings&lt;/b&gt;</property>
+                <property name="use-markup">true</property>
+                <property name="xalign">0</property>
+                <property name="margin-top">4</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkGrid" id="network_http_grid">
+                <property name="hexpand">true</property>
+                <property name="column-homogeneous">true</property>
+                <property name="row-spacing">8</property>
+                <property name="column-spacing">12</property>
+                <child><object class="GtkLabel"><property name="label">Referer:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkEntry" id="network_referer_entry"><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Cookie:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkEntry" id="network_cookie_entry"><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">User Agent:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkEntry" id="network_user_agent_entry"><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="network_options_right_column">
+            <property name="orientation">vertical</property>
+            <property name="spacing">10</property>
+            <property name="hexpand">true</property>
+            <layout>
+              <property name="row">0</property>
+              <property name="column">1</property>
+            </layout>
+            <child>
+              <object class="GtkLabel" id="network_proxy_heading">
+                <property name="label">&lt;b&gt;Proxy Settings&lt;/b&gt;</property>
+                <property name="use-markup">true</property>
+                <property name="xalign">0</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkGrid" id="network_proxy_grid">
+                <property name="hexpand">true</property>
+                <property name="column-homogeneous">true</property>
+                <property name="row-spacing">8</property>
+                <property name="column-spacing">12</property>
+                <child><object class="GtkLabel"><property name="label">Proxy type:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkDropDown" id="network_proxy_type_combo"><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Proxy host:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkEntry" id="network_proxy_host_entry"><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Proxy port:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkSpinButton" id="network_proxy_port_spin"><property name="adjustment">network_proxy_port_adjustment</property><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Username:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkEntry" id="network_proxy_username_entry"><property name="hexpand">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                <child><object class="GtkLabel"><property name="label">Password:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkEntry" id="network_proxy_password_entry"><property name="visibility">false</property><property name="hexpand">true</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="network_tor_heading">
+                <property name="label">&lt;b&gt;Tor Settings&lt;/b&gt;</property>
+                <property name="use-markup">true</property>
+                <property name="xalign">0</property>
+                <property name="margin-top">4</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkGrid" id="network_tor_grid">
+                <property name="hexpand">true</property>
+                <property name="column-homogeneous">true</property>
+                <property name="row-spacing">8</property>
+                <property name="column-spacing">12</property>
+                <child><object class="GtkLabel"><property name="label">Enable Tor:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                <child><object class="GtkSwitch" id="network_tor_switch"><property name="hexpand">false</property><property name="halign">start</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

@@ -109,7 +109,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         "following", // GID this one was spawned by
         "belongsTo", // Parent GID (e.g. metadata download of a payload)
         "verifiedLength", // Bytes examined while aria2 is checking hashes
-        "verifyIntegrityPending" // True while a requested hash check is queued
+        "verifyIntegrityPending", // True while a requested hash check is queued
+        "errorCode", // Numeric aria2 failure category for actionable diagnostics
+        "errorMessage" // Engine-provided failure detail
     };
 
     private final Aria2Client aria2Client;
@@ -850,12 +852,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         aria2Client.setHonorExternalConfiguration(
                 globalSettings.isHonorExternalAria2Configuration());
 
-        // Convert KB/s to B/s for aria2
-        long speedLimitBytesPerSec = globalSettings.getGlobalSpeedLimit() * 1024L;
-        if (speedLimitBytesPerSec > 0) {
-            extraArgs.add("--max-overall-download-limit=" + speedLimitBytesPerSec);
-        }
-
         // aria2's --all-proxy accepts HTTP(S), but not SOCKS. SOCKS work is
         // routed per download through ProxychainsDownloadHandler.
         if (globalSettings.isGlobalProxyEnabled()
@@ -955,11 +951,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
-     * Pushes the current global settings (overall speed limit, concurrency,
-     * and proxy) to the running aria2 daemon and to every active download,
-     * so changes made in the settings dialog or via the Tor toggle affect
-     * running transfers without a restart. Downloads that carry their own
-     * per-download proxy are left untouched.
+     * Pushes the current global settings (concurrency and proxy) to the
+     * running aria2 daemon and to every active download, so changes made in
+     * the settings dialog or via the Tor toggle affect running transfers
+     * without a restart. Transfer limits are per-record Network settings;
+     * the legacy hidden global speed field must not override them.
      */
     public void applyGlobalRuntimeOptions() {
         if (aria2Client == null) {
@@ -969,10 +965,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Daemon-wide options
         try {
             Map<String, Object> globalOptions = new HashMap<>();
-            // Convert KB/s to B/s for aria2; "0" clears a previously set limit
-            long speedLimitBytesPerSec = globalSettings.getGlobalSpeedLimit() * 1024L;
-            globalOptions.put("max-overall-download-limit",
-                    speedLimitBytesPerSec > 0 ? String.valueOf(speedLimitBytesPerSec) : "0");
             globalOptions.put("max-concurrent-downloads",
                     String.valueOf(globalSettings.getMaxConcurrentDownloads()));
             aria2Client.changeGlobalOption(globalOptions);
@@ -1270,6 +1262,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             String infoHash = (String) status.get("infoHash");
             boolean seeder = Boolean.parseBoolean(String.valueOf(
                     status.getOrDefault("seeder", false)));
+            String errorCode = statusText(status.get("errorCode"));
+            String errorMessage = statusText(status.get("errorMessage"));
 
             // Record this GID's complete transfer snapshot, then aggregate
             // every tracked GID. Previously only completed/total were summed,
@@ -1316,7 +1310,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
 
             // Update download status based on aria2 status
-            updateDownloadStatus(download, downloadStatus, gid, seeder);
+            updateDownloadStatus(download, downloadStatus, gid, seeder,
+                    errorCode, errorMessage);
 
             // Notify listeners about progress
             notifyDownloadProgress(download, progress, aggregatedCompleted, aggregatedTotal,
@@ -1336,6 +1331,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    private static String statusText(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.toString().strip();
+        return text.isEmpty() ? null : text;
     }
 
     private static int statusInt(Object value) {
@@ -1472,7 +1475,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * @param gid The aria2 GID for cleanup operations
      */
     private void updateDownloadStatus(Download download, String aria2Status, String gid,
-            boolean seeder) {
+            boolean seeder, String errorCode, String aria2ErrorMessage) {
         if (aria2Status == null) {
             return;
         }
@@ -1515,7 +1518,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 break;
             case "error":
                 download.setStatus(Download.Status.ERROR);
-                String errorMessage = "Aria2 download error for GID: " + gid;
+                String errorMessage = aria2FailureMessage(
+                        gid, errorCode, aria2ErrorMessage);
                 download.setErrorMessage(errorMessage);
                 notifyDownloadError(download, errorMessage);
                 untrackEntireDownload(download.getId());
@@ -1539,6 +1543,22 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 LOGGER.warn("Unknown aria2 status: " + aria2Status + " for GID: " + gid);
                 break;
         }
+    }
+
+    static String aria2FailureMessage(String gid, String errorCode,
+            String aria2ErrorMessage) {
+        String detail = statusText(aria2ErrorMessage);
+        String code = statusText(errorCode);
+        if (code != null && detail != null) {
+            return "Aria2 error " + code + ": " + detail;
+        }
+        if (detail != null) {
+            return "Aria2 error: " + detail;
+        }
+        if (code != null) {
+            return "Aria2 error " + code + " for GID: " + gid;
+        }
+        return "Aria2 download error for GID: " + gid;
     }
 
     /**
@@ -1662,6 +1682,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
         }
 
+        allowRenameWhenExistingOutputCannotBeResumed(download, options);
+
         // aria2 cannot validate an ordinary HTTP(S)/FTP file from
         // check-integrity alone; it also needs the authoritative digest.
         String checksum = checksumOptionFor(download);
@@ -1685,6 +1707,36 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         LOGGER.info("aria2.addUri returned GID: " + gid);
 
         return List.of(gid);
+    }
+
+    /**
+     * aria2 gives {@code --continue} precedence over auto file renaming. If an
+     * existing target is not writable, resume mode consequently fails with
+     * error 15 instead of applying the requested auto-renaming policy. Resume
+     * is impossible in that situation anyway, so disable it for this one RPC
+     * request and let aria2 choose its normal {@code name.1.ext} path.
+     */
+    void allowRenameWhenExistingOutputCannotBeResumed(Download download,
+            Map<String, Object> options) {
+        if (download == null || options == null
+                || !Boolean.parseBoolean(String.valueOf(options.get("continue")))
+                || !Boolean.parseBoolean(String.valueOf(options.get("auto-file-renaming")))
+                || Boolean.parseBoolean(String.valueOf(options.get("allow-overwrite")))) {
+            return;
+        }
+        Path destination = download.getDestination();
+        String outputName = download.getRequestedFileName() != null
+                ? download.getRequestedFileName() : download.getName();
+        if (destination == null || outputName == null || outputName.isBlank()) {
+            return;
+        }
+        org.manager.util.PathSafety.requireSafeFileName(outputName);
+        Path output = destination.resolve(outputName);
+        if (Files.exists(output) && !Files.isWritable(output)) {
+            options.put("continue", "false");
+            LOGGER.info("Existing output is not writable; allowing aria2 to auto-rename: "
+                    + output);
+        }
     }
 
     /**
@@ -2214,8 +2266,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
                 Map<String, Object> options = new HashMap<>();
                 switch (download.getSettings()) {
-                    case Aria2Settings aria2Settings ->
-                        options.putAll(aria2Settings.toRpcOptions());
+                    case Aria2Settings aria2Settings -> {
+                        String proxy = aria2Settings.isUseProxy()
+                                ? aria2Settings.getProxyAddress()
+                                : globalSettings.isGlobalProxyEnabled()
+                                        ? globalSettings.getGlobalProxyAddress() : null;
+                        options.putAll(liveRpcOptions(aria2Settings, proxy));
+                    }
                     case null, default -> {
                         if (download.getSettings() != null) {
                             Map<String, String> settingsMap = download.getSettings().toMap();
@@ -2236,6 +2293,34 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 throw new RuntimeException("Failed to change aria2 settings", e);
             }
         }, executor);
+    }
+
+    /**
+     * Builds a complete live-update map. aria2.changeOption retains omitted
+     * values, so zero/blank controls must be sent explicitly to clear a
+     * previous per-GID limit, header, or proxy.
+     */
+    static Map<String, Object> liveRpcOptions(Aria2Settings settings,
+            String effectiveProxy) {
+        if (org.manager.download.handler.DownloadHandlerFactory
+                .isSocksProxyAddress(effectiveProxy)) {
+            throw new IllegalStateException(
+                    "SOCKS settings require a proxychains route handoff");
+        }
+        Map<String, Object> options = new HashMap<>(settings.toRpcOptions());
+        options.put("max-download-limit", settings.getDownloadLimitKB() > 0
+                ? String.valueOf(settings.getDownloadLimitKB() * 1024L) : "0");
+        options.put("max-upload-limit", settings.getUploadLimitKB() > 0
+                ? String.valueOf(settings.getUploadLimitKB() * 1024L) : "0");
+        options.put("referer", blankIfNull(settings.getReferer()));
+        options.put("user-agent", blankIfNull(settings.getUserAgent()));
+        options.put("header", blankIfNull(settings.getCookieHeader()));
+        options.put("all-proxy", blankIfNull(effectiveProxy));
+        return options;
+    }
+
+    private static String blankIfNull(String value) {
+        return value == null ? "" : value;
     }
 
     /**

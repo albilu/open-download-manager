@@ -333,8 +333,10 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 return;
             }
 
-            boolean running = download.getStatus() == Download.Status.DOWNLOADING
-                    || download.getStatus() == Download.Status.CONNECTING;
+            boolean running = download.getStatus() == Download.Status.STARTING
+                    || download.getStatus() == Download.Status.CONNECTING
+                    || download.getStatus() == Download.Status.DOWNLOADING
+                    || download.getStatus() == Download.Status.SEEDING;
 
             if (running) {
                 // Restart the transfer (same mechanism as the existing

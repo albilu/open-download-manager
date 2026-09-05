@@ -351,7 +351,8 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         // Create appropriate settings for magnet downloads
-        download.setSettings(getSettingsFactory().createSettings(Download.Type.ARIA2));
+        download.setSettings(getSettingsFactory().createSettings(
+                Download.Type.ARIA2, download.getProtocol()));
 
         downloadRepository.addDownload(download);
         return download;
@@ -370,7 +371,8 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         // Create appropriate settings for metaLink downloads
-        download.setSettings(getSettingsFactory().createSettings(Download.Type.ARIA2));
+        download.setSettings(getSettingsFactory().createSettings(
+                Download.Type.ARIA2, download.getProtocol()));
 
         downloadRepository.addDownload(download);
         return download;
@@ -388,7 +390,8 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         // Create appropriate settings for YouTube downloads
-        download.setSettings(getSettingsFactory().createSettings(Download.Type.YOUTUBE));
+        download.setSettings(getSettingsFactory().createSettings(
+                Download.Type.YOUTUBE, download.getProtocol()));
 
         // Add YouTube download options
         if (options != null) {
@@ -414,7 +417,8 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         // Create appropriate settings for website scraping
-        download.setSettings(getSettingsFactory().createSettings(Download.Type.WEBSITE_SCRAPING));
+        download.setSettings(getSettingsFactory().createSettings(
+                Download.Type.WEBSITE_SCRAPING, download.getProtocol()));
 
         // Add httrack options
         if (options != null) {
@@ -952,20 +956,57 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-        return CompletableFuture.runAsync(() -> {
-            try {
-                DownloadHandler handler = handlerFor(download);
+        if (download == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("Download cannot be null"));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            DownloadHandler active = activeHandlers.get(download.getId());
+            boolean socksRoute = org.manager.download.handler.DownloadHandlerFactory
+                    .isSocksProxyAddress(effectiveProxyAddress(download));
 
-                if (handler != null) {
-                    handler.changeSettings(download).join();
-                } else {
-                    LOGGER.warn("No handler found for download type: " + download.getType());
-                }
-            } catch (Exception e) {
-                LOGGER.warn("Failed to change settings for download: " + download.getName(), e);
-                throw new CompletionException("Failed to change settings for download: " + download.getName(), e);
+            if (active != null && active.getSupportedType() == Download.Type.ARIA2
+                    && socksRoute) {
+                return restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
+                        "SOCKS proxychains route");
             }
-        }, executorManager.getGeneralExecutor());
+            if (active != null && active.getSupportedType() == Download.Type.PROXYCHAINS
+                    && !socksRoute) {
+                return restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
+                        "native aria2 route");
+            }
+
+            // A paused/queued proxychains record has no active owner to drive
+            // a handoff. Restore its native aria2 identity before its next start.
+            if (active == null && download.getType() == Download.Type.PROXYCHAINS
+                    && !socksRoute) {
+                download.setType(Download.Type.ARIA2);
+                download.setGid(null);
+            }
+
+            DownloadHandler handler = handlerFor(download);
+            if (handler == null) {
+                return CompletableFuture.<Void>failedFuture(new IllegalStateException(
+                        "No handler found for download type: " + download.getType()));
+            }
+            CompletableFuture<Void> update = handler.changeSettings(download);
+            return update != null ? update : CompletableFuture.<Void>completedFuture(null);
+        }, executorManager.getGeneralExecutor()).thenCompose(update -> update)
+                .whenComplete((ignored, error) -> {
+                    if (error != null) {
+                        LOGGER.warn("Failed to change settings for download: "
+                                + download.getName(), error);
+                    }
+                });
+    }
+
+    private String effectiveProxyAddress(Download download) {
+        if (download.getSettings() != null && download.getSettings().isUseProxy()
+                && download.getSettings().getProxyAddress() != null) {
+            return download.getSettings().getProxyAddress();
+        }
+        GlobalSettings global = getGlobalSettings();
+        return global.isGlobalProxyEnabled() ? global.getGlobalProxyAddress() : null;
     }
 
     @Override
@@ -1617,6 +1658,12 @@ public class DownloadManagerImpl implements DownloadManager {
                 boolean inherited = globallyProxiedDownloadIds.contains(download.getId());
                 boolean changed = false;
                 if (proxyEnabled && proxyAddress != null && !proxyAddress.isBlank()) {
+                    if (!DownloadNetworkCapabilities.supportsProxy(download, proxyAddress)) {
+                        LOGGER.warn("Global proxy type is unsupported for "
+                                + download.getType() + "/" + download.getProtocol()
+                                + "; leaving download " + download.getId() + " unchanged");
+                        continue;
+                    }
                     if (!settings.isUseProxy() || inherited) {
                         changed = !settings.isUseProxy()
                                 || !java.util.Objects.equals(settings.getProxyAddress(), proxyAddress);
@@ -1665,13 +1712,14 @@ public class DownloadManagerImpl implements DownloadManager {
      * A failed pause is surfaced and never followed by a start on the new
      * route; this keeps privacy changes fail-closed.
      */
-    private void restartActiveDownloadForProxyRoute(Download download, Download.Type targetType,
+    private CompletableFuture<Void> restartActiveDownloadForProxyRoute(
+            Download download, Download.Type targetType,
             String routeDescription) {
         DownloadHandler sourceHandler = activeHandlers.get(download.getId());
         if (sourceHandler == null) {
-            LOGGER.warn("Cannot switch " + download.getId() + " to " + routeDescription
-                    + ": no active handler owns it");
-            return;
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Cannot switch " + download.getId() + " to " + routeDescription
+                            + ": no active handler owns it"));
         }
         Download.Status statusBefore = download.getStatus();
         boolean restartAfterHandoff = isResumableActiveStatus(statusBefore);
@@ -1683,8 +1731,8 @@ public class DownloadManagerImpl implements DownloadManager {
         // paused/canceled state. The specialized handoff then stops/removes
         // the old task without publishing a terminal event.
         downloadRepository.updateDownloadStatus(download, Download.Status.PAUSED);
-        sourceHandler.stopForRouteChange(download)
-                .thenCompose(ignored -> {
+        return sourceHandler.stopForRouteChange(download)
+                .thenRun(() -> {
                     activeHandlers.remove(download.getId(), sourceHandler);
                     gidToIdMap.entrySet().removeIf(
                             entry -> download.getId().equals(entry.getValue()));
@@ -1699,19 +1747,20 @@ public class DownloadManagerImpl implements DownloadManager {
                     } else {
                         releaseRunningSlot(download.getId());
                     }
-                    return CompletableFuture.completedFuture(null);
                 })
                 .thenRun(() -> LOGGER.info("Download " + download.getId()
                         + " handed off to " + routeDescription + " (engine "
                         + download.getType() + ")"))
-                .exceptionally(error -> {
+                .whenComplete((ignored, error) -> {
+                    if (error == null) {
+                        return;
+                    }
                     LOGGER.error("Failed to switch " + download.getId()
                             + " to " + routeDescription, error);
                     download.setErrorMessage("Failed to switch to " + routeDescription + ": "
                             + messageOf(error));
                     downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
                     notifyDownloadError(download, download.getErrorMessage());
-                    return null;
                 });
     }
 

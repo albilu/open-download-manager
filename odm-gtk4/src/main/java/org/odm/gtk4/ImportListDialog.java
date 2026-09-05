@@ -48,20 +48,29 @@ public class ImportListDialog {
     private final Runnable onImportDone;
     private final GtkBuilder builder;
     private final ImportLimits importLimits;
+    private final org.tor.TorService torService;
 
     private final ListStore urlStore;
     private final ListStore extensionFilterStore;
     private final DropDown extensionFilterCombo;
     private final Label diskSpaceLabel;
     private final PathChooserButton destinationChooser;
+    private final NetworkOptionControls networkControls;
 
     private Path destinationFolder;
 
     private ImportListDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone,
             List<String> initialUrls, ImportLimits importLimits) {
+        this(parent, downloadManager, onImportDone, initialUrls, importLimits, null);
+    }
+
+    private ImportListDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone,
+            List<String> initialUrls, ImportLimits importLimits,
+            org.tor.TorService torService) {
         this.downloadManager = downloadManager;
         this.onImportDone = onImportDone;
         this.importLimits = importLimits != null ? importLimits : ImportLimits.defaults();
+        this.torService = torService;
 
         this.builder = UiLoader.load("/ui/import-list.ui");
         this.dialog = Widgets.require(builder, "import_dialog", Window.class);
@@ -104,7 +113,22 @@ public class ImportListDialog {
         for (String type : DialogOptions.PROXY_TYPES) {
             proxyTypes.append(type);
         }
-        Widgets.require(builder, "proxy_type_combo", DropDown.class).setModel(proxyTypes);
+        DropDown proxyType = Widgets.require(builder, "proxy_type_combo", DropDown.class);
+        proxyType.setModel(proxyTypes);
+        this.networkControls = new NetworkOptionControls(
+                Widgets.require(builder, "max_connections_spin", SpinButton.class),
+                Widgets.require(builder, "max_download_speed_spin", SpinButton.class),
+                Widgets.require(builder, "max_upload_speed_spin", SpinButton.class),
+                Widgets.require(builder, "retry_limit_spin", SpinButton.class),
+                Widgets.require(builder, "retry_after", SpinButton.class),
+                Widgets.require(builder, "referrer", Entry.class),
+                Widgets.require(builder, "user_agent", Entry.class),
+                Widgets.require(builder, "cookie", Entry.class), proxyType,
+                Widgets.require(builder, "proxy_host_entry", Entry.class),
+                Widgets.require(builder, "proxy_port_spin", SpinButton.class),
+                Widgets.require(builder, "proxy_username_entry", Entry.class),
+                Widgets.require(builder, "proxy_password_entry", Entry.class),
+                Widgets.require(builder, "tor_switch", Switch.class));
         loadGlobalDefaults();
 
         MenuButton folderButton = Widgets.require(builder, "folder_destination", MenuButton.class);
@@ -131,6 +155,7 @@ public class ImportListDialog {
                 nv.setBoolean(!current);
                 urlStore.setValue(iter, 0, nv);
                 nv.unset();
+                refreshNetworkCapabilities();
             }
         });
 
@@ -149,6 +174,11 @@ public class ImportListDialog {
      */
     public static void chooseAndPresent(Window parent, DownloadManager downloadManager,
             Runnable onImportDone) {
+        chooseAndPresent(parent, downloadManager, onImportDone, null);
+    }
+
+    public static void chooseAndPresent(Window parent, DownloadManager downloadManager,
+            Runnable onImportDone, org.tor.TorService torService) {
         FileDialog fileDialog = new FileDialog();
         fileDialog.setTitle("Select URL list file");
         fileDialog.open(parent, null, result -> {
@@ -161,13 +191,21 @@ public class ImportListDialog {
                             java.util.concurrent.ForkJoinPool.commonPool(),
                             lines -> UiThread.marshal(() ->
                                     new ImportListDialog(parent, downloadManager,
-                                            onImportDone, lines, limits).present()),
+                                            onImportDone, lines, limits, torService).present()),
                             error -> UiThread.marshal(() -> showLoadError(parent, error)));
                 }
             } catch (Exception e) {
                 LOGGER.debug("List file selection cancelled or failed", e);
             }
         });
+    }
+
+    /** Presents the same selectable list and Options tab for extracted HTML links. */
+    static void presentUrls(Window parent, DownloadManager downloadManager,
+            Runnable onImportDone, List<String> urls, ImportLimits limits,
+            org.tor.TorService torService) {
+        new ImportListDialog(parent, downloadManager, onImportDone,
+                urls != null ? urls : List.of(), limits, torService).present();
     }
 
     /**
@@ -265,6 +303,7 @@ public class ImportListDialog {
             }
         }
         rebuildExtensionFilter(extensions);
+        refreshNetworkCapabilities();
         LOGGER.info("Loaded " + Math.min(lines.size(), importLimits.maxUrls())
                 + " URLs into import list");
     }
@@ -298,11 +337,37 @@ public class ImportListDialog {
                 nv.unset();
             } while (urlStore.iterNext(iter));
         }
+        refreshNetworkCapabilities();
     }
 
     private void onImport() {
         Path destination = destinationFolder != null ? destinationFolder
                 : Path.of(currentDefaultDirectory());
+        List<String> urls = markedUrls();
+        ImportOptions options = captureOptions();
+        Widgets.require(builder, "validate_button", Button.class).setSensitive(false);
+        DialogOptions.ensureTorAvailable(options.tor(), torService)
+                .thenCompose(ignored -> CompletableFuture.supplyAsync(
+                        () -> queueUrls(urls, destination, options)))
+                .whenComplete((queued, error) -> UiThread.marshal(() -> {
+                    if (error != null) {
+                        LOGGER.warn("List import failed", error);
+                        Widgets.require(builder, "validate_button", Button.class)
+                                .setSensitive(true);
+                        AccessibilitySupport.status(diskSpaceLabel,
+                                "Could not import this list: " + rootCause(error).getMessage(),
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                        return;
+                    }
+                    LOGGER.info("Imported " + queued + " downloads from list");
+                    if (onImportDone != null) {
+                        onImportDone.run();
+                    }
+                    dialog.close();
+                }));
+    }
+
+    private List<String> markedUrls() {
         List<String> urls = new ArrayList<>();
         TreeIter iter = new TreeIter();
         if (urlStore.getIterFirst(iter)) {
@@ -315,20 +380,12 @@ public class ImportListDialog {
                 urls.add(url);
             } while (urlStore.iterNext(iter));
         }
-        ImportOptions options = captureOptions();
-        Widgets.require(builder, "validate_button", Button.class).setSensitive(false);
-        CompletableFuture.supplyAsync(() -> queueUrls(urls, destination, options))
-                .whenComplete((queued, error) -> UiThread.marshal(() -> {
-                    if (error != null) {
-                        LOGGER.warn("List import failed", error);
-                    } else {
-                        LOGGER.info("Imported " + queued + " downloads from list");
-                        if (onImportDone != null) {
-                            onImportDone.run();
-                        }
-                    }
-                    dialog.close();
-                }));
+        return urls;
+    }
+
+    private void refreshNetworkCapabilities() {
+        networkControls.applyCapabilities(NetworkOptionControls.commonCapabilities(
+                downloadManager.getGlobalSettings(), markedUrls()));
     }
 
     private ImportOptions captureOptions() {
@@ -372,7 +429,7 @@ public class ImportListDialog {
         void apply(Download download) {
             DialogOptions.applyProxy(download, tor, proxyType, proxyHost, proxyPort,
                     proxyUser, proxyPassword);
-            DialogOptions.applyCommon(download.getSettings(), connections, downloadLimitKb,
+            DialogOptions.applyCommon(download, connections, downloadLimitKb,
                     uploadLimitKb, retries, retryDelay, referer, userAgent, cookie);
         }
     }
@@ -400,9 +457,8 @@ public class ImportListDialog {
         Widgets.require(builder, "tor_switch", Switch.class)
                 .setActive(settings.getBooleanProperty("tor.enabled", false));
 
-        DialogOptions.ProxyFields proxy = settings.isGlobalProxyEnabled()
-                ? DialogOptions.parseProxy(settings.getGlobalProxyAddress())
-                : DialogOptions.ProxyFields.none();
+        DialogOptions.ProxyFields proxy = DialogOptions.parseProxy(
+                DialogOptions.manualProxyAddress(settings));
         Widgets.require(builder, "proxy_type_combo", DropDown.class).setSelected(proxy.typeIndex());
         Widgets.require(builder, "proxy_host_entry", Entry.class).setText(proxy.host());
         Widgets.require(builder, "proxy_port_spin", SpinButton.class).setValue(proxy.port());

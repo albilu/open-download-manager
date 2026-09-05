@@ -150,6 +150,16 @@ final class HtmlImportExport {
 
     static int importHtmlFile(Path path, DownloadOperations operations,
             ImportLimits limits) {
+        try {
+            return queueLinkStrings(readHtmlLinks(path, limits), operations);
+        } catch (Exception e) {
+            LOGGER.debug("HTML import failed", e);
+            return -1;
+        }
+    }
+
+    /** Reads and validates a local HTML source without creating records yet. */
+    static List<String> readHtmlLinks(Path path, ImportLimits limits) {
         ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         try {
             byte[] bytes;
@@ -157,14 +167,13 @@ final class HtmlImportExport {
                 bytes = input.readNBytes(Math.toIntExact(effective.maxSourceBytes()) + 1);
             }
             if (bytes.length > effective.maxSourceBytes()) {
-                return -1;
+                throw new IllegalArgumentException("HTML source exceeds the "
+                        + effective.maxSourceSizeMiB() + " MiB import limit");
             }
-            List<URI> urls = extractHttpLinks(
-                    new String(bytes, StandardCharsets.UTF_8), null, effective);
-            return queueLinks(urls, operations);
-        } catch (Exception e) {
-            LOGGER.debug("HTML import failed", e);
-            return -1;
+            return extractHttpLinks(new String(bytes, StandardCharsets.UTF_8), null, effective)
+                    .stream().map(URI::toString).toList();
+        } catch (java.io.IOException error) {
+            throw new IllegalArgumentException("Could not read the selected HTML file", error);
         }
     }
 
@@ -181,24 +190,37 @@ final class HtmlImportExport {
 
     static int importRemoteHtml(URI source, DownloadOperations operations,
             String proxyAddress, ImportLimits limits) {
+        try {
+            return queueLinkStrings(fetchRemoteHtmlLinks(source, proxyAddress, limits),
+                    operations);
+        } catch (Exception e) {
+            LOGGER.debug("Remote HTML import failed", e);
+            return -1;
+        }
+    }
+
+    /** Fetches and validates a remote HTML source without creating records yet. */
+    static List<String> fetchRemoteHtmlLinks(URI source, String proxyAddress,
+            ImportLimits limits) {
         ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         if (!isHttp(source)) {
-            return -1;
+            throw new IllegalArgumentException("Only HTTP(S) HTML sources are supported");
         }
         try {
             BoundedHttpFetcher.FetchResult response = BoundedHttpFetcher.fetchResult(
                     source, effective.maxSourceBytes(), Duration.ofSeconds(10),
                     Duration.ofSeconds(30), proxyAddress);
             if (!isHtmlContentType(response.contentType())) {
-                return -1;
+                throw new IllegalArgumentException("The remote source is not HTML");
             }
             Charset charset = responseCharset(response.contentType());
             String html = new String(response.body(), charset);
-            return queueLinks(extractHttpLinks(
-                    html, response.finalUri(), effective), operations);
-        } catch (Exception e) {
-            LOGGER.debug("Remote HTML import failed", e);
-            return -1;
+            return extractHttpLinks(html, response.finalUri(), effective)
+                    .stream().map(URI::toString).toList();
+        } catch (IllegalArgumentException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalArgumentException("Could not fetch the remote HTML source", error);
         }
     }
 
@@ -213,6 +235,10 @@ final class HtmlImportExport {
             }
         }
         return queued;
+    }
+
+    private static int queueLinkStrings(List<String> urls, DownloadOperations operations) {
+        return queueLinks(urls.stream().map(URI::create).toList(), operations);
     }
 
     private static boolean isHtmlContentType(String contentType) {

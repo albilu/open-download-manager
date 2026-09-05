@@ -3,6 +3,8 @@ package org.manager.download.handler;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -206,6 +208,28 @@ class Aria2LiveGidRoutingTest {
     }
 
     @Test
+    void liveSettingsIncludeExplicitResetValues() {
+        Aria2Settings settings = new Aria2Settings();
+
+        Map<String, Object> options = Aria2DownloadHandler.liveRpcOptions(settings, null);
+
+        assertEquals("0", options.get("max-download-limit"));
+        assertEquals("0", options.get("max-upload-limit"));
+        assertEquals("", options.get("referer"));
+        assertEquals("", options.get("user-agent"));
+        assertEquals("", options.get("header"));
+        assertEquals("", options.get("all-proxy"));
+    }
+
+    @Test
+    void liveSettingsRejectSocksWithoutARouteHandoff() {
+        Aria2Settings settings = new Aria2Settings();
+        assertThrows(IllegalStateException.class, () ->
+                Aria2DownloadHandler.liveRpcOptions(
+                        settings, "socks5h://127.0.0.1:9050"));
+    }
+
+    @Test
     @DisplayName("Retiring magnet metadata promotes a payload GID and settings reach every payload")
     void metadataRetirementPromotesPayloadsForSettings() throws Exception {
         Download download = new Download(URI.create(
@@ -398,6 +422,44 @@ class Aria2LiveGidRoutingTest {
 
         assertEquals("sha-256=" + "cd".repeat(32),
                 client.addUriOptions.getFirst().get("checksum"));
+    }
+
+    @Test
+    @DisplayName("An unwritable HTTP target falls back from resume to aria2 auto-renaming")
+    void unwritableHttpTargetUsesAutoRenamingInsteadOfFailingResume() throws Exception {
+        Path existing = tempDir.resolve("archive.iso");
+        Files.writeString(existing, "already here");
+        Files.setPosixFilePermissions(existing,
+                PosixFilePermissions.fromString("r--r--r--"));
+        Download download = new Download(URI.create("https://example.test/archive.iso"));
+        download.setDestination(tempDir);
+        download.initSettings(new DownloadSettingsFactory(globalSettings));
+
+        handler.startDownload(download).join();
+
+        Map<String, Object> options = client.addUriOptions.getFirst();
+        assertEquals("false", options.get("continue"),
+                "resume cannot open this file; aria2 must be free to choose archive.1.iso");
+        assertEquals("true", options.get("auto-file-renaming"));
+        assertEquals("false", options.get("allow-overwrite"));
+        assertTrue(((Aria2Settings) download.getSettings()).isContinueDownload(),
+                "the per-record preference is unchanged; only this RPC request falls back");
+    }
+
+    @Test
+    @DisplayName("aria2 error details are retained on the download record")
+    void engineErrorDetailsReachTheDownloadRecord() {
+        Download download = new Download(URI.create("https://example.test/archive.iso"));
+        handler.registerTrackedDownload(download, List.of("http-gid"));
+        Map<String, Object> failed = status("error", 0, 100);
+        failed.put("errorCode", "15");
+        failed.put("errorMessage", "Failed to open the existing file");
+
+        handler.processProgressUpdate(download.getId(), "http-gid", failed);
+
+        assertEquals(Download.Status.ERROR, download.getStatus());
+        assertEquals("Aria2 error 15: Failed to open the existing file",
+                download.getErrorMessage());
     }
 
     @Test

@@ -173,6 +173,18 @@ class GlobalSettingsTest {
     }
 
     @Test
+    @DisplayName("Should treat an empty settings file like a missing settings file")
+    void shouldKeepDefaultsForEmptySettingsFile() throws IOException {
+        Path settingsFile = tempDir.resolve("settings.json");
+        Files.writeString(settingsFile, " \n\t");
+        globalSettings.setMaxConcurrentDownloads(7);
+
+        globalSettings.load(settingsFile);
+
+        assertEquals(7, globalSettings.getMaxConcurrentDownloads());
+    }
+
+    @Test
     @DisplayName("Should handle null clipboard settings")
     void shouldHandleNullClipboardSettings() {
         globalSettings.setClipboardSettings(null);

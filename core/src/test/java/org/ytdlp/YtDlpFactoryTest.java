@@ -249,10 +249,10 @@ class YtDlpFactoryTest {
     }
 
     @Test
-    @DisplayName("Should apply global speed limit to default settings")
+    @DisplayName("Should apply the Network download limit to default settings")
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void testDefaultSettingsWithSpeedLimit() {
-        when(mockGlobalSettings.getGlobalSpeedLimit()).thenReturn(1000);
+        when(mockGlobalSettings.getIntProperty("network.downloadLimitKb", 0)).thenReturn(1000);
         factory = YtDlpFactory.getInstance(mockGlobalSettings);
 
         YtDlpSettings settings = factory.createDefaultSettings();
@@ -260,7 +260,7 @@ class YtDlpFactoryTest {
         assertNotNull(settings);
         assertTrue(settings.isLimitRate());
         assertEquals(1000, settings.getRateLimit());
-        verify(mockGlobalSettings).getGlobalSpeedLimit();
+        verify(mockGlobalSettings).getIntProperty("network.downloadLimitKb", 0);
     }
 
     @Test
@@ -566,11 +566,11 @@ class YtDlpFactoryTest {
     void testSettingsInheritance() {
         when(mockGlobalSettings.isGlobalProxyEnabled()).thenReturn(true);
         when(mockGlobalSettings.getGlobalProxyAddress()).thenReturn("http://proxy:8080");
-        when(mockGlobalSettings.getGlobalSpeedLimit()).thenReturn(2000);
+        when(mockGlobalSettings.getIntProperty("network.downloadLimitKb", 0)).thenReturn(2000);
 
         factory = YtDlpFactory.getInstance(mockGlobalSettings);
 
-        // All settings types should inherit global settings
+        // All settings types should inherit the shared Network defaults.
         YtDlpSettings defaultSettings = factory.createDefaultSettings();
         YtDlpSettings audioSettings = factory.createAudioSettings();
         YtDlpSettings videoSettings = factory.createHighQualityVideoSettings();

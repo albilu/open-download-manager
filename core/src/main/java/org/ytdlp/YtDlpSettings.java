@@ -135,7 +135,7 @@ public class YtDlpSettings extends DownloadSettings {
     public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
         return switch (capability) {
             case CONNECTIONS, DOWNLOAD_LIMIT, MAX_RETRIES, RETRY_DELAY,
-                    REFERER, USER_AGENT, COOKIE -> true;
+                    REFERER, USER_AGENT, COOKIE, PROXY, SOCKS_PROXY -> true;
             case UPLOAD_LIMIT -> false;
         };
     }

@@ -48,7 +48,8 @@ public class HttrackSettings extends DownloadSettings {
                 || capability == org.manager.download.ExternalToolSettings.Capability.MAX_RETRIES
                 || capability == org.manager.download.ExternalToolSettings.Capability.REFERER
                 || capability == org.manager.download.ExternalToolSettings.Capability.USER_AGENT
-                || capability == org.manager.download.ExternalToolSettings.Capability.COOKIE;
+                || capability == org.manager.download.ExternalToolSettings.Capability.COOKIE
+                || capability == org.manager.download.ExternalToolSettings.Capability.PROXY;
     }
 
     private String url;

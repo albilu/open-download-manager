@@ -14,7 +14,7 @@
   <object class="GtkWindow" id="new_media_dialog">
     <property name="title">New Media Download</property>
     <property name="modal">true</property>
-    <property name="default-width">620</property>
+    <property name="default-width">760</property>
     <property name="default-height">720</property>
     <child>
       <object class="GtkBox" id="new_media_content">
@@ -26,7 +26,10 @@
         <property name="margin-bottom">12</property>
 
         <child>
-          <object class="GtkScrolledWindow" id="media_fields_scroller">
+          <object class="GtkNotebook" id="media_notebook">
+            <property name="vexpand">true</property>
+            <child>
+              <object class="GtkScrolledWindow" id="media_fields_scroller">
             <property name="vexpand">true</property>
             <property name="hscrollbar-policy">never</property>
             <child>
@@ -35,6 +38,10 @@
             <property name="vexpand">true</property>
             <property name="row-spacing">10</property>
             <property name="column-spacing">12</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
+            <property name="margin-bottom">12</property>
 
             <child><object class="GtkLabel" id="media_url_label"><property name="label">Media URL:</property><property name="xalign">0</property><property name="valign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
             <child>
@@ -120,6 +127,17 @@
             </child>
               </object>
             </child>
+              </object>
+            </child>
+            <child type="tab"><object class="GtkLabel"><property name="label">Media</property></object></child>
+            <child>
+              <object class="GtkScrolledWindow" id="media_network_scroller">
+                <property name="vexpand">true</property>
+                <property name="hscrollbar-policy">never</property>
+                <child><object class="GtkBox" id="media_network_options_host"><property name="orientation">vertical</property></object></child>
+              </object>
+            </child>
+            <child type="tab"><object class="GtkLabel"><property name="label">Options</property></object></child>
           </object>
         </child>
 

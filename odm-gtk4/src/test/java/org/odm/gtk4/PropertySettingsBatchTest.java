@@ -3,13 +3,16 @@ package org.odm.gtk4;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.aria2.Aria2Settings;
 import org.junit.jupiter.api.Test;
@@ -48,7 +51,8 @@ class PropertySettingsBatchTest {
             ExternalToolSettings settings = download.getSettings();
             assertEquals(12, settings.getMaxConnections());
             assertEquals(512, settings.getDownloadLimitKB());
-            assertEquals(64, settings.getUploadLimitKB());
+            assertEquals(0, settings.getUploadLimitKB(),
+                    "upload limits are irrelevant for HTTP records");
             assertEquals(7, settings.getMaxRetries());
             assertEquals(3, settings.getRetryDelaySeconds());
             assertEquals("https://referrer.example/", settings.getReferer());
@@ -102,6 +106,81 @@ class PropertySettingsBatchTest {
 
         assertTrue(result.isDone());
         result.join();
+    }
+
+    @Test
+    void unchangedMixedFieldsArePreserved() {
+        Aria2Settings firstSettings = new Aria2Settings();
+        firstSettings.setReferer("https://one.test/");
+        Aria2Settings secondSettings = new Aria2Settings();
+        secondSettings.setReferer("https://two.test/");
+        Download first = download("first.bin", firstSettings);
+        Download second = download("second.bin", secondSettings);
+        DownloadOperations operations = mock(DownloadOperations.class);
+        when(operations.changeSettings(any(Download.class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        PropertySettingsBatch.Values values = new PropertySettingsBatch.Values(
+                4, 250, 0, 5, 0, "overwritten", "", "",
+                false, 0, "", 0, "", "",
+                Set.of(ExternalToolSettings.Capability.DOWNLOAD_LIMIT), false);
+        PropertySettingsBatch.apply(List.of(first, second), operations, values).join();
+
+        assertEquals(250, firstSettings.getDownloadLimitKB());
+        assertEquals(250, secondSettings.getDownloadLimitKB());
+        assertEquals("https://one.test/", firstSettings.getReferer());
+        assertEquals("https://two.test/", secondSettings.getReferer());
+    }
+
+    @Test
+    void failedEngineApplicationRestoresThePreviousRecordSettings() {
+        Aria2Settings original = new Aria2Settings();
+        original.setDownloadLimitKB(100);
+        Download download = download("failure.bin", original);
+        DownloadOperations operations = mock(DownloadOperations.class);
+        when(operations.changeSettings(download))
+                .thenReturn(CompletableFuture.failedFuture(
+                        new IllegalStateException("engine rejected update")))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        PropertySettingsBatch.Values values = new PropertySettingsBatch.Values(
+                4, 999, 0, 5, 0, "", "", "",
+                false, 0, "", 0, "", "",
+                Set.of(ExternalToolSettings.Capability.DOWNLOAD_LIMIT), false);
+
+        assertThrows(java.util.concurrent.CompletionException.class,
+                () -> PropertySettingsBatch.apply(
+                        List.of(download), operations, values).join());
+        assertEquals(100, download.getSettings().getDownloadLimitKB());
+    }
+
+    @Test
+    void synchronousFailureAfterAnEarlierSubmissionRollsBackEveryTarget() {
+        Aria2Settings firstOriginal = new Aria2Settings();
+        firstOriginal.setDownloadLimitKB(100);
+        Aria2Settings secondOriginal = new Aria2Settings();
+        secondOriginal.setDownloadLimitKB(200);
+        Download first = download("first-failure.bin", firstOriginal);
+        Download second = download("second-failure.bin", secondOriginal);
+        DownloadOperations operations = mock(DownloadOperations.class);
+        when(operations.changeSettings(first))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        when(operations.changeSettings(second))
+                .thenThrow(new IllegalStateException("synchronous engine rejection"))
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        PropertySettingsBatch.Values values = new PropertySettingsBatch.Values(
+                4, 999, 0, 5, 0, "", "", "",
+                false, 0, "", 0, "", "",
+                Set.of(ExternalToolSettings.Capability.DOWNLOAD_LIMIT), false);
+
+        assertThrows(java.util.concurrent.CompletionException.class,
+                () -> PropertySettingsBatch.apply(
+                        List.of(first, second), operations, values).join());
+        assertEquals(100, first.getSettings().getDownloadLimitKB());
+        assertEquals(200, second.getSettings().getDownloadLimitKB());
+        verify(operations, times(2)).changeSettings(first);
+        verify(operations, times(2)).changeSettings(second);
     }
 
     private static Download download(String name,

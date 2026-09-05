@@ -5,21 +5,19 @@ import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CellRendererCombo;
 import org.gnome.gtk.CellRendererToggle;
 import org.gnome.gtk.CheckButton;
-import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
+import org.gnome.gtk.Grid;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.Notebook;
-import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.Spinner;
-import org.gnome.gtk.StringList;
-import org.gnome.gtk.Switch;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreeRowReference;
 import org.gnome.gtk.TreeStore;
@@ -40,6 +38,7 @@ public class NewDownloadDialog {
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final Runnable onDownloadQueued;
+    private final org.tor.TorService torService;
 
     private final Entry urlEntry;
     private final PathChooserButton torrentFileChooser;
@@ -52,22 +51,9 @@ public class NewDownloadDialog {
     private final CheckButton selectAllFilesCheck;
     private final Notebook optionsNotebook;
     private final java.util.Map<String, TreeRowReference> fileRows = new java.util.HashMap<>();
-    private final SpinButton maxConnectionsSpin;
-    private final SpinButton retryLimitSpin;
-    private final SpinButton maxDownloadSpeedSpin;
-    private final SpinButton maxUploadSpeedSpin;
-    private final SpinButton retryAfterSpin;
-    private final Entry referrerEntry;
-    private final Entry cookieEntry;
-    private final Entry userAgentEntry;
-    private final Label sftpHostKeyLabel;
+    private final Grid sftpHostKeyGrid;
     private final Entry sftpHostKeyEntry;
-    private final DropDown proxyTypeCombo;
-    private final Entry proxyHostEntry;
-    private final SpinButton proxyPortSpin;
-    private final Entry proxyUsernameEntry;
-    private final Entry proxyPasswordEntry;
-    private final Switch torSwitch;
+    private final NetworkOptionsPane networkOptions;
     private final Label checksumLabel;
     private final CheckButton verifyChecksumCheck;
     private final Button startButton;
@@ -91,8 +77,14 @@ public class NewDownloadDialog {
     private volatile java.net.URI lastProbedUrl;
 
     public NewDownloadDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
+        this(parent, downloadManager, onDownloadQueued, null);
+    }
+
+    public NewDownloadDialog(Window parent, DownloadManager downloadManager,
+            Runnable onDownloadQueued, org.tor.TorService torService) {
         this.downloadManager = downloadManager;
         this.onDownloadQueued = onDownloadQueued;
+        this.torService = torService;
 
         GtkBuilder builder = UiLoader.load("/ui/new-download.ui");
         this.dialog = Widgets.require(builder, "new_download_dialog", Window.class);
@@ -107,22 +99,12 @@ public class NewDownloadDialog {
         this.selectAllFilesCheck = Widgets.require(builder,
                 "select_all_files_check", CheckButton.class);
         this.optionsNotebook = Widgets.require(builder, "options_notebook", Notebook.class);
-        this.maxConnectionsSpin = Widgets.require(builder, "max_connections_spin", SpinButton.class);
-        this.retryLimitSpin = Widgets.require(builder, "retry_limit_spin", SpinButton.class);
-        this.maxDownloadSpeedSpin = Widgets.require(builder, "max_download_speed_spin", SpinButton.class);
-        this.maxUploadSpeedSpin = Widgets.require(builder, "max_upload_speed_spin", SpinButton.class);
-        this.retryAfterSpin = Widgets.require(builder, "retry_after", SpinButton.class);
-        this.referrerEntry = Widgets.require(builder, "referrer", Entry.class);
-        this.cookieEntry = Widgets.require(builder, "cookie", Entry.class);
-        this.userAgentEntry = Widgets.require(builder, "user_agent", Entry.class);
-        this.sftpHostKeyLabel = Widgets.require(builder, "sftp_host_key_label", Label.class);
+        this.sftpHostKeyGrid = Widgets.require(builder, "sftp_host_key_grid", Grid.class);
         this.sftpHostKeyEntry = Widgets.require(builder, "sftp_host_key_entry", Entry.class);
-        this.proxyTypeCombo = Widgets.require(builder, "proxy_type_combo", DropDown.class);
-        this.proxyHostEntry = Widgets.require(builder, "proxy_host_entry", Entry.class);
-        this.proxyPortSpin = Widgets.require(builder, "proxy_port_spin", SpinButton.class);
-        this.proxyUsernameEntry = Widgets.require(builder, "proxy_username_entry", Entry.class);
-        this.proxyPasswordEntry = Widgets.require(builder, "proxy_password_entry", Entry.class);
-        this.torSwitch = Widgets.require(builder, "tor_switch", Switch.class);
+        this.networkOptions = new NetworkOptionsPane(downloadManager.getGlobalSettings(),
+                Download.Type.ARIA2, Download.Protocol.HTTPS);
+        Widgets.require(builder, "new_download_network_options_host", Box.class)
+                .append(networkOptions.widget());
         this.checksumLabel = Widgets.require(builder, "checksum_label", Label.class);
         this.verifyChecksumCheck = Widgets.require(builder, "verify_checksum_check", CheckButton.class);
         this.startButton = Widgets.require(builder, "new_download_start_button", Button.class);
@@ -135,20 +117,6 @@ public class NewDownloadDialog {
         AccessibilitySupport.label(filenameEntry, "Output filename");
         AccessibilitySupport.label(filesTreeview, "Files in the torrent or Metalink");
         AccessibilitySupport.label(selectAllFilesCheck, "Select every descriptor file");
-        AccessibilitySupport.label(proxyTypeCombo, "Proxy type");
-        AccessibilitySupport.label(proxyHostEntry, "Proxy host");
-        AccessibilitySupport.label(proxyPortSpin, "Proxy port");
-        AccessibilitySupport.label(proxyUsernameEntry, "Proxy username");
-        AccessibilitySupport.label(proxyPasswordEntry, "Proxy password");
-        AccessibilitySupport.label(torSwitch, "Route this download through Tor");
-        AccessibilitySupport.label(maxConnectionsSpin, "Maximum connections");
-        AccessibilitySupport.label(retryLimitSpin, "Retry limit");
-        AccessibilitySupport.label(maxDownloadSpeedSpin, "Maximum download speed in KB per second");
-        AccessibilitySupport.label(maxUploadSpeedSpin, "Maximum upload speed in KB per second");
-        AccessibilitySupport.label(retryAfterSpin, "Seconds before retry");
-        AccessibilitySupport.label(referrerEntry, "HTTP referrer");
-        AccessibilitySupport.label(cookieEntry, "HTTP cookie header");
-        AccessibilitySupport.label(userAgentEntry, "HTTP user agent");
         AccessibilitySupport.label(sftpHostKeyEntry, "Expected SFTP host key digest");
         sftpHostKeyEntry.setTooltipText(
                 "Expected server public-key digest: sha-1=<40 hex digits> or md5=<32 hex digits>. "
@@ -156,12 +124,6 @@ public class NewDownloadDialog {
         AccessibilitySupport.label(verifyChecksumCheck, "Verify checksum at completion");
 
         dialog.setTransientFor(parent);
-
-        StringList proxyTypes = new StringList(new String[0]);
-        for (String type : DialogOptions.PROXY_TYPES) {
-            proxyTypes.append(type);
-        }
-        proxyTypeCombo.setModel(proxyTypes);
 
         ListStore priorityStore = Widgets.require(builder, "file_priority_store", ListStore.class);
         for (String priority : new String[]{FileTreeSupport.PRIORITY_HIGH,
@@ -186,8 +148,6 @@ public class NewDownloadDialog {
             }
         });
 
-        loadGlobalDefaults();
-
         Path defaultDestination = Path.of(currentDefaultDirectory());
         this.torrentFileChooser = PathChooserButton.forFile(torrentFileButton, dialog,
                 "Select torrent or metalink file", null, path -> {
@@ -195,6 +155,8 @@ public class NewDownloadDialog {
                     if (!urlEntry.getText().isBlank()) {
                         urlEntry.setText("");
                     }
+                    updateNetworkCapabilities(Download.Type.ARIA2,
+                            Download.Protocol.fromPath(path));
                     analyzeTorrentFile();
                 });
         this.saveFolderChooser = PathChooserButton.forFolder(saveFolderButton, dialog,
@@ -227,10 +189,6 @@ public class NewDownloadDialog {
             return false;
         });
         startButton.onClicked(this::onStart);
-        torSwitch.onStateSet(state -> {
-            // Tor enabled -> route through the local Tor SOCKS proxy
-            return false; // let the switch apply its new state
-        });
     }
 
     public void present() {
@@ -261,6 +219,7 @@ public class NewDownloadDialog {
         }
         resetChecksumUi();
         if (url.isEmpty()) {
+            updateNetworkCapabilities(Download.Type.ARIA2, Download.Protocol.HTTPS);
             setSftpHostKeyVisible(false);
             filesStatusLabel.setLabel(
                     "Enter a torrent, magnet, or Metalink source to inspect its files.");
@@ -269,6 +228,9 @@ public class NewDownloadDialog {
         try {
             java.net.URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
             Download.Protocol protocol = Download.Protocol.fromUri(uri);
+            Download.Type type = org.manager.download.MediaUrlDetector.isMediaUrl(uri)
+                    ? Download.Type.YOUTUBE : Download.Type.ARIA2;
+            updateNetworkCapabilities(type, protocol);
             setSftpHostKeyVisible(protocol == Download.Protocol.SFTP);
             if (protocol == Download.Protocol.MAGNET) {
                 analyzeMagnet(url);
@@ -295,14 +257,18 @@ public class NewDownloadDialog {
                 probeChecksumAsynchronously(uri);
             }
         } catch (Exception e) {
+            updateNetworkCapabilities(Download.Type.ARIA2, Download.Protocol.HTTPS);
             setSftpHostKeyVisible(false);
             filesStatusLabel.setLabel("Enter a valid download URL or magnet link.");
         }
     }
 
+    private void updateNetworkCapabilities(Download.Type type, Download.Protocol protocol) {
+        networkOptions.updateCapabilities(downloadManager.getGlobalSettings(), type, protocol);
+    }
+
     private void setSftpHostKeyVisible(boolean visible) {
-        sftpHostKeyLabel.setVisible(visible);
-        sftpHostKeyEntry.setVisible(visible);
+        sftpHostKeyGrid.setVisible(visible);
     }
 
     /**
@@ -447,10 +413,7 @@ public class NewDownloadDialog {
     }
 
     private String selectedPreviewProxy() {
-        return DialogOptions.selectedProxyAddress(torSwitch.getActive(),
-                (int) proxyTypeCombo.getSelected(), proxyHostEntry.getText(),
-                (int) proxyPortSpin.getValue(), proxyUsernameEntry.getText(),
-                proxyPasswordEntry.getText());
+        return networkOptions.selectedProxyAddress();
     }
 
     private URI currentFilePreviewSource() {
@@ -585,7 +548,10 @@ public class NewDownloadDialog {
             refreshStartSensitivity();
             AccessibilitySupport.status(diskSpaceLabel, "Adding download to queue…");
             Download submitted = download;
-            activity.track(downloadManager.queueDownload(download)).whenComplete((ignored, error) ->
+            CompletableFuture<Void> submission = DialogOptions.ensureTorAvailable(
+                    networkOptions.isTorSelected(), torService)
+                    .thenCompose(ignored -> downloadManager.queueDownload(submitted));
+            activity.track(submission).whenComplete((ignored, error) ->
                     UiThread.marshal(() -> {
                         if (error == null) {
                             pendingDownload = null;
@@ -680,49 +646,8 @@ public class NewDownloadDialog {
                 org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
     }
 
-    private void loadGlobalDefaults() {
-        org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
-        org.manager.download.DownloadSettingsFactory.NetworkDefaults network =
-                org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(settings);
-        maxConnectionsSpin.setValue(network.maxConnections());
-        retryLimitSpin.setValue(network.maxRetries());
-        maxDownloadSpeedSpin.setValue(network.downloadLimitKb());
-        maxUploadSpeedSpin.setValue(network.uploadLimitKb());
-        retryAfterSpin.setValue(network.retryDelaySeconds());
-        referrerEntry.setText(network.referer());
-        cookieEntry.setText(network.cookie());
-        userAgentEntry.setText(network.userAgent());
-        torSwitch.setActive(settings.getBooleanProperty("tor.enabled", false));
-
-        DialogOptions.ProxyFields proxy = settings.isGlobalProxyEnabled()
-                ? DialogOptions.parseProxy(settings.getGlobalProxyAddress())
-                : DialogOptions.ProxyFields.none();
-        proxyTypeCombo.setSelected(proxy.typeIndex());
-        proxyHostEntry.setText(proxy.host());
-        proxyPortSpin.setValue(proxy.port());
-        proxyUsernameEntry.setText(proxy.username());
-        proxyPasswordEntry.setText(proxy.password());
-    }
-
     private void applyOptions(Download download) {
-        // Proxy: explicit proxy fields, or Tor SOCKS (shared assembly)
-        DialogOptions.applyProxy(download, torSwitch.getActive(),
-                (int) proxyTypeCombo.getSelected(),
-                proxyHostEntry.getText(), (int) proxyPortSpin.getValue(),
-                proxyUsernameEntry.getText(), proxyPasswordEntry.getText());
-
-        // Uniform option handling via the engine-neutral seam: the shared
-        // "max connections" field drives segmentation for every engine —
-        // aria2 per-server connections, yt-dlp concurrent fragments, HTTrack
-        // sockets (-c); curl intentionally stays single-connection as the
-        // plain fallback engine.
-        DialogOptions.applyCommon(download.getSettings(),
-                (int) maxConnectionsSpin.getValue(),
-                (int) maxDownloadSpeedSpin.getValue(),
-                (int) maxUploadSpeedSpin.getValue(),
-                (int) retryLimitSpin.getValue(),
-                (int) retryAfterSpin.getValue(),
-                referrerEntry.getText(), userAgentEntry.getText(), cookieEntry.getText());
+        networkOptions.applyTo(download);
 
         if (download.getProtocol() == Download.Protocol.SFTP
                 && download.getSettings() instanceof org.aria2.Aria2Settings aria2Settings) {

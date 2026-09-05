@@ -101,9 +101,9 @@
         <child>
           <object class="GtkNotebook" id="settings_notebook">
             <property name="vexpand">true</property>
-            <property name="margin-start">10</property>
-            <property name="margin-end">10</property>
-            <property name="margin-top">10</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-top">12</property>
 
             <!-- GENERAL -->
             <child>
@@ -117,8 +117,8 @@
                     <property name="hexpand">true</property><property name="vexpand">true</property>
                     <property name="column-homogeneous">true</property>
                     <property name="row-spacing">10</property><property name="column-spacing">24</property>
-                    <property name="margin-start">18</property><property name="margin-end">18</property>
-                    <property name="margin-top">18</property><property name="margin-bottom">18</property>
+                    <property name="margin-start">12</property><property name="margin-end">12</property>
+                    <property name="margin-top">14</property><property name="margin-bottom">14</property>
                     <child><object class="GtkLabel"><property name="label">Default download directory:</property><property name="xalign">0</property><property name="halign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                     <child>
                       <object class="GtkBox" id="default_download_folder_stack">
@@ -167,8 +167,8 @@
                       <object class="GtkGrid" id="options_columns_grid">
                     <property name="hexpand">true</property><property name="vexpand">true</property>
                     <property name="column-homogeneous">true</property><property name="column-spacing">20</property>
-                    <property name="margin-start">18</property><property name="margin-end">18</property>
-                    <property name="margin-top">18</property><property name="margin-bottom">18</property>
+                    <property name="margin-start">12</property><property name="margin-end">12</property>
+                    <property name="margin-top">14</property><property name="margin-bottom">14</property>
                     <child>
                       <object class="GtkBox" id="options_left_column">
                         <property name="orientation">vertical</property><property name="spacing">10</property><property name="hexpand">true</property>
@@ -252,8 +252,8 @@
                       <object class="GtkGrid" id="aria2_layout_grid">
                     <property name="hexpand">true</property><property name="vexpand">true</property>
                     <property name="column-homogeneous">true</property><property name="row-spacing">10</property><property name="column-spacing">24</property>
-                    <property name="margin-start">18</property><property name="margin-end">18</property>
-                    <property name="margin-top">18</property><property name="margin-bottom">18</property>
+                    <property name="margin-start">12</property><property name="margin-end">12</property>
+                    <property name="margin-top">14</property><property name="margin-bottom">14</property>
                     <child><object class="GtkLabel"><property name="label">aria2 path:</property><property name="xalign">0</property><property name="halign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="aria2_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout><child><object class="GtkEntry" id="aria2_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_aria2_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel"><property name="label">RPC port:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
@@ -308,8 +308,8 @@
                       <object class="GtkGrid" id="ytdlp_layout_grid">
                     <property name="hexpand">true</property><property name="vexpand">true</property>
                     <property name="column-homogeneous">true</property><property name="row-spacing">10</property><property name="column-spacing">24</property>
-                    <property name="margin-start">18</property><property name="margin-end">18</property>
-                    <property name="margin-top">18</property><property name="margin-bottom">18</property>
+                    <property name="margin-start">12</property><property name="margin-end">12</property>
+                    <property name="margin-top">14</property><property name="margin-bottom">14</property>
                     <child><object class="GtkLabel"><property name="label">yt-dlp path:</property><property name="xalign">0</property><property name="halign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="ytdlp_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout><child><object class="GtkEntry" id="ytdlp_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_ytdlp_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkCheckButton" id="write_thumbnail_check"><property name="label">Save thumbnail file</property><layout><property name="row">1</property><property name="column">0</property><property name="column-span">2</property></layout></object></child>
@@ -336,8 +336,8 @@
                       <object class="GtkGrid" id="httrack_layout_grid">
                     <property name="hexpand">true</property><property name="vexpand">true</property>
                     <property name="column-homogeneous">true</property><property name="row-spacing">10</property><property name="column-spacing">24</property>
-                    <property name="margin-start">18</property><property name="margin-end">18</property>
-                    <property name="margin-top">18</property><property name="margin-bottom">18</property>
+                    <property name="margin-start">12</property><property name="margin-end">12</property>
+                    <property name="margin-top">14</property><property name="margin-bottom">14</property>
                     <child><object class="GtkLabel"><property name="label">httrack path:</property><property name="xalign">0</property><property name="halign">start</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkBox" id="httrack_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">0</property><property name="column">1</property></layout><child><object class="GtkEntry" id="httrack_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_httrack_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel"><property name="label">Maximum mirror size (MiB):</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
@@ -373,8 +373,8 @@
                       <object class="GtkGrid" id="advanced_layout_grid">
                     <property name="hexpand">true</property><property name="vexpand">true</property>
                     <property name="column-homogeneous">true</property><property name="row-spacing">10</property><property name="column-spacing">24</property>
-                    <property name="margin-start">18</property><property name="margin-end">18</property>
-                    <property name="margin-top">18</property><property name="margin-bottom">18</property>
+                    <property name="margin-start">12</property><property name="margin-end">12</property>
+                    <property name="margin-top">14</property><property name="margin-bottom">14</property>
                     <child><object class="GtkLabel" id="scheduling_heading"><property name="label">&lt;b&gt;Scheduling&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property><property name="column-span">2</property></layout></object></child>
                     <child>
                       <object class="GtkBox" id="scheduling_box">
@@ -462,7 +462,7 @@
             <property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">8</property><property name="margin-bottom">12</property>
             <child><object class="GtkLabel" id="settings_status_label"><property name="accessible-role">status</property><property name="hexpand">true</property><property name="xalign">0</property></object></child>
             <child><object class="GtkButton" id="settings_cancel_button"><property name="label">_Cancel</property><property name="use-underline">true</property></object></child>
-            <child><object class="GtkButton" id="settings_reset_button"><property name="label">_Reset</property><property name="use-underline">true</property></object></child>
+            <child><object class="GtkButton" id="settings_reset_button"><property name="label">_Reset</property><property name="use-underline">true</property><property name="tooltip-text">Restore defaults for the currently selected tab only</property></object></child>
             <child><object class="GtkButton" id="settings_apply_button"><property name="label">_Apply</property><property name="use-underline">true</property></object></child>
             <child><object class="GtkButton" id="settings_ok_button"><property name="label">_OK</property><property name="use-underline">true</property><property name="css-classes">['suggested-action']</property></object></child>
           </object>

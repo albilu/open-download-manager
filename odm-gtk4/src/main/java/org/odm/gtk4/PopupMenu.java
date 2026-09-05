@@ -18,6 +18,7 @@ import org.gnome.gtk.Widget;
 public class PopupMenu {
 
     private static final String CONTEXT_MENU_CSS = """
+            button.odm-context-menu-item:hover,
             button.odm-context-menu-item.odm-context-menu-item-hover,
             button.odm-context-menu-item:focus-visible {
               background-color: alpha(@theme_fg_color, 0.14);
@@ -39,6 +40,7 @@ public class PopupMenu {
         box = new Box(Orientation.VERTICAL, 0);
         popover = new Popover();
         popover.setHasArrow(false);
+        popover.setAutohide(true);
         popover.setChild(box);
     }
 
@@ -61,6 +63,10 @@ public class PopupMenu {
         item.addCssClass("odm-context-menu-item");
         EventControllerMotion hover = new EventControllerMotion();
         hover.onEnter((x, y) -> item.addCssClass("odm-context-menu-item-hover"));
+        // Some compositors map the popover with the pointer already inside a
+        // row and do not deliver a distinct enter transition. Any subsequent
+        // motion must still establish the visible hover state.
+        hover.onMotion((x, y) -> item.addCssClass("odm-context-menu-item-hover"));
         hover.onLeave(() -> item.removeCssClass("odm-context-menu-item-hover"));
         item.addController(hover);
         item.onClicked(() -> {

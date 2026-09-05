@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import org.gnome.gdk.Rectangle;
 import org.gnome.glib.MainContext;
@@ -45,6 +46,9 @@ import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.Spinner;
 import org.gnome.gtk.SortType;
+import org.gnome.gtk.StringList;
+import org.gnome.gtk.Switch;
+import org.gnome.gtk.TextView;
 import org.gnome.gtk.TreeView;
 import org.gnome.gtk.TreeViewColumn;
 import org.gnome.gtk.TreeViewColumnSizing;
@@ -82,6 +86,7 @@ class WindowSmokeTest {
                 .add("Disabled action", false, () -> { });
         assertFalse(contextMenu.getPopover().getHasArrow(),
                 "download context menu should match arrowless menubar dropdowns");
+        assertTrue(contextMenu.getPopover().getAutohide());
         Box contextItems = assertInstanceOf(Box.class,
                 contextMenu.getPopover().getChild());
         Button enabledContextItem = assertInstanceOf(Button.class,
@@ -110,6 +115,9 @@ class WindowSmokeTest {
         assertTrue(enabledContextItem.hasCssClass("odm-context-menu-item-hover"));
         hoverController.emitLeave();
         assertFalse(enabledContextItem.hasCssClass("odm-context-menu-item-hover"));
+        hoverController.emitMotion(2.0, 2.0);
+        assertTrue(enabledContextItem.hasCssClass("odm-context-menu-item-hover"),
+                "motion must recover hover when mapping produced no enter event");
         // stores
         for (String id : new String[]{"status_store", "category_store", "download_store",
                 "completion_details_store", "global_progress_store",
@@ -342,11 +350,25 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("context menu presentation waits until pointer dispatch completes")
+    void contextMenuPresentationIsDeferred() {
+        AtomicBoolean presented = new AtomicBoolean();
+
+        MainWindow.deferContextMenuPopup(() -> presented.set(true));
+
+        assertFalse(presented.get());
+        drainGtkEvents();
+        assertTrue(presented.get());
+    }
+
+    @Test
     @DisplayName("settings.ui parses with 1:1 original ids (6 tabs)")
     void settings() {
         GtkBuilder builder = UiLoader.load("/ui/settings.ui");
         Widgets.require(builder, "settings_dialog", Window.class);
-        Widgets.require(builder, "settings_notebook", org.gnome.gtk.Notebook.class);
+        Notebook settingsNotebook = Widgets.require(builder,
+                "settings_notebook", Notebook.class);
+        assertNotebookInset(settingsNotebook);
         // General
         for (String id : new String[]{"max_concurrent_downloads_spin"}) {
             Widgets.require(builder, id, SpinButton.class);
@@ -417,6 +439,7 @@ class WindowSmokeTest {
                 "available_space_label");
         Grid generalLayout = Widgets.require(builder, "general_layout_grid", Grid.class);
         assertFlatFieldGrid(generalLayout);
+        assertOptionsMargins(generalLayout);
         assertEquals(1, gridColumn(generalLayout,
                 Widgets.require(builder, "max_concurrent_downloads_spin", SpinButton.class)));
         assertTrue(Widgets.require(builder, "clipboard_silent_check", CheckButton.class)
@@ -452,7 +475,9 @@ class WindowSmokeTest {
         assertDownloadOptionsLayout(builder);
         for (String id : new String[]{"aria2_layout_grid", "ytdlp_layout_grid",
                 "httrack_layout_grid", "advanced_layout_grid"}) {
-            assertFlatFieldGrid(Widgets.require(builder, id, Grid.class));
+            Grid layout = Widgets.require(builder, id, Grid.class);
+            assertFlatFieldGrid(layout);
+            assertOptionsMargins(layout);
         }
         assertEquals(1, gridColumn(Widgets.require(builder, "aria2_layout_grid", Grid.class),
                 Widgets.require(builder, "min_split_size_spin1", SpinButton.class)));
@@ -475,10 +500,64 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("Network Options disable controls unsupported by the engine and protocol")
+    void networkOptionCapabilitiesDriveControlSensitivity() {
+        SpinButton connections = SpinButton.withRange(1, 16, 1);
+        SpinButton downloadLimit = SpinButton.withRange(0, 1000, 1);
+        SpinButton uploadLimit = SpinButton.withRange(0, 1000, 1);
+        SpinButton retries = SpinButton.withRange(0, 50, 1);
+        SpinButton retryDelay = SpinButton.withRange(0, 600, 1);
+        Entry referer = new Entry();
+        Entry userAgent = new Entry();
+        Entry cookie = new Entry();
+        DropDown proxyType = DropDown.fromStrings(DialogOptions.PROXY_TYPES);
+        Entry proxyHost = new Entry();
+        SpinButton proxyPort = SpinButton.withRange(0, 65_535, 1);
+        Entry proxyUsername = new Entry();
+        Entry proxyPassword = new Entry();
+        Switch tor = new Switch();
+        NetworkOptionControls controls = new NetworkOptionControls(connections,
+                downloadLimit, uploadLimit, retries, retryDelay, referer,
+                userAgent, cookie, proxyType, proxyHost, proxyPort,
+                proxyUsername, proxyPassword, tor);
+
+        controls.applyCapabilities(NetworkOptionControls.capabilitiesFor(
+                new org.manager.GlobalSettings(),
+                org.manager.download.Download.Type.WEBSITE_SCRAPING,
+                org.manager.download.Download.Protocol.HTTPS));
+
+        assertTrue(connections.getSensitive());
+        assertTrue(downloadLimit.getSensitive());
+        assertFalse(uploadLimit.getSensitive());
+        assertTrue(retries.getSensitive());
+        assertFalse(retryDelay.getSensitive());
+        assertTrue(referer.getSensitive());
+        assertTrue(proxyType.getSensitive());
+        assertFalse(tor.getSensitive());
+        assertFalse(proxyHost.getSensitive(),
+                "proxy details remain disabled while proxy type is None");
+        proxyType.setSelected(1);
+        assertTrue(proxyHost.getSensitive());
+
+        controls.applyCapabilities(NetworkOptionControls.capabilitiesFor(
+                new org.manager.GlobalSettings(),
+                org.manager.download.Download.Type.ARIA2,
+                org.manager.download.Download.Protocol.TORRENT));
+        assertFalse(connections.getSensitive());
+        assertTrue(uploadLimit.getSensitive());
+        assertFalse(referer.getSensitive());
+        assertTrue(tor.getSensitive());
+    }
+
+    @Test
     @DisplayName("new-download.ui parses with 1:1 original ids")
     void newDownload() {
         GtkBuilder builder = UiLoader.load("/ui/new-download.ui");
         Widgets.require(builder, "new_download_dialog", Window.class);
+        assertNotebookInset(Widgets.require(builder,
+                "options_notebook", Notebook.class));
+        assertPrimaryTabMargins(Widgets.require(builder, "download_page", Grid.class));
+        assertListTabMargins(Widgets.require(builder, "files_page", Box.class));
         Widgets.require(builder, "url_entry", Entry.class);
         Widgets.require(builder, "torrent_file_chooser", Button.class);
         Widgets.require(builder, "save_folder_chooser", MenuButton.class);
@@ -498,29 +577,18 @@ class WindowSmokeTest {
                     fileColumnIds[index], TreeViewColumn.class).getSortColumnId(),
                     fileColumnIds[index] + " must be sortable");
         }
-        Widgets.require(builder, "max_connections_spin", SpinButton.class);
-        Widgets.require(builder, "retry_limit_spin", SpinButton.class);
-        Widgets.require(builder, "max_download_speed_spin", SpinButton.class);
-        Widgets.require(builder, "max_upload_speed_spin", SpinButton.class);
-        Widgets.require(builder, "retry_after", SpinButton.class);
-        Widgets.require(builder, "referrer", Entry.class);
-        Widgets.require(builder, "cookie", Entry.class);
-        Widgets.require(builder, "user_agent", Entry.class);
+        Widgets.require(builder, "new_download_options_content", Box.class);
+        Widgets.require(builder, "new_download_network_options_host", Box.class);
+        Widgets.require(builder, "sftp_host_key_grid", Grid.class);
         Widgets.require(builder, "sftp_host_key_label", Label.class);
         Widgets.require(builder, "sftp_host_key_entry", Entry.class);
-        Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
-        Widgets.require(builder, "proxy_host_entry", Entry.class);
-        Widgets.require(builder, "proxy_port_spin", SpinButton.class);
-        Widgets.require(builder, "proxy_username_entry", Entry.class);
-        Widgets.require(builder, "proxy_password_entry", Entry.class);
-        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        assertNoEmbeddedNetworkOptions(builder);
         assertNull(builder.getObject("start_automatically_check"));
         assertNull(builder.getObject("move_torrent_check"));
         Widgets.require(builder, "new_download_spinner", Spinner.class);
         Widgets.require(builder, "new_download_cancel_button", Button.class);
         Widgets.require(builder, "new_download_start_button", Button.class);
         assertDiskLabelBelowChooser(builder, "save_folder_chooser", "disk_space_label");
-        assertDownloadOptionsLayout(builder);
     }
 
     @Test
@@ -554,6 +622,9 @@ class WindowSmokeTest {
         Widgets.require(builder, "media_start_button", Button.class);
         Grid fields = Widgets.require(builder, "media_fields_grid", Grid.class);
         assertFieldGrid(fields);
+        assertPrimaryTabMargins(fields);
+        assertPrimaryTabMargins(Widgets.require(builder,
+                "new_media_content", Box.class));
         assertEquals(1, gridColumn(fields,
                 Widgets.require(builder, "media_url_entry", Entry.class).getParent()));
         assertEquals(1, gridColumn(fields,
@@ -572,30 +643,244 @@ class WindowSmokeTest {
     }
 
     @Test
-    @DisplayName("property.ui parses with 1:1 original ids")
+    @DisplayName("new-website.ui parses with expected ids")
+    void newWebsite() {
+        GtkBuilder builder = UiLoader.load("/ui/new-website.ui");
+        Widgets.require(builder, "new_website_dialog", Window.class);
+        Widgets.require(builder, "website_notebook", Notebook.class);
+        Widgets.require(builder, "website_url_entry", Entry.class);
+        Widgets.require(builder, "website_depth_spin", SpinButton.class);
+        Widgets.require(builder, "website_scope_combo", DropDown.class);
+        Widgets.require(builder, "website_external_depth_spin", SpinButton.class);
+        Widgets.require(builder, "website_include_entry", Entry.class);
+        Widgets.require(builder, "website_exclude_entry", Entry.class);
+        Widgets.require(builder, "website_include_archives_check", CheckButton.class);
+        Widgets.require(builder, "website_headers_entry", Entry.class);
+        Widgets.require(builder, "website_cookie_file_button", Button.class);
+        Widgets.require(builder, "website_clear_cookie_button", Button.class);
+        Widgets.require(builder, "website_network_options_host", Box.class);
+        Widgets.require(builder, "website_status_label", Label.class);
+        Widgets.require(builder, "new_website_spinner", Spinner.class);
+        Widgets.require(builder, "website_cancel_button", Button.class);
+        Widgets.require(builder, "website_start_button", Button.class);
+        Grid fields = Widgets.require(builder, "website_fields_grid", Grid.class);
+        assertFieldGrid(fields);
+        assertPrimaryTabMargins(fields);
+        assertPrimaryTabMargins(Widgets.require(builder,
+                "new_website_content", Box.class));
+        assertEquals(1, gridColumn(fields,
+                Widgets.require(builder, "website_url_entry", Entry.class)));
+        assertEquals(1, gridColumn(fields,
+                Widgets.require(builder, "website_cookie_file_box", Box.class)));
+    }
+
+    @Test
+    @DisplayName("shared per-record network pane follows the Network tab columns")
+    void sharedNetworkOptionsLayout() {
+        GtkBuilder builder = UiLoader.load("/ui/network-options.ui");
+        Box resourceRoot = Widgets.require(builder, "network_options_root", Box.class);
+        Grid resourceColumns = Widgets.require(builder, "network_options_columns", Grid.class);
+        assertSame(resourceColumns, resourceRoot.getFirstChild());
+        for (String id : new String[]{"network_connections_spin",
+                "network_retry_limit_spin", "network_retry_delay_spin",
+                "network_download_limit_spin", "network_upload_limit_spin",
+                "network_proxy_port_spin"}) {
+            Widgets.require(builder, id, SpinButton.class);
+        }
+        for (String id : new String[]{"network_referer_entry",
+                "network_cookie_entry", "network_user_agent_entry",
+                "network_proxy_host_entry", "network_proxy_username_entry",
+                "network_proxy_password_entry"}) {
+            Widgets.require(builder, id, Entry.class);
+        }
+        Widgets.require(builder, "network_proxy_type_combo", DropDown.class);
+        Widgets.require(builder, "network_tor_switch", Switch.class);
+        StringList plainProxyTypes = Widgets.require(builder,
+                "network_plain_proxy_types", StringList.class);
+        assertEquals(3, plainProxyTypes.getNItems());
+        assertEquals("None", plainProxyTypes.getString(0));
+        assertEquals("HTTP", plainProxyTypes.getString(1));
+        assertEquals("HTTPS", plainProxyTypes.getString(2));
+        StringList allProxyTypes = Widgets.require(builder,
+                "network_all_proxy_types", StringList.class);
+        assertEquals(DialogOptions.PROXY_TYPES.length, allProxyTypes.getNItems());
+        for (int index = 0; index < DialogOptions.PROXY_TYPES.length; index++) {
+            assertEquals(DialogOptions.PROXY_TYPES[index], allProxyTypes.getString(index));
+        }
+
+        NetworkOptionsPane pane = new NetworkOptionsPane(new org.manager.GlobalSettings(),
+                org.manager.download.Download.Type.WEBSITE_SCRAPING,
+                org.manager.download.Download.Protocol.HTTPS);
+        Grid columns = assertInstanceOf(Grid.class, pane.widget().getFirstChild());
+        assertTrue(columns.getColumnHomogeneous());
+        assertTrue(columns.getColumnSpacing() >= 16);
+        assertOptionsMargins(columns);
+        Switch torSwitch = firstDescendant(pane.widget(), Switch.class);
+        assertNotNull(torSwitch);
+        assertFalse(torSwitch.getHexpand(),
+                "switch controls must keep their natural width");
+        assertEquals(Align.START, torSwitch.getHalign(),
+                "switch controls must align with the other option values");
+        int leftColumns = 0;
+        int rightColumns = 0;
+        for (Widget child = columns.getFirstChild(); child != null;
+                child = child.getNextSibling()) {
+            assertInstanceOf(Box.class, child);
+            if (gridColumn(columns, child) == 0) {
+                leftColumns++;
+            } else if (gridColumn(columns, child) == 1) {
+                rightColumns++;
+            }
+        }
+        assertEquals(1, leftColumns);
+        assertEquals(1, rightColumns);
+    }
+
+    @Test
+    @DisplayName("shared Network Options loads defaults and updates protocol capabilities")
+    void sharedNetworkOptionsDefaultsAndCapabilities() {
+        org.manager.GlobalSettings settings = new org.manager.GlobalSettings();
+        new org.manager.download.DownloadSettingsFactory.NetworkDefaults(
+                7, 8, 512, 96, 3, "https://referrer.test/",
+                "ODM test", "session=one").saveTo(settings);
+
+        NetworkOptionsPane pane = new NetworkOptionsPane(settings,
+                org.manager.download.Download.Type.ARIA2,
+                org.manager.download.Download.Protocol.HTTPS);
+        DialogOptions.NetworkValues values = pane.values();
+        assertEquals(7, values.connections());
+        assertEquals(8, values.maxRetries());
+        assertEquals(512, values.downloadLimitKb());
+        assertEquals(96, values.uploadLimitKb());
+        assertEquals(3, values.retryDelaySeconds());
+        assertEquals("https://referrer.test/", values.referer());
+        assertEquals("ODM test", values.userAgent());
+        assertEquals("session=one", values.cookie());
+        assertTrue(pane.isSensitive(
+                org.manager.download.ExternalToolSettings.Capability.CONNECTIONS));
+        assertFalse(pane.isSensitive(
+                org.manager.download.ExternalToolSettings.Capability.UPLOAD_LIMIT));
+        assertFalse(pane.hasChanges());
+
+        pane.updateCapabilities(settings, org.manager.download.Download.Type.ARIA2,
+                org.manager.download.Download.Protocol.TORRENT);
+        assertFalse(pane.isSensitive(
+                org.manager.download.ExternalToolSettings.Capability.CONNECTIONS));
+        assertTrue(pane.isSensitive(
+                org.manager.download.ExternalToolSettings.Capability.UPLOAD_LIMIT));
+        assertFalse(pane.isSensitive(
+                org.manager.download.ExternalToolSettings.Capability.REFERER));
+        assertFalse(pane.hasChanges(),
+                "route-driven sensitivity changes must not look like user edits");
+    }
+
+    @Test
+    @DisplayName("shared Network Options loads records and tracks mixed user edits")
+    void sharedNetworkOptionsRecordEditing() {
+        org.aria2.Aria2Settings firstSettings = new org.aria2.Aria2Settings();
+        firstSettings.setMaxConnections(7);
+        firstSettings.setDownloadLimitKB(512);
+        firstSettings.setMaxRetries(8);
+        firstSettings.setRetryDelaySeconds(3);
+        firstSettings.setReferer("https://referrer.test/");
+        firstSettings.setUserAgent("ODM test");
+        firstSettings.setCookieHeader("Cookie: session=one");
+        org.manager.download.Download first = new org.manager.download.Download(
+                URI.create("https://example.test/one.iso"));
+        first.setSettings(firstSettings);
+        first.setUseProxy(true);
+        first.setProxyAddress("https://alice:secret@proxy.test:8443");
+
+        org.aria2.Aria2Settings secondSettings =
+                (org.aria2.Aria2Settings) firstSettings.copy();
+        secondSettings.setMaxConnections(4);
+        org.manager.download.Download second = new org.manager.download.Download(
+                URI.create("https://example.test/two.iso"));
+        second.setSettings(secondSettings);
+        second.setUseProxy(true);
+        second.setProxyAddress("https://alice:secret@proxy.test:8443");
+
+        NetworkOptionsPane pane = new NetworkOptionsPane(List.of(first, second));
+        DialogOptions.NetworkValues values = pane.values();
+        assertEquals(7, values.connections());
+        assertEquals(512, values.downloadLimitKb());
+        assertEquals("session=one", values.cookie());
+        assertEquals(2, values.proxyTypeIndex());
+        assertEquals("proxy.test", values.proxyHost());
+        assertEquals(8443, values.proxyPort());
+        assertTrue(pane.hasMixedValues());
+        assertFalse(pane.hasChanges(),
+                "loading existing or mixed values must not mark them dirty");
+
+        SpinButton connections = firstDescendant(pane.widget(), SpinButton.class);
+        assertNotNull(connections);
+        connections.setValue(8);
+        assertTrue(pane.hasChanges());
+        assertTrue(pane.changedCapabilities().contains(
+                org.manager.download.ExternalToolSettings.Capability.CONNECTIONS));
+    }
+
+    @Test
+    @DisplayName("action-output.ui parses with its complete static layout")
+    void actionOutput() {
+        GtkBuilder builder = UiLoader.load("/ui/action-output.ui");
+        Widgets.require(builder, "action_output_dialog", Window.class);
+        Box content = Widgets.require(builder, "action_output_content", Box.class);
+        assertPrimaryTabMargins(content);
+        Widgets.require(builder, "action_output_action_label", Label.class);
+        Widgets.require(builder, "action_output_result_label", Label.class);
+        Widgets.require(builder, "action_output_scroller", ScrolledWindow.class);
+        TextView output = Widgets.require(builder, "action_output_text_view", TextView.class);
+        assertFalse(output.getEditable());
+        assertTrue(output.getMonospace());
+        Widgets.require(builder, "action_output_close_button", Button.class);
+    }
+
+    @Test
+    @DisplayName("completion-command.ui parses with its complete static layout")
+    void completionCommand() {
+        GtkBuilder builder = UiLoader.load("/ui/completion-command.ui");
+        Widgets.require(builder, "completion_command_dialog", Window.class);
+        Box content = Widgets.require(builder, "completion_command_content", Box.class);
+        assertPrimaryTabMargins(content);
+        Widgets.require(builder, "completion_command_help_label", Label.class);
+        Widgets.require(builder, "completion_command_entry", Entry.class);
+        Widgets.require(builder, "completion_command_actions", Box.class);
+        Widgets.require(builder, "completion_command_cancel_button", Button.class);
+        Widgets.require(builder, "completion_command_save_button", Button.class);
+    }
+
+    @Test
+    @DisplayName("import-remote.ui parses with its complete static layout")
+    void remoteImport() {
+        GtkBuilder builder = UiLoader.load("/ui/import-remote.ui");
+        Widgets.require(builder, "remote_import_dialog", Window.class);
+        Box content = Widgets.require(builder, "remote_import_content", Box.class);
+        assertPrimaryTabMargins(content);
+        Widgets.require(builder, "remote_import_help_label", Label.class);
+        Widgets.require(builder, "remote_import_url_entry", Entry.class);
+        Widgets.require(builder, "remote_import_status_label", Label.class);
+        Widgets.require(builder, "remote_import_actions", Box.class);
+        Widgets.require(builder, "remote_import_cancel_button", Button.class);
+        Widgets.require(builder, "remote_import_start_button", Button.class);
+    }
+
+    @Test
+    @DisplayName("property.ui parses with the shared Network Options host")
     void property() {
         GtkBuilder builder = UiLoader.load("/ui/property.ui");
         Widgets.require(builder, "property_dialog", Window.class);
-        Widgets.require(builder, "properties_notebook", org.gnome.gtk.Notebook.class);
-        for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
-                "max_download_speed_spin", "max_upload_speed_spin", "retry_after", "proxy_port_spin"}) {
-            Widgets.require(builder, id, SpinButton.class);
-        }
-        for (String id : new String[]{"referrer", "cookie", "user_agent", "proxy_host_entry",
-                "proxy_username_entry", "proxy_password_entry"}) {
-            Widgets.require(builder, id, Entry.class);
-        }
-        Widgets.require(builder, "proxy_type_combo", org.gnome.gtk.DropDown.class);
-        org.gnome.gtk.Switch propertyTor = Widgets.require(builder,
-                "tor_switch", org.gnome.gtk.Switch.class);
-        assertSame(Widgets.require(builder, "tor_settings_grid", Grid.class),
-                propertyTor.getParent());
+        Notebook propertiesNotebook = Widgets.require(builder,
+                "properties_notebook", Notebook.class);
+        assertNotebookInset(propertiesNotebook);
+        Widgets.require(builder, "property_options_scrolled", ScrolledWindow.class);
+        Widgets.require(builder, "property_network_options_host", Box.class);
+        assertNoEmbeddedNetworkOptions(builder);
         assertNull(builder.getObject("start_automatically_check"));
         assertNull(builder.getObject("move_torrent_check"));
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "apply_button", Button.class);
         Widgets.require(builder, "ok_button", Button.class);
-        assertDownloadOptionsLayout(builder);
     }
 
     @Test
@@ -622,8 +907,11 @@ class WindowSmokeTest {
     void importListStructure() {
         GtkBuilder builder = UiLoader.load("/ui/import-list.ui");
         Widgets.require(builder, "import_dialog", Window.class);
-        Widgets.require(builder, "options_notebook", org.gnome.gtk.Notebook.class);
-        Widgets.require(builder, "clipboard_page", org.gnome.gtk.Box.class);
+        Notebook importNotebook = Widgets.require(builder,
+                "options_notebook", Notebook.class);
+        assertNotebookInset(importNotebook);
+        Box clipboardPage = Widgets.require(builder, "clipboard_page", Box.class);
+        assertListTabMargins(clipboardPage);
         Widgets.require(builder, "filter_label", Label.class);
         Widgets.require(builder, "extension_filter_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "url_treeview", TreeView.class);
@@ -654,6 +942,8 @@ class WindowSmokeTest {
     void importSequence() {
         GtkBuilder builder = UiLoader.load("/ui/import-sequence.ui");
         Widgets.require(builder, "import_sequence_dialog", Window.class);
+        assertNotebookInset(Widgets.require(builder, "main_notebook", Notebook.class));
+        assertPrimaryTabMargins(Widgets.require(builder, "sequence_page", Box.class));
         Widgets.require(builder, "uri_entry", Entry.class);
         Widgets.require(builder, "num_start_spin", SpinButton.class);
         Widgets.require(builder, "num_vers_spin", SpinButton.class);
@@ -1065,6 +1355,41 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("deferred context popup restores the press-time multi-selection")
+    void deferredContextPopupRestoresMultiSelection() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ListStore store = Widgets.require(builder, "download_store", ListStore.class);
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        DownloadListPresenter presenter = new DownloadListPresenter(
+                Widgets.require(builder, "status_store", ListStore.class),
+                Widgets.require(builder, "category_store", ListStore.class),
+                store,
+                Widgets.require(builder, "global_progress_store", ListStore.class),
+                Widgets.require(builder, "status_treeview", TreeView.class),
+                Widgets.require(builder, "category_treeview", TreeView.class), () -> { });
+        org.manager.download.Download first = new org.manager.download.Download(
+                URI.create("https://example.com/first.bin"));
+        org.manager.download.Download second = new org.manager.download.Download(
+                URI.create("https://example.com/second.bin"));
+        presenter.refresh(List.of(first, second));
+        tree.getSelection().setMode(org.gnome.gtk.SelectionMode.MULTIPLE);
+        tree.getSelection().selectPath(TreePath.fromString("0"));
+        tree.getSelection().selectPath(TreePath.fromString("1"));
+        List<String> pressSelection = List.of(first.getId(), second.getId());
+
+        // Reproduce GtkTreeView's late selection change between the captured
+        // press and the idle callback that presents the popover.
+        tree.getSelection().unselectAll();
+        tree.getSelection().selectPath(TreePath.fromString("1"));
+
+        assertTrue(MainWindow.restoreContextSelection(
+                presenter, tree.getSelection(), pressSelection));
+        assertEquals(2, tree.getSelection().countSelectedRows());
+        assertTrue(tree.getSelection().pathIsSelected(TreePath.fromString("0")));
+        assertTrue(tree.getSelection().pathIsSelected(TreePath.fromString("1")));
+    }
+
+    @Test
     @DisplayName("appending a history page preserves the current multi-selection")
     void paginationAppendPreservesMultiSelection() {
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
@@ -1104,6 +1429,50 @@ class WindowSmokeTest {
         assertEquals(3, store.iterNChildren(null));
     }
 
+    @Test
+    @DisplayName("queue reorder rebuild restores the moved record selection")
+    void queueReorderRebuildRestoresSelection() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ListStore store = Widgets.require(builder, "download_store", ListStore.class);
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        DownloadListPresenter presenter = new DownloadListPresenter(
+                Widgets.require(builder, "status_store", ListStore.class),
+                Widgets.require(builder, "category_store", ListStore.class),
+                store,
+                Widgets.require(builder, "global_progress_store", ListStore.class),
+                Widgets.require(builder, "status_treeview", TreeView.class),
+                Widgets.require(builder, "category_treeview", TreeView.class), () -> { });
+        org.manager.download.Download first = new org.manager.download.Download(
+                URI.create("https://example.com/first.bin"));
+        org.manager.download.Download second = new org.manager.download.Download(
+                URI.create("https://example.com/second.bin"));
+        first.setStatus(org.manager.download.Download.Status.QUEUED);
+        second.setStatus(org.manager.download.Download.Status.QUEUED);
+        first.setQueuePosition(1);
+        second.setQueuePosition(2);
+
+        presenter.refresh(List.of(first, second));
+        tree.getSelection().setMode(org.gnome.gtk.SelectionMode.MULTIPLE);
+        tree.getSelection().selectPath(TreePath.fromString("1"));
+        ((TreeSortable) store).setSortColumnId(1, SortType.ASCENDING);
+        assertSame(first, presenter.rowAt(0));
+        presenter.useQueueOrder();
+
+        first.setQueuePosition(2);
+        second.setQueuePosition(1);
+        DownloadListPresenter.RefreshSummary summary =
+                presenter.refresh(List.of(first, second));
+
+        assertTrue(summary.modelRebuilt());
+        assertEquals(0, tree.getSelection().countSelectedRows(),
+                "GtkListStore.clear drops the former TreePath selection");
+        assertEquals(1, presenter.restoreSelection(
+                tree.getSelection(), List.of(second.getId())));
+        assertEquals(1, tree.getSelection().countSelectedRows());
+        assertTrue(tree.getSelection().pathIsSelected(TreePath.fromString("0")));
+        assertSame(second, presenter.rowAt(0));
+    }
+
     private static Object defaultValue(Class<?> type) {
         if (!type.isPrimitive()) return null;
         if (type == boolean.class) return false;
@@ -1136,6 +1505,20 @@ class WindowSmokeTest {
             index++;
         }
         return -1;
+    }
+
+    private static <T extends Widget> T firstDescendant(Widget parent, Class<T> type) {
+        for (Widget child = parent.getFirstChild(); child != null;
+                child = child.getNextSibling()) {
+            if (type.isInstance(child)) {
+                return type.cast(child);
+            }
+            T nested = firstDescendant(child, type);
+            if (nested != null) {
+                return nested;
+            }
+        }
+        return null;
     }
 
     private static int treeColumnIndex(TreeView tree, TreeViewColumn expected) {
@@ -1200,6 +1583,7 @@ class WindowSmokeTest {
             assertFlatFieldGrid(Widgets.require(builder, id, Grid.class));
         }
         Grid columns = Widgets.require(builder, "options_columns_grid", Grid.class);
+        assertOptionsMargins(columns);
         Box left = Widgets.require(builder, "options_left_column", Box.class);
         Box right = Widgets.require(builder, "options_right_column", Box.class);
         assertTrue(columns.getHexpand());
@@ -1214,6 +1598,42 @@ class WindowSmokeTest {
                 Widgets.require(builder, "proxy_host_entry", Entry.class)));
         assertBoldLabels(builder, "download_settings_heading", "http_connection_heading",
                 "proxy_settings_heading", "tor_settings_heading");
+    }
+
+    private static void assertNoEmbeddedNetworkOptions(GtkBuilder builder) {
+        for (String id : new String[]{"max_connections_spin", "retry_limit_spin",
+                "max_download_speed_spin", "max_upload_speed_spin", "retry_after",
+                "referrer", "cookie", "user_agent", "proxy_type_combo",
+                "proxy_host_entry", "proxy_port_spin", "proxy_username_entry",
+                "proxy_password_entry", "tor_switch"}) {
+            assertNull(builder.getObject(id),
+                    id + " must come from the shared network-options.ui resource");
+        }
+    }
+
+    private static void assertNotebookInset(Notebook notebook) {
+        assertEquals(12, notebook.getMarginStart());
+        assertEquals(12, notebook.getMarginEnd());
+        assertEquals(12, notebook.getMarginTop());
+    }
+
+    private static void assertPrimaryTabMargins(Widget content) {
+        assertMargins(content, 12, 12);
+    }
+
+    private static void assertListTabMargins(Widget content) {
+        assertMargins(content, 8, 8);
+    }
+
+    private static void assertOptionsMargins(Widget content) {
+        assertMargins(content, 12, 14);
+    }
+
+    private static void assertMargins(Widget content, int horizontal, int vertical) {
+        assertEquals(horizontal, content.getMarginStart());
+        assertEquals(horizontal, content.getMarginEnd());
+        assertEquals(vertical, content.getMarginTop());
+        assertEquals(vertical, content.getMarginBottom());
     }
 
     private static void assertBoldLabels(GtkBuilder builder, String... labelIds) {

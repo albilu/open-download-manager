@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -14,6 +15,7 @@ import org.aria2.Aria2Settings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.download.Download;
+import org.manager.download.ExternalToolSettings;
 
 class ImportListDialogTest {
 
@@ -88,11 +90,27 @@ class ImportListDialogTest {
         Aria2Settings settings = (Aria2Settings) download.getSettings();
         assertEquals(12, settings.getMaxConnections());
         assertEquals(256, settings.getDownloadLimitKB());
-        assertEquals(64, settings.getUploadLimitKB());
+        assertEquals(0, settings.getUploadLimitKB(),
+                "upload limits are irrelevant for an HTTP record");
         assertEquals(9, settings.getMaxRetries());
         assertEquals(4, settings.getRetryDelaySeconds());
         assertEquals("https://referrer.test/", settings.getReferer());
         assertEquals("ODM import", settings.getUserAgent());
         assertEquals("Cookie: session=abc", settings.getCookieHeader());
+    }
+
+    @Test
+    void mixedImportsExposeOnlyCapabilitiesSharedByEverySelectedRecord() {
+        var capabilities = NetworkOptionControls.commonCapabilities(
+                new org.manager.GlobalSettings(), List.of(
+                        "https://example.test/file.iso",
+                        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+
+        assertTrue(capabilities.contains(ExternalToolSettings.Capability.DOWNLOAD_LIMIT));
+        assertTrue(capabilities.contains(ExternalToolSettings.Capability.MAX_RETRIES));
+        assertTrue(capabilities.contains(ExternalToolSettings.Capability.SOCKS_PROXY));
+        assertFalse(capabilities.contains(ExternalToolSettings.Capability.CONNECTIONS));
+        assertFalse(capabilities.contains(ExternalToolSettings.Capability.UPLOAD_LIMIT));
+        assertFalse(capabilities.contains(ExternalToolSettings.Capability.REFERER));
     }
 }

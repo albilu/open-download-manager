@@ -978,7 +978,12 @@ public class GlobalSettings {
             return;
         }
         try {
-            Map<String, String> serialized = MAPPER.readValue(file.toFile(),
+            String json = Files.readString(file);
+            if (json.isBlank()) {
+                LOGGER.debug("Settings file is empty at " + file + ", keeping defaults");
+                return;
+            }
+            Map<String, String> serialized = MAPPER.readValue(json,
                     new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {
                     });
             serialized.forEach(custom::set);

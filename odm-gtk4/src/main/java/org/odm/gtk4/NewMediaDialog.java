@@ -7,6 +7,7 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.Box;
 import org.gnome.gtk.CellRendererToggle;
 import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
@@ -42,8 +43,10 @@ public class NewMediaDialog {
     private final Window dialog;
     private final DownloadManager downloadManager;
     private final Runnable onDownloadQueued;
+    private final org.tor.TorService torService;
     private final YtDlpClient ytDlpClient;
     private final YtDlpSettings defaultSettings;
+    private final NetworkOptionsPane networkOptions;
     private final java.util.concurrent.atomic.AtomicBoolean closed =
             new java.util.concurrent.atomic.AtomicBoolean(false);
     private volatile java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> metadataFuture;
@@ -83,8 +86,14 @@ public class NewMediaDialog {
     private Download pendingDownload;
 
     public NewMediaDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
+        this(parent, downloadManager, onDownloadQueued, null);
+    }
+
+    public NewMediaDialog(Window parent, DownloadManager downloadManager,
+            Runnable onDownloadQueued, org.tor.TorService torService) {
         this.downloadManager = downloadManager;
         this.onDownloadQueued = onDownloadQueued;
+        this.torService = torService;
         org.manager.GlobalSettings globalSettings = downloadManager.getGlobalSettings();
         this.defaultSettings = (YtDlpSettings) new DownloadSettingsFactory(globalSettings)
                 .createSettings(Download.Type.YOUTUBE);
@@ -126,6 +135,10 @@ public class NewMediaDialog {
         MenuButton folderButton = Widgets.require(builder, "media_folder_chooser", MenuButton.class);
         this.diskSpaceLabel = Widgets.require(builder, "media_disk_space_label", Label.class);
         this.startButton = Widgets.require(builder, "media_start_button", Button.class);
+        this.networkOptions = new NetworkOptionsPane(globalSettings,
+                Download.Type.YOUTUBE, Download.Protocol.HTTPS);
+        Widgets.require(builder, "media_network_options_host", Box.class)
+                .append(networkOptions.widget());
 
         AccessibilitySupport.label(urlEntry, "Media URL");
         AccessibilitySupport.label(formatDrop, "Media format");
@@ -225,7 +238,13 @@ public class NewMediaDialog {
         }
         YtDlpSettings previewSettings = (YtDlpSettings) defaultSettings.copy();
         applyAuthenticationOptions(previewSettings);
-        metadataFuture = ytDlpClient.previewMedia(url, previewSettings);
+        Download previewDownload = new Download(java.net.URI.create(url));
+        previewDownload.setType(Download.Type.YOUTUBE);
+        previewDownload.setSettings(previewSettings);
+        networkOptions.applyTo(previewDownload);
+        metadataFuture = DialogOptions.ensureTorAvailable(
+                networkOptions.isTorSelected(), torService)
+                .thenCompose(ignored -> ytDlpClient.previewMedia(url, previewSettings));
         metadataFuture.thenAccept(info -> UiThread.marshal(() -> {
                     if (!closed.get() && url.equals(urlEntry.getText().trim())) {
                         onInfoFetched(url, info);
@@ -285,11 +304,14 @@ public class NewMediaDialog {
                 download = downloadManager.createYoutubeDownload(uri, destinationFolder, null);
             }
             applyMediaOptions(download);
+            networkOptions.applyTo(download);
             pendingDownload = download;
             startButton.setSensitive(false);
             AccessibilitySupport.status(statusLabel, "Adding media download to queue…");
             Download submitted = download;
-            downloadManager.queueDownload(download).whenComplete((ignored, error) ->
+            DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService)
+                    .thenCompose(ignored -> downloadManager.queueDownload(submitted))
+                    .whenComplete((ignored, error) ->
                     UiThread.marshal(() -> {
                         if (closed.get()) {
                             return;

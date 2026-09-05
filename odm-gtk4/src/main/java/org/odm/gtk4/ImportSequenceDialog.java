@@ -42,6 +42,7 @@ public class ImportSequenceDialog {
     private final Runnable onImportDone;
     private final GtkBuilder builder;
     private final ImportLimits importLimits;
+    private final org.tor.TorService torService;
 
     private final Entry uriEntry;
     private final SpinButton numStartSpin;
@@ -56,6 +57,7 @@ public class ImportSequenceDialog {
     private final PathChooserButton destinationChooser;
     private final Button validateButton;
     private final SpinnerActivity activity;
+    private final NetworkOptionControls networkControls;
 
     private Path destinationFolder;
     private boolean syncingRangeMode;
@@ -63,9 +65,15 @@ public class ImportSequenceDialog {
     private List<String> currentPreviewUrls = List.of();
 
     public ImportSequenceDialog(Window parent, DownloadManager downloadManager, Runnable onImportDone) {
+        this(parent, downloadManager, onImportDone, null);
+    }
+
+    public ImportSequenceDialog(Window parent, DownloadManager downloadManager,
+            Runnable onImportDone, org.tor.TorService torService) {
         this.downloadManager = downloadManager;
         this.onImportDone = onImportDone;
         this.importLimits = ImportLimits.from(downloadManager.getGlobalSettings());
+        this.torService = torService;
 
         this.builder = UiLoader.load("/ui/import-sequence.ui");
         this.dialog = Widgets.require(builder, "import_sequence_dialog", Window.class);
@@ -106,7 +114,22 @@ public class ImportSequenceDialog {
         for (String type : DialogOptions.PROXY_TYPES) {
             proxyTypes.append(type);
         }
-        Widgets.require(builder, "proxy_type_combo", DropDown.class).setModel(proxyTypes);
+        DropDown proxyType = Widgets.require(builder, "proxy_type_combo", DropDown.class);
+        proxyType.setModel(proxyTypes);
+        this.networkControls = new NetworkOptionControls(
+                Widgets.require(builder, "max_connections_spin", SpinButton.class),
+                Widgets.require(builder, "max_download_speed_spin", SpinButton.class),
+                Widgets.require(builder, "max_upload_speed_spin", SpinButton.class),
+                Widgets.require(builder, "retry_limit_spin", SpinButton.class),
+                Widgets.require(builder, "retry_after", SpinButton.class),
+                Widgets.require(builder, "referrer_entry", Entry.class),
+                Widgets.require(builder, "user_agent_entry", Entry.class),
+                Widgets.require(builder, "cookie_entry", Entry.class), proxyType,
+                Widgets.require(builder, "proxy_host_entry", Entry.class),
+                Widgets.require(builder, "proxy_port_spin", SpinButton.class),
+                Widgets.require(builder, "proxy_username_entry", Entry.class),
+                Widgets.require(builder, "proxy_password_entry", Entry.class),
+                Widgets.require(builder, "tor_switch", Switch.class));
         loadGlobalDefaults();
 
         MenuButton destinationButton = Widgets.require(builder, "destination_folder", MenuButton.class);
@@ -240,10 +263,14 @@ public class ImportSequenceDialog {
                     }
                     if (error != null) {
                         LOGGER.warn("Could not generate URL sequence preview", error);
+                        networkControls.applyCapabilities(java.util.Set.of());
                         return;
                     }
                     currentPreviewUrls = List.copyOf(urls);
                     appendPreview(urls);
+                    networkControls.applyCapabilities(
+                            NetworkOptionControls.commonCapabilities(
+                                    downloadManager.getGlobalSettings(), urls));
                     validateButton.setSensitive(!urls.isEmpty());
                 }));
     }
@@ -269,8 +296,9 @@ public class ImportSequenceDialog {
         ImportOptions options = captureOptions();
         validateButton.setSensitive(false);
         AccessibilitySupport.status(diskSpaceLabel, "Adding URL sequence to queue…");
-        activity.track(CompletableFuture.supplyAsync(
-                () -> queueUrls(urls, destination, options)))
+        activity.track(DialogOptions.ensureTorAvailable(options.tor(), torService)
+                .thenCompose(ignored -> CompletableFuture.supplyAsync(
+                        () -> queueUrls(urls, destination, options))))
                 .whenComplete((queued, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         LOGGER.warn("URL sequence import failed", error);
@@ -345,7 +373,7 @@ public class ImportSequenceDialog {
         void apply(Download download) {
             DialogOptions.applyProxy(download, tor, proxyType, proxyHost, proxyPort,
                     proxyUser, proxyPassword);
-            DialogOptions.applyCommon(download.getSettings(), connections, downloadLimitKb,
+            DialogOptions.applyCommon(download, connections, downloadLimitKb,
                     uploadLimitKb, retries, retryDelay, referer, userAgent, cookie);
         }
     }
@@ -373,9 +401,8 @@ public class ImportSequenceDialog {
         Widgets.require(builder, "tor_switch", Switch.class)
                 .setActive(settings.getBooleanProperty("tor.enabled", false));
 
-        DialogOptions.ProxyFields proxy = settings.isGlobalProxyEnabled()
-                ? DialogOptions.parseProxy(settings.getGlobalProxyAddress())
-                : DialogOptions.ProxyFields.none();
+        DialogOptions.ProxyFields proxy = DialogOptions.parseProxy(
+                DialogOptions.manualProxyAddress(settings));
         Widgets.require(builder, "proxy_type_combo", DropDown.class).setSelected(proxy.typeIndex());
         Widgets.require(builder, "proxy_host_entry", Entry.class).setText(proxy.host());
         Widgets.require(builder, "proxy_port_spin", SpinButton.class).setValue(proxy.port());

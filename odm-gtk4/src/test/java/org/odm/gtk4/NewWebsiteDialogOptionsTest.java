@@ -12,14 +12,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 @DisplayName("New Website Scrape per-record options")
-class MainWindowWebsiteScrapeOptionsTest {
+class NewWebsiteDialogOptionsTest {
 
     @Test
     @DisplayName("crawl, filter, and HTTP controls are stored on the website download settings")
     void appliesCrawlOptionsToDownloadSettings() {
         HttrackSettings settings = new HttrackSettings();
 
-        MainWindow.applyWebsiteScrapeOptions(settings, 7,
+        NewWebsiteDialog.applyWebsiteScrapeOptions(settings, 7,
                 HttrackSettings.CrawlScope.CUSTOM_EXTERNAL_DEPTH, 2,
                 "*.html   example.test/downloads/*\n*.css",
                 "*/admin/* */logout/*", true,
@@ -50,7 +50,7 @@ class MainWindowWebsiteScrapeOptionsTest {
                 .setAdditionalHttpHeaders(List.of("Authorization: old"))
                 .setCookieFile(Path.of("/tmp/old-cookies.txt"));
 
-        MainWindow.applyWebsiteScrapeOptions(settings, 3,
+        NewWebsiteDialog.applyWebsiteScrapeOptions(settings, 3,
                 HttrackSettings.CrawlScope.SAME_HOST, 1,
                 " ", null, false, " ", null);
 

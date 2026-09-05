@@ -412,8 +412,9 @@ public class DownloadHandlerFactory {
         if (address == null) {
             return false;
         }
-        String lower = address.toLowerCase();
-        return lower.startsWith("socks4://") || lower.startsWith("socks5://")
+        String lower = address.toLowerCase(java.util.Locale.ROOT);
+        return lower.startsWith("socks4://") || lower.startsWith("socks4a://")
+                || lower.startsWith("socks5://")
                 || lower.startsWith("socks5h://");
     }
 

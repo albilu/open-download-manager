@@ -1,9 +1,12 @@
 package org.odm.gtk4;
 
 import java.net.URI;
+import java.util.concurrent.CompletableFuture;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
+import org.manager.download.DownloadNetworkCapabilities;
 import org.manager.download.ExternalToolSettings;
+import org.tor.TorService;
 
 /**
  * Shared option plumbing for the new-download/import/property dialogs: the
@@ -26,6 +29,20 @@ final class DialogOptions {
     record ProxyFields(int typeIndex, String host, int port, String username, String password) {
         static ProxyFields none() {
             return new ProxyFields(0, "", 0, "", "");
+        }
+    }
+
+    /** Immutable snapshot shared by every per-record Network Options panel. */
+    record NetworkValues(int connections, int downloadLimitKb, int uploadLimitKb,
+            int maxRetries, int retryDelaySeconds, String referer, String userAgent,
+            String cookie, boolean torActive, int proxyTypeIndex, String proxyHost,
+            int proxyPort, String proxyUsername, String proxyPassword) {
+
+        void applyTo(Download download) {
+            applyCommon(download, connections, downloadLimitKb, uploadLimitKb,
+                    maxRetries, retryDelaySeconds, referer, userAgent, cookie);
+            applyProxy(download, torActive, proxyTypeIndex, proxyHost, proxyPort,
+                    proxyUsername, proxyPassword);
         }
     }
 
@@ -171,12 +188,32 @@ final class DialogOptions {
             String host, int port, String user, String password) {
         String proxy = selectedProxyAddress(torActive, typeIndex, host, port, user, password);
         if (proxy != null) {
+            if (!DownloadNetworkCapabilities.supportsProxy(download, proxy)) {
+                throw new IllegalArgumentException(torActive
+                        ? "Tor/SOCKS proxying is not supported for this download"
+                        : "This proxy type is not supported for this download");
+            }
             download.setUseProxy(true);
             download.setProxyAddress(proxy);
         } else {
             download.setUseProxy(false);
             download.setProxyAddress(null);
         }
+    }
+
+    /** Starts ODM's Tor service when a per-record Tor option requires it. */
+    static CompletableFuture<Void> ensureTorAvailable(boolean requested, TorService torService) {
+        if (!requested || (torService != null && torService.isRunning())) {
+            return CompletableFuture.completedFuture(null);
+        }
+        if (torService == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "Tor is selected, but the ODM Tor service is unavailable"));
+        }
+        return torService.start().thenCompose(started -> Boolean.TRUE.equals(started)
+                ? CompletableFuture.completedFuture(null)
+                : CompletableFuture.failedFuture(new IllegalStateException(
+                        "Could not start the ODM Tor service")));
     }
 
     /**
@@ -191,6 +228,18 @@ final class DialogOptions {
                 ExternalToolSettings.Capability.class), connections,
                 downloadLimitKb, uploadLimitKb, maxRetries, retryDelaySeconds,
                 referer, userAgent, cookie);
+    }
+
+    /** Applies only controls meaningful for this record's engine and protocol. */
+    static void applyCommon(Download download, int connections,
+            int downloadLimitKb, int uploadLimitKb, int maxRetries,
+            int retryDelaySeconds, String referer, String userAgent, String cookie) {
+        if (download == null) {
+            return;
+        }
+        applyCommon(download.getSettings(), DownloadNetworkCapabilities.forDownload(download),
+                connections, downloadLimitKb, uploadLimitKb, maxRetries,
+                retryDelaySeconds, referer, userAgent, cookie);
     }
 
     static void applyCommon(ExternalToolSettings settings,

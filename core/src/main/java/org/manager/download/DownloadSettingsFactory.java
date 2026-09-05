@@ -168,13 +168,39 @@ public class DownloadSettingsFactory {
 
     private static void applyNetworkPreferences(GlobalSettings global,
             ExternalToolSettings settings) {
-        NetworkDefaults.from(global).applyTo(settings);
-        // This older typed setting is a stronger application-wide limiter.
-        // Preserve its precedence, but do so for every supporting engine.
-        int globalLimit = global.getGlobalSpeedLimit();
-        if (globalLimit > 0
-                && settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
-            settings.setDownloadLimitKB(globalLimit);
+        applyNetworkPreferences(global, settings, null, null);
+    }
+
+    private static void applyNetworkPreferences(GlobalSettings global,
+            ExternalToolSettings settings, Download.Type type, Download.Protocol protocol) {
+        NetworkDefaults defaults = NetworkDefaults.from(global);
+        java.util.EnumSet<ExternalToolSettings.Capability> capabilities =
+                DownloadNetworkCapabilities.forSettings(settings, type, protocol);
+        if (capabilities.contains(ExternalToolSettings.Capability.CONNECTIONS)) {
+            settings.setMaxConnections(defaults.maxConnections());
+        }
+        if (capabilities.contains(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
+            settings.setDownloadLimitKB(defaults.downloadLimitKb());
+        }
+        if (capabilities.contains(ExternalToolSettings.Capability.UPLOAD_LIMIT)) {
+            settings.setUploadLimitKB(defaults.uploadLimitKb());
+        }
+        if (capabilities.contains(ExternalToolSettings.Capability.MAX_RETRIES)) {
+            settings.setMaxRetries(defaults.maxRetries());
+        }
+        if (capabilities.contains(ExternalToolSettings.Capability.RETRY_DELAY)) {
+            settings.setRetryDelaySeconds(defaults.retryDelaySeconds());
+        }
+        if (capabilities.contains(ExternalToolSettings.Capability.REFERER)) {
+            settings.setReferer(defaults.referer());
+        }
+        if (capabilities.contains(ExternalToolSettings.Capability.USER_AGENT)) {
+            settings.setUserAgent(defaults.userAgent());
+        }
+        if (capabilities.contains(ExternalToolSettings.Capability.COOKIE)) {
+            settings.setCookieHeader(defaults.cookie().isEmpty() ? null
+                    : defaults.cookie().regionMatches(true, 0, "Cookie:", 0, 7)
+                            ? defaults.cookie() : "Cookie: " + defaults.cookie());
         }
     }
 
@@ -185,25 +211,36 @@ public class DownloadSettingsFactory {
      * @return A settings object configured for the download type
      */
     public DownloadSettings createSettings(Download.Type type) {
+        return createSettings(type, null);
+    }
+
+    /**
+     * Creates settings narrowed to the concrete source protocol. This is the
+     * canonical record-creation path; the one-argument overload remains for
+     * engine discovery and compatibility tests where no source exists yet.
+     */
+    public DownloadSettings createSettings(Download.Type type, Download.Protocol protocol) {
         DownloadSettings settings = switch (type) {
 //            case HTTP:
 //            case FTP:
 //            case MAGNET:
 //            case TORRENT:
-            case ARIA2 -> createAria2Settings();
-            case CURL -> createCurlSettings();
-            case YOUTUBE -> createYtDlpSettings();
-            case WEBSITE_SCRAPING -> createHttrackSettings();
-            case PROXYCHAINS -> createProxychainsSettings();
-            case TOR -> createTorSettings();
-            default -> createAria2Settings(); // Default to Aria2 settings
+            case ARIA2 -> createAria2Settings(protocol);
+            case CURL -> createCurlSettings(protocol);
+            case YOUTUBE -> createYtDlpSettings(protocol);
+            case WEBSITE_SCRAPING -> createHttrackSettings(protocol);
+            case PROXYCHAINS -> createProxychainsSettings(protocol);
+            case TOR -> createTorSettings(protocol);
+            default -> createAria2Settings(protocol); // Default to Aria2 settings
         };
 
         // Apply global proxy settings if enabled
         GlobalSettings currentSettings = getGlobalSettings();
         if (currentSettings.isGlobalProxyEnabled()) {
             String globalProxyAddress = currentSettings.getGlobalProxyAddress();
-            if (globalProxyAddress != null) {
+            if (globalProxyAddress != null
+                    && DownloadNetworkCapabilities.supportsProxy(
+                            settings, type, protocol, globalProxyAddress)) {
                 settings.setUseProxy(true);
                 settings.setProxyAddress(globalProxyAddress);
             }
@@ -218,6 +255,10 @@ public class DownloadSettingsFactory {
      * @return Aria2Settings object
      */
     public Aria2Settings createAria2Settings() {
+        return createAria2Settings(null);
+    }
+
+    private Aria2Settings createAria2Settings(Download.Protocol protocol) {
         Aria2Settings settings = new Aria2Settings();
         GlobalSettings g = getGlobalSettings();
 
@@ -237,7 +278,7 @@ public class DownloadSettingsFactory {
                         DEFAULT_ARIA2_PEER_SPEED_LIMIT_KB)));
 
         Aria2GlobalOptions.applyDownloadOptions(g, settings);
-        applyNetworkPreferences(g, settings);
+        applyNetworkPreferences(g, settings, Download.Type.ARIA2, protocol);
 
         return settings;
     }
@@ -248,6 +289,10 @@ public class DownloadSettingsFactory {
      * @return CurlSettings object
      */
     public CurlSettings createCurlSettings() {
+        return createCurlSettings(null);
+    }
+
+    private CurlSettings createCurlSettings(Download.Protocol protocol) {
         CurlSettings settings = new CurlSettings();
 
         // Set reasonable defaults
@@ -256,7 +301,7 @@ public class DownloadSettingsFactory {
         settings.setResumeDownloads(true);
         settings.setShowProgress(true);
         settings.setConnectTimeout(30);
-        applyNetworkPreferences(getGlobalSettings(), settings);
+        applyNetworkPreferences(getGlobalSettings(), settings, Download.Type.CURL, protocol);
 
         return settings;
     }
@@ -267,6 +312,10 @@ public class DownloadSettingsFactory {
      * @return YtDlpSettings object
      */
     public YtDlpSettings createYtDlpSettings() {
+        return createYtDlpSettings(null);
+    }
+
+    private YtDlpSettings createYtDlpSettings(Download.Protocol protocol) {
         YtDlpSettings settings = new YtDlpSettings();
         GlobalSettings g = getGlobalSettings();
 
@@ -288,7 +337,7 @@ public class DownloadSettingsFactory {
         String aria2cPath = g.getAria2Path();
         settings.setAria2cPath(aria2cPath == null || aria2cPath.isBlank()
                 ? "aria2c" : aria2cPath);
-        applyNetworkPreferences(g, settings);
+        applyNetworkPreferences(g, settings, Download.Type.YOUTUBE, protocol);
 
         return settings;
     }
@@ -299,6 +348,10 @@ public class DownloadSettingsFactory {
      * @return HttrackSettings object
      */
     public HttrackSettings createHttrackSettings() {
+        return createHttrackSettings(null);
+    }
+
+    private HttrackSettings createHttrackSettings(Download.Protocol protocol) {
         HttrackSettings settings = new HttrackSettings();
         GlobalSettings g = getGlobalSettings();
 
@@ -332,7 +385,7 @@ public class DownloadSettingsFactory {
                 DEFAULT_HTTRACK_DELAY_BETWEEN_FILES_SECONDS), 0, 3_600));
         // maxRate stays at 0: ODM emits no rate flag and leaves HTTrack's
         // engine-default safety policy intact.
-        applyNetworkPreferences(g, settings);
+        applyNetworkPreferences(g, settings, Download.Type.WEBSITE_SCRAPING, protocol);
 
         return settings;
     }
@@ -362,6 +415,10 @@ public class DownloadSettingsFactory {
      * @return ProxychainsSettings object
      */
     public ProxychainsSettings createProxychainsSettings() {
+        return createProxychainsSettings(null);
+    }
+
+    private ProxychainsSettings createProxychainsSettings(Download.Protocol protocol) {
         ProxychainsSettings settings = new ProxychainsSettings();
 
         // Set reasonable defaults
@@ -369,7 +426,8 @@ public class DownloadSettingsFactory {
         settings.setQuiet(true);
         settings.setRandomChain(1);
         settings.setStrictChain(false);
-        applyNetworkPreferences(getGlobalSettings(), settings);
+        applyNetworkPreferences(getGlobalSettings(), settings,
+                Download.Type.PROXYCHAINS, protocol);
 
         return settings;
     }
@@ -380,7 +438,11 @@ public class DownloadSettingsFactory {
      * @return Aria2Settings object configured for Tor
      */
     public Aria2Settings createTorSettings() {
-        Aria2Settings settings = createAria2Settings();
+        return createTorSettings(null);
+    }
+
+    private Aria2Settings createTorSettings(Download.Protocol protocol) {
+        Aria2Settings settings = createAria2Settings(protocol);
 
         // Configure for Tor
         settings.setUseProxy(true);

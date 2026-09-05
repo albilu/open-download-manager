@@ -74,6 +74,29 @@ public class MainWindow {
         OPEN_FILE,
         REVEAL_IN_FOLDER
     }
+
+    enum QueueMove {
+        UP,
+        TOP,
+        DOWN,
+        BOTTOM
+    }
+
+    record QueueMovementCapabilities(boolean up, boolean top,
+            boolean down, boolean bottom) {
+
+        static final QueueMovementCapabilities NONE =
+                new QueueMovementCapabilities(false, false, false, false);
+
+        boolean allows(QueueMove move) {
+            return switch (move) {
+                case UP -> up;
+                case TOP -> top;
+                case DOWN -> down;
+                case BOTTOM -> bottom;
+            };
+        }
+    }
     private final ApplicationWindow window;
     private final ListStore statusStore;
     private final ListStore categoryStore;
@@ -104,6 +127,10 @@ public class MainWindow {
     private final Label downloadedValue;
     private final Label connectionsValue;
     private final Label seedsPeersValue;
+    private final Button moveUpButton;
+    private final Button moveTopButton;
+    private final Button moveDownButton;
+    private final Button moveBottomButton;
     private final org.gnome.gtk.Switch torSwitch;
     private final org.gnome.gtk.SearchEntry searchEntry;
     private final PopoverMenuBar menuBar;
@@ -139,6 +166,14 @@ public class MainWindow {
     private java.util.function.Consumer<Boolean> trayPreferenceHandler;
     private Download selectedDownload;
     private List<Download> selectedDownloads = List.of();
+    /**
+     * Stable snapshot taken on the captured secondary-button press. GtkTreeView
+     * may still collapse its selection later in the same pointer sequence, so
+     * the deferred popup must restore this snapshot rather than re-hit-testing
+     * the row after release.
+     */
+    private List<String> pendingContextSelectionIds = List.of();
+    private boolean pendingContextPopup;
     /** Guard so menu actions register on the window only once. */
     private boolean menuActionsRegistered;
     private final java.util.Map<String, org.gnome.gio.SimpleAction> menuActions =
@@ -291,14 +326,31 @@ public class MainWindow {
         downloadContextClick.setPropagationPhase(PropagationPhase.CAPTURE);
         downloadContextClick.onPressed((nPress, x, y) -> {
             if (selectContextTargetAt(x, y)) {
+                onDownloadSelectionChanged();
+                pendingContextSelectionIds = selectedDownloads.stream()
+                        .map(Download::getId)
+                        .filter(java.util.Objects::nonNull)
+                        .toList();
+                pendingContextPopup = !pendingContextSelectionIds.isEmpty();
                 downloadContextClick.setState(
                         org.gnome.gtk.EventSequenceState.CLAIMED);
+            } else {
+                pendingContextSelectionIds = List.of();
+                pendingContextPopup = false;
             }
         });
-        // Open only after the secondary-button sequence ends. Opening during
-        // the captured press leaves TreeView owning pointer motion, so custom
-        // popover rows never receive hover/prelight events.
-        downloadContextClick.onReleased((nPress, x, y) -> showContextMenu(x, y));
+        // A released signal still runs inside GTK's claimed pointer sequence.
+        // Defer presentation by one main-loop turn so the grab is completely
+        // released before the popover starts receiving hover/prelight events.
+        downloadContextClick.onReleased((nPress, x, y) -> {
+            if (!pendingContextPopup) {
+                return;
+            }
+            List<String> selectionIds = pendingContextSelectionIds;
+            pendingContextSelectionIds = List.of();
+            pendingContextPopup = false;
+            deferContextMenuPopup(() -> showContextMenu(x, y, selectionIds));
+        });
         downloadsTreeview.addController(downloadContextClick);
         var contextKey = new EventControllerKey();
         contextKey.onKeyPressed((keyval, keycode, state) -> {
@@ -316,14 +368,14 @@ public class MainWindow {
         Widgets.require(builder, "pause_button", Button.class).onClicked(this::onPauseClicked);
         Widgets.require(builder, "resume_button", Button.class).onClicked(this::onResumeClicked);
         Widgets.require(builder, "delete_button", Button.class).onClicked(this::onDeleteClicked);
-        Widgets.require(builder, "move_up_button", Button.class)
-                .onClicked(() -> { downloadManager.moveDownloadUp(selectedDownload); refresh(); });
-        Widgets.require(builder, "move_top_button", Button.class)
-                .onClicked(() -> { downloadManager.moveDownloadToTop(selectedDownload); refresh(); });
-        Widgets.require(builder, "move_down_button", Button.class)
-                .onClicked(() -> { downloadManager.moveDownloadDown(selectedDownload); refresh(); });
-        Widgets.require(builder, "move_bottom_button", Button.class)
-                .onClicked(() -> { downloadManager.moveDownloadToBottom(selectedDownload); refresh(); });
+        this.moveUpButton = Widgets.require(builder, "move_up_button", Button.class);
+        this.moveTopButton = Widgets.require(builder, "move_top_button", Button.class);
+        this.moveDownButton = Widgets.require(builder, "move_down_button", Button.class);
+        this.moveBottomButton = Widgets.require(builder, "move_bottom_button", Button.class);
+        moveUpButton.onClicked(() -> moveSelectedDownload(QueueMove.UP));
+        moveTopButton.onClicked(() -> moveSelectedDownload(QueueMove.TOP));
+        moveDownButton.onClicked(() -> moveSelectedDownload(QueueMove.DOWN));
+        moveBottomButton.onClicked(() -> moveSelectedDownload(QueueMove.BOTTOM));
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
         folderOpenButton.onClicked(this::openDisplayedSaveFolder);
         this.searchEntry = Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
@@ -449,7 +501,7 @@ public class MainWindow {
                     }
                     UiThread.marshal(() -> {
                         NewDownloadDialog dialog = new NewDownloadDialog(window, downloadManager,
-                                () -> UiThread.marshal(MainWindow.this::refresh));
+                                () -> UiThread.marshal(MainWindow.this::refresh), torService);
                         dialog.prefillUrl(urls.get(0).toString());
                         if (urls.size() > 1) {
                             LOGGER.info(urls.size() + " URLs detected; offering the first");
@@ -581,11 +633,13 @@ public class MainWindow {
     }
 
     private void onAddClicked() {
-        new NewDownloadDialog(window, downloadManager, () -> UiThread.marshal(this::refresh)).present();
+        new NewDownloadDialog(window, downloadManager,
+                () -> UiThread.marshal(this::refresh), torService).present();
     }
 
     private void onNewMediaClicked() {
-        new NewMediaDialog(window, downloadManager, () -> UiThread.marshal(this::refresh)).present();
+        new NewMediaDialog(window, downloadManager,
+                () -> UiThread.marshal(this::refresh), torService).present();
     }
 
     /**
@@ -673,6 +727,71 @@ public class MainWindow {
         runSelectedDownloads(MainWindow::canStart, downloadManager::startDownload, "start");
     }
 
+    /** Reorders one waiting download and keeps it selected at its new row. */
+    private void moveSelectedDownload(QueueMove move) {
+        onDownloadSelectionChanged();
+        List<Download> queued = queuedDownloadsForMovement();
+        QueueMovementCapabilities capabilities =
+                queueMovementCapabilities(selectedDownloads, queued);
+        if (!capabilities.allows(move)) {
+            updateQueueButtonSensitivity(capabilities);
+            return;
+        }
+
+        Download target = selectedDownloads.getFirst();
+        // A user-requested queue move and an explicit column sort conflict.
+        // Return to the manager's queue order so the move is immediately visible.
+        listPresenter.useQueueOrder();
+        switch (move) {
+            case UP -> downloadManager.moveDownloadUp(target);
+            case TOP -> downloadManager.moveDownloadToTop(target);
+            case DOWN -> downloadManager.moveDownloadDown(target);
+            case BOTTOM -> downloadManager.moveDownloadToBottom(target);
+        }
+        updateQueueButtonSensitivity(queueMovementCapabilities(
+                selectedDownloads, queuedDownloadsForMovement()));
+        refresh();
+    }
+
+    private List<Download> queuedDownloadsForMovement() {
+        List<Download> queued = downloadManager.getDownloadsByStatus(Download.Status.QUEUED);
+        return queued == null ? List.of() : queued;
+    }
+
+    /** Queue controls apply to exactly one waiting record, with boundary-aware buttons. */
+    static QueueMovementCapabilities queueMovementCapabilities(List<Download> selection,
+            List<Download> queuedDownloads) {
+        if (selection == null || selection.size() != 1 || queuedDownloads == null) {
+            return QueueMovementCapabilities.NONE;
+        }
+        Download selected = selection.getFirst();
+        if (selected == null || selected.getStatus() != Download.Status.QUEUED) {
+            return QueueMovementCapabilities.NONE;
+        }
+        List<Download> ordered = queuedDownloads.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(download -> download.getStatus() == Download.Status.QUEUED)
+                .sorted(java.util.Comparator.comparingInt(Download::getQueuePosition)
+                        .thenComparing(Download::getCreatedAt,
+                                java.util.Comparator.nullsLast(
+                                        java.util.Comparator.naturalOrder())))
+                .toList();
+        int index = -1;
+        for (int i = 0; i < ordered.size(); i++) {
+            if (java.util.Objects.equals(ordered.get(i).getId(), selected.getId())) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) {
+            return QueueMovementCapabilities.NONE;
+        }
+        boolean hasPrevious = index > 0;
+        boolean hasNext = index + 1 < ordered.size();
+        return new QueueMovementCapabilities(
+                hasPrevious, hasPrevious, hasNext, hasNext);
+    }
+
     private void runSelectedDownloads(java.util.function.Predicate<Download> applicable,
             java.util.function.Function<Download, CompletableFuture<Void>> operation,
             String operationName) {
@@ -753,20 +872,37 @@ public class MainWindow {
     private void onPropertiesClicked() {
         onDownloadSelectionChanged();
         if (!selectedDownloads.isEmpty()) {
-            new PropertyDialog(window, downloadManager, selectedDownloads).present();
+            new PropertyDialog(window, downloadManager, selectedDownloads, torService).present();
         }
     }
 
     /** Context menu rebuilt on popup so sensitivity reflects the current multi-selection. */
     private PopupMenu contextMenu;
 
-    private void showContextMenu(double x, double y) {
-        if (!selectContextTargetAt(x, y)) {
+    private void showContextMenu(double x, double y, List<String> selectionIds) {
+        if (!restoreContextSelection(listPresenter,
+                downloadsTreeview.getSelection(), selectionIds)) {
             return;
         }
         onDownloadSelectionChanged();
         if (selectedDownload == null) return;
         showContextMenuAt((int) x, (int) y);
+    }
+
+    /** Runs after the current GTK input dispatch has released its pointer grab. */
+    static void deferContextMenuPopup(Runnable popup) {
+        UiThread.marshal(popup);
+    }
+
+    /** Restores the press-time selection if GTK changed it before popup time. */
+    static boolean restoreContextSelection(DownloadListPresenter presenter,
+            TreeSelection selection, List<String> downloadIds) {
+        if (presenter == null || selection == null
+                || downloadIds == null || downloadIds.isEmpty()) {
+            return false;
+        }
+        selection.unselectAll();
+        return presenter.restoreSelection(selection, downloadIds) > 0;
     }
 
     /** Selects the row under a secondary click without collapsing a selected group. */
@@ -1252,9 +1388,9 @@ public class MainWindow {
         addAction("new-media", this::onNewMediaClicked);
         addAction("scrape", this::onScraperClicked);
         addAction("import-sequence", () -> new ImportSequenceDialog(window, downloadManager,
-                () -> UiThread.marshal(this::refresh)).present());
+                () -> UiThread.marshal(this::refresh), torService).present());
         addAction("import-file", () -> ImportListDialog.chooseAndPresent(window, downloadManager,
-                () -> UiThread.marshal(this::refresh)));
+                () -> UiThread.marshal(this::refresh), torService));
         addAction("import-html", this::onImportHtml);
         addAction("import-remote-html", this::onImportRemoteHtml);
         addAction("export-file", this::onExportList);
@@ -1386,6 +1522,15 @@ public class MainWindow {
         setMenuActionEnabled("delete", capabilities.delete());
         setMenuActionEnabled("delete-with-files", capabilities.deleteWithFiles());
         setMenuActionEnabled("properties", capabilities.properties());
+        updateQueueButtonSensitivity(queueMovementCapabilities(
+                selectedDownloads, queuedDownloadsForMovement()));
+    }
+
+    private void updateQueueButtonSensitivity(QueueMovementCapabilities capabilities) {
+        moveUpButton.setSensitive(capabilities.up());
+        moveTopButton.setSensitive(capabilities.top());
+        moveDownButton.setSensitive(capabilities.down());
+        moveBottomButton.setSensitive(capabilities.bottom());
     }
 
     private void setMenuActionEnabled(String name, boolean enabled) {
@@ -1482,38 +1627,17 @@ public class MainWindow {
     private void promptForCustomCommand() {
         String saved = downloadManager.getGlobalSettings().getProperty("ui.completionCommand", "");
         if (saved.isBlank()) {
-            org.gnome.gtk.Window prompt = new org.gnome.gtk.Window();
-            prompt.setTitle("Custom completion command");
-            prompt.setModal(true);
+            org.gnome.gtk.GtkBuilder builder = UiLoader.load("/ui/completion-command.ui");
+            org.gnome.gtk.Window prompt = Widgets.require(builder,
+                    "completion_command_dialog", org.gnome.gtk.Window.class);
             prompt.setTransientFor(window);
-            prompt.setDefaultSize(520, -1);
-
-            org.gnome.gtk.Box box = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.VERTICAL, 10);
-            box.setMarginTop(10);
-            box.setMarginBottom(10);
-            box.setMarginStart(10);
-            box.setMarginEnd(10);
-
-            org.gnome.gtk.Label help = new org.gnome.gtk.Label(
-                    "Command to run on completion. Variables: "
-                    + "{file_path} {filename} {dir} {url} {id} {gid}");
-            help.setWrap(true);
-            box.append(help);
-
-            org.gnome.gtk.Entry entry = new org.gnome.gtk.Entry();
-            entry.setPlaceholderText("mv {file_path} /tmp");
-            box.append(entry);
-
-            org.gnome.gtk.Box buttons = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.HORIZONTAL, 6);
-            buttons.setHalign(org.gnome.gtk.Align.END);
-            org.gnome.gtk.Button cancel = org.gnome.gtk.Button.withLabel("Cancel");
-            org.gnome.gtk.Button ok = org.gnome.gtk.Button.withLabel("Save");
-            ok.addCssClass("suggested-action");
-            buttons.append(cancel);
-            buttons.append(ok);
-            box.append(buttons);
-
-            prompt.setChild(box);
+            org.gnome.gtk.Entry entry = Widgets.require(builder,
+                    "completion_command_entry", org.gnome.gtk.Entry.class);
+            org.gnome.gtk.Button cancel = Widgets.require(builder,
+                    "completion_command_cancel_button", org.gnome.gtk.Button.class);
+            org.gnome.gtk.Button ok = Widgets.require(builder,
+                    "completion_command_save_button", org.gnome.gtk.Button.class);
+            AccessibilitySupport.label(entry, "Custom completion command");
             java.util.concurrent.atomic.AtomicBoolean committed =
                     new java.util.concurrent.atomic.AtomicBoolean(false);
             Runnable apply = () -> {
@@ -1674,18 +1798,20 @@ public class MainWindow {
                 // Bounded file I/O and HTML parsing run off the GTK main loop;
                 // only the result goes back to the UI.
                 trackActivity(CompletableFuture.supplyAsync(
-                        () -> HtmlImportExport.importHtmlFile(
-                                path, downloadManager, importLimits),
-                        backgroundExecutor)).thenAccept(count -> {
-                    if (count == null || count < 0) {
-                        return;
-                    }
-                    UiThread.marshal(() -> {
-                        AccessibilitySupport.status(infoLabel,
-                                "Imported " + count + " link(s) from HTML");
-                        refresh();
-                    });
-                });
+                        () -> HtmlImportExport.readHtmlLinks(path, importLimits),
+                        backgroundExecutor)).whenComplete((links, error) ->
+                                UiThread.marshal(() -> {
+                                    if (error != null) {
+                                        AccessibilitySupport.status(infoLabel,
+                                                "Could not read links from this HTML file: "
+                                                        + failureMessage(error),
+                                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                                        return;
+                                    }
+                                    ImportListDialog.presentUrls(window, downloadManager,
+                                            () -> UiThread.marshal(this::refresh), links,
+                                            importLimits, torService);
+                                }));
             } catch (Exception e) {
                 LOGGER.debug("HTML import cancelled or failed", e);
             }
@@ -1694,34 +1820,27 @@ public class MainWindow {
 
     /** Fetches a remote HTML page and imports the links found in it. */
     private void onImportRemoteHtml() {
-        org.gnome.gtk.Window prompt = new org.gnome.gtk.Window();
-        prompt.setTitle("Import Links from Remote");
-        prompt.setModal(true);
+        org.gnome.gtk.GtkBuilder builder = UiLoader.load("/ui/import-remote.ui");
+        org.gnome.gtk.Window prompt = Widgets.require(builder,
+                "remote_import_dialog", org.gnome.gtk.Window.class);
         prompt.setTransientFor(window);
-        prompt.setDefaultSize(560, -1);
-
-        org.gnome.gtk.Box box = new org.gnome.gtk.Box(
-                org.gnome.gtk.Orientation.VERTICAL, 10);
-        box.setMarginTop(16);
-        box.setMarginBottom(16);
-        box.setMarginStart(16);
-        box.setMarginEnd(16);
 
         ImportLimits displayedLimits = ImportLimits.from(downloadManager.getGlobalSettings());
-        org.gnome.gtk.Label help = new org.gnome.gtk.Label(
-                "Enter an HTTP(S) page. Up to " + displayedLimits.maxUrls()
+        org.gnome.gtk.Label help = Widgets.require(builder,
+                "remote_import_help_label", org.gnome.gtk.Label.class);
+        help.setLabel("Enter an HTTP(S) page. Up to " + displayedLimits.maxUrls()
                 + " links are imported from a page up to "
                 + displayedLimits.maxSourceSizeMiB() + " MiB; "
                 + "relative links use the page's final address after redirects.");
-        help.setWrap(true);
-        org.gnome.gtk.Entry sourceEntry = new org.gnome.gtk.Entry();
-        sourceEntry.setPlaceholderText("https://example.com/downloads.html");
+        org.gnome.gtk.Entry sourceEntry = Widgets.require(builder,
+                "remote_import_url_entry", org.gnome.gtk.Entry.class);
         AccessibilitySupport.label(sourceEntry, "Remote HTML page URL");
-        org.gnome.gtk.Label status = new org.gnome.gtk.Label("");
-
-        org.gnome.gtk.Button cancel = org.gnome.gtk.Button.withLabel("Cancel");
-        org.gnome.gtk.Button importButton = org.gnome.gtk.Button.withLabel("Import Links");
-        importButton.addCssClass("suggested-action");
+        org.gnome.gtk.Label status = Widgets.require(builder,
+                "remote_import_status_label", org.gnome.gtk.Label.class);
+        org.gnome.gtk.Button cancel = Widgets.require(builder,
+                "remote_import_cancel_button", org.gnome.gtk.Button.class);
+        org.gnome.gtk.Button importButton = Widgets.require(builder,
+                "remote_import_start_button", org.gnome.gtk.Button.class);
         Runnable startImport = () -> {
             org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
             if (settings.getBooleanProperty("ui.offline", false)) {
@@ -1749,37 +1868,28 @@ public class MainWindow {
             importButton.setSensitive(false);
             sourceEntry.setSensitive(false);
             AccessibilitySupport.status(status, "Fetching page and importing links…");
-            trackActivity(CompletableFuture.supplyAsync(() -> HtmlImportExport.importRemoteHtml(
-                    source, downloadManager, proxy, importLimits), backgroundExecutor))
-                    .whenComplete((count, error) -> UiThread.marshal(() -> {
-                        if (error != null || count == null || count < 0) {
+            trackActivity(CompletableFuture.supplyAsync(() -> HtmlImportExport
+                    .fetchRemoteHtmlLinks(source, proxy, importLimits), backgroundExecutor))
+                    .whenComplete((links, error) -> UiThread.marshal(() -> {
+                        if (error != null) {
                             importButton.setSensitive(true);
                             sourceEntry.setSensitive(true);
                             AccessibilitySupport.status(status,
-                                    "Could not import this remote HTML page",
+                                    "Could not import this remote HTML page: "
+                                            + failureMessage(error),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             return;
                         }
-                        AccessibilitySupport.status(infoLabel,
-                                "Imported " + count + " link(s) from remote HTML");
-                        refresh();
                         prompt.close();
+                        ImportListDialog.presentUrls(window, downloadManager,
+                                () -> UiThread.marshal(this::refresh), links,
+                                importLimits, torService);
                     }));
         };
         cancel.onClicked(prompt::close);
         importButton.onClicked(startImport::run);
         sourceEntry.onActivate(startImport::run);
 
-        box.append(help);
-        box.append(sourceEntry);
-        box.append(status);
-        org.gnome.gtk.Box buttons = new org.gnome.gtk.Box(
-                org.gnome.gtk.Orientation.HORIZONTAL, 8);
-        buttons.setHalign(org.gnome.gtk.Align.END);
-        buttons.append(cancel);
-        buttons.append(importButton);
-        box.append(buttons);
-        prompt.setChild(box);
         prompt.present();
         ClipboardUrlPrefill.populate(prompt, sourceEntry,
                 ClipboardUrlPrefill::isWebPage);
@@ -2054,232 +2164,8 @@ public class MainWindow {
     }
 
     private void onScraperClicked() {
-        // Website scrape via httrack: minimal dialog -> createWebsiteDownload
-        showScraperDialog();
-    }
-
-    private void showScraperDialog() {
-        org.gnome.gtk.Window scraper = new org.gnome.gtk.Window();
-        scraper.setTitle("New Website Scrape");
-        scraper.setModal(true);
-        scraper.setTransientFor(window);
-        scraper.setDefaultSize(520, -1);
-
-        org.gnome.gtk.Box box = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.VERTICAL, 10);
-        box.setMarginStart(16);
-        box.setMarginEnd(16);
-        box.setMarginTop(16);
-        box.setMarginBottom(16);
-
-        org.gnome.gtk.Entry urlEntry = new org.gnome.gtk.Entry();
-        urlEntry.setPlaceholderText("https://example.com/site");
-        AccessibilitySupport.label(urlEntry, "Website URL to mirror");
-        org.httrack.HttrackSettings httrackDefaults =
-                new org.manager.download.DownloadSettingsFactory(
-                        downloadManager.getGlobalSettings()).createHttrackSettings();
-        org.gnome.gtk.SpinButton depthSpin = org.gnome.gtk.SpinButton.withRange(1, 20, 1);
-        depthSpin.setValue(httrackDefaults.getDepth());
-        depthSpin.setTooltipText("Maximum number of link levels to crawl for this website.");
-        AccessibilitySupport.label(depthSpin, "Website crawl depth");
-        String[] scopeLabels = {
-            "Same directory", "Same host", "Same domain",
-            "Include nearby external assets", "Custom external depth"
-        };
-        org.gnome.gtk.DropDown scopeDrop = org.gnome.gtk.DropDown.fromStrings(scopeLabels);
-        scopeDrop.setSelected(httrackDefaults.getCrawlScope().ordinal());
-        scopeDrop.setTooltipText(
-                "Boundary for this mirror. Nearby assets may come from other hosts.");
-        AccessibilitySupport.label(scopeDrop, "Website crawl scope");
-        org.gnome.gtk.SpinButton externalDepthSpin =
-                org.gnome.gtk.SpinButton.withRange(1, 20, 1);
-        externalDepthSpin.setValue(httrackDefaults.getExternalDepth());
-        externalDepthSpin.setTooltipText(
-                "External link levels followed when Custom external depth is selected.");
-        AccessibilitySupport.label(externalDepthSpin, "External website crawl depth");
-        Runnable updateExternalDepth = () -> externalDepthSpin.setSensitive(
-                scopeDrop.getSelected()
-                        == org.httrack.HttrackSettings.CrawlScope.CUSTOM_EXTERNAL_DEPTH.ordinal());
-        scopeDrop.onNotify("selected", ignored -> updateExternalDepth.run());
-        updateExternalDepth.run();
-
-        org.gnome.gtk.Entry includeEntry = new org.gnome.gtk.Entry();
-        includeEntry.setPlaceholderText("*.html *.css example.com/downloads/*");
-        includeEntry.setTooltipText(
-                "Whitespace-separated HTTrack wildcard patterns included in this mirror.");
-        AccessibilitySupport.label(includeEntry, "Included website URL patterns");
-        org.gnome.gtk.Entry excludeEntry = new org.gnome.gtk.Entry();
-        excludeEntry.setPlaceholderText("*/admin/* */logout/* *.tmp");
-        excludeEntry.setTooltipText(
-                "Whitespace-separated HTTrack wildcard patterns excluded from this mirror.");
-        AccessibilitySupport.label(excludeEntry, "Excluded website URL patterns");
-        org.gnome.gtk.CheckButton includeArchivesCheck = new org.gnome.gtk.CheckButton();
-        includeArchivesCheck.setLabel("Include archive files");
-        includeArchivesCheck.setActive(httrackDefaults.isIncludeArchives());
-        includeArchivesCheck.setTooltipText(
-                "Allow ZIP, RAR, TAR, and GZ files in this website mirror.");
-        AccessibilitySupport.label(includeArchivesCheck,
-                "Include archive files in this website mirror");
-
-        org.gnome.gtk.Entry additionalHeadersEntry = new org.gnome.gtk.Entry();
-        additionalHeadersEntry.setPlaceholderText(
-                "Accept-Language: en | X-Custom-Header: value");
-        additionalHeadersEntry.setTooltipText(
-                "Optional Name: value headers separated with |. They apply only to "
-                + "this mirror; avoid storing credentials unless required.");
-        AccessibilitySupport.label(additionalHeadersEntry,
-                "Additional HTTP headers for this website mirror");
-
-        org.gnome.gtk.Button cookieFileButton = new org.gnome.gtk.Button();
-        cookieFileButton.setLabel("None selected");
-        cookieFileButton.setHexpand(true);
-        org.gnome.gtk.Button clearCookieFileButton = new org.gnome.gtk.Button();
-        clearCookieFileButton.setLabel("Clear");
-        clearCookieFileButton.setSensitive(false);
-        PathChooserButton cookieFileChooser = PathChooserButton.forFile(
-                cookieFileButton, scraper, "Select Netscape cookie file", null,
-                ignored -> clearCookieFileButton.setSensitive(true));
-        cookieFileButton.setTooltipText(
-                "Optional Netscape-format cookie file used only by this mirror.");
-        clearCookieFileButton.setTooltipText(
-                "Do not use a cookie file for this mirror.");
-        clearCookieFileButton.onClicked(() -> {
-            cookieFileChooser.clear();
-            clearCookieFileButton.setSensitive(false);
-        });
-        AccessibilitySupport.label(cookieFileButton,
-                "Netscape cookie file for this website mirror");
-        org.gnome.gtk.Box cookieFileBox = new org.gnome.gtk.Box(
-                org.gnome.gtk.Orientation.HORIZONTAL, 6);
-        cookieFileBox.append(cookieFileButton);
-        cookieFileBox.append(clearCookieFileButton);
-
-        org.gnome.gtk.Label statusLabel = new org.gnome.gtk.Label("");
-
-        org.gnome.gtk.Button cancelButton = new org.gnome.gtk.Button();
-        cancelButton.setLabel("Cancel");
-        cancelButton.onClicked(scraper::close);
-        org.gnome.gtk.Button startButton = new org.gnome.gtk.Button();
-        startButton.setLabel("Start Scrape");
-        startButton.addCssClass("suggested-action");
-        java.util.concurrent.atomic.AtomicReference<Download> pendingDownload =
-                new java.util.concurrent.atomic.AtomicReference<>();
-        startButton.onClicked(() -> {
-            String url = urlEntry.getText().trim();
-            if (url.isEmpty()) {
-                AccessibilitySupport.status(statusLabel, "Enter a URL");
-                return;
-            }
-            try {
-                Download download = pendingDownload.get();
-                if (download == null) {
-                    java.net.URI source = org.manager.clipboard.UrlDetector
-                            .requireValidDownloadUrl(url);
-                    if (!ClipboardUrlPrefill.isWebPage(source)) {
-                        throw new IllegalArgumentException(
-                                "Website scraping requires an HTTP(S) URL");
-                    }
-                    download = downloadManager.createWebsiteDownload(source,
-                            java.nio.file.Path.of(downloadManager.getGlobalSettings()
-                                    .getDefaultDownloadDirectory().toString()), null);
-                    pendingDownload.set(download);
-                }
-                if (download.getSettings() instanceof org.httrack.HttrackSettings settings) {
-                    int selectedScope = scopeDrop.getSelected();
-                    org.httrack.HttrackSettings.CrawlScope[] scopes =
-                            org.httrack.HttrackSettings.CrawlScope.values();
-                    applyWebsiteScrapeOptions(settings,
-                            (int) depthSpin.getValue(),
-                            selectedScope >= 0 && selectedScope < scopes.length
-                                    ? scopes[selectedScope]
-                                    : org.httrack.HttrackSettings.CrawlScope.SAME_HOST,
-                            (int) externalDepthSpin.getValue(),
-                            includeEntry.getText(), excludeEntry.getText(),
-                            includeArchivesCheck.getActive(),
-                            additionalHeadersEntry.getText(),
-                            cookieFileChooser.getPath());
-                }
-                startButton.setSensitive(false);
-                AccessibilitySupport.status(statusLabel, "Adding website scrape to queue…");
-                trackActivity(downloadManager.queueDownload(download)).whenComplete((ignored, error) ->
-                        UiThread.marshal(() -> {
-                            if (error == null) {
-                                pendingDownload.set(null);
-                                refresh();
-                                scraper.close();
-                            } else {
-                                startButton.setSensitive(true);
-                                AccessibilitySupport.status(statusLabel,
-                                        "Could not add to queue: " + failureMessage(error)
-                                                + ". Press Start Scrape to retry.",
-                                        org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                            }
-                        }));
-            } catch (Exception e) {
-                AccessibilitySupport.status(statusLabel, "Invalid request: " + failureMessage(e),
-                        org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-            }
-        });
-
-        box.append(new org.gnome.gtk.Label("Website URL:"));
-        box.append(urlEntry);
-        box.append(new org.gnome.gtk.Label("Depth:"));
-        box.append(depthSpin);
-        box.append(new org.gnome.gtk.Label("Crawl scope:"));
-        box.append(scopeDrop);
-        box.append(new org.gnome.gtk.Label("External depth:"));
-        box.append(externalDepthSpin);
-        box.append(new org.gnome.gtk.Label("Include URL patterns:"));
-        box.append(includeEntry);
-        box.append(new org.gnome.gtk.Label("Exclude URL patterns:"));
-        box.append(excludeEntry);
-        box.append(includeArchivesCheck);
-        box.append(new org.gnome.gtk.Label("Additional HTTP headers:"));
-        box.append(additionalHeadersEntry);
-        box.append(new org.gnome.gtk.Label("Netscape cookie file:"));
-        box.append(cookieFileBox);
-        box.append(statusLabel);
-        org.gnome.gtk.Box buttons = new org.gnome.gtk.Box(org.gnome.gtk.Orientation.HORIZONTAL, 8);
-        buttons.setHalign(org.gnome.gtk.Align.END);
-        buttons.append(cancelButton);
-        buttons.append(startButton);
-        box.append(buttons);
-
-        scraper.setChild(box);
-        scraper.present();
-        ClipboardUrlPrefill.populate(scraper, urlEntry,
-                ClipboardUrlPrefill::isWebPage);
-    }
-
-    static void applyWebsiteScrapeOptions(org.httrack.HttrackSettings settings,
-            int depth, org.httrack.HttrackSettings.CrawlScope scope,
-            int externalDepth, String includePatterns, String excludePatterns,
-            boolean includeArchives, String additionalHeaders,
-            Path cookieFile) {
-        settings.setDepth(Math.max(1, depth));
-        settings.setCrawlScope(scope);
-        settings.setExternalDepth(externalDepth);
-        settings.setIncludePatterns(splitHttrackPatterns(includePatterns));
-        settings.setExcludePatterns(splitHttrackPatterns(excludePatterns));
-        settings.setIncludeArchives(includeArchives);
-        settings.setAdditionalHttpHeaders(splitHttrackHeaders(additionalHeaders));
-        settings.setCookieFile(cookieFile);
-    }
-
-    private static List<String> splitHttrackPatterns(String patterns) {
-        if (patterns == null || patterns.isBlank()) {
-            return List.of();
-        }
-        return List.of(patterns.trim().split("\\s+"));
-    }
-
-    private static List<String> splitHttrackHeaders(String headers) {
-        if (headers == null || headers.isBlank()) {
-            return List.of();
-        }
-        return java.util.Arrays.stream(headers.split("[|\\r\\n]+"))
-                .map(String::strip)
-                .filter(header -> !header.isEmpty())
-                .toList();
+        new NewWebsiteDialog(window, downloadManager,
+                () -> UiThread.marshal(this::refresh), torService).present();
     }
 
     private static String failureMessage(Throwable failure) {
@@ -2485,17 +2371,27 @@ public class MainWindow {
 
     /** Applies an already-fetched repository snapshot on the GTK thread. */
     private void applyRefresh(RefreshSnapshot snapshot) {
+        List<String> selectedIds = selectedDownloads.stream()
+                .map(Download::getId)
+                .filter(java.util.Objects::nonNull)
+                .toList();
         loadedHistoryCount = snapshot.loadedHistoryCount();
         knownDownloadCount = snapshot.totalCount();
         DownloadListPresenter.RefreshSummary summary = listPresenter.refresh(
                 snapshot.downloads(), snapshot.totalCount(), snapshot.statusCounts());
         if (summary.modelRebuilt()) {
-            // GtkTreeSelection emits no useful row when the model was just
-            // cleared, so explicitly invalidate the pointer used by actions.
-            downloadsTreeview.getSelection().unselectAll();
-            selectedDownload = null;
-            selectedDownloads = List.of();
-            updateSelectionActionSensitivity();
+            // Clearing GtkListStore clears GtkTreeSelection. Restore by stable
+            // download id so queue moves and other structural refreshes keep
+            // their selection at the record's new visible position.
+            int restored = listPresenter.restoreSelection(
+                    downloadsTreeview.getSelection(), selectedIds);
+            if (restored == 0) {
+                selectedDownload = null;
+                selectedDownloads = List.of();
+                updateSelectionActionSensitivity();
+            } else {
+                onDownloadSelectionChanged();
+            }
         }
         java.util.Map<Download.Status, Integer> counts = snapshot.statusCounts();
         int activeCount = counts.getOrDefault(Download.Status.STARTING, 0)

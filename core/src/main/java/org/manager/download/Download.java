@@ -321,7 +321,7 @@ public class Download {
                 globalSettings = new org.manager.GlobalSettings();
             }
             DownloadSettingsFactory factory = new DownloadSettingsFactory(globalSettings);
-            settings = factory.createSettings(type);
+            settings = factory.createSettings(type, protocol);
         }
     }
 
@@ -334,7 +334,7 @@ public class Download {
             if (settings != null) {
                 return; // Already initialized
             }
-            settings = factory.createSettings(type);
+            settings = factory.createSettings(type, protocol);
         }
     }
 

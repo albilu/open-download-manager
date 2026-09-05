@@ -192,6 +192,44 @@ class MainWindowSelectionCapabilitiesTest {
                 MainWindow.downloadListStatusText(0, 12, 12));
     }
 
+    @Test
+    void queueMovementIsSingleSelectionAndBoundaryAware() {
+        Download first = download("first.bin", Download.Status.QUEUED);
+        Download middle = download("middle.bin", Download.Status.QUEUED);
+        Download last = download("last.bin", Download.Status.QUEUED);
+        first.setQueuePosition(1);
+        middle.setQueuePosition(2);
+        last.setQueuePosition(3);
+        List<Download> queue = List.of(last, first, middle);
+
+        MainWindow.QueueMovementCapabilities firstCapabilities =
+                MainWindow.queueMovementCapabilities(List.of(first), queue);
+        assertFalse(firstCapabilities.up());
+        assertFalse(firstCapabilities.top());
+        assertTrue(firstCapabilities.down());
+        assertTrue(firstCapabilities.bottom());
+
+        MainWindow.QueueMovementCapabilities middleCapabilities =
+                MainWindow.queueMovementCapabilities(List.of(middle), queue);
+        assertTrue(middleCapabilities.up());
+        assertTrue(middleCapabilities.top());
+        assertTrue(middleCapabilities.down());
+        assertTrue(middleCapabilities.bottom());
+
+        MainWindow.QueueMovementCapabilities lastCapabilities =
+                MainWindow.queueMovementCapabilities(List.of(last), queue);
+        assertTrue(lastCapabilities.up());
+        assertTrue(lastCapabilities.top());
+        assertFalse(lastCapabilities.down());
+        assertFalse(lastCapabilities.bottom());
+
+        Download paused = download("paused.bin", Download.Status.PAUSED);
+        assertEquals(MainWindow.QueueMovementCapabilities.NONE,
+                MainWindow.queueMovementCapabilities(List.of(paused), queue));
+        assertEquals(MainWindow.QueueMovementCapabilities.NONE,
+                MainWindow.queueMovementCapabilities(List.of(first, middle), queue));
+    }
+
     private static Download download(String name, Download.Status status) {
         Download download = new Download(URI.create("https://example.com/" + name));
         download.setName(name);

@@ -17,6 +17,7 @@ import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.MenuButton;
+import org.gnome.gtk.Notebook;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
@@ -276,6 +277,7 @@ public class SettingsDialog {
     private final org.manager.schedule.ScheduleManager scheduleManager;
     private final java.util.function.Consumer<Boolean> torPreferenceHandler;
     private final GtkBuilder builder;
+    private final Notebook settingsNotebook;
     private final Label statusLabel;
     private final Label availableSpaceLabel;
     private final Label antivirusDetectionLabel;
@@ -314,6 +316,7 @@ public class SettingsDialog {
         this.torPreferenceHandler = torPreferenceHandler;
         this.builder = UiLoader.load("/ui/settings.ui");
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
+        this.settingsNotebook = Widgets.require(builder, "settings_notebook", Notebook.class);
         this.statusLabel = Widgets.require(builder, "settings_status_label", Label.class);
         this.availableSpaceLabel = Widgets.require(builder, "available_space_label", Label.class);
         this.antivirusDetectionLabel = Widgets.require(
@@ -969,21 +972,63 @@ public class SettingsDialog {
         load(downloadManager.getGlobalSettings(), true);
     }
 
-    /** Loads defaults into the controls; Apply/OK remains the commit point. */
+    /** Loads defaults for the focused tab; Apply/OK remains the commit point. */
     void resetToDefaults() {
-        load(new GlobalSettings(), false);
+        resetTabToDefaults(settingsNotebook.getCurrentPage());
+    }
+
+    void selectTab(int page) {
+        settingsNotebook.setCurrentPage(page);
+    }
+
+    /** Package-private seam used by tests and future tab-specific entry points. */
+    void resetTabToDefaults(int page) {
+        GlobalSettings defaults = new GlobalSettings();
+        String tabName = switch (page) {
+            case 0 -> {
+                loadGeneral(defaults, false);
+                yield "General";
+            }
+            case 1 -> {
+                loadNetwork(defaults);
+                yield "Network";
+            }
+            case 2 -> {
+                loadAria2(defaults);
+                yield "Aria2";
+            }
+            case 3 -> {
+                loadYtDlp(defaults);
+                yield "Yt-dlp";
+            }
+            case 4 -> {
+                loadHttrack(defaults);
+                yield "HTTrack";
+            }
+            case 5 -> {
+                loadAdvanced(defaults);
+                yield "Advanced";
+            }
+            default -> throw new IllegalArgumentException("Unknown settings tab: " + page);
+        };
         AccessibilitySupport.status(statusLabel,
-                "Default values loaded. Press Apply or OK to save them.");
+                tabName + " defaults loaded. Press Apply or OK to save them.");
     }
 
     private void load(GlobalSettings s, boolean useRuntimeMonitoringState) {
-        // General
+        loadGeneral(s, useRuntimeMonitoringState);
+        loadNetwork(s);
+        loadAria2(s);
+        loadYtDlp(s);
+        loadHttrack(s);
+        loadAdvanced(s);
+    }
+
+    private void loadGeneral(GlobalSettings s, boolean useRuntimeMonitoringState) {
         Path dir = s.getDefaultDownloadDirectory();
         setDefaultDir(dir != null ? dir.toString()
                 : org.manager.util.OdmPaths.downloadDirectory().toString());
         spin("max_concurrent_downloads_spin").setValue(s.getMaxConcurrentDownloads());
-        check("retain_completed_canceled_history_check").setActive(
-                s.isRetainCompletedAndCanceledHistory());
         check("clipboard_monitor_check").setActive(useRuntimeMonitoringState
                 ? downloadManager.isClipboardMonitoringEnabled()
                 : s.getClipboardSettings() != null
@@ -1002,7 +1047,10 @@ public class SettingsDialog {
         // Restore the persisted monitored folder (empty until first configured)
         String monitoredDir = s.getProperty("folder.monitorPath", "");
         setMonitoredDir(monitoredDir);
-        // Engine-neutral Network defaults + proxy
+        check("enable_auto_save_check").setActive(s.isOdmAutoSaveEnabled());
+    }
+
+    private void loadNetwork(GlobalSettings s) {
         torSwitchSet(s.getBooleanProperty("tor.enabled", false));
         setNetworkDefaults(DownloadSettingsFactory.NetworkDefaults.from(s));
         DialogOptions.ProxyFields proxy = DialogOptions.parseProxy(
@@ -1012,7 +1060,9 @@ public class SettingsDialog {
         spin("proxy_port_spin").setValue(proxy.port());
         entry("proxy_username_entry").setText(proxy.username());
         entry("proxy_password_entry").setText(proxy.password());
-        // Aria2
+    }
+
+    private void loadAria2(GlobalSettings s) {
         entry("aria2_path_entry").setText(s.getAria2Path() != null ? s.getAria2Path() : "");
         spin("min_split_size_spin1").setValue(s.getIntProperty("aria2.minSplitSizeMb",
                 org.manager.download.DownloadSettingsFactory.DEFAULT_ARIA2_MIN_SPLIT_SIZE_MB));
@@ -1045,10 +1095,12 @@ public class SettingsDialog {
         int allocationIndex = java.util.Arrays.asList(FILE_ALLOCATIONS).indexOf(fileAllocation);
         Widgets.require(builder, "file_allocation_combo", DropDown.class)
                 .setSelected(Math.max(0, allocationIndex));
-        check("enable_auto_save_check").setActive(s.isOdmAutoSaveEnabled());
         entry("tracker_list_entry").setText(s.getProperty("tracker.list", ""));
         spin("tracker_refresh_spin").setValue(s.getIntProperty("tracker.refreshInterval", 0));
-        // Yt-dlp
+        updateSeedingControlSensitivity();
+    }
+
+    private void loadYtDlp(GlobalSettings s) {
         entry("ytdlp_path_entry").setText(s.getYtDlpPath() != null ? s.getYtDlpPath() : "");
         check("write_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.writeThumbnail", false));
         check("embed_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.embedThumbnail", false));
@@ -1056,7 +1108,9 @@ public class SettingsDialog {
         check("use_aria2_external_check").setActive(s.getBooleanProperty("ytdlp.useAria2External", false));
         check("honor_external_ytdlp_config_check").setActive(
                 s.isHonorExternalYtDlpConfiguration());
-        // HTTrack
+    }
+
+    private void loadHttrack(GlobalSettings s) {
         entry("httrack_path_entry").setText(s.getHttrackPath() != null ? s.getHttrackPath() : "");
         spin("httrack_max_total_size_spin").setValue(s.getIntProperty(
                 "httrack.maxTotalSizeMb",
@@ -1078,7 +1132,11 @@ public class SettingsDialog {
         spin("httrack_delay_between_files_spin").setValue(s.getIntProperty(
                 "httrack.delayBetweenFilesSeconds",
                 DownloadSettingsFactory.DEFAULT_HTTRACK_DELAY_BETWEEN_FILES_SECONDS));
-        // Advanced
+    }
+
+    private void loadAdvanced(GlobalSettings s) {
+        check("retain_completed_canceled_history_check").setActive(
+                s.isRetainCompletedAndCanceledHistory());
         check("automatic_cleanup_check").setActive(s.isAutomaticCleanupEnabled());
         spin("cleanup_interval_spin").setValue(s.getCleanupIntervalHours());
         spin("max_history_records_spin").setValue(s.getMaxDownloadsInMemory());
@@ -1119,7 +1177,7 @@ public class SettingsDialog {
         if (!antivirusChoices.isEmpty()) {
             applyAntivirusChoices(antivirusChoices, false);
         }
-        updateSeedingControlSensitivity();
+        updateAntivirusControlSensitivity();
     }
 
     private void onApply(boolean closeAfterSave) {

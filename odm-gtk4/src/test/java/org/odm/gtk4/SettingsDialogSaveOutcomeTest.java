@@ -285,8 +285,8 @@ class SettingsDialogSaveOutcomeTest {
 
     @Test
     @Timeout(60)
-    @DisplayName("Reset loads defaults but does not commit until Apply")
-    void resetUsesRealDefaultsAndKeepsApplyAsCommitPoint() throws Exception {
+    @DisplayName("Reset changes only the focused General tab and waits for Apply")
+    void resetUsesFocusedTabDefaultsAndKeepsApplyAsCommitPoint() throws Exception {
         Path configHome = tempDir.resolve("reset-config");
         Files.createDirectories(configHome);
 
@@ -311,14 +311,58 @@ class SettingsDialogSaveOutcomeTest {
             dialog.applySettings();
             GlobalSettings reset = settings.get();
             assertEquals(3, reset.getMaxConcurrentDownloads());
-            assertFalse(reset.isAutomaticCleanupEnabled());
-            assertEquals(GlobalSettings.DEFAULT_ARIA2_RPC_PORT,
-                    reset.getAria2RpcPort());
-            assertFalse(reset.isHonorExternalAria2Configuration());
-            assertFalse(reset.isHonorExternalYtDlpConfiguration());
-            assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS,
+            assertTrue(reset.isAutomaticCleanupEnabled(),
+                    "Advanced values must survive a General-tab reset");
+            assertEquals(6900, reset.getAria2RpcPort(),
+                    "Aria2 values must survive a General-tab reset");
+            assertTrue(reset.isHonorExternalAria2Configuration());
+            assertTrue(reset.isHonorExternalYtDlpConfiguration());
+            assertEquals(16,
                     org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(reset)
-                            .maxConnections());
+                            .maxConnections(),
+                    "Network values must survive a General-tab reset");
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    @DisplayName("Reset follows the selected tab and preserves every other tab")
+    void resetFollowsSelectedTab() throws Exception {
+        Path configHome = tempDir.resolve("network-reset-config");
+        Files.createDirectories(configHome);
+
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            initial.setMaxConcurrentDownloads(17);
+            initial.setAutomaticCleanupEnabled(true);
+            initial.setAria2RpcPort(6900);
+            initial.setHonorExternalAria2Configuration(true);
+            initial.setHonorExternalYtDlpConfiguration(true);
+            new org.manager.download.DownloadSettingsFactory.NetworkDefaults(
+                    16, 8, 900, 700, 12,
+                    "https://referrer.test/", "Custom agent", "id=123")
+                    .saveTo(initial);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null,
+                    newStubManager(settings), null);
+
+            dialog.selectTab(1);
+            dialog.resetToDefaults();
+            assertSame(initial, settings.get(),
+                    "Reset alone must not mutate the live settings");
+            dialog.applySettings();
+
+            GlobalSettings reset = settings.get();
+            var network = org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(reset);
+            assertEquals(org.manager.download.DownloadSettingsFactory.DEFAULT_NETWORK_MAX_CONNECTIONS,
+                    network.maxConnections());
+            assertEquals(0, network.downloadLimitKb());
+            assertEquals(17, reset.getMaxConcurrentDownloads());
+            assertTrue(reset.isAutomaticCleanupEnabled());
+            assertEquals(6900, reset.getAria2RpcPort());
+            assertTrue(reset.isHonorExternalAria2Configuration());
+            assertTrue(reset.isHonorExternalYtDlpConfiguration());
         });
     }
 

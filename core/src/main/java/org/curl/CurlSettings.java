@@ -13,7 +13,8 @@ public class CurlSettings extends DownloadSettings {
     @Override
     public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
         return switch (capability) {
-            case DOWNLOAD_LIMIT, MAX_RETRIES, RETRY_DELAY, REFERER, USER_AGENT, COOKIE -> true;
+            case DOWNLOAD_LIMIT, MAX_RETRIES, RETRY_DELAY, REFERER, USER_AGENT, COOKIE,
+                    PROXY, SOCKS_PROXY -> true;
             case CONNECTIONS, UPLOAD_LIMIT -> false;
         };
     }
