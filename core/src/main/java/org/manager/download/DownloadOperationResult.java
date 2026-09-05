@@ -22,7 +22,8 @@ public record DownloadOperationResult(
         Instant finishedAt) {
 
     public enum OperationType {
-        RECHECK_DATA("Recheck Data");
+        RECHECK_DATA("Recheck Data"),
+        MEDIA_ARCHIVE("Media archive");
 
         private final String description;
 

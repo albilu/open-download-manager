@@ -114,6 +114,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         yield defaultSettings;
                     }
                 };
+                settingsFactory.applyGlobalTransferPreferences(settings);
                 if (download.getRequestedFileName() != null) {
                     settings.setOutputTemplate(download.getRequestedFileName());
                 }
@@ -178,6 +179,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             if (task != null && download.getStatus() == Download.Status.PAUSED) {
                 // Resume the task on a new run generation; the retired
                 // run's late callbacks cannot touch it
+                settingsFactory.applyGlobalTransferPreferences(task.getSettings());
                 watchRun(download, task, task.resume());
 
                 download.setStatus(Download.Status.DOWNLOADING);
@@ -375,6 +377,13 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
      */
     private void installProgressListener(YtDlpDownloadTask task, Download download) {
         task.setProgressListener(new org.ytdlp.YtDlpClient.ProgressCallback() {
+            private int skippedCount;
+
+            @Override
+            public void onSkipped(int count) {
+                skippedCount = count;
+            }
+
             @Override
             public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
                 if (task.isCancelled()) {
@@ -422,6 +431,14 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             public void onComplete(String filename) {
                 if (task.isCancelled()) {
                     return; // a late completion must not replace CANCELED
+                }
+                download.setArchiveOnlyCompletion(skippedCount > 0 && (filename == null || filename.isBlank()));
+                if (skippedCount > 0) {
+                    String operation = download.beginOperation(
+                            org.manager.download.DownloadOperationResult.OperationType.MEDIA_ARCHIVE);
+                    download.finishOperation(operation,
+                            org.manager.download.DownloadOperationResult.Status.ACCEPTED,
+                            "Skipped " + skippedCount + " previously downloaded video(s).");
                 }
                 if (filename != null && !filename.isBlank()) {
                     try {

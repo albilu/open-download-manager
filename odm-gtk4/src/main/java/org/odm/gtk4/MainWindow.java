@@ -115,9 +115,10 @@ public class MainWindow {
     private final Spinner activitySpinner;
     private final SpinnerActivity activity;
     private final DownloadProgressGraph infoProgressGraph;
-    private final Label totalSizeValue;
     private final Label addedOnValue;
     private final Label infoHashValue;
+    private final Label errorValue;
+    private final Button errorDetailsButton;
     private final Button folderOpenButton;
     private final Label folderValue;
     private final Image engineIcon;
@@ -141,6 +142,7 @@ public class MainWindow {
 
     private final DownloadListPresenter listPresenter;
     final DetailTabsPresenter detailTabsPresenter;
+    final SourcesPresenter sourcesPresenter;
     private final java.util.concurrent.ExecutorService backgroundExecutor;
     private final java.util.concurrent.atomic.AtomicBoolean refreshInFlight =
             new java.util.concurrent.atomic.AtomicBoolean();
@@ -233,7 +235,6 @@ public class MainWindow {
         this.activitySpinner = Widgets.require(builder, "activity_spinner", Spinner.class);
         this.activity = new SpinnerActivity(activitySpinner);
         this.infoProgressGraph = new DownloadProgressGraph(builder);
-        this.totalSizeValue = Widgets.require(builder, "total_size_value", Label.class);
         this.addedOnValue = Widgets.require(builder, "added_on_value", Label.class);
         this.trackersStore = Widgets.require(builder, "trackers_store", ListStore.class);
         this.peersStore = Widgets.require(builder, "peers_store", ListStore.class);
@@ -241,6 +242,8 @@ public class MainWindow {
         this.completionDetailsStore = Widgets.require(builder, "completion_details_store", ListStore.class);
         this.globalProgressStore = Widgets.require(builder, "global_progress_store", ListStore.class);
         this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
+        this.errorValue = Widgets.require(builder, "info_error_value", Label.class);
+        this.errorDetailsButton = Widgets.require(builder, "info_error_button", Button.class);
         this.folderOpenButton = Widgets.require(builder, "folder_open_button", Button.class);
         this.folderValue = Widgets.require(builder, "folder_value", Label.class);
         this.engineIcon = Widgets.require(builder, "engine_icon", Image.class);
@@ -258,6 +261,14 @@ public class MainWindow {
         this.detailTabsPresenter = new DetailTabsPresenter(downloadManager, trackersStore,
                 peersStore, filesStore, filesTreeview, completionDetailsStore,
                 () -> selectedDownload);
+        this.sourcesPresenter = new SourcesPresenter(downloadManager, () -> selectedDownload);
+        ScrolledWindow sourcesScrolled = new ScrolledWindow();
+        sourcesScrolled.setChild(sourcesPresenter.root);
+        sourcesScrolled.setVexpand(true);
+        sourcesScrolled.setPropagateNaturalHeight(false);
+        sourcesScrolled.setMinContentHeight(32);
+        Widgets.require(builder, "info_notebook", org.gnome.gtk.Notebook.class)
+                .appendPage(sourcesScrolled, new Label("Sources"));
         this.backgroundExecutor = java.util.concurrent.Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "odm-window-fetch");
             t.setDaemon(true);
@@ -388,6 +399,12 @@ public class MainWindow {
         moveBottomButton.onClicked(() -> moveSelectedDownloads(QueueMove.BOTTOM));
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
         folderOpenButton.onClicked(this::openDisplayedSaveFolder);
+        errorDetailsButton.onClicked(() -> {
+            if (selectedDownload != null && selectedDownload.getErrorMessage() != null) {
+                ActionOutputDialog.presentError(window, selectedDownload.getName(),
+                        selectedDownload.getErrorMessage());
+            }
+        });
         this.searchEntry = Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         searchEntry.onSearchChanged(this::onSearchChanged);
         // tor_switch: wired below
@@ -657,6 +674,7 @@ public class MainWindow {
             contextMenu = null;
         }
         detailTabsPresenter.shutdown();
+        sourcesPresenter.shutdown();
         infoProgressGraph.dispose();
         activity.dispose();
         backgroundExecutor.shutdown();
@@ -2588,9 +2606,13 @@ public class MainWindow {
     }
 
     private void updateInfoPanel() {
+        sourcesPresenter.load();
         infoProgressGraph.update(selectedDownload);
+        String error = selectedDownload == null ? null : selectedDownload.getErrorMessage();
+        boolean hasError = error != null && !error.isBlank();
+        errorValue.setLabel(hasError ? error.replaceAll("\\s+", " ").strip() : "—");
+        errorDetailsButton.setSensitive(hasError);
         if (selectedDownload == null) {
-            totalSizeValue.setLabel("—");
             addedOnValue.setLabel("—");
             infoHashValue.setLabel("—");
             folderValue.setLabel("—");
@@ -2604,7 +2626,6 @@ public class MainWindow {
             detailTabsPresenter.load();
             return;
         }
-        totalSizeValue.setLabel(DownloadFormats.totalSize(selectedDownload));
         addedOnValue.setLabel(selectedDownload.getCreatedAt() != null
                 ? DownloadFormats.DATE_FORMAT.format(selectedDownload.getCreatedAt()) : "—");
         infoHashValue.setLabel(selectedDownload.getInfoHash() != null ? selectedDownload.getInfoHash() : "—");
@@ -2614,7 +2635,7 @@ public class MainWindow {
         engineIcon.setFromGicon(DownloadEnginePresentation.icon(selectedDownload.getType()));
         engineValue.setLabel(DownloadEnginePresentation.displayName(selectedDownload.getType()));
         etaValue.setLabel(DownloadFormats.eta(selectedDownload));
-        downloadedValue.setLabel(DownloadFormats.size(selectedDownload.getDownloaded()));
+        downloadedValue.setLabel(DownloadFormats.downloadedSize(selectedDownload));
         connectionsValue.setLabel(String.valueOf(selectedDownload.getConnectionCount()));
         seedsPeersValue.setLabel(selectedDownload.getSeeders() > 0
                 ? selectedDownload.getSeeders() + " seed(s)"

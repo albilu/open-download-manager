@@ -200,6 +200,9 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
                     return;
                 }
 
+                if (attemptNumber > 0) {
+                    download.recordRetry();
+                }
                 delegate.startDownload(download)
                         .whenComplete((gid, throwable) -> {
                             if (throwable != null) {

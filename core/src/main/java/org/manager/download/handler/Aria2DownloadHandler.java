@@ -33,6 +33,7 @@ import org.aria2.Aria2NotificationListener;
 import org.aria2.Aria2Settings;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
+import org.manager.download.DownloadSourceFile;
 import org.manager.download.DescriptorFileInspector;
 import org.manager.download.DownloadFileInfo;
 import org.manager.download.DownloadSettingsFactory;
@@ -246,6 +247,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 // Override output
                 overrideOutputPath(download);
 
+                settingsFactory.applyGlobalTransferPreferences(download.getSettings());
                 List<String> gids = switch (download.getType()) {
                     case ARIA2 -> {
                         // Protocol captures descriptor semantics independently
@@ -410,6 +412,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 ensureInitialized();
 
                 List<String> gids = trackedGidsSnapshot(download);
+                settingsFactory.applyGlobalTransferPreferences(download.getSettings());
+                Map<String, Object> options = Map.of("remote-time", Boolean.toString(
+                        globalSettings.getBooleanProperty("aria2.remoteTime", false)));
+                applyToEveryGid(gids, "update remote modification time",
+                        gid -> aria2Client.changeOption(gid, options));
                 applyToEveryGid(gids, "unpause", aria2Client::unpause);
                 download.setStatus(Download.Status.DOWNLOADING);
                 notifyDownloadResume(download);
@@ -1693,11 +1700,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         // Add mirrors if available: aria2 treats all URIs of a single addUri
         // call as mirrors of one download with automatic failover.
-        List<String> uris = new ArrayList<>();
-        uris.add(download.getUri().toString());
-        for (URI mirror : download.getMirrors()) {
-            uris.add(mirror.toString());
-        }
+        List<String> uris = download.getSourceUris();
 
         // Start download with aria2 as ONE multi-source task
         String[] uriArray = uris.toArray(new String[0]);
@@ -1900,7 +1903,32 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
         }
 
+        boolean restoreSources = !download.getSourceOverrides().isEmpty();
+        if (restoreSources) {
+            options.put("pause", "true");
+        }
         List<String> gids = aria2Client.addMetalinkAll(metaLinkData, options);
+        if (restoreSources) {
+            try {
+                for (String gid : gids) {
+                    for (Map<String, Object> file : aria2Client.getFiles(gid)) {
+                        List<String> saved = download.getSourceOverrides().get(sourceFileKey(download, file));
+                        if (saved != null) {
+                            aria2Client.changeUri(gid, Integer.parseInt(file.get("index").toString()),
+                                    sourceUris(file), saved, 0);
+                        }
+                    }
+                }
+                for (String gid : gids) {
+                    aria2Client.unpause(gid);
+                }
+            } catch (Exception error) {
+                for (String gid : gids) {
+                    try { aria2Client.forceRemove(gid); } catch (Exception cleanup) { error.addSuppressed(cleanup); }
+                }
+                throw new IOException("Could not restore edited Metalink sources", error);
+            }
+        }
 
         // Keep staged sources until the owning history record is removed.
 
@@ -2040,6 +2068,152 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }
         String message = error.getMessage().toLowerCase(java.util.Locale.ROOT);
         return message.contains("gid") && message.contains("not found");
+    }
+
+    private static boolean supportsSources(Download download) {
+        return download != null && download.getProtocol() != null
+                && (download.getProtocol().isDirectTransfer()
+                        || download.getProtocol() == Download.Protocol.METALINK);
+    }
+
+    private static String sourceFileKey(Download download, Map<String, Object> file) {
+        if (download.getProtocol().isDirectTransfer()) {
+            return "";
+        }
+        Path path = Path.of(file.get("path").toString()).toAbsolutePath().normalize();
+        Path destination = download.getDestination().toAbsolutePath().normalize();
+        return path.startsWith(destination) ? destination.relativize(path).toString() : path.toString();
+    }
+
+    private static List<Map<?, ?>> sourceMaps(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<?, ?>> maps = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) { maps.add(map); }
+        }
+        return maps;
+    }
+
+    private static List<String> sourceUris(Map<String, Object> file) {
+        return sourceMaps(file.get("uris")).stream()
+                .map(source -> source.get("uri").toString()).distinct().toList();
+    }
+
+    public List<DownloadSourceFile> getDownloadSources(Download download) {
+        if (!supportsSources(download)) { return List.of(); }
+        List<String> gids = liveTrackedGidsSnapshot(download);
+        List<DownloadSourceFile> result = new ArrayList<>();
+        if (gids.isEmpty()) {
+            Map<String, List<String>> configured = download.getProtocol().isDirectTransfer()
+                    ? Map.of("", download.getSourceUris()) : download.getSourceOverrides();
+            configured.forEach((key, uris) -> result.add(new DownloadSourceFile(
+                    "", 1, key, key.isEmpty() ? download.getName() : key,
+                    uris.stream().map(uri -> new DownloadSourceFile.Source(
+                            uri, "Configured", 0, "")).toList())));
+            return List.copyOf(result);
+        }
+        try {
+            for (String gid : gids) {
+                List<Map<String, Object>> servers;
+                try {
+                    servers = aria2Client.getServers(gid);
+                } catch (Aria2RpcException unavailable) {
+                    if (unavailable.getMessage() != null
+                            && unavailable.getMessage().contains("No active download")) {
+                        servers = List.of();
+                    } else { throw unavailable; }
+                }
+                for (Map<String, Object> file : aria2Client.getFiles(gid)) {
+                    int index = Integer.parseInt(file.get("index").toString());
+                    List<Map<?, ?>> connections = servers.stream()
+                            .filter(server -> file.get("index").toString().equals(server.get("index").toString()))
+                            .flatMap(server -> sourceMaps(server.get("servers")).stream()).toList();
+                    List<DownloadSourceFile.Source> sources = new ArrayList<>();
+                    java.util.Set<String> seenUris = new java.util.HashSet<>();
+                    for (Map<?, ?> source : sourceMaps(file.get("uris"))) {
+                        String uri = source.get("uri").toString();
+                        // aria2 can report the same URI for multiple connections and waiting slots.
+                        if (!seenUris.add(uri)) { continue; }
+                        long speed = 0;
+                        String current = "";
+                        for (Map<?, ?> server : connections) {
+                            if (uri.equals(server.get("uri"))) {
+                                speed += Long.parseLong(server.get("downloadSpeed").toString());
+                                current = String.valueOf(server.get("currentUri"));
+                            }
+                        }
+                        String state = !current.isEmpty() ? "Active"
+                                : "used".equals(source.get("status")) ? "Used" : "Waiting";
+                        sources.add(new DownloadSourceFile.Source(uri, state, speed, current));
+                    }
+                    if (isLiveTrackedGid(download, gid)) {
+                        result.add(new DownloadSourceFile(gid, index,
+                                sourceFileKey(download, file), String.valueOf(file.get("path")), sources));
+                    }
+                }
+            }
+            return List.copyOf(result);
+        } catch (Exception error) {
+            throw new java.util.concurrent.CompletionException("Could not load mirror details", error);
+        }
+    }
+
+    public CompletableFuture<Void> changeDownloadSource(Download download,
+            DownloadSourceFile selected, String remove, String add, boolean prefer) {
+        return CompletableFuture.runAsync(() -> {
+            synchronized (download) {
+                try {
+                    if (!supportsSources(download) || selected == null
+                            || !isLiveTrackedGid(download, selected.gid())) {
+                        throw new IllegalStateException("Start or resume this download before editing mirrors");
+                    }
+                    if (add != null) {
+                        URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(add);
+                        if (!Download.Protocol.fromUri(uri).isDirectTransfer()) {
+                            throw new IllegalArgumentException("A mirror must be an HTTP, HTTPS, FTP or SFTP URL");
+                        }
+                    }
+                    Map<String, Object> file = aria2Client.getFiles(selected.gid()).stream()
+                            .filter(row -> Integer.toString(selected.index()).equals(String.valueOf(row.get("index"))))
+                            .findFirst().orElseThrow(() -> new IllegalStateException("The source file is no longer available"));
+                    String key = sourceFileKey(download, file);
+                    if (!key.equals(selected.key())) {
+                        throw new IllegalStateException("The source file has changed; refresh and try again");
+                    }
+                    List<String> uris = new ArrayList<>(sourceUris(file));
+                    if (remove != null && !uris.remove(remove)) {
+                        throw new IllegalArgumentException("This mirror is no longer in the source list");
+                    }
+                    if (add != null && uris.contains(add)) {
+                        throw new IllegalArgumentException("This mirror is already in the source list");
+                    }
+                    if (add != null) { uris.add(prefer ? 0 : uris.size(), add); }
+                    if (uris.isEmpty()) { throw new IllegalArgumentException("Keep at least one mirror for this file"); }
+                    if (!isLiveTrackedGid(download, selected.gid())) {
+                        throw new IllegalStateException("This download's engine task has ended");
+                    }
+                    List<Integer> counts = aria2Client.changeUri(selected.gid(), selected.index(),
+                            sourceMaps(file.get("uris")).stream().map(row -> row.get("uri").toString())
+                                    .filter(uri -> uri.equals(remove)).toList(),
+                            add == null ? List.of() : List.of(add), prefer ? 0 : uris.size());
+                    long removedOccurrences = sourceMaps(file.get("uris")).stream()
+                            .filter(row -> Objects.equals(remove, row.get("uri"))).count();
+                    if (counts.size() != 2 || counts.get(0) != removedOccurrences
+                            || counts.get(1) != (add == null ? 0 : 1)) {
+                        Map<String, Object> actual = aria2Client.getFiles(selected.gid()).stream()
+                                .filter(row -> Integer.toString(selected.index()).equals(String.valueOf(row.get("index"))))
+                                .findFirst().orElseThrow();
+                        download.setFileSources(key, sourceUris(actual));
+                        throw new IllegalStateException("aria2 could not apply every mirror change; refresh and try again");
+                    }
+                    download.setFileSources(key, uris);
+                } catch (Exception error) {
+                    throw new java.util.concurrent.CompletionException(error);
+                }
+            }
+        }, executor);
     }
 
     /**
@@ -2255,6 +2429,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     return;
                 }
 
+                settingsFactory.applyGlobalTransferPreferences(download.getSettings());
                 Map<String, Object> options = new HashMap<>();
                 switch (download.getSettings()) {
                     case Aria2Settings aria2Settings -> {

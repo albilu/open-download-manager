@@ -14,10 +14,21 @@ final class ActionOutputDialog {
 
     static void present(Window parent, String action, String status,
             String result, String output) {
+        present(parent, "Action Output — " + display(action, "Completion action"),
+                action, "Status: " + display(status, "—") + "\nResult: " + display(result, "—"),
+                output, status);
+    }
+
+    static void presentError(Window parent, String name, String error) {
+        present(parent, "Download Error", name, "Download error details", error, "Error");
+    }
+
+    private static void present(Window parent, String title, String action,
+            String summary, String output, String status) {
         String actionLabel = display(action, "Completion action");
         GtkBuilder builder = UiLoader.load("/ui/action-output.ui");
         Window dialog = Widgets.require(builder, "action_output_dialog", Window.class);
-        dialog.setTitle("Action Output — " + actionLabel);
+        dialog.setTitle(title);
         DialogSupport.configureIndependent(dialog, parent);
 
         Label actionValue = Widgets.require(builder,
@@ -25,8 +36,7 @@ final class ActionOutputDialog {
         actionValue.setLabel(actionLabel);
 
         Label outcome = Widgets.require(builder, "action_output_result_label", Label.class);
-        outcome.setLabel("Status: " + display(status, "—")
-                + "\nResult: " + display(result, "—"));
+        outcome.setLabel(summary);
 
         TextView log = Widgets.require(builder, "action_output_text_view", TextView.class);
         String displayedOutput = output == null || output.isBlank()

@@ -80,6 +80,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 completion_action_results TEXT,
                 operation_results TEXT,
                 speed_history TEXT,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                source_overrides TEXT,
+                archive_only_completion INTEGER NOT NULL DEFAULT 0,
                 active_before_exit INTEGER NOT NULL DEFAULT 0,
                 pause_reason TEXT
             )
@@ -94,8 +97,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, manual_start_required,
                 active_elapsed_millis, completion_action_results, operation_results,
-                active_before_exit, pause_reason, speed_history
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                active_before_exit, pause_reason, speed_history, retry_count, source_overrides, archive_only_completion
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -239,6 +242,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             ensureColumn("completion_action_results", "TEXT");
             ensureColumn("operation_results", "TEXT");
             ensureColumn("speed_history", "TEXT");
+            ensureColumn("retry_count", "INTEGER NOT NULL DEFAULT 0");
+            ensureColumn("source_overrides", "TEXT");
+            ensureColumn("archive_only_completion", "INTEGER NOT NULL DEFAULT 0");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
@@ -396,6 +402,10 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         download.setStartedAt(readInstant(rs, "started_at"));
         download.setCompletedAt(readInstant(rs, "completed_at"));
         download.setErrorMessage(rs.getString("error_message"));
+        download.setRetryCount(rs.getInt("retry_count"));
+        download.setArchiveOnlyCompletion(rs.getInt("archive_only_completion") != 0);
+        download.setSourceOverrides(readJson(rs, "source_overrides",
+                new TypeReference<Map<String, List<String>>>() { }));
         String scheduleJson = rs.getString("schedule_settings");
         if (scheduleJson != null && !scheduleJson.isBlank()) {
             try {
@@ -504,6 +514,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(34, download.getPauseReason() == null ? null : download.getPauseReason().name());
         DownloadSpeedHistory.State history = progress.speedHistory();
         insert.setString(35, history == null ? null : mapper.writeValueAsString(history));
+        insert.setInt(36, download.getRetryCount());
+        insert.setString(37, mapper.writeValueAsString(download.getSourceOverrides()));
+        insert.setInt(38, download.isArchiveOnlyCompletion() ? 1 : 0);
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

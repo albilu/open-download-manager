@@ -13,6 +13,17 @@ import java.util.concurrent.CompletableFuture;
  */
 public interface DownloadOperations {
 
+    default List<DownloadSourceFile> getDownloadSources(Download download) {
+        return List.of();
+    }
+
+    /** Replace, add or remove a single mirror, optionally moving it to the front. */
+    default CompletableFuture<Void> changeDownloadSource(Download download,
+            DownloadSourceFile file, String remove, String add, boolean prefer) {
+        return CompletableFuture.failedFuture(
+                new UnsupportedOperationException("This engine cannot edit live mirrors"));
+    }
+
     /**
      * Creates a new download for the given URI.
      *

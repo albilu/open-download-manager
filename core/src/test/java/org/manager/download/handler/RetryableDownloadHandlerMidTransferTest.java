@@ -145,6 +145,7 @@ class RetryableDownloadHandlerMidTransferTest {
         // manager's slot accounting depends on that); the failure arrives
         // later through the event channel
         assertTrue(handler.startDownload(download).get(5, TimeUnit.SECONDS).startsWith("gid-1"));
+        assertEquals(0, download.getRetryCount());
 
         assertEquals(RetryDecision.RETRY_SCHEDULED,
                 handler.interceptError(download.getId(), "server error: HTTP 503 Service Unavailable"));
@@ -155,6 +156,7 @@ class RetryableDownloadHandlerMidTransferTest {
         }
         assertEquals(2, delegate.startAttempts.get(),
                 "a mid-transfer 5xx must rotate and retry, not be silently ignored");
+        assertEquals(1, download.getRetryCount());
     }
 
     @Test
@@ -178,6 +180,7 @@ class RetryableDownloadHandlerMidTransferTest {
         Thread.sleep(500);
         assertEquals(2, delegate.startAttempts.get(),
                 "exactly one retry (initial + 1), never one per notification");
+        assertEquals(1, download.getRetryCount());
     }
 
     @Test

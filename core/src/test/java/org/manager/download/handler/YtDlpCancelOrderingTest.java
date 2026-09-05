@@ -161,6 +161,29 @@ class YtDlpCancelOrderingTest {
     }
 
     @Test
+    void entirelyArchivedSelectionCompletesWithoutInventingAnOutput() throws Exception {
+        Download download = downloadWithDestination();
+        SimulatedProcessClient client = new SimulatedProcessClient(scheduler);
+        try {
+            YtDlpDownloadTask task = new YtDlpDownloadTask("archived", "http://example.test/v",
+                    new YtDlpSettings().setUseDownloadArchive(true), tempDir, client);
+            wireProgressListener(task, download);
+            CompletableFuture<String> completion = task.start();
+            var callback = awaitCallback(client);
+            callback.onSkipped(3);
+            callback.onComplete(null);
+            client.run.complete(null);
+            completion.get(5, TimeUnit.SECONDS);
+            assertEquals(Download.Status.COMPLETED, download.getStatus());
+            assertTrue(download.isArchiveOnlyCompletion());
+            assertTrue(download.getOutputPaths().isEmpty());
+            assertEquals(100, download.getProgress());
+            assertEquals("Skipped 3 previously downloaded video(s).",
+                    download.getOperationResults().getFirst().message());
+        } finally { client.shutdown(); }
+    }
+
+    @Test
     @DisplayName("A late process callback cannot replace CANCELED on the download")
     void lateProcessCallbackCannotReplaceCancelledStatus() throws Exception {
         Download download = downloadWithDestination();

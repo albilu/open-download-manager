@@ -160,6 +160,14 @@ public class YtDlpSettings extends DownloadSettings {
     private boolean skipUnavailableFragments = true;
     private boolean ignoreErrors = false;
     private boolean noPlaylist = false;
+    private boolean useDownloadArchive;
+
+    public boolean isUseDownloadArchive() { return useDownloadArchive; }
+
+    public YtDlpSettings setUseDownloadArchive(boolean enabled) {
+        useDownloadArchive = enabled;
+        return this;
+    }
     private boolean playlistEnd = false;
     private int playlistItems = 0;
     private String playlistItemSpec = null;
@@ -1216,6 +1224,7 @@ public class YtDlpSettings extends DownloadSettings {
         copy.skipUnavailableFragments = this.skipUnavailableFragments;
         copy.ignoreErrors = this.ignoreErrors;
         copy.noPlaylist = this.noPlaylist;
+        copy.useDownloadArchive = this.useDownloadArchive;
         copy.playlistEnd = this.playlistEnd;
         copy.playlistItems = this.playlistItems;
         copy.playlistItemSpec = this.playlistItemSpec;

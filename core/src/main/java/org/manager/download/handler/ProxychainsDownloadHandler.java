@@ -112,6 +112,14 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
         return options != null ? new HashMap<>(options) : new HashMap<>();
     }
 
+    private Map<String, String> getLaunchOptions(Download download) {
+        settingsFactory.applyGlobalTransferPreferences(download.getSettings());
+        Map<String, String> options = getDownloadOptions(download.getId());
+        options.put("aria2.remote-time", Boolean.toString(
+                globalSettings.getBooleanProperty("aria2.remoteTime", false)));
+        return options;
+    }
+
     /**
      * Creates a new download from a URI and starts it.
      *
@@ -201,7 +209,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
 
                 // Use this handler as the listener directly
                 // Get any additional options for this download
-                Map<String, String> options = getDownloadOptions(download.getId());
+                Map<String, String> options = getLaunchOptions(download);
 
                 // This global policy can change while the handler remains
                 // alive, so take its current value for every new process.
@@ -271,7 +279,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 // Use this handler as the listener directly
 
                 // Get options for this download
-                Map<String, String> options = getDownloadOptions(download.getId());
+                Map<String, String> options = getLaunchOptions(download);
 
                 activeTasks.put(download.getId(), CompletableFuture.completedFuture(null));
                 return proxychainsClient.resumeDownload(download, this, options);

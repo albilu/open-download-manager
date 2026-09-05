@@ -84,6 +84,18 @@ public class DownloadSettingsFactory {
         return globalSettings;
     }
 
+    /** Refresh preferences with no per-download override before starting or resuming a transfer. */
+    public void applyGlobalTransferPreferences(DownloadSettings settings) {
+        if (settings instanceof Aria2Settings || settings instanceof CurlSettings
+                || settings instanceof ProxychainsSettings) {
+            settings.setOption("remote-time", Boolean.toString(
+                    getGlobalSettings().getBooleanProperty("aria2.remoteTime", false)));
+        } else if (settings instanceof YtDlpSettings media) {
+            media.setUseDownloadArchive(
+                    getGlobalSettings().getBooleanProperty("ytdlp.skipDownloaded", true));
+        }
+    }
+
     /**
      * Engine-neutral defaults edited by the Network preferences panel. Each
      * value is submitted only when an engine advertises the corresponding
@@ -272,6 +284,7 @@ public class DownloadSettingsFactory {
         settings.setFileAllocation(g.getProperty("aria2.fileAllocation", "prealloc"));
         settings.setAutoFileRenaming(true);
         settings.setCheckIntegrity(g.getBooleanProperty("aria2.checkIntegrity", false));
+        applyGlobalTransferPreferences(settings);
         settings.setBtMaxPeers(Math.max(0, g.getIntProperty("aria2.maxPeers",
                 DEFAULT_ARIA2_MAX_PEERS)));
         settings.setBtRequestPeerSpeedLimit(
@@ -302,6 +315,7 @@ public class DownloadSettingsFactory {
         settings.setResumeDownloads(true);
         settings.setShowProgress(true);
         settings.setConnectTimeout(30);
+        applyGlobalTransferPreferences(settings);
         applyNetworkPreferences(getGlobalSettings(), settings, Download.Type.CURL, protocol);
 
         return settings;
@@ -335,6 +349,7 @@ public class DownloadSettingsFactory {
         settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.embedThumbnail", false));
         settings.setEmbedMetadata(g.getBooleanProperty("ytdlp.embedMetadata", false));
         settings.setUseAria2c(g.getBooleanProperty("ytdlp.useAria2External", false));
+        applyGlobalTransferPreferences(settings);
         String aria2cPath = g.getAria2Path();
         settings.setAria2cPath(aria2cPath == null || aria2cPath.isBlank()
                 ? "aria2c" : aria2cPath);
@@ -427,6 +442,7 @@ public class DownloadSettingsFactory {
         settings.setQuiet(true);
         settings.setRandomChain(1);
         settings.setStrictChain(false);
+        applyGlobalTransferPreferences(settings);
         applyNetworkPreferences(getGlobalSettings(), settings,
                 Download.Type.PROXYCHAINS, protocol);
 

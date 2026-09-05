@@ -1,5 +1,6 @@
 package org.odm.gtk4;
 
+import java.text.NumberFormat;
 import java.time.Duration;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -36,6 +37,27 @@ final class DownloadFormats {
     /** HTTrack may know transferred bytes without knowing the final mirror size. */
     static String totalSize(Download download) {
         return unknownWebsiteSize(download) ? "—" : size(download.getSize());
+    }
+
+    /** Downloaded / total bytes with one shared unit and locale-aware decimals. */
+    static String downloadedSize(Download download) {
+        long downloaded = Math.max(0, download.getDownloaded());
+        long total = Math.max(0, download.getSize());
+        long largest = Math.max(downloaded, total);
+        String[] units = {"B", "KB", "MB", "GB"};
+        long divisor = 1;
+        int unit = 0;
+        while (unit < units.length - 1 && largest / divisor >= 1024) {
+            divisor *= 1024;
+            unit++;
+        }
+        NumberFormat format = NumberFormat.getNumberInstance();
+        format.setGroupingUsed(false);
+        format.setMaximumFractionDigits(2);
+        boolean unknownTotal = unknownWebsiteSize(download) || (total == 0 && downloaded > 0);
+        return format.format((double) downloaded / divisor) + " / "
+                + (unknownTotal ? "—" : format.format((double) total / divisor))
+                + " " + units[unit];
     }
 
     static String remainingSize(Download download) {

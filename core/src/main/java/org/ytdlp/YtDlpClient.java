@@ -57,6 +57,7 @@ public class YtDlpClient {
     private final boolean honorExternalAria2Configuration;
     private final ExecutorService executor;
     private final org.manager.tools.ExternalProcessRegistry activeProcesses;
+    private final Path archiveDatabase;
 
     /**
      * Creates a new YtDlpClient with default yt-dlp path from
@@ -89,7 +90,14 @@ public class YtDlpClient {
 
     public YtDlpClient(String ytDlpPath, boolean honorExternalConfiguration,
             boolean honorExternalAria2Configuration) {
+        this(ytDlpPath, honorExternalConfiguration, honorExternalAria2Configuration,
+                org.manager.util.OdmPaths.stateDirectory().resolve("odm-state.db"));
+    }
+
+    YtDlpClient(String ytDlpPath, boolean honorExternalConfiguration,
+            boolean honorExternalAria2Configuration, Path archiveDatabase) {
         this.ytDlpPath = ytDlpPath;
+        this.archiveDatabase = archiveDatabase;
         this.honorExternalConfiguration = honorExternalConfiguration;
         this.honorExternalAria2Configuration = honorExternalAria2Configuration;
         this.executor = Executors.newCachedThreadPool(r -> {
@@ -446,6 +454,9 @@ public class YtDlpClient {
         void onComplete(String filename);
 
         void onError(String error);
+
+        /** Cumulative number skipped by the native media-ID archive in this run. */
+        default void onSkipped(int count) { }
     }
 
     /**
@@ -905,9 +916,17 @@ public class YtDlpClient {
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         return CompletableFuture.supplyAsync(() -> {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
+            MediaDownloadArchive archive = null;
             try {
                 // Build command
                 List<String> command = buildDownloadCommand(url, settings, outputPath);
+                if (settings.isUseDownloadArchive()) {
+                    archive = new MediaDownloadArchive(archiveDatabase);
+                    command.addAll(command.size() - 1, List.of("--download-archive", archive.path().toString(),
+                            "--no-break-on-existing", "--no-quiet"));
+                } else {
+                    command.add(command.size() - 1, "--no-download-archive");
+                }
 
                 // Create output directory if it doesn't exist
                 if (outputPath != null) {
@@ -927,10 +946,21 @@ public class YtDlpClient {
                 // Monitor progress
                 String filename = null;
                 boolean progressReported = false;
+                int skipped = 0;
+                String reportedError = null;
+                if (callback != null) { callback.onSkipped(0); }
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
                     while (!Thread.currentThread().isInterrupted()
                             && (line = reader.readLine()) != null) {
+                        if (archive != null) {
+                            checkpointArchive(archive);
+                            if (line.startsWith("[download]")
+                                    && line.contains("has already been recorded in the archive")) {
+                                skipped++;
+                                if (callback != null) { callback.onSkipped(skipped); }
+                            }
+                        }
                         // Track both the early destination and the final
                         // after-move path (post-processing may change the
                         // extension). Publishing each distinct path also
@@ -954,17 +984,19 @@ public class YtDlpClient {
                         }
 
                         // Check for errors
-                        if (line.contains("ERROR:") && callback != null) {
-                            callback.onError("yt-dlp reported an error");
+                        if (line.contains("ERROR:") || line.startsWith("yt-dlp: error:")) {
+                            reportedError = line;
+                            if (callback != null) { callback.onError(line); }
                         }
                     }
                 }
 
                 int exitCode = process.waitFor();
+                if (archive != null) { checkpointArchive(archive); }
                 if (launch.isCancelled()) {
                     throw new CancellationException("yt-dlp download was cancelled");
                 } else if (exitCode == 0) {
-                    if (filename == null || filename.isBlank()) {
+                    if ((filename == null || filename.isBlank()) && skipped == 0) {
                         throw new IllegalStateException(
                                 "yt-dlp exited successfully without reporting an output file");
                     }
@@ -973,7 +1005,7 @@ public class YtDlpClient {
                         // without yt-dlp emitting an intermediate progress
                         // line. Preserve the callback contract by publishing
                         // a terminal snapshot before completion.
-                        if (!progressReported) {
+                        if (!progressReported && filename != null) {
                             long completedBytes = completedFileSize(filename, outputPath);
                             callback.onProgress(100.0f, completedBytes, completedBytes, 0.0f);
                         }
@@ -982,7 +1014,8 @@ public class YtDlpClient {
                     LOGGER.info("yt-dlp download completed successfully");
                     return filename;
                 } else {
-                    String error = "yt-dlp failed with exit code: " + exitCode;
+                    String error = "yt-dlp failed with exit code: " + exitCode
+                            + (reportedError == null ? "" : "\n" + reportedError);
                     if (callback != null) {
                         callback.onError(error);
                     }
@@ -1001,6 +1034,10 @@ public class YtDlpClient {
                 }
                 throw new RuntimeException("Download failed: " + e.getMessage(), e);
             } finally {
+                if (archive != null) {
+                    try { archive.close(); }
+                    catch (Exception error) { LOGGER.error("Could not save media archive; retained at " + archive.path(), error); }
+                }
                 if (registration != null) {
                     registration.unregister();
                 } else {
@@ -1104,6 +1141,11 @@ public class YtDlpClient {
     /**
      * Builds the yt-dlp command with settings.
      */
+    private static void checkpointArchive(MediaDownloadArchive archive) {
+        try { archive.checkpoint(); }
+        catch (Exception error) { LOGGER.warn("Could not checkpoint media archive; will retry at process exit", error); }
+    }
+
     List<String> buildDownloadCommand(String url, YtDlpSettings settings, Path outputPath) {
         List<String> command = command();
 

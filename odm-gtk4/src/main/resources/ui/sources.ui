@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <object class="GtkListStore" id="sources_store"><columns><column type="gchararray"/><column type="gchararray"/><column type="gchararray"/><column type="gchararray"/></columns></object>
+  <object class="GtkBox" id="sources_root">
+    <property name="orientation">vertical</property><property name="spacing">6</property>
+    <property name="margin-start">8</property><property name="margin-end">8</property><property name="margin-top">8</property><property name="margin-bottom">8</property>
+    <child><object class="GtkDropDown" id="source_file_drop"><property name="tooltip-text">File whose mirrors are shown below</property></object></child>
+    <child><object class="GtkScrolledWindow"><property name="vexpand">true</property><property name="min-content-height">32</property><child>
+      <object class="GtkTreeView" id="sources_view"><property name="model">sources_store</property><property name="tooltip-column">3</property>
+        <child><object class="GtkTreeViewColumn"><property name="title">Mirror URL</property><property name="expand">true</property><child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">0</attribute></attributes></child></object></child>
+        <child><object class="GtkTreeViewColumn"><property name="title">State</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
+        <child><object class="GtkTreeViewColumn"><property name="title">Speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+      </object>
+    </child></object></child>
+    <child><object class="GtkBox"><property name="spacing">6</property>
+      <child><object class="GtkEntry" id="mirror_entry"><property name="hexpand">true</property><property name="placeholder-text">Mirror URL for the selected file</property></object></child>
+      <child><object class="GtkButton" id="add_mirror_button"><property name="label">Add</property></object></child>
+      <child><object class="GtkButton" id="remove_mirror_button"><property name="label">Remove</property></object></child>
+      <child><object class="GtkButton" id="prefer_mirror_button"><property name="label">Prefer</property><property name="tooltip-text">Move this mirror to the front of the waiting sources</property></object></child>
+    </object></child>
+    <child><object class="GtkLabel" id="sources_status"><property name="xalign">0</property><property name="ellipsize">end</property></object></child>
+  </object>
+</interface>

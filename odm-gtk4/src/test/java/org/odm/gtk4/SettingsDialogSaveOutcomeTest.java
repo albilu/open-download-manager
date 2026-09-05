@@ -51,11 +51,11 @@ class SettingsDialogSaveOutcomeTest {
             "torrent_listen_ports_entry", "ipv6_dht_combo", "peer_exchange_combo",
             "local_peer_discovery_combo", "torrent_encryption_combo", "tracker_refresh_spin",
             "tracker_list_entry", "continue_download_check", "check_integrity_check",
-            "aria2_rpc_port_spin", "honor_external_aria2_config_check",
+            "aria2_rpc_port_spin", "remote_time_check", "honor_external_aria2_config_check",
             // yt-dlp
             "ytdlp_path_entry", "browse_ytdlp_button", "write_thumbnail_check",
             "embed_thumbnail_check", "embed_metadata_check", "use_aria2_external_check",
-            "honor_external_ytdlp_config_check",
+            "skip_downloaded_media_check", "honor_external_ytdlp_config_check",
             // HTTrack
             "httrack_path_entry", "browse_httrack_button", "httrack_max_total_size_spin",
             "httrack_max_non_html_size_spin", "httrack_max_html_size_spin",

@@ -154,6 +154,13 @@ public class YtDlpDownloadTask {
 
             ProgressCallback callback = new ProgressCallback() {
                 @Override
+                public void onSkipped(int count) {
+                    if (!cancelled.get() && isCurrentGeneration(generation)) {
+                        forwardToListener(l -> l.onSkipped(count));
+                    }
+                }
+
+                @Override
                 public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
                     if (cancelled.get() || !isCurrentGeneration(generation)) {
                         return; // progress events are invalidated by cancellation or retirement

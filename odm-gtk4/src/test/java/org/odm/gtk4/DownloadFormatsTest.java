@@ -3,6 +3,7 @@ package org.odm.gtk4;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.net.URI;
 import java.time.Instant;
+import java.util.Locale;
 
 import org.junit.jupiter.api.Test;
 import org.manager.download.Download;
@@ -18,6 +19,38 @@ class DownloadFormatsTest {
         assertEquals("2 KB", DownloadFormats.size(2048));
         assertEquals("1.5 MB", DownloadFormats.size(1024 * 1024 + 512 * 1024));
         assertEquals("2.00 GB", DownloadFormats.size(2L * 1024 * 1024 * 1024));
+    }
+
+    @Test
+    void downloadedAndTotalShareAUnitAndUseLocalizedDecimals() {
+        Locale original = Locale.getDefault(Locale.Category.FORMAT);
+        try {
+            Download download = new Download(URI.create("https://example.test/file"));
+            download.setDownloaded(Math.round(2.3 * 1024 * 1024 * 1024));
+            download.setSize(Math.round(4.15 * 1024 * 1024 * 1024));
+            Locale.setDefault(Locale.Category.FORMAT, Locale.US);
+            assertEquals("2.3 / 4.15 GB", DownloadFormats.downloadedSize(download));
+            Locale.setDefault(Locale.Category.FORMAT, Locale.FRANCE);
+            assertEquals("2,3 / 4,15 GB", DownloadFormats.downloadedSize(download));
+            download.setDownloaded(512 * 1024 * 1024);
+            assertEquals("0,5 / 4,15 GB", DownloadFormats.downloadedSize(download));
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, original);
+        }
+    }
+
+    @Test
+    void downloadedAndTotalKeepUnknownTotalsAndEmptyFilesDistinct() {
+        Download download = new Download(URI.create("https://example.test/file"));
+        assertEquals("0 / 0 B", DownloadFormats.downloadedSize(download));
+        download.setDownloaded(4096);
+        assertEquals("4 / — KB", DownloadFormats.downloadedSize(download));
+        download.setSize(8192);
+        assertEquals("4 / 8 KB", DownloadFormats.downloadedSize(download));
+        download.setType(Download.Type.WEBSITE_SCRAPING);
+        download.setSize(0);
+        download.setDownloaded(0);
+        assertEquals("0 / — B", DownloadFormats.downloadedSize(download));
     }
 
     @Test

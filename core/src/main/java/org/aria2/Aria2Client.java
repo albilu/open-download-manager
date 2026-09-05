@@ -838,8 +838,18 @@ public class Aria2Client {
     }
 
     // Implement aria2.getUris
-    public List<String> getUris(String gid) throws IOException, Aria2RpcException {
-        return call("aria2.getUris", List.class, gid);
+    public List<Map<String, Object>> getUris(String gid) throws IOException, Aria2RpcException {
+        return call("aria2.getUris", new TypeReference<List<Map<String, Object>>>() { }, gid);
+    }
+
+    /** File indexes are one-based; insertion positions are zero-based. */
+    public List<Integer> changeUri(String gid, int fileIndex, List<String> remove,
+            List<String> add, int position) throws IOException, Aria2RpcException {
+        if (fileIndex < 1 || position < 0) {
+            throw new IllegalArgumentException("Invalid source file index or position");
+        }
+        return call("aria2.changeUri", new TypeReference<List<Integer>>() { },
+                gid, fileIndex, remove, add, position);
     }
 
     // Implement aria2.getFiles

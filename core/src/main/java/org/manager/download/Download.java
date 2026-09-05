@@ -155,6 +155,8 @@ public class Download {
     private volatile URI uri;
     private volatile Protocol protocol;
     private volatile List<URI> mirrors;
+    private Map<String, List<String>> sourceOverrides = Map.of();
+
     private volatile Path destination;
     private volatile Type type;
     private volatile Status status;
@@ -181,6 +183,9 @@ public class Download {
     /** Start of the current active interval; runtime-only and never persisted. */
     private volatile Instant activeElapsedSince;
     private volatile String errorMessage;
+    private volatile int retryCount;
+    private volatile boolean archiveOnlyCompletion;
+
     private volatile DownloadSettings settings; // unified settings object
     private volatile String checksumAlgorithm; // detected expected-hash algorithm (sha256, md5, ...)
     private volatile String expectedChecksum; // detected expected hash in hex
@@ -537,6 +542,44 @@ public class Download {
         return fromUri;
     }
 
+    public Map<String, List<String>> getSourceOverrides() {
+        synchronized (lock) {
+            return sourceOverrides;
+        }
+    }
+
+    public void setSourceOverrides(Map<String, List<String>> overrides) {
+        synchronized (lock) {
+            Map<String, List<String>> copy = new java.util.LinkedHashMap<>();
+            if (overrides != null) {
+                overrides.forEach((key, value) -> copy.put(key, List.copyOf(value)));
+            }
+            sourceOverrides = Map.copyOf(copy);
+        }
+    }
+
+    public void setFileSources(String key, List<String> sources) {
+        synchronized (lock) {
+            Map<String, List<String>> copy = new java.util.LinkedHashMap<>(sourceOverrides);
+            copy.put(key, List.copyOf(sources));
+            sourceOverrides = Map.copyOf(copy);
+        }
+    }
+
+    /** Effective single-file sources, including edits to the original URL's membership. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public List<String> getSourceUris() {
+        synchronized (lock) {
+            if (sourceOverrides.containsKey("")) {
+                return sourceOverrides.get("");
+            }
+            List<String> sources = new ArrayList<>();
+            sources.add(uri.toString());
+            mirrors.forEach(mirror -> sources.add(mirror.toString()));
+            return List.copyOf(sources);
+        }
+    }
+
     public List<URI> getMirrors() {
         synchronized (lock) {
             return new ArrayList<>(mirrors);
@@ -860,7 +903,7 @@ public class Download {
     }
 
     public float getProgress() {
-        return progress;
+        return archiveOnlyCompletion && status == Status.COMPLETED ? 100 : progress;
     }
 
     public Instant getCreatedAt() {
@@ -911,6 +954,28 @@ public class Download {
 
     public String getErrorMessage() {
         return errorMessage;
+    }
+
+    public boolean isArchiveOnlyCompletion() { return archiveOnlyCompletion; }
+    public void setArchiveOnlyCompletion(boolean skipped) { archiveOnlyCompletion = skipped; }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(int retryCount) {
+        synchronized (lock) {
+            this.retryCount = Math.max(0, retryCount);
+        }
+    }
+
+    /** Counts ODM retry attempts, including explicit retries queued for admission. */
+    public void recordRetry() {
+        synchronized (lock) {
+            if (retryCount < Integer.MAX_VALUE) {
+                retryCount++;
+            }
+        }
     }
 
     public void setErrorMessage(String errorMessage) {

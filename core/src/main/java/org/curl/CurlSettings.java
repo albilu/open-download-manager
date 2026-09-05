@@ -10,6 +10,15 @@ import org.manager.download.DownloadSettings;
  */
 public class CurlSettings extends DownloadSettings {
 
+    public boolean isPreserveRemoteModificationTime() {
+        return Boolean.parseBoolean(getOption("remote-time"));
+    }
+
+    public CurlSettings setPreserveRemoteModificationTime(boolean preserve) {
+        setOption("remote-time", Boolean.toString(preserve));
+        return this;
+    }
+
     @Override
     public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
         return switch (capability) {

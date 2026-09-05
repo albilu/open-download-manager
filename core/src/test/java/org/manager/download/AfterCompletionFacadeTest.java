@@ -56,6 +56,24 @@ class AfterCompletionFacadeTest {
 
     @Test
     @Timeout(30)
+    void archivedOnlyCompletionDoesNotRunFileActions() throws Exception {
+        DownloadManager manager = DownloadManagerFactory.getInstance();
+        Download download = new Download(URI.create("https://example.test/archived"));
+        download.setStatus(Download.Status.COMPLETED);
+        download.setArchiveOnlyCompletion(true);
+        CountingAction action = new CountingAction();
+        manager.addAfterCompletionAction(download, action);
+        try {
+            manager.executeAfterCompletionActions(download).get(10, TimeUnit.SECONDS);
+            assertEquals(0, action.executions.get());
+            download.setArchiveOnlyCompletion(false);
+            manager.executeAfterCompletionActions(download).get(10, TimeUnit.SECONDS);
+            assertEquals(1, action.executions.get());
+        } finally { manager.removeAfterCompletionAction(download, action); }
+    }
+
+    @Test
+    @Timeout(30)
     @DisplayName("Registered action executes once; listener observes; duplicate add is a no-op")
     void facadeExecutesAndNotifies() throws Exception {
         DownloadManagerImpl manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();

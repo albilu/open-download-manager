@@ -315,12 +315,22 @@ class WindowSmokeTest {
         assertSame(Widgets.require(builder, "transfer_frame", org.gnome.gtk.Frame.class),
                 generalColumns.getLastChild());
         assertBoldFrameTitles(builder, "information_frame", "transfer_frame", "progress_frame");
-        for (String id : new String[]{"total_size_value", "added_on_value", "info_hash_v1_value",
+        for (String id : new String[]{"added_on_value", "info_hash_v1_value",
                 "folder_value", "engine_value", "eta_value", "downloaded_value",
                 "connections_value", "seeds_peers_value"}) {
             Widgets.require(builder, id, Label.class);
         }
         Button folderButton = Widgets.require(builder, "folder_open_button", Button.class);
+        Button errorButton = Widgets.require(builder, "info_error_button", Button.class);
+        Label errorValue = Widgets.require(builder, "info_error_value", Label.class);
+        assertFalse(errorButton.getSensitive());
+        assertEquals(org.gnome.pango.EllipsizeMode.END, errorValue.getEllipsize());
+        assertSame(errorButton, errorValue.getParent());
+        assertEquals(2, gridRow(Widgets.require(builder, "general_info_grid", Grid.class), errorButton));
+        assertEquals(1, gridRow(Widgets.require(builder, "general_info_grid", Grid.class),
+                Widgets.require(builder, "info_hash_v1_value", Label.class)));
+        assertEquals(0, gridRow(Widgets.require(builder, "transfer_info_grid", Grid.class),
+                Widgets.require(builder, "engine_value_box", Box.class)));
         Box folderContent = Widgets.require(builder, "folder_open_content", Box.class);
         Label folderValue = Widgets.require(builder, "folder_value", Label.class);
         assertSame(folderContent, folderValue.getParent());
@@ -455,10 +465,10 @@ class WindowSmokeTest {
                 "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
                 "move_to_trash_check",
                 "continue_download_check", "check_integrity_check", "enable_auto_save_check",
-                "honor_external_aria2_config_check",
+                "remote_time_check", "honor_external_aria2_config_check",
                 "write_thumbnail_check", "embed_thumbnail_check",
                 "embed_metadata_check", "use_aria2_external_check",
-                "honor_external_ytdlp_config_check",
+                "skip_downloaded_media_check", "honor_external_ytdlp_config_check",
                 "enable_scheduling_check"}) {
             Widgets.require(builder, id, CheckButton.class);
         }
@@ -1311,6 +1321,15 @@ class WindowSmokeTest {
         presenter.refresh(List.of(small, large));
         assertSame(small, presenter.rowAt(0),
                 "an in-place update may reorder the GTK model without corrupting identity");
+        small.setRetryCount(2);
+        large.setRetryCount(12);
+        small.setErrorMessage("Z error");
+        large.setErrorMessage("A error");
+        presenter.refresh(List.of(small, large));
+        ((TreeSortable) downloadStore).setSortColumnId(8, SortType.ASCENDING);
+        assertSame(small, presenter.rowAt(0), "Retries must sort numerically, independently of errors");
+        ((TreeSortable) downloadStore).setSortColumnId(8, SortType.DESCENDING);
+        assertSame(large, presenter.rowAt(0));
     }
 
     @Test
@@ -1329,17 +1348,63 @@ class WindowSmokeTest {
                 URI.create("magnet:?xt=urn:btih:abababababababababababababababababababab"));
         download.setStatus(org.manager.download.Download.Status.DOWNLOADING);
         download.setUploadSpeed(2_048);
+        download.setRetryCount(12);
+        download.setErrorMessage("HTTP 503: unavailable");
 
         DownloadListPresenter.RefreshSummary summary = presenter.refresh(List.of(download));
 
         TreeIter row = new TreeIter();
         assertTrue(downloadStore.getIterFirst(row));
         assertEquals("2 KB/s", ListStoreCells.getString(downloadStore, row, 7));
+        assertEquals(12, ListStoreCells.getInt(downloadStore, row, 8));
         assertEquals(2_048, summary.upBytesPerSec());
         download.setUploadSpeed(0);
         presenter.refresh(List.of(download));
         assertEquals("0 B/s", ListStoreCells.getString(downloadStore, row, 7),
                 "zero upload must remain visible instead of becoming an ambiguous dash");
+    }
+
+    @Test
+    void sourcesTabDropsStaleResultsAndShowsLiveState() throws Exception {
+        var manager = org.mockito.Mockito.mock(org.manager.download.DownloadManager.class);
+        var selected = new java.util.concurrent.atomic.AtomicReference<org.manager.download.Download>();
+        var first = new org.manager.download.Download(URI.create("https://example.test/first"));
+        var second = new org.manager.download.Download(URI.create("https://example.test/second"));
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.when(manager.getDownloadSources(first)).thenAnswer(invocation -> {
+            entered.countDown();
+            release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            return List.of(new org.manager.download.DownloadSourceFile("old-gid", 1, "", "old", List.of()));
+        });
+        org.mockito.Mockito.when(manager.getDownloadSources(second)).thenReturn(List.of(
+                new org.manager.download.DownloadSourceFile("new-gid", 1, "", "new", List.of(
+                        new org.manager.download.DownloadSourceFile.Source("https://mirror.test/file", "Active", 2048,
+                                "https://cdn.test/file")))));
+        var sources = new SourcesPresenter(manager, selected::get);
+        try {
+            selected.set(first);
+            sources.load();
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+            selected.set(second);
+            sources.load();
+            release.countDown();
+            awaitGtk(() -> sources.store.iterNChildren(null) == 1, "New source selection did not load");
+            TreeIter row = new TreeIter();
+            assertTrue(sources.store.getIterFirst(row));
+            assertEquals("https://mirror.test/file", ListStoreCells.getString(sources.store, row, 0));
+            assertEquals("Active", ListStoreCells.getString(sources.store, row, 1));
+            assertEquals("2 KB/s", ListStoreCells.getString(sources.store, row, 2));
+            sources.entry.setText("https://another.test/file");
+            assertTrue(sources.add.getSensitive());
+            selected.set(null);
+            sources.load();
+            assertEquals(0, sources.store.iterNChildren(null));
+            assertFalse(sources.add.getSensitive());
+        } finally {
+            release.countDown();
+            sources.shutdown();
+        }
     }
 
     @Test

@@ -55,6 +55,34 @@ class SqliteDownloadStateStoreTest {
     }
 
     @Test
+    void retriesMirrorsRemoteTimeAndArchivePolicySurviveRestart() {
+        Download download = new Download(URI.create("https://example.test/original.bin"));
+        download.recordRetry();
+        download.recordRetry();
+        download.setErrorMessage("HTTP 503\nServer unavailable");
+        download.setFileSources("", List.of("https://mirror.test/file.bin"));
+        download.setSettings(new org.aria2.Aria2Settings().setPreserveRemoteModificationTime(true));
+        Download media = new Download(URI.create("https://example.test/video"));
+        media.setType(Download.Type.YOUTUBE);
+        media.setSettings(new org.ytdlp.YtDlpSettings().setUseDownloadArchive(true));
+        media.setArchiveOnlyCompletion(true);
+        try (var store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            store.save(List.of(download, media), Set.of());
+        }
+        try (var store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            Map<String, Download> restored = store.load().downloads().stream()
+                    .collect(Collectors.toMap(Download::getId, item -> item));
+            Download direct = restored.get(download.getId());
+            assertEquals(2, direct.getRetryCount());
+            assertEquals(download.getErrorMessage(), direct.getErrorMessage());
+            assertEquals(download.getSourceUris(), direct.getSourceUris());
+            assertEquals("true", ((org.aria2.Aria2Settings) direct.getSettings()).toRpcOptions().get("remote-time"));
+            assertTrue(((org.ytdlp.YtDlpSettings) restored.get(media.getId()).getSettings()).isUseDownloadArchive());
+            assertTrue(restored.get(media.getId()).isArchiveOnlyCompletion());
+        }
+    }
+
+    @Test
     void torServiceHoldAndCurlSocksRouteSurviveRestart() {
         Download original = new Download(URI.create("sftp://user:secret@host.invalid/file.bin"));
         original.setType(Download.Type.CURL);

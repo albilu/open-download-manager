@@ -87,6 +87,7 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
                 overrideOutputPath(download);
 
                 // Delegate to CurlClient with this handler as the listener
+                settingsFactory.applyGlobalTransferPreferences(download.getSettings());
                 return curlClient.startDownload(download, this);
             } catch (Exception e) {
                 // Only set status and error message if download is not null
@@ -121,6 +122,7 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
                 return CompletableFuture.<Void>completedFuture(null);
             }
 
+            settingsFactory.applyGlobalTransferPreferences(download.getSettings());
             return curlClient.resumeDownload(download, this);
         }, executor).thenCompose(started -> started);
     }

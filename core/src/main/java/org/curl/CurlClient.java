@@ -489,6 +489,11 @@ public class CurlClient {
             }
         }
 
+        if (download.getSettings() != null
+                && Boolean.parseBoolean(download.getSettings().getOption("remote-time"))) {
+            command.add("--remote-time");
+        }
+
         // For backward compatibility, also check legacy options
         // But skip if we already have CurlSettings to avoid duplicates
         if (!(download.getSettings() instanceof CurlSettings)) {
@@ -519,7 +524,8 @@ public class CurlClient {
         }
 
         // Add the URL
-        command.add(download.getUri().toString());
+        command.add(download.getProtocol() != null && download.getProtocol().isDirectTransfer()
+                ? download.getSourceUris().getFirst() : download.getUri().toString());
 
         return command;
     }

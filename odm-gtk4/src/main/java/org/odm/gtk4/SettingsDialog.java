@@ -154,6 +154,8 @@ public class SettingsDialog {
                     "Local RPC port used by ODM's aria2 daemon. The default 6801 avoids aria2's conventional port 6800; changes apply after restarting ODM."),
             Map.entry("honor_external_aria2_config_check",
                     "Allow an aria2 daemon started by ODM to load the user's normal aria2 configuration file. Disabled keeps ODM settings authoritative."),
+            Map.entry("remote_time_check",
+                    "Use the server's last-modified time for supported file downloads. Applies when a download starts or resumes."),
 
             // yt-dlp
             Map.entry("ytdlp_path_entry",
@@ -170,6 +172,8 @@ public class SettingsDialog {
                     "Let yt-dlp use aria2 for supported media fragments and direct media URLs."),
             Map.entry("honor_external_ytdlp_config_check",
                     "Allow ODM's yt-dlp commands to load system and user yt-dlp configuration files. Disabled keeps ODM settings authoritative."),
+            Map.entry("skip_downloaded_media_check",
+                    "Remember successfully downloaded videos across playlists and restarts, even after removing records. Applies when a media download starts or resumes; disable this preference to download a video again."),
 
             // HTTrack
             Map.entry("httrack_path_entry",
@@ -1102,6 +1106,7 @@ public class SettingsDialog {
                 .setSelected(Aria2GlobalOptions.encryptionPolicy(s).ordinal());
         check("continue_download_check").setActive(s.getBooleanProperty("aria2.continueDownload", true));
         check("check_integrity_check").setActive(s.getBooleanProperty("aria2.checkIntegrity", false));
+        check("remote_time_check").setActive(s.getBooleanProperty("aria2.remoteTime", false));
         spin("aria2_rpc_port_spin").setValue(s.getAria2RpcPort());
         check("honor_external_aria2_config_check").setActive(
                 s.isHonorExternalAria2Configuration());
@@ -1120,6 +1125,7 @@ public class SettingsDialog {
         check("embed_thumbnail_check").setActive(s.getBooleanProperty("ytdlp.embedThumbnail", false));
         check("embed_metadata_check").setActive(s.getBooleanProperty("ytdlp.embedMetadata", false));
         check("use_aria2_external_check").setActive(s.getBooleanProperty("ytdlp.useAria2External", false));
+        check("skip_downloaded_media_check").setActive(s.getBooleanProperty("ytdlp.skipDownloaded", true));
         check("honor_external_ytdlp_config_check").setActive(
                 s.isHonorExternalYtDlpConfiguration());
     }
@@ -1325,6 +1331,7 @@ public class SettingsDialog {
                 Aria2GlobalOptions.EncryptionPolicy.ENGINE_DEFAULT).settingValue());
         s.setProperty("aria2.continueDownload", String.valueOf(check("continue_download_check").getActive()));
         s.setProperty("aria2.checkIntegrity", String.valueOf(check("check_integrity_check").getActive()));
+        s.setProperty("aria2.remoteTime", String.valueOf(check("remote_time_check").getActive()));
         s.setAria2RpcPort((int) spin("aria2_rpc_port_spin").getValue());
         s.setHonorExternalAria2Configuration(
                 check("honor_external_aria2_config_check").getActive());
@@ -1342,6 +1349,7 @@ public class SettingsDialog {
         s.setProperty("ytdlp.embedThumbnail", String.valueOf(check("embed_thumbnail_check").getActive()));
         s.setProperty("ytdlp.embedMetadata", String.valueOf(check("embed_metadata_check").getActive()));
         s.setProperty("ytdlp.useAria2External", String.valueOf(check("use_aria2_external_check").getActive()));
+        s.setProperty("ytdlp.skipDownloaded", String.valueOf(check("skip_downloaded_media_check").getActive()));
         s.setHonorExternalYtDlpConfiguration(
                 check("honor_external_ytdlp_config_check").getActive());
         // HTTrack

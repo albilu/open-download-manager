@@ -594,7 +594,8 @@ public class ProxychainsClient {
         command.add("--bt-enable-lpd=false");
 
         // Add mirrors if any
-        if (download.getMirrors() != null && !download.getMirrors().isEmpty()) {
+        if (!download.getSourceOverrides().containsKey("")
+                && download.getMirrors() != null && !download.getMirrors().isEmpty()) {
             for (java.net.URI mirror : download.getMirrors()) {
                 command.add(mirror.toString());
             }
@@ -608,7 +609,12 @@ public class ProxychainsClient {
             command.add((download.getProtocol() == Download.Protocol.TORRENT
                     ? "--torrent-file=" : "--metalink-file=") + descriptor);
         } else {
-            command.add(download.getUri().toString());
+            if (download.getProtocol() != null && download.getProtocol().isDirectTransfer()
+                    && download.getSourceOverrides().containsKey("")) {
+                command.addAll(download.getSourceUris());
+            } else {
+                command.add(download.getUri().toString());
+            }
         }
 
         return command;

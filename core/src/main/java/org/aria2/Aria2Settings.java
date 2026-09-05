@@ -10,6 +10,15 @@ import org.manager.download.DownloadSettings;
  */
 public class Aria2Settings extends DownloadSettings {
 
+    public boolean isPreserveRemoteModificationTime() {
+        return Boolean.parseBoolean(getOption("remote-time"));
+    }
+
+    public Aria2Settings setPreserveRemoteModificationTime(boolean preserve) {
+        setOption("remote-time", Boolean.toString(preserve));
+        return this;
+    }
+
     @Override
     public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
         return true;

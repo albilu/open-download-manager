@@ -35,7 +35,7 @@ final class DownloadListPresenter {
     };
     static final String[] CATEGORIES = {"All", "Videos", "Audios", "Photos", "Programs", "Others"};
 
-    // Visible download_store columns. Number is gint; 1-10 are strings,
+    // Visible download_store columns. Number and Retry are gint; other 1-10 are strings,
     // 11 is the after-completion outcome GIcon, progress is gint, and 13-14 are strings.
     private static final int COL_NUMBER = 0;
     private static final int COL_NAME = 1;
@@ -630,11 +630,7 @@ final class DownloadListPresenter {
                 DownloadFormats.rate((long) download.getSpeed()));
         ListStoreCells.setString(store, iter, COL_UP_SPEED,
                 DownloadFormats.rate((long) download.getUploadSpeed()));
-        ListStoreCells.setString(store, iter, COL_RETRY,
-                download.getStatus() == Download.Status.ERROR
-                        && download.getErrorMessage() != null
-                        && !download.getErrorMessage().isBlank()
-                                ? download.getErrorMessage() : "—");
+        ListStoreCells.setInt(store, iter, COL_RETRY, download.getRetryCount());
         ListStoreCells.setString(store, iter, COL_START,
                 download.getStartedAt() != null
                         ? DownloadFormats.DATE_FORMAT.format(download.getStartedAt())

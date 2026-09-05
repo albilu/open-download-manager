@@ -545,6 +545,9 @@ public class DownloadManagerImpl implements DownloadManager {
             synchronized (generationLock) {
                 generation = nextAttemptGeneration(download);
                 pauseRevision = pauseRevisions.getOrDefault(download.getId(), 0L);
+                if (download.getStatus() == Download.Status.ERROR) {
+                    download.recordRetry();
+                }
                 downloadRepository.updateDownloadStatus(download, Download.Status.STARTING);
             }
 
@@ -722,6 +725,9 @@ public class DownloadManagerImpl implements DownloadManager {
 
     /** Leaves a non-admitted download queued, with a position and a queued event when new to the queue. */
     private void requeueAfterDeniedAdmission(Download download) {
+        if (download.getStatus() == Download.Status.ERROR) {
+            download.recordRetry();
+        }
         boolean alreadyQueued = download.getStatus() == Download.Status.QUEUED;
         if (!alreadyQueued && download.getQueuePosition() == 0) {
             download.setQueuePosition(nextQueuePosition());
@@ -1076,6 +1082,9 @@ public class DownloadManagerImpl implements DownloadManager {
         synchronized (generationLock) {
             generation = nextAttemptGeneration(download);
             pauseRevision = pauseRevisions.getOrDefault(download.getId(), 0L);
+            if (statusBefore == Download.Status.ERROR) {
+                download.recordRetry();
+            }
         }
         if (statusBefore == Download.Status.QUEUED) {
             downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.PAUSED);
@@ -1472,6 +1481,24 @@ public class DownloadManagerImpl implements DownloadManager {
     public List<List<String>> getDownloadTrackers(Download download) {
         org.manager.download.handler.Aria2DownloadHandler handler = aria2HandlerFor(download);
         return handler != null ? handler.getDownloadTrackers(download) : List.of();
+    }
+
+    @Override
+    public List<DownloadSourceFile> getDownloadSources(Download download) {
+        var handler = aria2HandlerFor(download);
+        return handler == null ? List.of() : handler.getDownloadSources(download);
+    }
+
+    @Override
+    public CompletableFuture<Void> changeDownloadSource(Download download,
+            DownloadSourceFile file, String remove, String add, boolean prefer) {
+        var handler = aria2HandlerFor(download);
+        if (handler == null) {
+            return CompletableFuture.failedFuture(
+                    new UnsupportedOperationException("This engine cannot edit live mirrors"));
+        }
+        return handler.changeDownloadSource(download, file, remove, add, prefer)
+                .whenComplete((unused, error) -> servicesScheduler.requestStateSnapshot());
     }
 
     /** Returns the aria2 handler if the given download is handled by it. */
@@ -2167,6 +2194,9 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public CompletableFuture<Void> executeAfterCompletionActions(Download download) {
+        if (download.isArchiveOnlyCompletion()) {
+            return CompletableFuture.completedFuture(null);
+        }
         return getActionManager().executeActions(download);
     }
 

@@ -44,19 +44,21 @@ class YtDlpPauseLifecycleTest {
     private YtDlpFactory factory;
     private YtDlpDownloadHandler handler;
     private ExecutorService executor;
+    private GlobalSettings settings;
 
     @BeforeEach
     void setUp() throws Exception {
         Path fakeTool = tempDir.resolve("fake-yt-dlp");
         Files.writeString(fakeTool, "#!/bin/bash\n"
                 + "case \" $* \" in *\" --version \"*) echo \"2024.01.01\"; exit 0;; esac\n"
+                + "printf '%s\\n' \"$@\" > \"$0.args\"\n"
                 + "echo \"[download] Destination: video.mp4\"\n"
                 + "sleep 300\n");
         Files.setPosixFilePermissions(fakeTool, PosixFilePermissions.fromString("rwxr-xr-x"));
 
         YtDlpFactory.clearInstance();
 
-        GlobalSettings settings = mock(GlobalSettings.class);
+        settings = mock(GlobalSettings.class);
         when(settings.getDefaultDownloadDirectory()).thenReturn(tempDir);
 
         org.ytdlp.YtDlpToolManager toolManager = mock(org.ytdlp.YtDlpToolManager.class);
@@ -119,6 +121,32 @@ class YtDlpPauseLifecycleTest {
         awaitRunning(task);
         assertEquals(YtDlpDownloadTask.Status.DOWNLOADING, task.getStatus(),
                 "the resumed run must be running again");
+    }
+
+    @Test
+    @Timeout(120)
+    void archivePreferenceOverridesStoredChoicesOnStartAndResume() throws Exception {
+        com.github.stefanbirkner.systemlambda.SystemLambda
+                .withEnvironmentVariable("XDG_STATE_HOME", tempDir.resolve("state").toString())
+                .execute(() -> {
+                    when(settings.getBooleanProperty("ytdlp.skipDownloaded", true)).thenReturn(true);
+                    Download download = newDownload("archive");
+                    download.setSettings(new org.ytdlp.YtDlpSettings().setUseDownloadArchive(false));
+                    handler.startDownload(download).get(30, TimeUnit.SECONDS);
+                    YtDlpDownloadTask task = factory.getDownloadTask(download.getId());
+                    awaitRunning(task);
+                    Path arguments = tempDir.resolve("fake-yt-dlp.args");
+                    assertTrue(Files.readAllLines(arguments).contains("--download-archive"));
+
+                    handler.pauseDownload(download).get(30, TimeUnit.SECONDS);
+                    assertTrue(task.awaitRunCompletion(java.time.Duration.ofSeconds(15)));
+                    when(settings.getBooleanProperty("ytdlp.skipDownloaded", true)).thenReturn(false);
+                    handler.resumeDownload(download).get(30, TimeUnit.SECONDS);
+                    awaitRunning(task);
+                    assertTrue(Files.readAllLines(arguments).contains("--no-download-archive"));
+                    assertFalse(Files.readAllLines(arguments).contains("--download-archive"));
+                    handler.cancelDownload(download, false).get(30, TimeUnit.SECONDS);
+                });
     }
 
     @Test
