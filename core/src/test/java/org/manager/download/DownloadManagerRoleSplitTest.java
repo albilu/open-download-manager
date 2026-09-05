@@ -82,6 +82,7 @@ class DownloadManagerRoleSplitTest {
 
     private static Set<String> methodNames(Class<?> iface) {
         return Arrays.stream(iface.getDeclaredMethods())
+                .filter(method -> !method.isSynthetic())
                 .map(Method::getName)
                 .collect(Collectors.toCollection(TreeSet::new));
     }

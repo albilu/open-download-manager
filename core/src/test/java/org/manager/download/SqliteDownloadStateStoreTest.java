@@ -65,6 +65,8 @@ class SqliteDownloadStateStoreTest {
         original.setDownloaded(1_234);
         original.setQueuePosition(7);
         original.setManualStartRequired(true);
+        original.setPauseReason(Download.PauseReason.SCHEDULE);
+        original.getSettings().setProxyInherited(true);
         original.setActiveElapsedMillis(87_654);
         original.setGid("abcdef0123456789");
         original.setStartedAt(Instant.parse("2026-08-19T10:15:30Z"));
@@ -121,6 +123,8 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getGid(), restored.getGid());
             assertEquals(original.getQueuePosition(), restored.getQueuePosition());
             assertTrue(restored.isManualStartRequired());
+            assertEquals(Download.PauseReason.SCHEDULE, restored.getPauseReason());
+            assertTrue(restored.getSettings().isProxyInherited());
             assertEquals(87_654, restored.getActiveElapsedMillis());
             assertEquals(original.getStartedAt(), restored.getStartedAt());
             assertEquals(original.getCompletedAt(), restored.getCompletedAt());

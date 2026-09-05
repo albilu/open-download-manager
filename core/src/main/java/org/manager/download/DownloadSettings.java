@@ -28,6 +28,15 @@ public abstract class DownloadSettings implements ExternalToolSettings {
     private int connections = 5;
     private boolean useProxy = false;
     private String proxyAddress = null;
+    private volatile boolean proxyInherited;
+
+    public boolean isProxyInherited() {
+        return proxyInherited;
+    }
+
+    public void setProxyInherited(boolean inherited) {
+        proxyInherited = inherited;
+    }
     // Written by settings dialogs and the proxy-rotation wrapper while
     // handler start paths iterate toMap() concurrently
     private Map<String, String> additionalOptions = new java.util.concurrent.ConcurrentHashMap<>();
@@ -295,6 +304,7 @@ public abstract class DownloadSettings implements ExternalToolSettings {
         target.setConnections(this.connections);
         target.setUseProxy(this.useProxy);
         target.setProxyAddress(this.proxyAddress);
+        target.setProxyInherited(this.proxyInherited);
 
         // Copy additional options
         for (Map.Entry<String, String> entry : this.additionalOptions.entrySet()) {

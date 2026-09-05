@@ -187,9 +187,12 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             if (download.getStatus() == Download.Status.PAUSED) {
                 String jobId = downloadToJobMap.get(download.getId());
                 if (jobId != null) {
-                    httrackClient.resumeJob(jobId).join();
-                    download.setStatus(Download.Status.DOWNLOADING);
-                    notifyDownloadResume(download);
+                    HttrackJob job = httrackClient.getJobStatus(jobId);
+                    if (job == null) {
+                        throw new IllegalStateException("Paused website job is unavailable");
+                    }
+                    httrackClient.resumeJob(jobId, createHttrackSettings(download,
+                            job.getSettings().getOutputDirectory())).join();
                     LOGGER.info("Resumed httrack job " + jobId + " for download " + download.getId());
                 }
             }
@@ -347,6 +350,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
                     download.setStatus(Download.Status.DOWNLOADING);
+                    notifyDownloadResume(download);
                     LOGGER.info("Httrack job resumed: " + job.getJobId() + " for download " + download.getId());
                 }
             }
@@ -430,12 +434,14 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                     || download.getStatus() == Download.Status.CONNECTING;
 
             if (jobId != null && running) {
-                // Stop the current job, then restart with the settings stored
-                // on the Download (same mechanism as pause/resume).
+                // Preserve the existing job/cache while replacing its route.
                 httrackClient.pauseJob(jobId).join();
-                downloadToJobMap.remove(download.getId());
-                jobToDownloadMap.remove(jobId);
-                startDownload(download).join();
+                HttrackJob job = httrackClient.getJobStatus(jobId);
+                if (job == null) {
+                    throw new IllegalStateException("Website job is unavailable for route change");
+                }
+                httrackClient.resumeJob(jobId, createHttrackSettings(download,
+                        job.getSettings().getOutputDirectory())).join();
             }
             // If not actively running, the new settings stay stored on the
             // Download and apply on (re)start.

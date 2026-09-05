@@ -243,6 +243,7 @@ public class DownloadSettingsFactory {
                             settings, type, protocol, globalProxyAddress)) {
                 settings.setUseProxy(true);
                 settings.setProxyAddress(globalProxyAddress);
+                settings.setProxyInherited(true);
             }
         }
 

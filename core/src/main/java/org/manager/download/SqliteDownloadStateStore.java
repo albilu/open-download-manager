@@ -79,7 +79,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 active_elapsed_millis INTEGER NOT NULL DEFAULT 0,
                 completion_action_results TEXT,
                 operation_results TEXT,
-                active_before_exit INTEGER NOT NULL DEFAULT 0
+                active_before_exit INTEGER NOT NULL DEFAULT 0,
+                pause_reason TEXT
             )
             """;
 
@@ -92,8 +93,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, manual_start_required,
                 active_elapsed_millis, completion_action_results, operation_results,
-                active_before_exit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                active_before_exit, pause_reason
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -232,6 +233,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             ensureColumn("output_paths", "TEXT");
             ensureColumn("protocol", "TEXT");
             ensureColumn("manual_start_required", "INTEGER NOT NULL DEFAULT 0");
+            ensureColumn("pause_reason", "TEXT");
             ensureColumn("active_elapsed_millis", "INTEGER NOT NULL DEFAULT 0");
             ensureColumn("completion_action_results", "TEXT");
             ensureColumn("operation_results", "TEXT");
@@ -380,6 +382,14 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         download.setInfoHash(rs.getString("info_hash"));
         download.setQueuePosition(rs.getInt("queue_position"));
         download.setManualStartRequired(rs.getInt("manual_start_required") != 0);
+        String pauseReason = rs.getString("pause_reason");
+        if (pauseReason != null) {
+            try {
+                download.setPauseReason(Download.PauseReason.valueOf(pauseReason));
+            } catch (IllegalArgumentException unknownReason) {
+                download.setPauseReason(Download.PauseReason.USER);
+            }
+        }
         download.setActiveElapsedMillis(rs.getLong("active_elapsed_millis"));
         download.setStartedAt(readInstant(rs, "started_at"));
         download.setCompletedAt(readInstant(rs, "completed_at"));
@@ -486,6 +496,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setString(32, download.getOperationResults().isEmpty()
                 ? null : mapper.writeValueAsString(download.getOperationResults()));
         insert.setInt(33, activeBeforeExit ? 1 : 0);
+        insert.setString(34, download.getPauseReason() == null ? null : download.getPauseReason().name());
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

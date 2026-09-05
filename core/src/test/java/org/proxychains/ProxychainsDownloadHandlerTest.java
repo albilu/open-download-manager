@@ -1,6 +1,7 @@
 package org.proxychains;
 
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -242,15 +243,26 @@ class ProxychainsDownloadHandlerTest {
 
     @Test
     @DisplayName("Should start download with proper setup")
-    void shouldStartDownloadWithProperSetup() {
-        assertDoesNotThrow(() -> {
+    void shouldStartDownloadWithProperSetup() throws Exception {
+        String payload = "proxychains handler launch test";
+        try (var proxy = new utils.SocksHttpServer(false, payload)) {
             handler.initialize().join();
+            Download download = new Download(URI.create("http://launch.odm.invalid/test-file.zip"));
+            download.setType(Download.Type.PROXYCHAINS);
+            download.setDestination(tempDir);
+            download.setProxyAddress("socks5h://127.0.0.1:" + proxy.port());
+            download.setUseProxy(true);
+            download.setStatus(Download.Status.QUEUED);
 
-            String gid = handler.startDownload(mockDownload).join();
+            String gid = handler.startDownload(download).get(10, TimeUnit.SECONDS);
             assertNotNull(gid);
-            assertEquals(TEST_DOWNLOAD_ID, gid);
-            assertTrue(handler.isActive(TEST_DOWNLOAD_ID));
-        });
+            assertEquals(download.getId(), gid);
+            Awaitility.await().atMost(15, TimeUnit.SECONDS)
+                    .until(() -> download.getStatus() == Download.Status.COMPLETED);
+            assertEquals(payload, Files.readString(tempDir.resolve("test-file.zip")));
+            assertTrue(proxy.hosts.contains("launch.odm.invalid"));
+            assertTrue(proxy.failures.isEmpty(), proxy.failures.toString());
+        }
     }
 
     @Test

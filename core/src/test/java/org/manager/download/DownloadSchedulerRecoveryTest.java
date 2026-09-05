@@ -62,11 +62,12 @@ class DownloadSchedulerRecoveryTest {
         when(manager.getDownload(download.getId())).thenReturn(download);
 
         AtomicInteger pauseAttempts = new AtomicInteger();
-        when(manager.pauseDownload(download)).thenAnswer(ignored -> {
+        when(manager.pauseDownload(download, Download.PauseReason.SCHEDULE)).thenAnswer(ignored -> {
             if (pauseAttempts.incrementAndGet() == 1) {
                 return CompletableFuture.failedFuture(new RuntimeException("pause failed"));
             }
             download.setStatus(Download.Status.PAUSED);
+            download.setPauseReason(Download.PauseReason.SCHEDULE);
             return CompletableFuture.completedFuture(null);
         });
         AtomicInteger resumeAttempts = new AtomicInteger();

@@ -373,6 +373,7 @@ public class DownloadHandlerFactory {
         }
         curl.setUseProxy(true);
         curl.setProxyAddress(proxy);
+        curl.setProxyInherited(old.isProxyInherited());
         download.setSettings(curl);
         download.setType(Download.Type.CURL);
 

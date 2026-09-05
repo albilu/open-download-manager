@@ -180,7 +180,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<String> startDownload(Download download) {
-        return CompletableFuture.supplyAsync(() -> {
+        return submitStart(download, () -> {
             try {
                 ensureInitialized();
 
@@ -214,22 +214,23 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 // (real cancellation goes through the client's process
                 // registry via cancelDownload).
                 activeTasks.put(download.getId(), java.util.concurrent.CompletableFuture.completedFuture(null));
-                proxychainsClient.startDownload(download, this, options);
-
-                return download.getId(); // Return download ID as the GID equivalent
+                return proxychainsClient.startDownload(download, this, options);
             } catch (Exception e) {
-                activeTasks.remove(download.getId());
-                download.setStatus(Download.Status.ERROR);
-                download.setErrorMessage("Failed to start proxychains download: " + e.getMessage());
-                notifyDownloadError(download, download.getErrorMessage());
+                if (download != null) {
+                    activeTasks.remove(download.getId());
+                    download.setStatus(Download.Status.ERROR);
+                    download.setErrorMessage("Failed to start proxychains download: " + e.getMessage());
+                    notifyDownloadError(download, download.getErrorMessage());
+                }
                 LOGGER.error("Failed to start proxychains download", e);
                 throw new RuntimeException("Failed to start proxychains download", e);
             }
-        }, executor);
+        });
     }
 
     @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
+        invalidatePendingStart(download);
         return CompletableFuture.runAsync(() -> {
             if (download != null) {
                 // Cancel the task if it's still running
@@ -247,6 +248,7 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> stopForRouteChange(Download download) {
+        invalidatePendingStart(download);
         return CompletableFuture.runAsync(() -> {
             if (download == null) {
                 return;
@@ -262,7 +264,8 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> resumeDownload(Download download) {
-        return CompletableFuture.runAsync(() -> {
+        invalidatePendingStart(download);
+        return CompletableFuture.supplyAsync(() -> {
             if (download != null && download.getStatus() == Download.Status.PAUSED) {
                 refreshAria2LaunchPolicy();
                 // Use this handler as the listener directly
@@ -270,19 +273,16 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
                 // Get options for this download
                 Map<String, String> options = getDownloadOptions(download.getId());
 
-                // Submit the resume task to the executor service
-                Future<?> task = executor.submit(() -> {
-                    proxychainsClient.resumeDownload(download, this, options);
-                });
-
-                // Store the task for future reference
-                activeTasks.put(download.getId(), task);
+                activeTasks.put(download.getId(), CompletableFuture.completedFuture(null));
+                return proxychainsClient.resumeDownload(download, this, options);
             }
-        }, executor);
+            return CompletableFuture.<Void>completedFuture(null);
+        }, executor).thenCompose(started -> started);
     }
 
     @Override
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
+        invalidatePendingStart(download);
         return CompletableFuture.runAsync(() -> {
             if (download != null) {
                 // Cancel the task if it's still running
@@ -328,36 +328,16 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> changeSettings(Download download) {
-        return CompletableFuture.runAsync(() -> {
-            if (download == null) {
-                return;
-            }
-
-            boolean running = download.getStatus() == Download.Status.STARTING
-                    || download.getStatus() == Download.Status.CONNECTING
-                    || download.getStatus() == Download.Status.DOWNLOADING
-                    || download.getStatus() == Download.Status.SEEDING;
-
-            if (running) {
-                // Restart the transfer (same mechanism as the existing
-                // pause/resume code) so the settings stored on the Download
-                // take effect.
-                Future<?> task = activeTasks.get(download.getId());
-                if (task != null) {
-                    task.cancel(false); // Don't interrupt if running
-                    activeTasks.remove(download.getId());
-                }
-
-                proxychainsClient.pauseDownload(download, this);
-
-                Map<String, String> options = getDownloadOptions(download.getId());
-                refreshAria2LaunchPolicy();
-                Future<?> resumeTask = executor.submit(() -> proxychainsClient.resumeDownload(download, this, options));
-                activeTasks.put(download.getId(), resumeTask);
-            }
-            // If not actively running, the new settings stay stored on the
-            // Download and apply on (re)start.
-        }, executor);
+        if (download == null) return CompletableFuture.completedFuture(null);
+        boolean running = download.getStatus() == Download.Status.STARTING
+                || download.getStatus() == Download.Status.CONNECTING
+                || download.getStatus() == Download.Status.DOWNLOADING
+                || download.getStatus() == Download.Status.SEEDING;
+        if (running) {
+            return pauseDownload(download).thenCompose(ignored -> resumeDownload(download));
+        }
+        // Paused transfers use the stored settings on their next resume.
+        return CompletableFuture.completedFuture(null);
     }
 
     private void refreshAria2LaunchPolicy() {

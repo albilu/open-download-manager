@@ -116,6 +116,11 @@ public interface DownloadOperations {
      */
     CompletableFuture<Void> pauseDownload(Download download);
 
+    /** Records which controller may automatically release a pause after recovery. */
+    default CompletableFuture<Void> pauseDownload(Download download, Download.PauseReason reason) {
+        return pauseDownload(download).thenRun(() -> download.setPauseReason(reason));
+    }
+
     /**
      * Resumes a paused download.
      *

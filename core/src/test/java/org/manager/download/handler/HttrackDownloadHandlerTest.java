@@ -111,6 +111,24 @@ class HttrackDownloadHandlerTest {
     }
 
     @Test
+    void resumeRefreshesThePausedJobsProxySettingsAndKeepsItsCache() throws Exception {
+        Download download = scrapingDownload();
+        download.setSettings(new org.httrack.HttrackSettings().setDepth(2));
+        handler.startDownload(download).get(10, TimeUnit.SECONDS);
+        handler.pauseDownload(download).get(10, TimeUnit.SECONDS);
+        org.httrack.HttrackJob job = handler.getJobForDownload(download);
+        assertNotNull(job);
+        Path project = job.getSettings().getOutputDirectory();
+        download.setUseProxy(true).setProxyAddress("socks5h://127.0.0.1:1");
+        handler.changeSettings(download).join();
+        handler.resumeDownload(download).get(10, TimeUnit.SECONDS);
+        assertTrue(job.getSettings().isUseProxy());
+        assertEquals("socks5h://127.0.0.1:1", job.getSettings().getProxyAddress());
+        assertEquals(project, job.getSettings().getOutputDirectory());
+        assertEquals(org.httrack.HttrackSettings.RunMode.CONTINUE, job.getSettings().getRunMode());
+    }
+
+    @Test
     @DisplayName("only website-scraping downloads are handled")
     void canHandleContract() throws Exception {
         assertEquals(Download.Type.WEBSITE_SCRAPING, handler.getSupportedType());

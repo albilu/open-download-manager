@@ -2,9 +2,7 @@ package org.manager.download;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
 import org.manager.GlobalSettings;
@@ -23,7 +21,6 @@ public final class OfflineModeController {
 
     private final DownloadManager downloadManager;
     private final Executor executor;
-    private final Set<String> pausedByOffline = ConcurrentHashMap.newKeySet();
     /** Serializes rapid toggles so an online transition cannot overtake pause. */
     private CompletableFuture<Void> transition = CompletableFuture.completedFuture(null);
 
@@ -52,11 +49,11 @@ public final class OfflineModeController {
         if (!settings.save()) {
             LOGGER.warn("Offline Mode changed for this session but could not be persisted");
         }
-        return offline ? pauseActiveDownloads() : resumeOwnedDownloads();
+        return (offline ? pauseActiveDownloads() : resumeOwnedDownloads())
+                .thenCompose(ignored -> downloadManager.saveState());
     }
 
     private CompletableFuture<Void> pauseActiveDownloads() {
-        pausedByOffline.clear();
         return CompletableFuture.supplyAsync(() -> downloadManager.getAllDownloads().stream()
                 .filter(OfflineModeController::isActivelyTransferring)
                 .toList(), executor).thenCompose(activeDownloads -> allOf(activeDownloads.stream()
@@ -66,10 +63,8 @@ public final class OfflineModeController {
 
     private CompletableFuture<Void> pauseForOffline(Download download) {
         try {
-            return downloadManager.pauseDownload(download).handle((ignored, failure) -> {
-                if (failure == null) {
-                    pausedByOffline.add(download.getId());
-                } else {
+            return downloadManager.pauseDownload(download, Download.PauseReason.OFFLINE).handle((ignored, failure) -> {
+                if (failure != null) {
                     LOGGER.warn("Failed to pause download " + download.getId()
                             + " for Offline Mode", failure);
                 }
@@ -83,7 +78,9 @@ public final class OfflineModeController {
     }
 
     private CompletableFuture<Void> resumeOwnedDownloads() {
-        return CompletableFuture.supplyAsync(() -> List.copyOf(pausedByOffline), executor)
+        return CompletableFuture.supplyAsync(() -> downloadManager.getAllDownloads().stream()
+                        .filter(d -> d.getPauseReason() == Download.PauseReason.OFFLINE)
+                        .map(Download::getId).toList(), executor)
                 .thenCompose(downloadIds -> allOf(downloadIds.stream()
                 .map(this::resumeAfterOffline)
                 .toList()));
@@ -92,15 +89,13 @@ public final class OfflineModeController {
     private CompletableFuture<Void> resumeAfterOffline(String downloadId) {
         Download download = downloadManager.getDownload(downloadId);
         if (download == null || download.getStatus() != Download.Status.PAUSED
+                || download.getPauseReason() != Download.PauseReason.OFFLINE
                 || download.isManualStartRequired()) {
-            pausedByOffline.remove(downloadId);
             return CompletableFuture.completedFuture(null);
         }
         try {
             return downloadManager.resumeDownload(download).handle((ignored, failure) -> {
-                if (failure == null) {
-                    pausedByOffline.remove(downloadId);
-                } else {
+                if (failure != null) {
                     LOGGER.warn("Failed to resume download " + downloadId
                             + " after Offline Mode", failure);
                 }

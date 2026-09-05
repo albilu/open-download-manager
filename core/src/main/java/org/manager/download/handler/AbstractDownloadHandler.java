@@ -3,9 +3,13 @@ package org.manager.download.handler;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.manager.GlobalSettings;
@@ -28,6 +32,7 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
     // ensureInitialized() from arbitrary caller threads
     protected volatile boolean initialized = false;
     private volatile boolean shutdownEntered = false;
+    private final Map<String, CompletableFuture<String>> pendingStarts = new ConcurrentHashMap<>();
 
     /**
      * Creates a new AbstractDownloadHandler.
@@ -86,6 +91,9 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             return CompletableFuture.completedFuture(null);
         }
         shutdownEntered = true;
+        pendingStarts.values().forEach(start -> start.completeExceptionally(
+                new CancellationException("Download handler shut down")));
+        pendingStarts.clear();
         return runOnExecutor(() -> {
             try {
                 doShutdown();
@@ -114,6 +122,56 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             CompletableFuture<Void> failed = new CompletableFuture<>();
             failed.completeExceptionally(e);
             return failed;
+        }
+    }
+
+    /**
+     * Publishes a native start request before dispatching its preparation work.
+     * A pause/resume can then invalidate that request even if the handler's
+     * executor has not reached the client's process reservation yet.
+     */
+    protected CompletableFuture<String> submitStart(Download download,
+            Supplier<CompletableFuture<String>> action) {
+        if (download == null) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Download is null"));
+        }
+        CompletableFuture<String> result = new CompletableFuture<>();
+        synchronized (download) {
+            invalidatePendingStart(download);
+            pendingStarts.put(download.getId(), result);
+        }
+        result.whenComplete((id, error) -> pendingStarts.remove(download.getId(), result));
+        Runnable launch = () -> {
+            synchronized (download) {
+                if (pendingStarts.get(download.getId()) != result) {
+                    return;
+                }
+                try {
+                    action.get().whenComplete((id, error) -> {
+                        if (error == null) result.complete(id);
+                        else result.completeExceptionally(error);
+                    });
+                } catch (RuntimeException e) {
+                    result.completeExceptionally(e);
+                }
+            }
+        };
+        try {
+            if (executor == null) launch.run();
+            else executor.execute(launch);
+        } catch (RuntimeException e) {
+            result.completeExceptionally(e);
+        }
+        return result;
+    }
+
+    protected void invalidatePendingStart(Download download) {
+        if (download == null) return;
+        synchronized (download) {
+            CompletableFuture<String> pending = pendingStarts.remove(download.getId());
+            if (pending != null) {
+                pending.completeExceptionally(new CancellationException("Start request superseded"));
+            }
         }
     }
 

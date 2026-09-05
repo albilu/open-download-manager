@@ -54,7 +54,8 @@ class OfflineModeControllerTest {
         assertEquals(Download.Status.PAUSED, userPaused.getStatus());
         assertEquals(List.of(running), stub.pauseCalls);
 
-        controller.setOffline(false).join();
+        // Recreate the controller: ownership must come from the record.
+        controller(stub).setOffline(false).join();
         assertEquals(Download.Status.DOWNLOADING, running.getStatus());
         assertEquals(Download.Status.PAUSED, userPaused.getStatus());
         assertEquals(Download.Status.QUEUED, queued.getStatus());
@@ -172,13 +173,15 @@ class OfflineModeControllerTest {
                 case "pauseDownload" -> {
                     Download download = (Download) arguments[0];
                     pauseCalls.add(download);
-                    yield pause.apply(download);
+                    yield pause.apply(download).thenRun(() -> download.setPauseReason(
+                            arguments.length == 2 ? (Download.PauseReason) arguments[1] : Download.PauseReason.USER));
                 }
                 case "resumeDownload" -> {
                     Download download = (Download) arguments[0];
                     resumeCalls.add(download);
-                    yield resume.apply(download);
+                    yield resume.apply(download).thenRun(() -> download.setPauseReason(null));
                 }
+                case "saveState" -> CompletableFuture.completedFuture(null);
                 case "toString" -> "OfflineModeControllerTest.ManagerStub";
                 default -> throw new UnsupportedOperationException(method.getName());
             };

@@ -80,12 +80,12 @@ public class DownloadManagerImpl implements DownloadManager {
     private final AtomicInteger bulkPauseOperations;
     /** Download IDs currently holding a concurrency slot; guards exactly-once release. */
     private final Set<String> runningDownloadIds;
-    /** Downloads whose per-item proxy fields were inherited from the global proxy. */
-    private final Set<String> globallyProxiedDownloadIds;
     /** Download IDs currently undergoing a destination move. */
     private final Set<String> relocatingDownloadIds;
     /** Current start-generation per download id; late events of superseded generations are dropped. */
     private final ConcurrentHashMap<String, Long> attemptGenerations;
+    /** Pause invalidates pending start/resume results without discarding resumable engine ownership. */
+    private final ConcurrentHashMap<String, Long> pauseRevisions = new ConcurrentHashMap<>();
     /** Generation that already reached a terminal state per download id; first terminal wins. */
     private final ConcurrentHashMap<String, Long> terminalGenerations;
     /** Last generation that claimed the one-shot proxychains-to-Curl handoff. */
@@ -139,7 +139,6 @@ public class DownloadManagerImpl implements DownloadManager {
         this.runningDownloads = new AtomicInteger(0);
         this.bulkPauseOperations = new AtomicInteger(0);
         this.runningDownloadIds = ConcurrentHashMap.newKeySet();
-        this.globallyProxiedDownloadIds = ConcurrentHashMap.newKeySet();
         this.relocatingDownloadIds = ConcurrentHashMap.newKeySet();
         this.attemptGenerations = new ConcurrentHashMap<>();
         this.terminalGenerations = new ConcurrentHashMap<>();
@@ -536,8 +535,12 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Every start supersedes the previous operation on this id: a
             // fresh generation token isolates late results of the old one
-            generation = nextAttemptGeneration(download);
-            downloadRepository.updateDownloadStatus(download, Download.Status.STARTING);
+            final long pauseRevision;
+            synchronized (generationLock) {
+                generation = nextAttemptGeneration(download);
+                pauseRevision = pauseRevisions.getOrDefault(download.getId(), 0L);
+                downloadRepository.updateDownloadStatus(download, Download.Status.STARTING);
+            }
 
             // Get the appropriate handler for this download type
             DownloadHandler handler = getHandlerFactory().getHandler(download);
@@ -546,13 +549,6 @@ public class DownloadManagerImpl implements DownloadManager {
                 String noHandlerMessage = "No suitable handler found for download type: " + download.getType();
                 failStart(download, generation, noHandlerMessage, null);
                 return;
-            }
-
-            if (getGlobalSettings().isGlobalProxyEnabled()
-                    && download.getSettings().isUseProxy()
-                    && java.util.Objects.equals(download.getSettings().getProxyAddress(),
-                            getGlobalSettings().getGlobalProxyAddress())) {
-                globallyProxiedDownloadIds.add(download.getId());
             }
 
             // Wrap with proxy rotation when enabled: retries rate-limited /
@@ -578,31 +574,43 @@ public class DownloadManagerImpl implements DownloadManager {
             final long startGeneration = generation;
             CompletableFuture<String> future = handler.startDownload(download);
             future.thenAccept(gid -> {
-                if (!isCurrentAttempt(download.getId(), startGeneration)) {
-                    LOGGER.warn("Dropping stale generation result for download: " + download.getName());
-                    return;
-                }
-                if (isTerminalAttempt(download.getId(), startGeneration)) {
-                    LOGGER.warn("Dropping start result after terminal event for download: "
-                            + download.getName());
-                    return;
-                }
-                LOGGER.info("Download handler returned GID: " + gid + " for download: " + download.getName());
-                if (gid != null) {
-                    download.setGid(gid);
-                    gidToIdMap.put(gid, download.getId());
-                    // Route the transition through the repository so status
-                    // indexes stay consistent (bare setStatus leaves the id
-                    // in the QUEUED index and breaks status queries).
-                    downloadRepository.updateDownloadStatus(download,
-                            reportedRunningStatus(download));
-                } else {
-                    LOGGER.warn("Handler returned null GID for download: " + download.getName());
-                    failStart(download, startGeneration, "Handler returned null GID", null);
+                synchronized (generationLock) {
+                    if (!isCurrentAttempt(download.getId(), startGeneration)) {
+                        LOGGER.warn("Dropping stale generation result for download: " + download.getName());
+                        return;
+                    }
+                    if (isTerminalAttempt(download.getId(), startGeneration)) {
+                        LOGGER.warn("Dropping start result after terminal event for download: "
+                                + download.getName());
+                        return;
+                    }
+                    if (pauseRevisions.getOrDefault(download.getId(), 0L) != pauseRevision
+                            || download.getStatus() == Download.Status.PAUSED) {
+                        // An RPC start may publish its GID after the initial pause.
+                        // Stop that newly published job while retaining it for Resume.
+                        pauseDownload(download, download.getPauseReason(), true);
+                        return;
+                    }
+                    LOGGER.info("Download handler returned GID: " + gid + " for download: " + download.getName());
+                    if (gid != null) {
+                        download.setGid(gid);
+                        gidToIdMap.put(gid, download.getId());
+                        // Route the transition through the repository so status
+                        // indexes stay consistent (bare setStatus leaves the id
+                        // in the QUEUED index and breaks status queries).
+                        downloadRepository.updateDownloadStatus(download,
+                                reportedRunningStatus(download));
+                    } else {
+                        LOGGER.warn("Handler returned null GID for download: " + download.getName());
+                        failStart(download, startGeneration, "Handler returned null GID", null);
+                    }
                 }
             }).exceptionally(e -> {
                 if (!isCurrentAttempt(download.getId(), startGeneration)) {
                     LOGGER.warn("Dropping stale generation failure for download: " + download.getName());
+                    return null;
+                }
+                if (pauseRevisions.getOrDefault(download.getId(), 0L) != pauseRevision) {
                     return null;
                 }
                 if (maybeFallbackProxychainsToCurl(download, e, startGeneration)) {
@@ -644,6 +652,7 @@ public class DownloadManagerImpl implements DownloadManager {
     /** Completes a failed start exactly once and releases its admission slot. */
     private void failStart(Download download, long generation, String message, Throwable failure) {
         if (!isCurrentAttempt(download.getId(), generation)
+                || download.getStatus() == Download.Status.PAUSED
                 || !tryBeginTerminal(download.getId(), generation)) {
             return;
         }
@@ -869,12 +878,44 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
+        return pauseDownload(download, Download.PauseReason.USER);
+    }
+
+    @Override
+    public CompletableFuture<Void> pauseDownload(Download download, Download.PauseReason reason) {
+        return pauseDownload(download, reason, false);
+    }
+
+    private CompletableFuture<Void> pauseDownload(Download download, Download.PauseReason reason,
+            boolean ensureEnginePaused) {
+        final long revision;
+        final long requestGeneration;
+        synchronized (generationLock) {
+            revision = pauseRevisions.merge(download.getId(), 1L, Long::sum);
+            requestGeneration = download.getAttemptGeneration();
+        }
         return CompletableFuture.runAsync(() -> {
             // Handlers mutate Download.status before returning, so the true
             // prior status must be captured BEFORE delegating
             Download.Status statusBefore = download.getStatus();
+            if (download.getAttemptGeneration() != requestGeneration
+                    || pauseRevisions.getOrDefault(download.getId(), 0L) != revision) {
+                return;
+            }
+            if (isTerminalAttempt(download.getId(), download.getAttemptGeneration())) {
+                return;
+            }
+            // Automatic controllers cannot take over a pre-existing user pause.
+            if (!ensureEnginePaused && statusBefore == Download.Status.PAUSED
+                    && reason != Download.PauseReason.USER) {
+                return;
+            }
             if (statusBefore == Download.Status.QUEUED) {
+                if (pauseRevisions.getOrDefault(download.getId(), 0L) != revision) {
+                    return;
+                }
                 downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.PAUSED);
+                download.setPauseReason(reason);
                 releaseRunningSlot(download.getId());
                 notifyDownloadPause(download);
                 return;
@@ -891,7 +932,15 @@ public class DownloadManagerImpl implements DownloadManager {
                 LOGGER.warn("Failed to cancel download: " + download.getName(), e);
                 throw new CompletionException("Failed to pause download: " + download.getName(), e);
             }
-            downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.PAUSED);
+            synchronized (generationLock) {
+                if (isTerminalAttempt(download.getId(), download.getAttemptGeneration())
+                        || download.getAttemptGeneration() != requestGeneration
+                        || pauseRevisions.getOrDefault(download.getId(), 0L) != revision) {
+                    return;
+                }
+                downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.PAUSED);
+                download.setPauseReason(reason);
+            }
             releaseRunningSlot(download.getId());
             startNextQueuedDownload();
         }, executorManager.getGeneralExecutor());
@@ -906,7 +955,9 @@ public class DownloadManagerImpl implements DownloadManager {
     private void resumeDownloadInternal(Download download) {
         // Resume is also an explicit user/startup action and therefore releases
         // a manual-start hold before schedule/concurrency admission is checked.
+        Download.PauseReason pauseReason = download.getPauseReason();
         download.setManualStartRequired(false);
+        download.setPauseReason(null);
         if (!isStartAllowedBySchedule(download)) {
             requeueAfterDeniedAdmission(download);
             return;
@@ -935,20 +986,39 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         Download.Status statusBefore = download.getStatus();
-        long generation = nextAttemptGeneration(download);
+        final long generation;
+        final long pauseRevision;
+        synchronized (generationLock) {
+            generation = nextAttemptGeneration(download);
+            pauseRevision = pauseRevisions.getOrDefault(download.getId(), 0L);
+        }
+        if (statusBefore == Download.Status.QUEUED) {
+            downloadRepository.transitionDownloadStatus(download, statusBefore, Download.Status.PAUSED);
+        }
         try {
             active.resumeDownload(download).join();
-            if (isCurrentAttempt(download.getId(), generation)) {
-                // The handler may set the model to DOWNLOADING and emit its
-                // resume event before returning. Preserve the true source
-                // state captured above so a prewarmed PAUSED query is also
-                // invalidated, rather than only reindexing DOWNLOADING.
-                downloadRepository.transitionDownloadStatus(
-                        download, statusBefore, reportedRunningStatus(download));
+            synchronized (generationLock) {
+                if (isCurrentAttempt(download.getId(), generation)
+                        && !isTerminalAttempt(download.getId(), generation)
+                        && pauseRevisions.getOrDefault(download.getId(), 0L) == pauseRevision) {
+                    // The handler may set the model to DOWNLOADING and emit its
+                    // resume event before returning. Preserve the true source
+                    // state captured above so a prewarmed PAUSED query is also
+                    // invalidated, rather than only reindexing DOWNLOADING.
+                    downloadRepository.transitionDownloadStatus(
+                            download, statusBefore, reportedRunningStatus(download));
+                }
             }
         } catch (Exception e) {
-            releaseRunningSlot(download.getId());
-            downloadRepository.updateDownloadStatus(download, statusBefore);
+            synchronized (generationLock) {
+                if (isCurrentAttempt(download.getId(), generation)
+                        && !isTerminalAttempt(download.getId(), generation)
+                        && pauseRevisions.getOrDefault(download.getId(), 0L) == pauseRevision) {
+                    releaseRunningSlot(download.getId());
+                    downloadRepository.updateDownloadStatus(download, statusBefore);
+                    download.setPauseReason(pauseReason);
+                }
+            }
             LOGGER.warn("Failed to resume download: " + download.getName(), e);
             throw new CompletionException("Failed to resume download: " + download.getName(), e);
         }
@@ -1452,7 +1522,11 @@ public class DownloadManagerImpl implements DownloadManager {
 
             LOGGER.info("Starting next queued download: " + download.getName()
                     + " (current status: " + download.getStatus() + ", GID: " + download.getGid() + ")");
-            startDownloadInternal(download);
+            if (activeHandlers.containsKey(download.getId())) {
+                resumeDownloadInternal(download);
+            } else {
+                startDownloadInternal(download);
+            }
             }
         } else {
             LOGGER.debug("No eligible queued downloads to start");
@@ -1655,13 +1729,14 @@ public class DownloadManagerImpl implements DownloadManager {
                     continue;
                 }
                 DownloadSettings settings = download.getSettings();
-                boolean inherited = globallyProxiedDownloadIds.contains(download.getId());
+                boolean inherited = settings.isProxyInherited();
                 boolean changed = false;
                 if (proxyEnabled && proxyAddress != null && !proxyAddress.isBlank()) {
                     if (!DownloadNetworkCapabilities.supportsProxy(download, proxyAddress)) {
-                        LOGGER.warn("Global proxy type is unsupported for "
-                                + download.getType() + "/" + download.getProtocol()
-                                + "; leaving download " + download.getId() + " unchanged");
+                        if (!settings.isUseProxy() || inherited) {
+                            download.setErrorMessage("Selected global proxy is unsupported for this download");
+                            pauseDownload(download).join();
+                        }
                         continue;
                     }
                     if (!settings.isUseProxy() || inherited) {
@@ -1669,12 +1744,12 @@ public class DownloadManagerImpl implements DownloadManager {
                                 || !java.util.Objects.equals(settings.getProxyAddress(), proxyAddress);
                         settings.setUseProxy(true);
                         settings.setProxyAddress(proxyAddress);
-                        globallyProxiedDownloadIds.add(download.getId());
+                        settings.setProxyInherited(true);
                     }
                 } else if (inherited) {
                     settings.setUseProxy(false);
                     settings.setProxyAddress(null);
-                    globallyProxiedDownloadIds.remove(download.getId());
+                    settings.setProxyInherited(false);
                     changed = true;
                 }
 
@@ -1690,15 +1765,14 @@ public class DownloadManagerImpl implements DownloadManager {
                             "native aria2 route");
                     continue;
                 }
-                if (changed && !(active instanceof org.manager.download.handler.Aria2DownloadHandler)) {
-                    active.changeSettings(download).exceptionally(error -> {
+                if (changed) {
+                    active.changeSettings(download).exceptionallyCompose(error -> {
                         LOGGER.error("Failed to reroute active download "
                                 + download.getId(), error);
                         // Privacy changes fail closed: stop a transfer whose
                         // process could not be restarted with the new route.
-                        pauseDownload(download);
-                        return null;
-                    });
+                        return pauseDownload(download);
+                    }).join();
                 }
             }
         } catch (Exception e) {
@@ -2817,7 +2891,6 @@ public class DownloadManagerImpl implements DownloadManager {
             // the reusable listener attached: other running downloads of the
             // same type still deliver their events through it.
             activeHandlers.remove(downloadId);
-            globallyProxiedDownloadIds.remove(downloadId);
 
             // Clean up GID mapping if exists
             gidToIdMap.entrySet().removeIf(entry -> downloadId.equals(entry.getValue()));

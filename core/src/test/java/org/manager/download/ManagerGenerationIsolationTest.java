@@ -30,6 +30,9 @@ class ManagerGenerationIsolationTest {
         private final Map<String, CopyOnWriteArrayList<CompletableFuture<String>>> startsById
                 = new ConcurrentHashMap<>();
         private final Map<String, Integer> attemptCounts = new ConcurrentHashMap<>();
+        private final java.util.concurrent.atomic.AtomicInteger resumes = new java.util.concurrent.atomic.AtomicInteger();
+        private volatile boolean completeOnResume;
+        private volatile CompletableFuture<Void> resumeResult = CompletableFuture.completedFuture(null);
 
         ControlledStartHandler() {
             super(null, null, null);
@@ -71,7 +74,11 @@ class ManagerGenerationIsolationTest {
 
         @Override
         public CompletableFuture<Void> resumeDownload(Download download) {
-            return CompletableFuture.completedFuture(null);
+            resumes.incrementAndGet();
+            if (completeOnResume) {
+                notifyDownloadComplete(download);
+            }
+            return resumeResult;
         }
 
         @Override
@@ -227,4 +234,79 @@ class ManagerGenerationIsolationTest {
         assertEquals(Download.Status.COMPLETED, download.getStatus());
         assertEquals(0, manager.getRunningDownloadCount());
     }
+    @Test
+    void lateStartSuccessAndFailureCannotUndoPause() throws Exception {
+        setUp();
+        for (boolean fail : List.of(false, true)) {
+            Download download = newDownload("paused-launch-" + fail);
+            manager.queueDownload(download).join();
+            assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 1));
+            manager.pauseDownload(download).join();
+            if (fail) {
+                handler.start(download.getId(), 0).completeExceptionally(new IllegalStateException("late failure"));
+            } else {
+                handler.start(download.getId(), 0).complete("late-paused-gid");
+            }
+            assertEquals(Download.Status.PAUSED, download.getStatus());
+            assertEquals(0, manager.getRunningDownloadCount());
+            assertTrue(manager.getDownloadsByStatus(Download.Status.PAUSED).contains(download));
+        }
+    }
+
+    @Test
+    void completionInsideResumeCannotBeOverwrittenByItsFuture() throws Exception {
+        setUp();
+        Download download = newDownload("resume-terminal");
+        manager.queueDownload(download).join();
+        assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 1));
+        handler.start(download.getId(), 0).complete("original-gid");
+        manager.pauseDownload(download).join();
+        handler.completeOnResume = true;
+        manager.resumeDownload(download).join();
+        assertEquals(Download.Status.COMPLETED, download.getStatus());
+        assertEquals(0, manager.getRunningDownloadCount());
+        assertTrue(manager.getDownloadsByStatus(Download.Status.COMPLETED).contains(download));
+    }
+
+    @Test
+    void lateResumeResultCannotUndoAnotherPause() throws Exception {
+        setUp();
+        Download download = newDownload("resume-paused");
+        manager.queueDownload(download).join();
+        assertTrue(awaitTrue(() -> handler.attempts(download.getId()) == 1));
+        handler.start(download.getId(), 0).complete("original-gid");
+        manager.pauseDownload(download).join();
+        handler.resumeResult = new CompletableFuture<>();
+        CompletableFuture<Void> resume = manager.resumeDownload(download);
+        assertTrue(awaitTrue(() -> handler.resumes.get() == 1));
+        manager.pauseDownload(download).join();
+        handler.resumeResult.complete(null);
+        resume.get(5, TimeUnit.SECONDS);
+        assertEquals(Download.Status.PAUSED, download.getStatus());
+        assertEquals(0, manager.getRunningDownloadCount());
+    }
+
+    @Test
+    void queuedResumeReusesPausedHandlerAndGid() throws Exception {
+        setUp();
+        ApplicationContext.getGlobalSettings().setMaxConcurrentDownloads(1);
+        Download first = newDownload("queued-resume-first");
+        Download second = newDownload("queued-resume-second");
+        manager.queueDownload(first).join();
+        assertTrue(awaitTrue(() -> handler.attempts(first.getId()) == 1));
+        handler.start(first.getId(), 0).complete("first-gid");
+        manager.pauseDownload(first).join();
+        manager.queueDownload(second).join();
+        assertTrue(awaitTrue(() -> handler.attempts(second.getId()) == 1));
+        handler.start(second.getId(), 0).complete("second-gid");
+        manager.resumeDownload(first).join();
+        assertEquals(Download.Status.QUEUED, first.getStatus());
+        handler.fireComplete(second);
+        assertTrue(awaitTrue(() -> first.getStatus() == Download.Status.DOWNLOADING));
+        assertEquals(1, handler.attempts(first.getId()));
+        assertEquals(1, handler.resumes.get());
+        assertEquals("first-gid", first.getGid());
+        assertEquals(1, manager.getRunningDownloadCount());
+    }
+
 }

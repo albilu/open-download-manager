@@ -179,4 +179,27 @@ class RetryWrapperGenerationTest {
         }
         assertEquals(2, delegate.attempts(download), "the retry must fire for the owning generation");
     }
+    @Test
+    void admittedResumeAdoptsGenerationAndStillRetries() throws Exception {
+        SharedDelegate delegate = new SharedDelegate();
+        RetryableDownloadHandler handler = new RetryableDownloadHandler(
+                delegate, twoProxyManager(), fastSettings(3), scheduler, executor);
+        Download download = new Download(URI.create("http://example.test/resumed.bin"));
+        download.setAttemptGeneration(1);
+        handler.startDownload(download).get(5, TimeUnit.SECONDS);
+        handler.pauseDownload(download).join();
+        download.setAttemptGeneration(2);
+        handler.resumeDownload(download).join();
+        assertEquals(RetryDecision.RETRY_SCHEDULED,
+                handler.interceptError(download.getId(), "HTTP 429 Too Many Requests"));
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(5))
+                .until(() -> delegate.attempts(download) == 2);
+        handler.cancelDownload(download, false).join();
+        download.setAttemptGeneration(3);
+        handler.resumeDownload(download).join();
+        assertEquals(RetryDecision.STALE,
+                handler.interceptError(download.getId(), "HTTP 429 Too Many Requests"),
+                "a retired wrapper must never adopt a replacement generation");
+    }
+
 }

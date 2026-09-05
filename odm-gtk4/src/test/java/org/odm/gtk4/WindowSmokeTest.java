@@ -533,7 +533,7 @@ class WindowSmokeTest {
         assertFalse(retryDelay.getSensitive());
         assertTrue(referer.getSensitive());
         assertTrue(proxyType.getSensitive());
-        assertFalse(tor.getSensitive());
+        assertTrue(tor.getSensitive());
         assertFalse(proxyHost.getSensitive(),
                 "proxy details remain disabled while proxy type is None");
         proxyType.setSelected(1);

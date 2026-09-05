@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,6 +44,8 @@ public class CurlClient {
     private final ExecutorService executorService;
     private final org.manager.tools.ExternalProcessRegistry activeProcesses;
     private final Map<String, Download> activeDownloads;
+    /** Also identifies the worker run, so a late cleanup cannot remove a resumed download. */
+    private final Map<String, CompletableFuture<String>> launchFutures = new ConcurrentHashMap<>();
 
     /**
      * Creates a new CurlClient with default curl path from ToolManagerFactory.
@@ -114,198 +117,253 @@ public class CurlClient {
      * @param download The download to start
      * @param listener Listener for download events
      */
-    public void startDownload(Download download, DownloadListener listener) {
+    public CompletableFuture<String> startDownload(Download download, DownloadListener listener) {
+        return startDownload(download, listener, false);
+    }
+
+    private CompletableFuture<String> startDownload(Download download, DownloadListener listener, boolean resuming) {
+        CompletableFuture<String> started = new CompletableFuture<>();
         if (download == null || download.getUri() == null) {
             if (listener != null) {
                 listener.onDownloadError(download, "Invalid download or URI is null");
             }
-            return;
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Invalid download or URI is null"));
         }
 
-        // Set download status to connecting
-        download.setStatus(Download.Status.CONNECTING);
-
-        // Add to active downloads
-        activeDownloads.put(download.getId(), download);
-
-        // Reserve synchronously so pause/cancel cannot miss a child that has
-        // been submitted but has not reached ProcessBuilder.start() yet.
-        ExternalProcessRegistry.LaunchReservation launch =
-                activeProcesses.reserve(download.getId());
+        final ExternalProcessRegistry.LaunchReservation launch;
+        synchronized (download) {
+            if (!resuming && (download.getStatus() == Download.Status.PAUSED
+                    || download.getStatus() == Download.Status.CANCELED)) {
+                return CompletableFuture.failedFuture(new CancellationException("Download was stopped before launch"));
+            }
+            launch = activeProcesses.reserve(download.getId());
+            download.setStatus(Download.Status.CONNECTING);
+            activeDownloads.put(download.getId(), download);
+            CompletableFuture<String> previous = launchFutures.put(download.getId(), started);
+            if (previous != null) {
+                previous.completeExceptionally(new CancellationException("Launch was replaced"));
+            }
+        }
 
         // Start download in a separate thread
-        executorService.submit(() -> {
-            org.manager.tools.ExternalProcessRegistry.Registration registration = null;
-            try {
-                // Create destination directory if it doesn't exist
-                Path destinationDir = download.getDestination();
-                if (destinationDir != null) {
-                    Files.createDirectories(destinationDir);
-                } else {
-                    // Use current directory as default
-                    destinationDir = Paths.get(".");
-                }
-
-                // Prepare the output file path
-                String outputName = download.getRequestedFileName() != null
-                        ? download.getRequestedFileName() : download.getName();
-                org.manager.util.PathSafety.requireSafeFileName(outputName);
-                Path outputFile = destinationDir.resolve(outputName);
-                download.setName(outputName);
-                download.recordOutputPath(outputFile);
-
-                // Build curl command
-                List<String> command = buildCurlCommand(download, outputFile);
-
-                // Start the process
-                ProcessBuilder processBuilder = new ProcessBuilder(command);
-                // Don't redirect error stream - we need to read stderr separately for progress
-                // processBuilder.redirectErrorStream(true);
-
-                registration = launch.start(processBuilder);
-                Process process = registration.process();
-
-                // Gobble stdout on a daemon thread: the command normally
-                // writes to -o, but if a flag ever routes the document to
-                // stdout an undrained pipe would fill (64K) and deadlock
-                // the transfer
-                Thread stdoutDrain = new Thread(() -> {
-                    try {
-                        process.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
-                    } catch (IOException ignored) {
-                        // process died; draining is done
+        try {
+            executorService.submit(() -> {
+                org.manager.tools.ExternalProcessRegistry.Registration registration = null;
+                try {
+                    // Create destination directory if it doesn't exist
+                    Path destinationDir = download.getDestination();
+                    if (destinationDir != null) {
+                        Files.createDirectories(destinationDir);
+                    } else {
+                        // Use current directory as default
+                        destinationDir = Paths.get(".");
                     }
-                }, "curl-stdout-drain");
-                stdoutDrain.setDaemon(true);
-                stdoutDrain.start();
 
-                // Update download status
-                if (!download.compareAndSetStatus(Download.Status.CONNECTING,
-                        Download.Status.DOWNLOADING)) {
-                    activeProcesses.terminate(download.getId(), 5);
-                    return;
-                }
-                if (listener != null) {
-                    listener.onDownloadStart(download);
-                }
+                    // Prepare the output file path
+                    String outputName = download.getRequestedFileName() != null
+                            ? download.getRequestedFileName() : download.getName();
+                    org.manager.util.PathSafety.requireSafeFileName(outputName);
+                    Path outputFile = destinationDir.resolve(outputName);
+                    download.setName(outputName);
+                    download.recordOutputPath(outputFile);
 
-                // Read process error stream (stderr) to track progress
-                // curl sends progress information to stderr
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
-                    String line;
-                    long lastUpdateTime = System.currentTimeMillis();
-                    long lastDownloaded = 0;
-                    boolean firstProgressUpdate = true;
+                    // Build curl command
+                    List<String> command = buildCurlCommand(download, outputFile);
 
-                    while ((line = reader.readLine()) != null) {
-                        // Check for content length
-                        Matcher sizeMatcher = TOTAL_SIZE_PATTERN.matcher(line);
-                        if (sizeMatcher.find()) {
-                            long totalSize = Long.parseLong(sizeMatcher.group(1));
-                            download.setSize(totalSize);
+                    // Start the process
+                    ProcessBuilder processBuilder = new ProcessBuilder(command);
+                    // Don't redirect error stream - we need to read stderr separately for progress
+                    // processBuilder.redirectErrorStream(true);
+
+                    registration = launch.start(processBuilder);
+                    Process process = registration.process();
+
+                    // Gobble stdout on a daemon thread: the command normally
+                    // writes to -o, but if a flag ever routes the document to
+                    // stdout an undrained pipe would fill (64K) and deadlock
+                    // the transfer
+                    Thread stdoutDrain = new Thread(() -> {
+                        try {
+                            process.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
+                        } catch (IOException ignored) {
+                            // process died; draining is done
                         }
+                    }, "curl-stdout-drain");
+                    stdoutDrain.setDaemon(true);
+                    stdoutDrain.start();
 
-                        // Parse progress
-                        Matcher matcher = PROGRESS_PATTERN.matcher(line);
-                        if (matcher.matches()) {
-                            long totalBytes = Long.parseLong(matcher.group(2));
-                            long downloadedBytes = Long.parseLong(matcher.group(4));
-                            String speedStr = matcher.group(7);
-
-                            // Convert speed from curl format (with k/m/g suffix) to bytes per second
-                            float speedBps = parseSpeed(speedStr);
-
-                            // Set total size if not already set
-                            if (download.getSize() == 0 && totalBytes > 0) {
-                                download.setSize(totalBytes);
-                            }
-
-                            // Update download stats
-                            download.setDownloaded(downloadedBytes);
-                            download.setSpeed(speedBps);
-
-                            // Calculate progress
-                            float progress = 0;
-                            if (download.getSize() > 0) {
-                                progress = (float) downloadedBytes / download.getSize() * 100;
-                            }
-
-                            // Throttle progress updates to avoid UI flooding
-                            long currentTime = System.currentTimeMillis();
-                            long timeDiff = currentTime - lastUpdateTime;
-                            long byteDiff = downloadedBytes - lastDownloaded;
-
-                            // Always send progress callback for the first update or when significant
-                            // progress is made
-                            // or when download is complete
-                            boolean shouldUpdate = firstProgressUpdate
-                                    || // First update
-                                    (timeDiff > 1000)
-                                    || // Time-based throttling
-                                    (byteDiff > 1024 * 1024)
-                                    || // Byte-based throttling
-                                    (downloadedBytes == download.getSize() && download.getSize() > 0); // Download
-                            // complete
-
-                            if (shouldUpdate) {
-                                if (listener != null) {
-                                    listener.onDownloadProgress(download, progress,
-                                            downloadedBytes, download.getSize(), speedBps);
-                                }
-                                lastUpdateTime = currentTime;
-                                lastDownloaded = downloadedBytes;
-                                firstProgressUpdate = false; // Mark that we've sent the first update
-                            }
+                    synchronized (download) {
+                        // Pause/cancel/replacement wins over this worker's launch result.
+                        if (launch.isCancelled()) {
+                            return;
                         }
-                    }
-                }
-
-                // Wait for process to complete
-                int exitCode = process.waitFor();
-
-                // Handle process completion
-                if (exitCode == 0) {
-                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
-                            Download.Status.COMPLETED) && listener != null) {
-                        listener.onDownloadComplete(download);
-                    }
-                } else {
-                    // Terminal user states always win over late process exit.
-                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
-                            Download.Status.ERROR)
-                            || download.compareAndSetStatus(Download.Status.CONNECTING,
-                                    Download.Status.ERROR)) {
-                        download.setErrorMessage("curl process exited with code: " + exitCode);
+                        if (!download.compareAndSetStatus(Download.Status.CONNECTING,
+                                Download.Status.DOWNLOADING)) {
+                            registration.terminate(5);
+                            return;
+                        }
                         if (listener != null) {
-                            listener.onDownloadError(download, download.getErrorMessage());
+                            if (resuming) {
+                                listener.onDownloadResume(download);
+                            } else {
+                                listener.onDownloadStart(download);
+                            }
+                        }
+                        started.complete(download.getId());
+                    }
+
+                    // Read process error stream (stderr) to track progress
+                    // curl sends progress information to stderr
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                        String line;
+                        long lastUpdateTime = System.currentTimeMillis();
+                        long lastDownloaded = 0;
+                        boolean firstProgressUpdate = true;
+
+                        while ((line = reader.readLine()) != null && !launch.isCancelled()) {
+                            // Check for content length
+                            Matcher sizeMatcher = TOTAL_SIZE_PATTERN.matcher(line);
+                            if (sizeMatcher.find()) {
+                                long totalSize = Long.parseLong(sizeMatcher.group(1));
+                                download.setSize(totalSize);
+                            }
+
+                            // Parse progress
+                            Matcher matcher = PROGRESS_PATTERN.matcher(line);
+                            if (matcher.matches()) {
+                                long totalBytes = Long.parseLong(matcher.group(2));
+                                long downloadedBytes = Long.parseLong(matcher.group(4));
+                                String speedStr = matcher.group(7);
+
+                                // Convert speed from curl format (with k/m/g suffix) to bytes per second
+                                float speedBps = parseSpeed(speedStr);
+
+                                // Set total size if not already set
+                                if (download.getSize() == 0 && totalBytes > 0) {
+                                    download.setSize(totalBytes);
+                                }
+
+                                // Update download stats
+                                download.setDownloaded(downloadedBytes);
+                                download.setSpeed(speedBps);
+
+                                // Calculate progress
+                                float progress = 0;
+                                if (download.getSize() > 0) {
+                                    progress = (float) downloadedBytes / download.getSize() * 100;
+                                }
+
+                                // Throttle progress updates to avoid UI flooding
+                                long currentTime = System.currentTimeMillis();
+                                long timeDiff = currentTime - lastUpdateTime;
+                                long byteDiff = downloadedBytes - lastDownloaded;
+
+                                // Always send progress callback for the first update or when significant
+                                // progress is made
+                                // or when download is complete
+                                boolean shouldUpdate = firstProgressUpdate
+                                        || // First update
+                                        (timeDiff > 1000)
+                                        || // Time-based throttling
+                                        (byteDiff > 1024 * 1024)
+                                        || // Byte-based throttling
+                                        (downloadedBytes == download.getSize() && download.getSize() > 0); // Download
+                                // complete
+
+                                if (shouldUpdate) {
+                                    if (listener != null) {
+                                        listener.onDownloadProgress(download, progress,
+                                                downloadedBytes, download.getSize(), speedBps);
+                                    }
+                                    lastUpdateTime = currentTime;
+                                    lastDownloaded = downloadedBytes;
+                                    firstProgressUpdate = false; // Mark that we've sent the first update
+                                }
+                            }
+                        }
+                    }
+
+                    // Wait for process to complete
+                    int exitCode = process.waitFor();
+
+                    synchronized (download) {
+                        if (launch.isCancelled()) {
+                            return;
+                        }
+
+                        // Handle process completion
+                        if (exitCode == 0) {
+                            if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                                    Download.Status.COMPLETED) && listener != null) {
+                                listener.onDownloadComplete(download);
+                            }
+                        } else {
+                            // Terminal user states always win over late process exit.
+                            if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                                    Download.Status.ERROR)
+                                    || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                            Download.Status.ERROR)) {
+                                download.setErrorMessage("curl process exited with code: " + exitCode);
+                                if (listener != null) {
+                                    listener.onDownloadError(download, download.getErrorMessage());
+                                }
+                            }
+                        }
+                    }
+                } catch (CancellationException e) {
+                    started.completeExceptionally(e);
+                    // Cancellation before launch is an expected terminal path.
+                } catch (IOException | InterruptedException | RuntimeException e) {
+                    synchronized (download) {
+                        if (launch.isCancelled()) {
+                            started.completeExceptionally(e);
+                            return;
+                        }
+                        if (e instanceof InterruptedException) {
+                            Thread.currentThread().interrupt();
+                        }
+                        if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                                Download.Status.ERROR)
+                                || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                        Download.Status.ERROR)) {
+                            download.setErrorMessage("Error during download: " + e.getMessage());
+                            if (listener != null) {
+                                listener.onDownloadError(download, download.getErrorMessage());
+                            }
+                        }
+                        started.completeExceptionally(e);
+                    }
+                } finally {
+                    if (registration != null && registration.process().isAlive()) {
+                        registration.terminate(5);
+                    }
+                    started.completeExceptionally(new CancellationException("Process launch was stopped"));
+                    // Generation-safe cleanup: an old worker whose run was
+                    // replaced (pause + resume raced it) must not unregister
+                    // the newer process under the same key
+                    synchronized (download) {
+                        launch.unregister();
+                        boolean current = launchFutures.remove(download.getId(), started);
+                        if (current) {
+                            activeDownloads.remove(download.getId(), download);
                         }
                     }
                 }
-            } catch (CancellationException e) {
-                // Cancellation before launch is an expected terminal path.
-            } catch (IOException | InterruptedException e) {
-                if (e instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
-                if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
-                        Download.Status.ERROR)
-                        || download.compareAndSetStatus(Download.Status.CONNECTING,
-                                Download.Status.ERROR)) {
-                    download.setErrorMessage("Error during download: " + e.getMessage());
-                    if (listener != null) {
-                        listener.onDownloadError(download, download.getErrorMessage());
+            });
+        } catch (RuntimeException e) {
+            synchronized (download) {
+                launch.unregister();
+                if (launchFutures.remove(download.getId(), started)) {
+                    activeDownloads.remove(download.getId(), download);
+                    if (download.compareAndSetStatus(Download.Status.CONNECTING, Download.Status.ERROR)) {
+                        download.setErrorMessage("Could not submit download process");
+                        if (listener != null) listener.onDownloadError(download, download.getErrorMessage());
                     }
                 }
-            } finally {
-                // Generation-safe cleanup: an old worker whose run was
-                // replaced (pause + resume raced it) must not unregister
-                // the newer process under the same key
-                if (registration != null) {
-                    registration.unregister();
-                }
-                activeDownloads.remove(download.getId(), download);
             }
-        });
+            started.completeExceptionally(e);
+        }
+        return started;
     }
 
     /**
@@ -457,8 +515,11 @@ public class CurlClient {
      * @param listener Listener for download events
      */
     public void pauseDownload(Download download, DownloadListener listener) {
-        if (activeProcesses.terminate(download.getId(), 5)) {
+        synchronized (download) {
             download.setStatus(Download.Status.PAUSED);
+            activeProcesses.terminate(download.getId(), 5);
+            CompletableFuture<String> pending = launchFutures.get(download.getId());
+            if (pending != null) pending.completeExceptionally(new CancellationException("Download paused"));
             if (listener != null) {
                 listener.onDownloadPause(download);
             }
@@ -471,14 +532,11 @@ public class CurlClient {
      * @param download The download to resume
      * @param listener Listener for download events
      */
-    public void resumeDownload(Download download, DownloadListener listener) {
-        if (download.getStatus() == Download.Status.PAUSED) {
-            startDownload(download, listener);
-
-            if (listener != null) {
-                listener.onDownloadResume(download);
-            }
+    public CompletableFuture<Void> resumeDownload(Download download, DownloadListener listener) {
+        if (download != null && download.getStatus() == Download.Status.PAUSED) {
+            return startDownload(download, listener, true).thenApply(id -> null);
         }
+        return CompletableFuture.completedFuture(null);
     }
 
     /**
@@ -490,35 +548,39 @@ public class CurlClient {
      * @param deleteFile Whether to delete the partial file
      */
     public void cancelDownload(Download download, DownloadListener listener, boolean deleteFile) {
-        activeProcesses.terminate(download.getId(), 5);
+        synchronized (download) {
+            download.setStatus(Download.Status.CANCELED);
+            activeProcesses.terminate(download.getId(), 5);
+            CompletableFuture<String> pending = launchFutures.get(download.getId());
+            if (pending != null) pending.completeExceptionally(new CancellationException("Download canceled"));
 
-        // Delete partial file if requested. The name comes from the
-        // download model and may be stale or corrupted, so both a
-        // plain-file-name check and real-path containment must pass before
-        // anything is deleted.
-        if (deleteFile && download.getDestination() != null) {
-            try {
-                Path outputFile = download.getPrimaryOutputPath();
-                if (outputFile != null
-                        && org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
-                    org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
-                            download.getDestination());
-                } else {
-                    LOGGER.warn("Refusing unsafe partial-file deletion for " + download.getId()
+            // Delete partial file if requested. The name comes from the
+            // download model and may be stale or corrupted, so both a
+            // plain-file-name check and real-path containment must pass before
+            // anything is deleted.
+            if (deleteFile && download.getDestination() != null) {
+                try {
+                    Path outputFile = download.getPrimaryOutputPath();
+                    if (outputFile != null
+                            && org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
+                        org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
+                                download.getDestination());
+                    } else {
+                        LOGGER.warn("Refusing unsafe partial-file deletion for " + download.getId()
+                                + ": " + download.getName());
+                    }
+                } catch (IllegalArgumentException invalidPath) {
+                    LOGGER.warn("Refusing unsafe partial-file name for " + download.getId()
                             + ": " + download.getName());
                 }
-            } catch (IllegalArgumentException invalidPath) {
-                LOGGER.warn("Refusing unsafe partial-file name for " + download.getId()
-                        + ": " + download.getName());
             }
-        }
 
-        download.setStatus(Download.Status.CANCELED);
-        if (listener != null) {
-            listener.onDownloadCanceled(download);
-        }
+            if (listener != null) {
+                listener.onDownloadCanceled(download);
+            }
 
-        activeDownloads.remove(download.getId());
+            activeDownloads.remove(download.getId());
+        }
     }
 
     /**
@@ -527,6 +589,9 @@ public class CurlClient {
     public void shutdown() {
         // Stop all active processes (SIGTERM -> bounded wait -> SIGKILL)
         activeProcesses.terminateAll(5);
+        launchFutures.values().forEach(future -> future.completeExceptionally(
+                new CancellationException("Download client shut down")));
+        launchFutures.clear();
         activeDownloads.clear();
 
         // Shutdown executor

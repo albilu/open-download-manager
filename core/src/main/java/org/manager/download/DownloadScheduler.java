@@ -29,8 +29,6 @@ public class DownloadScheduler {
     private final ScheduledExecutorService scheduler;
     private final Map<String, ScheduleSettings> downloadSchedules;
     private final Set<DownloadSchedulerListener> listeners;
-    /** Download ids paused by the scheduler; only these are auto-resumed. */
-    private final Set<String> pausedBySchedule = ConcurrentHashMap.newKeySet();
     /** Prevents overlapping pause/resume requests across adjacent ticks. */
     private final Set<String> scheduleOperationsInFlight = ConcurrentHashMap.newKeySet();
     private final Object lock = new Object();
@@ -452,15 +450,6 @@ public class DownloadScheduler {
      */
     private void checkSchedules() {
         try {
-            // Fast path: with no per-download schedules and an unrestricted
-            // global schedule, every download is active at all times and this
-            // tick has nothing to do. Without this, each tick copied the
-            // schedule tree twice per download (thousands of copies for a
-            // large list) for a guaranteed "active" verdict.
-            if (downloadSchedules.isEmpty() && !globalSchedule.hasRestrictions()) {
-                return;
-            }
-
             LOGGER.debug("Checking schedules for all downloads");
 
             // Get all downloads from the manager
@@ -484,7 +473,6 @@ public class DownloadScheduler {
             if (download == null) {
                 // Download no longer exists, remove its schedule
                 downloadSchedules.remove(downloadId);
-                pausedBySchedule.remove(downloadId);
                 scheduleOperationsInFlight.remove(downloadId);
                 return;
             }
@@ -501,8 +489,10 @@ public class DownloadScheduler {
                 // scheduler paused: user-paused and background/manual-held
                 // downloads must stay paused.
                 if (currentStatus == Download.Status.PAUSED && effectiveSchedule.isResumeOnScheduleStart()
-                        && pausedBySchedule.contains(downloadId)
-                        && !download.isManualStartRequired()) {
+                        && download.getPauseReason() == Download.PauseReason.SCHEDULE
+                        && !download.isManualStartRequired()
+                        && (downloadManager.getGlobalSettings() == null
+                            || !downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false))) {
                     resumeAfterSchedule(download, effectiveSchedule);
                 }
             } else {
@@ -543,14 +533,14 @@ public class DownloadScheduler {
         if (!scheduleOperationsInFlight.add(downloadId)) {
             return;
         }
-        downloadManager.pauseDownload(download).whenComplete((ignored, error) -> {
+        downloadManager.pauseDownload(download, Download.PauseReason.SCHEDULE).whenComplete((ignored, error) -> {
             scheduleOperationsInFlight.remove(downloadId);
             if (error != null) {
                 LOGGER.warn("Failed to pause download " + downloadId
                         + " due to schedule", error);
                 return;
             }
-            pausedBySchedule.add(downloadId);
+            downloadManager.saveState();
             LOGGER.info("Paused download " + downloadId + " due to schedule (" + policy + ")");
             notifyDownloadPaused(downloadId, schedule);
         });
@@ -568,7 +558,7 @@ public class DownloadScheduler {
                         + " due to schedule", error);
                 return;
             }
-            pausedBySchedule.remove(downloadId);
+            downloadManager.saveState();
             LOGGER.info("Resumed download " + downloadId + " due to schedule");
             notifyDownloadResumed(downloadId, schedule);
         });

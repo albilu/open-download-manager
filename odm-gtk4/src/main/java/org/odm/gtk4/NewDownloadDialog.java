@@ -75,6 +75,7 @@ public class NewDownloadDialog {
     private volatile org.manager.download.ChecksumProbe.DetectedChecksum detectedChecksum;
     /** URL whose sibling checksum files were probed (negative results cached too). */
     private volatile java.net.URI lastProbedUrl;
+    private volatile long checksumProbeGeneration;
 
     public NewDownloadDialog(Window parent, DownloadManager downloadManager, Runnable onDownloadQueued) {
         this(parent, downloadManager, onDownloadQueued, null);
@@ -110,6 +111,14 @@ public class NewDownloadDialog {
         this.startButton = Widgets.require(builder, "new_download_start_button", Button.class);
         this.activity = new SpinnerActivity(
                 Widgets.require(builder, "new_download_spinner", Spinner.class));
+        networkOptions.onProxyChanged(() -> {
+            lastProbedUrl = null;
+            resetChecksumUi();
+            java.net.URI uri = safeCurrentUri();
+            if (uri != null) {
+                probeChecksumAsynchronously(uri);
+            }
+        });
 
         AccessibilitySupport.label(urlEntry, "Download URL");
         AccessibilitySupport.label(torrentFileButton, "Choose torrent or Metalink descriptor");
@@ -184,6 +193,7 @@ public class NewDownloadDialog {
         Widgets.require(builder, "new_download_cancel_button", Button.class)
                 .onClicked(this::closeDialog);
         dialog.onCloseRequest(() -> {
+            checksumProbeGeneration++;
             releaseFilePreviewRows();
             activity.dispose();
             return false;
@@ -283,16 +293,27 @@ public class NewDownloadDialog {
         if (!looksLikeFile || java.util.Objects.equals(uri, lastProbedUrl)) {
             return;
         }
+        final String proxy;
+        try {
+            proxy = networkOptions.selectedProxyAddress();
+        } catch (IllegalArgumentException incompleteRoute) {
+            return; // Wait for a complete route; never substitute direct networking.
+        }
         lastProbedUrl = uri;
         detectedChecksum = null;
-        String proxy = downloadManager.getGlobalSettings().isGlobalProxyEnabled()
-                ? downloadManager.getGlobalSettings().getGlobalProxyAddress() : null;
+        long generation = ++checksumProbeGeneration;
+        boolean torSelected = networkOptions.isTorSelected();
         java.util.concurrent.CompletableFuture<Void> probe = java.util.concurrent.CompletableFuture
-                .supplyAsync(() -> org.manager.download.ChecksumProbe.probe(uri, proxy)
-                        .orElse(null))
+                .runAsync(() -> { }, CompletableFuture.delayedExecutor(300, java.util.concurrent.TimeUnit.MILLISECONDS))
+                .thenCompose(ignored -> generation == checksumProbeGeneration
+                        ? DialogOptions.ensureTorAvailable(torSelected, torService)
+                        : CompletableFuture.completedFuture(null))
+                .thenCompose(ignored -> java.util.concurrent.CompletableFuture.supplyAsync(() ->
+                        generation == checksumProbeGeneration
+                                ? org.manager.download.ChecksumProbe.probe(uri, proxy).orElse(null) : null))
                 .thenAccept(found -> UiThread.marshal(() -> {
-                    // URL may have changed while probing
-                    if (!java.util.Objects.equals(uri, safeCurrentUri())) {
+                    if (generation != checksumProbeGeneration
+                            || !java.util.Objects.equals(uri, safeCurrentUri())) {
                         return;
                     }
                     detectedChecksum = found;
@@ -316,6 +337,8 @@ public class NewDownloadDialog {
 
     /** Clears the checksum widgets for a new URL being typed. */
     private void resetChecksumUi() {
+        checksumProbeGeneration++;
+        lastProbedUrl = null;
         checksumLabel.setLabel("—");
         verifyChecksumCheck.setVisible(false);
         verifyChecksumCheck.setActive(false);

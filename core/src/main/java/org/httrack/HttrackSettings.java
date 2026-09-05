@@ -49,7 +49,8 @@ public class HttrackSettings extends DownloadSettings {
                 || capability == org.manager.download.ExternalToolSettings.Capability.REFERER
                 || capability == org.manager.download.ExternalToolSettings.Capability.USER_AGENT
                 || capability == org.manager.download.ExternalToolSettings.Capability.COOKIE
-                || capability == org.manager.download.ExternalToolSettings.Capability.PROXY;
+                || capability == org.manager.download.ExternalToolSettings.Capability.PROXY
+                || capability == org.manager.download.ExternalToolSettings.Capability.SOCKS_PROXY;
     }
 
     private String url;
@@ -977,8 +978,8 @@ public class HttrackSettings extends DownloadSettings {
         return sign + normalized;
     }
 
-    private String proxyWithCredentials() {
-        if (proxyUsername == null || proxyUsername.isBlank() || proxyAddress.contains("@")) {
+    String proxyWithCredentials() {
+        if (proxyAddress == null || proxyUsername == null || proxyUsername.isBlank() || proxyAddress.contains("@")) {
             return proxyAddress;
         }
         try {

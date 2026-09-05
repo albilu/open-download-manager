@@ -35,13 +35,13 @@ class DownloadNetworkCapabilitiesTest {
     }
 
     @Test
-    void httrackAcceptsHttpProxyButNotSocks() {
+    void httrackAcceptsHttpAndProxychainsSocks() {
         Download website = download("https://example.test/", new HttrackSettings());
         website.setType(Download.Type.WEBSITE_SCRAPING);
 
         assertTrue(DownloadNetworkCapabilities.supportsProxy(
                 website, "http://proxy.test:8080"));
-        assertFalse(DownloadNetworkCapabilities.supportsProxy(
+        assertTrue(DownloadNetworkCapabilities.supportsProxy(
                 website, "socks5h://127.0.0.1:9050"));
     }
 
@@ -62,7 +62,7 @@ class DownloadNetworkCapabilitiesTest {
     }
 
     @Test
-    void factoryDoesNotApplyGlobalTorProxyToUnsupportedHttrackRoute() {
+    void factoryKeepsGlobalTorRouteForHttrack() {
         GlobalSettings global = new GlobalSettings()
                 .setGlobalProxyEnabled(true)
                 .setGlobalProxyAddress("socks5h://127.0.0.1:9050");
@@ -70,8 +70,8 @@ class DownloadNetworkCapabilitiesTest {
         HttrackSettings settings = (HttrackSettings) new DownloadSettingsFactory(global)
                 .createSettings(Download.Type.WEBSITE_SCRAPING, Download.Protocol.HTTPS);
 
-        assertFalse(settings.isUseProxy());
-        assertNull(settings.getProxyAddress());
+        assertTrue(settings.isUseProxy());
+        assertEquals("socks5h://127.0.0.1:9050", settings.getProxyAddress());
     }
 
     private static Download download(String uri, DownloadSettings settings) {

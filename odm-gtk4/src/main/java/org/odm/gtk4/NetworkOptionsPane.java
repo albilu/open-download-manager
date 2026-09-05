@@ -46,6 +46,7 @@ final class NetworkOptionsPane {
     private boolean proxyChanged;
     private boolean updating;
     private boolean mixedValues;
+    private Runnable proxyChangeListener = () -> { };
 
     /** Creates a new-record editor initialized from the global Network defaults. */
     NetworkOptionsPane(GlobalSettings globalSettings, Download.Type type,
@@ -134,10 +135,18 @@ final class NetworkOptionsPane {
     }
 
     String selectedProxyAddress() {
-        return DialogOptions.selectedProxyAddress(isTorSelected(),
+        String address = DialogOptions.selectedProxyAddress(isTorSelected(),
                 (int) proxyType.getSelected(), proxyHost.getText(),
                 (int) proxyPort.getValue(), proxyUsername.getText(),
                 proxyPassword.getText());
+        if (!isTorSelected() && proxyType.getSelected() > 0 && address == null) {
+            throw new IllegalArgumentException("Complete the selected proxy address before fetching metadata");
+        }
+        return address;
+    }
+
+    void onProxyChanged(Runnable listener) {
+        proxyChangeListener = Objects.requireNonNull(listener);
     }
 
     DialogOptions.NetworkValues values() {
@@ -151,7 +160,12 @@ final class NetworkOptionsPane {
     }
 
     void applyTo(Download download) {
+        boolean inherited = !proxyChanged && download.getSettings().isProxyInherited();
+        String inheritedAddress = download.getProxyAddress();
         values().applyTo(download);
+        if (inherited && Objects.equals(inheritedAddress, download.getProxyAddress())) {
+            download.getSettings().setProxyInherited(true);
+        }
     }
 
     /** Re-evaluates enabled controls without replacing values already entered by the user. */
@@ -318,10 +332,7 @@ final class NetworkOptionsPane {
         proxyPort.onValueChanged(this::markProxyChanged);
         proxyUsername.onChanged(this::markProxyChanged);
         proxyPassword.onChanged(this::markProxyChanged);
-        tor.onStateSet(active -> {
-            markProxyChanged();
-            return false;
-        });
+        tor.onNotify("active", ignored -> markProxyChanged());
     }
 
     private void mark(ExternalToolSettings.Capability capability) {
@@ -333,6 +344,7 @@ final class NetworkOptionsPane {
     private void markProxyChanged() {
         if (!updating) {
             proxyChanged = true;
+            proxyChangeListener.run();
         }
     }
 

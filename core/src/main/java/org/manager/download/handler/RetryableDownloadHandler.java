@@ -516,19 +516,27 @@ public class RetryableDownloadHandler implements DownloadHandler, RetryEventInte
         if (!owns(download)) {
             return delegate.resumeDownload(download);
         }
-        while (true) {
-            if (state.get() != State.PAUSED) {
-                return CompletableFuture.completedFuture(null);
-            }
-            boolean backoff = pausedDuringBackoff;
-            State target = backoff ? State.WAITING_RETRY : State.ACTIVE;
-            if (state.compareAndSet(State.PAUSED, target)) {
-                if (backoff) {
-                    scheduleRetry(download, pendingRetryAttempt, pendingRetryProxy);
+        lifecycleLock.lock();
+        try {
+            while (true) {
+                if (state.get() != State.PAUSED) {
                     return CompletableFuture.completedFuture(null);
                 }
-                return delegate.resumeDownload(download);
+                boolean backoff = pausedDuringBackoff;
+                State target = backoff ? State.WAITING_RETRY : State.ACTIVE;
+                if (state.compareAndSet(State.PAUSED, target)) {
+                    // The manager assigns a fresh generation to an admitted Resume.
+                    // Only this still-paused owner may adopt it; retired wrappers cannot.
+                    startGeneration = download.getAttemptGeneration();
+                    if (backoff) {
+                        scheduleRetry(download, pendingRetryAttempt, pendingRetryProxy);
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    return delegate.resumeDownload(download);
+                }
             }
+        } finally {
+            lifecycleLock.unlock();
         }
     }
 

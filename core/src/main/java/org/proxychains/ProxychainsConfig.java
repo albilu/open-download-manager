@@ -84,6 +84,62 @@ public class ProxychainsConfig {
         this.proxyList = new ArrayList<>();
     }
 
+    /** Builds a mandatory route; invalid selections must never fall back to system configuration. */
+    public static ProxychainsConfig forProxyAddress(String address) {
+        try {
+            java.net.URI uri = new java.net.URI(address).parseServerAuthority();
+            ProxyType type = switch (uri.getScheme().toLowerCase(java.util.Locale.ROOT)) {
+                case "socks4", "socks4a" -> ProxyType.SOCKS4;
+                case "socks5", "socks5h" -> ProxyType.SOCKS5;
+                case "http" -> ProxyType.HTTP;
+                default -> throw new IllegalArgumentException("Unsupported proxychains proxy scheme");
+            };
+            String host = uri.getHost();
+            if (host == null || uri.getPort() < 1 || uri.getPort() > 65535
+                    || (uri.getRawPath() != null && !uri.getRawPath().isEmpty())
+                    || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+                throw new IllegalArgumentException("Proxy requires a host and a valid port, without a path");
+            }
+            if (host.startsWith("[")) {
+                host = host.substring(1, host.length() - 1);
+            }
+            requireConfigToken(host);
+            String username = null;
+            String password = null;
+            String userInfo = uri.getRawUserInfo();
+            if (userInfo != null) {
+                int colon = userInfo.indexOf(':');
+                if (colon < 1 || type == ProxyType.SOCKS4) {
+                    throw new IllegalArgumentException("Unsupported proxy authentication");
+                }
+                username = decodeCredential(userInfo.substring(0, colon));
+                password = decodeCredential(userInfo.substring(colon + 1));
+                requireConfigToken(username);
+                requireConfigToken(password);
+            }
+            ProxychainsConfig config = new ProxychainsConfig();
+            config.setChainType(ChainType.STRICT);
+            config.addProxy(type, host, uri.getPort(), username, password);
+            return config;
+        } catch (java.net.URISyntaxException | NullPointerException e) {
+            // The address can contain credentials; do not include it in errors.
+            throw new IllegalArgumentException("Invalid proxy address");
+        }
+    }
+
+    private static String decodeCredential(String value) {
+        // '+' is a literal in URI userinfo, unlike form encoding.
+        return java.net.URLDecoder.decode(value.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static void requireConfigToken(String value) {
+        // proxychains reads whitespace-delimited tokens into 256-byte fields.
+        if (value.isEmpty() || value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 255
+                || value.chars().anyMatch(c -> Character.isWhitespace(c) || Character.isISOControl(c))) {
+            throw new IllegalArgumentException("Proxy value cannot be represented in proxychains configuration");
+        }
+    }
+
     /**
      * Creates a new ProxychainsConfig from an existing config file.
      *

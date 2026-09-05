@@ -82,6 +82,19 @@ public final class ExternalProcessRegistry {
         public boolean unregister() {
             return registry.removeIfCurrent(key, entry);
         }
+
+        /** Stops this launch's child tree, even if a newer launch now owns the key. */
+        public void terminate(int graceSeconds) {
+            registry.removeIfCurrent(key, entry);
+            Process process;
+            synchronized (entry) {
+                entry.cancelled = true;
+                process = entry.process;
+            }
+            if (process != null) {
+                terminateProcess(registry.ownerName, key, process, graceSeconds);
+            }
+        }
     }
 
     /**

@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -51,6 +52,8 @@ public class ProxychainsClient {
     private final org.manager.tools.ExternalProcessRegistry activeProcesses;
     private final Map<String, String> gidMap; // Download ID -> aria2 GID
     private final Map<String, Download> activeDownloads;
+    /** Also identifies the worker run, so a late cleanup cannot remove a resumed download. */
+    private final Map<String, CompletableFuture<String>> launchFutures = new ConcurrentHashMap<>();
 
     /**
      * Creates a new ProxychainsClient with the default proxychains command path
@@ -174,174 +177,237 @@ public class ProxychainsClient {
      * @param listener Listener for download events
      * @param options  Additional aria2c options
      */
-    public void startDownload(Download download, DownloadListener listener, Map<String, String> options) {
+    public CompletableFuture<String> startDownload(Download download, DownloadListener listener, Map<String, String> options) {
+        return startDownload(download, listener, options, false);
+    }
+
+    private CompletableFuture<String> startDownload(Download download, DownloadListener listener, Map<String, String> options, boolean resuming) {
+        CompletableFuture<String> started = new CompletableFuture<>();
         if (download == null || download.getUri() == null) {
             if (listener != null) {
                 listener.onDownloadError(download, "Invalid download or URI is null");
             }
-            return;
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Invalid download or URI is null"));
         }
 
-        // Set download status to connecting
-        download.setStatus(Download.Status.CONNECTING);
-
-        // Add to active downloads
-        activeDownloads.put(download.getId(), download);
-
-        ExternalProcessRegistry.LaunchReservation launch =
-                activeProcesses.reserve(download.getId());
+        final ExternalProcessRegistry.LaunchReservation launch;
+        synchronized (download) {
+            if (!resuming && (download.getStatus() == Download.Status.PAUSED
+                    || download.getStatus() == Download.Status.CANCELED)) {
+                return CompletableFuture.failedFuture(new CancellationException("Download was stopped before launch"));
+            }
+            launch = activeProcesses.reserve(download.getId());
+            download.setStatus(Download.Status.CONNECTING);
+            activeDownloads.put(download.getId(), download);
+            CompletableFuture<String> previous = launchFutures.put(download.getId(), started);
+            if (previous != null) {
+                previous.completeExceptionally(new CancellationException("Launch was replaced"));
+            }
+        }
 
         // Start download in a separate thread
-        executorService.submit(() -> {
-            Process process = null;
-            org.manager.tools.ExternalProcessRegistry.Registration registration = null;
-            try {
-                // Paused before the process spawned (pause raced the async
-                // start): abort so the paused state sticks
-                if (download.getStatus() == Download.Status.PAUSED) {
-                    LOGGER.info("Download " + download.getId() + " was paused before spawning; aborting start");
-                    return;
-                }
+        try {
+            executorService.submit(() -> {
+                Process process = null;
+                Path generatedConfig = null;
+                org.manager.tools.ExternalProcessRegistry.Registration registration = null;
+                try {
+                    // Paused before the process spawned (pause raced the async
+                    // start): abort so the paused state sticks
+                    if (download.getStatus() == Download.Status.PAUSED) {
+                        LOGGER.info("Download " + download.getId() + " was paused before spawning; aborting start");
+                        return;
+                    }
 
-                // Create destination directory if it doesn't exist
-                Path destinationDir = download.getDestination();
-                if (destinationDir != null) {
-                    Files.createDirectories(destinationDir);
-                } else {
-                    // Use current directory as default
-                    destinationDir = Paths.get(".");
-                }
+                    // Create destination directory if it doesn't exist
+                    Path destinationDir = download.getDestination();
+                    if (destinationDir != null) {
+                        Files.createDirectories(destinationDir);
+                    } else {
+                        // Use current directory as default
+                        destinationDir = Paths.get(".");
+                    }
 
-                // Prepare the output file path
-                String outputName = download.getRequestedFileName() != null
-                        ? download.getRequestedFileName() : download.getName();
-                org.manager.util.PathSafety.requireSafeFileName(outputName);
-                Path outputFile = destinationDir.resolve(outputName);
-                download.setName(outputName);
-                download.recordOutputPath(outputFile);
+                    // Prepare the output file path
+                    String outputName = download.getRequestedFileName() != null
+                            ? download.getRequestedFileName() : download.getName();
+                    org.manager.util.PathSafety.requireSafeFileName(outputName);
+                    Path outputFile = destinationDir.resolve(outputName);
+                    download.setName(outputName);
+                    download.recordOutputPath(outputFile);
 
-                // Get or create proxychains config
-                Path configPath = this.configPath != null ? Paths.get(this.configPath) : null;
+                    // Get or create proxychains config
+                    Path configPath = this.configPath != null ? Paths.get(this.configPath) : null;
 
-                if (configPath == null && download.isUseProxy() && download.getProxyAddress() != null) {
-                    // Parse proxy address (format: socks5h://127.0.0.1:9050)
-                    String proxyAddress = download.getProxyAddress();
-                    String[] parts = proxyAddress.split("://");
-                    if (parts.length == 2) {
-                        String proxyType = parts[0].replace("h", ""); // Convert socks5h to socks5
-                        String[] hostPort = parts[1].split(":");
-                        if (hostPort.length == 2) {
-                            String host = hostPort[0];
-                            int port = Integer.parseInt(hostPort[1]);
-                            configPath = createTempConfig(proxyType, host, port);
+                    if (download.isUseProxy()) {
+                        generatedConfig = ProxychainsConfig.forProxyAddress(download.getProxyAddress()).createTempConfig();
+                        configPath = generatedConfig;
+                    }
+
+                    // Build command for aria2c through proxychains
+                    List<String> command = buildProxychainsCommand(download, outputFile, configPath, options);
+
+                    // Start the process
+                    ProcessBuilder processBuilder = new ProcessBuilder(command);
+                    // Don't redirect error stream - read both separately
+
+                    // Do not log the command: it can contain signed URLs and
+                    // proxy credentials. The download id is sufficient to trace.
+                    LOGGER.info("Starting proxychains process for download " + download.getId());
+                    registration = launch.start(processBuilder);
+                    process = registration.process();
+                    final Process finalProcess = process; // Make final for lambda usage
+
+                    synchronized (download) {
+                        // Pause/cancel/replacement wins over this worker's launch result.
+                        if (launch.isCancelled()) {
+                            return;
                         }
-                    }
-                }
-
-                // Build command for aria2c through proxychains
-                List<String> command = buildProxychainsCommand(download, outputFile, configPath, options);
-
-                // Start the process
-                ProcessBuilder processBuilder = new ProcessBuilder(command);
-                // Don't redirect error stream - read both separately
-
-                // Do not log the command: it can contain signed URLs and
-                // proxy credentials. The download id is sufficient to trace.
-                LOGGER.info("Starting proxychains process for download " + download.getId());
-                registration = launch.start(processBuilder);
-                process = registration.process();
-                final Process finalProcess = process; // Make final for lambda usage
-
-                // Update download status
-                if (!download.compareAndSetStatus(Download.Status.CONNECTING,
-                        Download.Status.DOWNLOADING)) {
-                    activeProcesses.terminate(download.getId(), 5);
-                    return;
-                }
-                if (listener != null) {
-                    listener.onDownloadStart(download);
-                }
-
-                // Read both stdout and stderr in separate threads
-                Thread stderrReader = new Thread(() -> {
-                    try (BufferedReader reader = new BufferedReader(
-                            new InputStreamReader(finalProcess.getErrorStream()))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            // Per-line tool output at 1+ lines/second: FINE
-                            LOGGER.debug("[ARIA2 STDERR]: " + line);
-                            processAria2Output(line, download, listener);
+                        if (!download.compareAndSetStatus(Download.Status.CONNECTING,
+                                Download.Status.DOWNLOADING)) {
+                            registration.terminate(5);
+                            return;
                         }
-                    } catch (IOException e) {
-                        LOGGER.error("Error reading stderr: " + e.getMessage());
-                    }
-                });
-                stderrReader.setDaemon(true);
-                stderrReader.start();
-
-                // Read process stdout to track progress
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                    String line;
-
-                    while ((line = reader.readLine()) != null) {
-                        // Per-line tool output at 1+ lines/second: FINE
-                        LOGGER.debug("[ARIA2 STDOUT]: " + line);
-                        processAria2Output(line, download, listener);
-                    }
-                }
-
-                // Wait for process to complete
-                int exitCode = process.waitFor();
-
-                // Handle process completion
-                if (exitCode == 0) {
-                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
-                            Download.Status.COMPLETED) && listener != null) {
-                        listener.onDownloadComplete(download);
-                    }
-                } else if (download.getStatus() == Download.Status.PAUSED
-                        || download.getStatus() == Download.Status.CANCELED) {
-                    // Intentionally stopped by pauseDownload (process destroy):
-                    // keep the PAUSED state so a later resume works
-                    LOGGER.info("Process of paused download " + download.getId()
-                            + " terminated (exit " + exitCode + ")");
-                } else {
-                    if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
-                            Download.Status.ERROR)
-                            || download.compareAndSetStatus(Download.Status.CONNECTING,
-                                    Download.Status.ERROR)) {
-                        download.setErrorMessage("proxychains process exited with code: " + exitCode);
                         if (listener != null) {
-                            listener.onDownloadError(download, download.getErrorMessage());
+                            if (resuming) {
+                                listener.onDownloadResume(download);
+                            } else {
+                                listener.onDownloadStart(download);
+                            }
+                        }
+                        started.complete(download.getId());
+                    }
+
+                    // Read both stdout and stderr in separate threads
+                    Thread stderrReader = new Thread(() -> {
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(finalProcess.getErrorStream()))) {
+                            String line;
+                            while ((line = reader.readLine()) != null && !launch.isCancelled()) {
+                                // Per-line tool output at 1+ lines/second: FINE
+                                LOGGER.debug("[ARIA2 STDERR]: " + line);
+                                synchronized (download) {
+                                    if (!launch.isCancelled()) {
+                                        processAria2Output(line, download, listener);
+                                    }
+                                }
+                            }
+                        } catch (IOException e) {
+                            LOGGER.error("Error reading stderr: " + e.getMessage());
+                        }
+                    });
+                    stderrReader.setDaemon(true);
+                    stderrReader.start();
+
+                    // Read process stdout to track progress
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                        String line;
+
+                        while ((line = reader.readLine()) != null && !launch.isCancelled()) {
+                            // Per-line tool output at 1+ lines/second: FINE
+                            LOGGER.debug("[ARIA2 STDOUT]: " + line);
+                            synchronized (download) {
+                                if (!launch.isCancelled()) {
+                                    processAria2Output(line, download, listener);
+                                }
+                            }
+                        }
+                    }
+
+                    // Wait for process to complete
+                    int exitCode = process.waitFor();
+
+                    synchronized (download) {
+                        if (launch.isCancelled()) {
+                            return;
+                        }
+
+                        // Handle process completion
+                        if (exitCode == 0) {
+                            if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                                    Download.Status.COMPLETED) && listener != null) {
+                                listener.onDownloadComplete(download);
+                            }
+                        } else if (download.getStatus() == Download.Status.PAUSED
+                                || download.getStatus() == Download.Status.CANCELED) {
+                            // Intentionally stopped by pauseDownload (process destroy):
+                            // keep the PAUSED state so a later resume works
+                            LOGGER.info("Process of paused download " + download.getId()
+                                    + " terminated (exit " + exitCode + ")");
+                        } else {
+                            if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                                    Download.Status.ERROR)
+                                    || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                            Download.Status.ERROR)) {
+                                download.setErrorMessage("proxychains process exited with code: " + exitCode);
+                                if (listener != null) {
+                                    listener.onDownloadError(download, download.getErrorMessage());
+                                }
+                            }
+                        }
+                    }
+                } catch (CancellationException e) {
+                    started.completeExceptionally(e);
+                    // Expected when pause/cancel wins before child launch.
+                } catch (IOException | InterruptedException | RuntimeException e) {
+                    synchronized (download) {
+                        if (launch.isCancelled()) {
+                            started.completeExceptionally(e);
+                            return;
+                        }
+                        if (e instanceof InterruptedException) {
+                            Thread.currentThread().interrupt();
+                        }
+                        if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
+                                Download.Status.ERROR)
+                                || download.compareAndSetStatus(Download.Status.CONNECTING,
+                                        Download.Status.ERROR)) {
+                            download.setErrorMessage("Error during download: " + e.getMessage());
+                            if (listener != null) {
+                                listener.onDownloadError(download, download.getErrorMessage());
+                            }
+                        }
+                        started.completeExceptionally(e);
+                    }
+                } finally {
+                    if (registration != null && registration.process().isAlive()) {
+                        registration.terminate(5);
+                    }
+                    started.completeExceptionally(new CancellationException("Process launch was stopped"));
+                    if (generatedConfig != null) {
+                        try {
+                            Files.deleteIfExists(generatedConfig);
+                        } catch (IOException e) {
+                            LOGGER.warn("Could not remove temporary proxy configuration", e);
+                        }
+                    }
+                    // Generation-safe cleanup: an old worker whose run was
+                    // replaced (pause + resume raced it) must not unregister
+                    // the newer process under the same key
+                    synchronized (download) {
+                        launch.unregister();
+                        boolean current = launchFutures.remove(download.getId(), started);
+                        if (current) {
+                            gidMap.remove(download.getId());
+                            activeDownloads.remove(download.getId(), download);
                         }
                     }
                 }
-            } catch (CancellationException e) {
-                // Expected when pause/cancel wins before child launch.
-            } catch (IOException | InterruptedException e) {
-                if (e instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
-                if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
-                        Download.Status.ERROR)
-                        || download.compareAndSetStatus(Download.Status.CONNECTING,
-                                Download.Status.ERROR)) {
-                    download.setErrorMessage("Error during download: " + e.getMessage());
-                    if (listener != null) {
-                        listener.onDownloadError(download, download.getErrorMessage());
+            });
+        } catch (RuntimeException e) {
+            synchronized (download) {
+                launch.unregister();
+                if (launchFutures.remove(download.getId(), started)) {
+                    activeDownloads.remove(download.getId(), download);
+                    if (download.compareAndSetStatus(Download.Status.CONNECTING, Download.Status.ERROR)) {
+                        download.setErrorMessage("Could not submit download process");
+                        if (listener != null) listener.onDownloadError(download, download.getErrorMessage());
                     }
                 }
-            } finally {
-                // Generation-safe cleanup: an old worker whose run was
-                // replaced (pause + resume raced it) must not unregister
-                // the newer process under the same key
-                if (registration != null) {
-                    registration.unregister();
-                }
-                gidMap.remove(download.getId());
-                activeDownloads.remove(download.getId(), download);
             }
-        });
+            started.completeExceptionally(e);
+        }
+        return started;
     }
 
     /**
@@ -493,8 +559,13 @@ public class ProxychainsClient {
         // Set download directory and filename
         command.add("-d");
         command.add(outputFile.getParent().toString());
-        command.add("-o");
-        command.add(outputFile.getFileName().toString());
+        boolean localDescriptor = "file".equalsIgnoreCase(download.getUri().getScheme())
+                && (download.getProtocol() == Download.Protocol.TORRENT
+                    || download.getProtocol() == Download.Protocol.METALINK);
+        if (!localDescriptor) {
+            command.add("-o");
+            command.add(outputFile.getFileName().toString());
+        }
 
         // Add any custom options; imported settings are untrusted, so only
         // allowlisted aria2 options survive (--on-download-* hooks execute
@@ -529,8 +600,16 @@ public class ProxychainsClient {
             }
         }
 
-        // Add the URL
-        command.add(download.getUri().toString());
+        if (localDescriptor) {
+            Path descriptor = Path.of(download.getUri()).toAbsolutePath();
+            if (!Files.isRegularFile(descriptor) || !Files.isReadable(descriptor)) {
+                throw new IllegalArgumentException("Local download descriptor is unavailable");
+            }
+            command.add((download.getProtocol() == Download.Protocol.TORRENT
+                    ? "--torrent-file=" : "--metalink-file=") + descriptor);
+        } else {
+            command.add(download.getUri().toString());
+        }
 
         return command;
     }
@@ -555,16 +634,20 @@ public class ProxychainsClient {
      * @param listener Listener for download events
      */
     public void pauseDownload(Download download, DownloadListener listener) {
-        // Graceful terminate (SIGTERM: aria2c saves its control file),
-        // escalating to a hard kill if it ignores the signal
-        activeProcesses.terminate(download.getId(), 5);
+        synchronized (download) {
+            download.setStatus(Download.Status.PAUSED);
+            // Graceful terminate (SIGTERM: aria2c saves its control file),
+            // escalating to a hard kill if it ignores the signal
+            activeProcesses.terminate(download.getId(), 5);
+            CompletableFuture<String> pending = launchFutures.get(download.getId());
+            if (pending != null) pending.completeExceptionally(new CancellationException("Download paused"));
 
-        // Process not spawned (yet) is fine too: the download is trivially
-        // paused; reflect it so a subsequent resume works and listeners
-        // learn about the pause
-        download.setStatus(Download.Status.PAUSED);
-        if (listener != null) {
-            listener.onDownloadPause(download);
+            // Process not spawned (yet) is fine too: the download is trivially
+            // paused; reflect it so a subsequent resume works and listeners
+            // learn about the pause
+            if (listener != null) {
+                listener.onDownloadPause(download);
+            }
         }
     }
 
@@ -586,15 +669,11 @@ public class ProxychainsClient {
      * @param listener Listener for download events
      * @param options  Additional aria2c options
      */
-    public void resumeDownload(Download download, DownloadListener listener, Map<String, String> options) {
-        if (download.getStatus() == Download.Status.PAUSED) {
-            // Just restart the download with continue option
-            startDownload(download, listener, options);
-
-            if (listener != null) {
-                listener.onDownloadResume(download);
-            }
+    public CompletableFuture<Void> resumeDownload(Download download, DownloadListener listener, Map<String, String> options) {
+        if (download != null && download.getStatus() == Download.Status.PAUSED) {
+            return startDownload(download, listener, options, true).thenApply(id -> null);
         }
+        return CompletableFuture.completedFuture(null);
     }
 
     /**
@@ -605,43 +684,47 @@ public class ProxychainsClient {
      * @param deleteFile Whether to delete the partial file
      */
     public void cancelDownload(Download download, DownloadListener listener, boolean deleteFile) {
-        activeProcesses.terminate(download.getId(), 5);
+        synchronized (download) {
+            download.setStatus(Download.Status.CANCELED);
+            activeProcesses.terminate(download.getId(), 5);
+            CompletableFuture<String> pending = launchFutures.get(download.getId());
+            if (pending != null) pending.completeExceptionally(new CancellationException("Download canceled"));
 
-        // Remove GID mapping
-        gidMap.remove(download.getId());
+            // Remove GID mapping
+            gidMap.remove(download.getId());
 
-        // Delete partial file if requested. The name comes from the
-        // download model and may be stale or corrupted, so both a
-        // plain-file-name check and real-path containment must pass before
-        // anything is deleted.
-        if (deleteFile && download.getDestination() != null) {
-            try {
-                Path outputFile = download.getPrimaryOutputPath();
-                if (outputFile != null
-                        && org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
-                    org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
-                            download.getDestination());
-                    Path controlFile = Paths.get(outputFile.toString() + ".aria2");
-                    if (org.manager.util.PathSafety.isConfined(controlFile, download.getDestination())) {
-                        org.manager.util.PathSafety.deleteIfExistsConfined(controlFile,
+            // Delete partial file if requested. The name comes from the
+            // download model and may be stale or corrupted, so both a
+            // plain-file-name check and real-path containment must pass before
+            // anything is deleted.
+            if (deleteFile && download.getDestination() != null) {
+                try {
+                    Path outputFile = download.getPrimaryOutputPath();
+                    if (outputFile != null
+                            && org.manager.util.PathSafety.isConfined(outputFile, download.getDestination())) {
+                        org.manager.util.PathSafety.deleteIfExistsConfined(outputFile,
                                 download.getDestination());
+                        Path controlFile = Paths.get(outputFile.toString() + ".aria2");
+                        if (org.manager.util.PathSafety.isConfined(controlFile, download.getDestination())) {
+                            org.manager.util.PathSafety.deleteIfExistsConfined(controlFile,
+                                    download.getDestination());
+                        }
+                    } else {
+                        LOGGER.warn("Refusing unsafe partial-file deletion for " + download.getId()
+                                + ": " + download.getName());
                     }
-                } else {
-                    LOGGER.warn("Refusing unsafe partial-file deletion for " + download.getId()
+                } catch (IllegalArgumentException invalidPath) {
+                    LOGGER.warn("Refusing unsafe partial-file name for " + download.getId()
                             + ": " + download.getName());
                 }
-            } catch (IllegalArgumentException invalidPath) {
-                LOGGER.warn("Refusing unsafe partial-file name for " + download.getId()
-                        + ": " + download.getName());
             }
-        }
 
-        download.setStatus(Download.Status.CANCELED);
-        if (listener != null) {
-            listener.onDownloadCanceled(download);
-        }
+            if (listener != null) {
+                listener.onDownloadCanceled(download);
+            }
 
-        activeDownloads.remove(download.getId());
+            activeDownloads.remove(download.getId());
+        }
     }
 
     /**
@@ -650,6 +733,9 @@ public class ProxychainsClient {
     public void shutdown() {
         // Stop all active processes (SIGTERM -> bounded wait -> SIGKILL)
         activeProcesses.terminateAll(5);
+        launchFutures.values().forEach(future -> future.completeExceptionally(
+                new CancellationException("Download client shut down")));
+        launchFutures.clear();
         gidMap.clear();
         activeDownloads.clear();
 

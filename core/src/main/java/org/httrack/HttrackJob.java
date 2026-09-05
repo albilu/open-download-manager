@@ -22,7 +22,7 @@ public class HttrackJob {
     }
 
     private final String jobId;
-    private final HttrackSettings settings;
+    private volatile HttrackSettings settings;
     private final LocalDateTime createdAt;
     private final AtomicReference<Status> status;
     private final AtomicReference<LocalDateTime> startedAt;
@@ -77,6 +77,10 @@ public class HttrackJob {
      */
     public HttrackSettings getSettings() {
         return settings;
+    }
+
+    void setSettings(HttrackSettings settings) {
+        this.settings = java.util.Objects.requireNonNull(settings);
     }
 
     /**

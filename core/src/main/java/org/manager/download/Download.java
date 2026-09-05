@@ -132,6 +132,8 @@ public class Download {
         }
     }
 
+    public enum PauseReason { USER, SCHEDULE, OFFLINE }
+
     public enum Type {
         ARIA2,
         YOUTUBE,
@@ -167,6 +169,9 @@ public class Download {
     private volatile int queuePosition; // position in the download queue (lower = earlier)
     /** QUEUED but excluded from automatic admission until the user starts it. */
     private volatile boolean manualStartRequired;
+    /** Null on legacy records deliberately conveys no permission to resume automatically. */
+    private volatile PauseReason pauseReason;
+
     private final Instant createdAt;
     private volatile Instant startedAt;
     private volatile Instant completedAt;
@@ -771,6 +776,14 @@ public class Download {
         }
     }
 
+    public PauseReason getPauseReason() {
+        return pauseReason;
+    }
+
+    public void setPauseReason(PauseReason reason) {
+        pauseReason = reason;
+    }
+
     public boolean isManualStartRequired() {
         return manualStartRequired;
     }
@@ -1151,6 +1164,7 @@ public class Download {
                 initSettings();
             }
             settings.setUseProxy(useProxy);
+            settings.setProxyInherited(false);
             return this;
         }
     }
@@ -1181,6 +1195,7 @@ public class Download {
                 initSettings();
             }
             settings.setProxyAddress(proxyAddress);
+            settings.setProxyInherited(false);
             return this;
         }
     }

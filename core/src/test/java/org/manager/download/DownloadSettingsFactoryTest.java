@@ -333,11 +333,6 @@ class DownloadSettingsFactoryTest {
 
         for (Download.Type type : Download.Type.values()) {
             DownloadSettings settings = factory.createSettings(type);
-            if (type == Download.Type.WEBSITE_SCRAPING) {
-                assertFalse(settings.isUseProxy(),
-                        "HTTrack does not support a native SOCKS proxy");
-                continue;
-            }
             assertTrue(settings.isUseProxy(), type + " must use the global proxy");
             assertEquals("socks5h://127.0.0.1:9050", settings.getProxyAddress());
         }

@@ -119,6 +119,7 @@ public class HttrackClient {
     public CompletableFuture<String> startMirror(HttrackSettings settings) {
         return CompletableFuture.supplyAsync(() -> {
             String jobId = null;
+            PreparedCommand prepared = null;
             try {
                 validateSettings(settings);
 
@@ -132,10 +133,10 @@ public class HttrackClient {
                 }
 
                 // Build command
-                List<String> command = buildCommand(settings);
+                prepared = prepareCommand(settings);
 
                 // Start process
-                ProcessBuilder processBuilder = new ProcessBuilder(command);
+                ProcessBuilder processBuilder = new ProcessBuilder(prepared.arguments());
                 processBuilder.redirectErrorStream(true);
                 if (settings.getOutputDirectory() != null) {
                     processBuilder.directory(settings.getOutputDirectory().toFile());
@@ -152,6 +153,8 @@ public class HttrackClient {
                 notifyJobStarted(job);
 
                 // Start monitoring in background
+                PreparedCommand ownedCommand = prepared;
+                process.onExit().thenRun(ownedCommand::close);
                 Future<?> monitoringFuture = executorService.submit(() -> monitorProcess(process, job, registration));
                 monitoringFutures.put(jobId, monitoringFuture);
 
@@ -159,6 +162,9 @@ public class HttrackClient {
                 return jobId;
 
             } catch (Exception e) {
+                if (prepared != null) {
+                    prepared.close();
+                }
                 if (jobId != null) {
                     activeProcesses.terminate(jobId, 1);
                     Future<?> monitor = monitoringFutures.remove(jobId);
@@ -215,20 +221,28 @@ public class HttrackClient {
      * @return CompletableFuture that completes when the job is resumed
      */
     public CompletableFuture<Void> resumeJob(String jobId) {
+        return resumeJob(jobId, null);
+    }
+
+    /** Resumes the same cache with the latest per-download settings and route. */
+    public CompletableFuture<Void> resumeJob(String jobId, HttrackSettings latestSettings) {
         return CompletableFuture.runAsync(() -> {
             synchronized (this) {
                 HttrackJob job = activeJobs.get(jobId);
 
                 if (job != null && job.getStatus() == HttrackJob.Status.PAUSED) {
+                    PreparedCommand prepared = null;
                     try {
                     // Resume the interrupted cache without turning the action
                     // into a remote-content update.
-                    HttrackSettings settings = job.getSettings().copySettings();
+                    HttrackSettings settings = (latestSettings == null
+                            ? job.getSettings() : latestSettings).copySettings();
                     settings.setRunMode(HttrackSettings.RunMode.CONTINUE);
+                    job.setSettings(settings);
 
                     // Restart the process
-                    List<String> command = buildCommand(settings);
-                    ProcessBuilder processBuilder = new ProcessBuilder(command);
+                    prepared = prepareCommand(settings);
+                    ProcessBuilder processBuilder = new ProcessBuilder(prepared.arguments());
                     processBuilder.redirectErrorStream(true);
                     if (settings.getOutputDirectory() != null) {
                         processBuilder.directory(settings.getOutputDirectory().toFile());
@@ -244,18 +258,25 @@ public class HttrackClient {
                     notifyJobResumed(job);
 
                     // Start monitoring in background
+                    PreparedCommand ownedCommand = prepared;
+                    process.onExit().thenRun(ownedCommand::close);
                     Future<?> monitoringFuture = executorService.submit(() -> monitorProcess(process, job, registration));
                     monitoringFutures.put(jobId, monitoringFuture);
 
                     LOGGER.info("Resumed httrack job: " + jobId);
 
                     } catch (Exception e) {
+                        activeProcesses.terminate(jobId, 1);
+                        if (prepared != null) {
+                            prepared.close();
+                        }
                         if (job.getStatus() != HttrackJob.Status.CANCELED) {
                             job.setStatus(HttrackJob.Status.ERROR);
                             job.setErrorMessage("Failed to resume: " + e.getMessage());
                             notifyJobError(job, e.getMessage());
                         }
                         LOGGER.error("Failed to resume httrack job", e);
+                        throw new java.util.concurrent.CompletionException(e);
                     }
                 }
             }
@@ -397,6 +418,42 @@ public class HttrackClient {
         command.add("-q"); // Quiet mode
         command.add("-%v"); // Verbose status
         return command;
+    }
+
+    PreparedCommand prepareCommand(HttrackSettings settings) throws IOException {
+        if (!settings.isUseProxy()) {
+            return new PreparedCommand(buildCommand(settings), null);
+        }
+        String proxy = settings.proxyWithCredentials();
+        if (proxy == null || proxy.isBlank()) {
+            throw new IllegalArgumentException("An enabled proxy requires an address");
+        }
+        if (!org.manager.download.handler.DownloadHandlerFactory.isSocksProxyAddress(proxy)) {
+            return new PreparedCommand(buildCommand(settings), null);
+        }
+        // Older packaged HTTrack versions lack native SOCKS. Use the same
+        // mandatory SOCKS/DNS route as the other proxychains downloads.
+        org.proxychains.ProxychainsConfig config = org.proxychains.ProxychainsConfig.forProxyAddress(proxy);
+        HttrackSettings nativeSettings = settings.copySettings();
+        nativeSettings.setUseProxy(false);
+        List<String> command = new ArrayList<>(List.of(ToolPaths.proxychains(), "-f"));
+        Path configFile = config.createTempConfig();
+        command.add(configFile.toString());
+        command.addAll(buildCommand(nativeSettings));
+        return new PreparedCommand(command, configFile);
+    }
+
+    record PreparedCommand(List<String> arguments, Path configFile) implements AutoCloseable {
+        @Override
+        public void close() {
+            if (configFile != null) {
+                try {
+                    Files.deleteIfExists(configFile);
+                } catch (IOException e) {
+                    LOGGER.warn("Could not remove temporary HTTrack proxy configuration", e);
+                }
+            }
+        }
     }
 
     private void monitorProcess(Process process, HttrackJob job,

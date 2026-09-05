@@ -72,7 +72,7 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<String> startDownload(Download download) {
-        return CompletableFuture.supplyAsync(() -> {
+        return submitStart(download, () -> {
             try {
                 ensureInitialized();
 
@@ -87,9 +87,7 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
                 overrideOutputPath(download);
 
                 // Delegate to CurlClient with this handler as the listener
-                curlClient.startDownload(download, this);
-
-                return download.getId(); // Return download ID as the GID equivalent
+                return curlClient.startDownload(download, this);
             } catch (Exception e) {
                 // Only set status and error message if download is not null
                 if (download != null) {
@@ -100,11 +98,12 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
                 LOGGER.error("Failed to start curl download", e);
                 throw new RuntimeException("Failed to start curl download", e);
             }
-        }, executor);
+        });
     }
 
     @Override
     public CompletableFuture<Void> pauseDownload(Download download) {
+        invalidatePendingStart(download);
         return CompletableFuture.runAsync(() -> {
             if (download == null) {
                 return; // Handle null download gracefully
@@ -116,17 +115,19 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     public CompletableFuture<Void> resumeDownload(Download download) {
-        return CompletableFuture.runAsync(() -> {
+        invalidatePendingStart(download);
+        return CompletableFuture.supplyAsync(() -> {
             if (download == null) {
-                return; // Handle null download gracefully
+                return CompletableFuture.<Void>completedFuture(null);
             }
 
-            curlClient.resumeDownload(download, this);
-        }, executor);
+            return curlClient.resumeDownload(download, this);
+        }, executor).thenCompose(started -> started);
     }
 
     @Override
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
+        invalidatePendingStart(download);
         return CompletableFuture.runAsync(() -> {
             if (download == null) {
                 return; // Handle null download gracefully
@@ -150,9 +151,7 @@ public class CurlDownloadHandler extends AbstractDownloadHandler {
         // resume before the pause completed.
         if (download.getStatus() == Download.Status.DOWNLOADING
                 || download.getStatus() == Download.Status.CONNECTING) {
-            return CompletableFuture.runAsync(
-                    () -> curlClient.pauseDownload(download, this), executor)
-                    .thenRun(() -> curlClient.resumeDownload(download, this));
+            return pauseDownload(download).thenCompose(ignored -> resumeDownload(download));
         }
         return CompletableFuture.completedFuture(null);
     }

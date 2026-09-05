@@ -37,7 +37,6 @@ import org.manager.download.DescriptorFileInspector;
 import org.manager.download.DownloadFileInfo;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.tools.ToolManagerFactory;
-import org.manager.util.DescriptorStaging;
 import org.aria2.Aria2ToolManager;
 
 /**
@@ -987,6 +986,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             }
             if (download.getSettings() instanceof Aria2Settings aria2Settings
                     && aria2Settings.isUseProxy()
+                    && !aria2Settings.isProxyInherited()
                     && aria2Settings.getProxyAddress() != null) {
                 continue; // per-download proxy wins
             }
@@ -1800,12 +1800,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Parameters: byte[] torrent, List<String> uris, String dir, Map options
         String gid = aria2Client.addTorrent(torrentData, uris, download.getDestination().toString(), options);
 
-        // Successful ingestion consumes the descriptor: delete it only when
-        // ODM owns it (staged by folder monitoring or the selected-descriptor
-        // Trash flow); non-staged source files remain user-owned
-        if (localTorrentFile != null) {
-            DescriptorStaging.deleteIfStaged(localTorrentFile);
-        }
+        // Keep staged sources for recovery after daemon/application restart.
+        // The manager deletes owned descriptors when their history record is removed.
 
         LOGGER.info("Started torrent download with GID: " + gid);
         return List.of(gid);
@@ -1906,12 +1902,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
         List<String> gids = aria2Client.addMetalinkAll(metaLinkData, options);
 
-        // Successful ingestion consumes the descriptor: delete it only when
-        // ODM owns it (staged by folder monitoring or the selected-descriptor
-        // Trash flow); non-staged source files remain user-owned
-        if (localMetaLinkFile != null) {
-            DescriptorStaging.deleteIfStaged(localMetaLinkFile);
-        }
+        // Keep staged sources until the owning history record is removed.
 
         LOGGER.info("Started Metalink download with " + gids.size() + " GID(s)");
         return gids;
