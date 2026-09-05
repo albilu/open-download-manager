@@ -1,6 +1,7 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,6 +21,10 @@ class DownloadEnginePresentationTest {
         assertTrue(DownloadEnginePresentation.iconResource(Download.Type.ARIA2).isEmpty());
         assertEquals("/images/onion-icon-24.svg",
                 DownloadEnginePresentation.iconResource(Download.Type.TOR).orElseThrow());
+        org.gnome.gdk.Texture toolbarIcon = assertInstanceOf(
+                org.gnome.gdk.Texture.class, DownloadEnginePresentation.toolbarTorIcon());
+        assertEquals(24, toolbarIcon.getWidth());
+        assertEquals(24, toolbarIcon.getHeight());
     }
 
     private static void assertEngine(Download.Type type, String name, String icon) {

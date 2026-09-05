@@ -20,7 +20,7 @@ public final class AboutDialogPresenter {
     public static void present(Window parent) {
         GtkBuilder builder = UiLoader.load("/ui/about.ui");
         AboutDialog about = Widgets.require(builder, "about_dialog", AboutDialog.class);
-        about.setTransientFor(parent);
+        DialogSupport.configureIndependent(about, parent);
         about.setLogo(loadLogo());
         String implementationVersion = AboutDialogPresenter.class.getPackage()
                 .getImplementationVersion();

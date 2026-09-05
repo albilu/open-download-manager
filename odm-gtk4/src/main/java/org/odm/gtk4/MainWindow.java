@@ -47,7 +47,7 @@ public class MainWindow {
     static final int HISTORY_PAGE_SIZE = 500;
     private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
             "#", "Status", "Name", "Completed", "Size", "Progress", "Elapsed",
-            "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Type");
+            "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Result");
     private static final List<String> COMPLETION_ACTION_KEYS = List.of(
             "notify", "antivirus", "subtitles", "suspend", "shutdown", "custom");
     private static final Download.Status[] ALWAYS_VISIBLE_STATUSES = {
@@ -122,6 +122,7 @@ public class MainWindow {
     private final Button folderOpenButton;
     private final Label folderValue;
     private final Image engineIcon;
+    private final Image torIcon;
     private final Label engineValue;
     private final Label etaValue;
     private final Label downloadedValue;
@@ -162,6 +163,10 @@ public class MainWindow {
     private org.manager.clipboard.ClipboardServiceListener windowClipboardListener;
     /** Optional app-provided exit sequence (graceful shutdown UI). */
     private Runnable finalCloseDelegate;
+    /** At most one File -> Exit confirmation may be open at a time. */
+    private org.gnome.gtk.MessageDialog exitConfirmation;
+    /** Guards the final teardown delegate against duplicate exit gestures. */
+    private boolean finalExitStarted;
     /** App-owned StatusNotifier lifecycle; null in isolated window tests. */
     private java.util.function.Consumer<Boolean> trayPreferenceHandler;
     private Download selectedDownload;
@@ -240,6 +245,8 @@ public class MainWindow {
         this.folderOpenButton = Widgets.require(builder, "folder_open_button", Button.class);
         this.folderValue = Widgets.require(builder, "folder_value", Label.class);
         this.engineIcon = Widgets.require(builder, "engine_icon", Image.class);
+        this.torIcon = Widgets.require(builder, "tor_icon", Image.class);
+        this.torIcon.setFromGicon(DownloadEnginePresentation.toolbarTorIcon());
         this.engineValue = Widgets.require(builder, "engine_value", Label.class);
         this.etaValue = Widgets.require(builder, "eta_value", Label.class);
         this.downloadedValue = Widgets.require(builder, "downloaded_value", Label.class);
@@ -268,11 +275,13 @@ public class MainWindow {
             boolean toTray = downloadManager.getGlobalSettings().getBooleanProperty("ui.systemTray", false);
             if (toTray && trayAvailable) {
                 saveWindowState(builder); // persist geometry; destroy() skips this handler
+                dismissExitConfirmation();
                 window.setVisible(false);
                 return true; // suppress the close; tray keeps the app running
             }
-            saveWindowState(builder);
-            removeWindowListeners();
+            if (!beginFinalExit()) {
+                return true;
+            }
             if (finalCloseDelegate != null) {
                 // Hand the exit sequence to the app (graceful shutdown with
                 // a progress dialog); it disposes the window when done
@@ -374,10 +383,10 @@ public class MainWindow {
         this.moveTopButton = Widgets.require(builder, "move_top_button", Button.class);
         this.moveDownButton = Widgets.require(builder, "move_down_button", Button.class);
         this.moveBottomButton = Widgets.require(builder, "move_bottom_button", Button.class);
-        moveUpButton.onClicked(() -> moveSelectedDownload(QueueMove.UP));
-        moveTopButton.onClicked(() -> moveSelectedDownload(QueueMove.TOP));
-        moveDownButton.onClicked(() -> moveSelectedDownload(QueueMove.DOWN));
-        moveBottomButton.onClicked(() -> moveSelectedDownload(QueueMove.BOTTOM));
+        moveUpButton.onClicked(() -> moveSelectedDownloads(QueueMove.UP));
+        moveTopButton.onClicked(() -> moveSelectedDownloads(QueueMove.TOP));
+        moveDownButton.onClicked(() -> moveSelectedDownloads(QueueMove.DOWN));
+        moveBottomButton.onClicked(() -> moveSelectedDownloads(QueueMove.BOTTOM));
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
         folderOpenButton.onClicked(this::openDisplayedSaveFolder);
         this.searchEntry = Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
@@ -541,6 +550,81 @@ public class MainWindow {
      */
     public void setFinalCloseDelegate(Runnable delegate) {
         this.finalCloseDelegate = delegate;
+    }
+
+    /** Shows the explicit confirmation used only by File -> Exit. */
+    void requestExitFromMenu() {
+        if (finalExitStarted) {
+            return;
+        }
+        if (exitConfirmation != null) {
+            exitConfirmation.present();
+            return;
+        }
+
+        org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
+        DialogSupport.configureIndependent(confirmation, window);
+        confirmation.setTitle("Confirm Exit");
+        confirmation.setMarkup("<b>Exit Open Download Manager?</b>");
+        confirmation.formatSecondaryText(
+                "The application will stop its download services and close.");
+        int cancelResponse = org.gnome.gtk.ResponseType.CANCEL.getValue();
+        int exitResponse = org.gnome.gtk.ResponseType.ACCEPT.getValue();
+        confirmation.addButton("Cancel", cancelResponse);
+        org.gnome.gtk.Widget exitButton = confirmation.addButton("Exit", exitResponse);
+        exitButton.addCssClass("destructive-action");
+        confirmation.setDefaultResponse(cancelResponse);
+        confirmation.onResponse(response -> {
+            if (exitConfirmation == confirmation) {
+                exitConfirmation = null;
+            }
+            confirmation.close();
+            if (response == exitResponse) {
+                performFinalExit();
+            }
+        });
+        exitConfirmation = confirmation;
+        confirmation.present();
+    }
+
+    private void performFinalExit() {
+        if (!beginFinalExit()) {
+            return;
+        }
+        if (finalCloseDelegate != null) {
+            window.setVisible(false);
+            finalCloseDelegate.run();
+        } else {
+            window.destroy();
+        }
+    }
+
+    /** Common one-shot preparation for menu exits and title-bar closes. */
+    private boolean beginFinalExit() {
+        if (finalExitStarted) {
+            return false;
+        }
+        finalExitStarted = true;
+        dismissExitConfirmation();
+        saveWindowState(uiBuilder);
+        removeWindowListeners();
+        return true;
+    }
+
+    private void dismissExitConfirmation() {
+        org.gnome.gtk.MessageDialog confirmation = exitConfirmation;
+        exitConfirmation = null;
+        if (confirmation != null) {
+            confirmation.close();
+        }
+    }
+
+    org.gnome.gtk.MessageDialog exitConfirmationDialog() {
+        return exitConfirmation;
+    }
+
+    boolean hasStartedFinalExit() {
+        return finalExitStarted;
     }
 
     /** Controls whether closing to the notification area can keep the app reachable. */
@@ -715,8 +799,8 @@ public class MainWindow {
         runSelectedDownloads(MainWindow::canStart, downloadManager::startDownload, "start");
     }
 
-    /** Reorders one waiting download and keeps it selected at its new row. */
-    private void moveSelectedDownload(QueueMove move) {
+    /** Reorders the selected waiting downloads while preserving their relative order. */
+    private void moveSelectedDownloads(QueueMove move) {
         onDownloadSelectionChanged();
         List<Download> queued = queuedDownloadsForMovement();
         QueueMovementCapabilities capabilities =
@@ -726,15 +810,16 @@ public class MainWindow {
             return;
         }
 
-        Download target = selectedDownloads.getFirst();
         // A user-requested queue move and an explicit column sort conflict.
         // Return to the manager's queue order so the move is immediately visible.
         listPresenter.useQueueOrder();
-        switch (move) {
-            case UP -> downloadManager.moveDownloadUp(target);
-            case TOP -> downloadManager.moveDownloadToTop(target);
-            case DOWN -> downloadManager.moveDownloadDown(target);
-            case BOTTOM -> downloadManager.moveDownloadToBottom(target);
+        for (Download target : queueMoveTargets(selectedDownloads, queued, move)) {
+            switch (move) {
+                case UP -> downloadManager.moveDownloadUp(target);
+                case TOP -> downloadManager.moveDownloadToTop(target);
+                case DOWN -> downloadManager.moveDownloadDown(target);
+                case BOTTOM -> downloadManager.moveDownloadToBottom(target);
+            }
         }
         updateQueueButtonSensitivity(queueMovementCapabilities(
                 selectedDownloads, queuedDownloadsForMovement()));
@@ -746,17 +831,70 @@ public class MainWindow {
         return queued == null ? List.of() : queued;
     }
 
-    /** Queue controls apply to exactly one waiting record, with boundary-aware buttons. */
+    /** Queue controls require an all-queued selection and remain boundary-aware. */
     static QueueMovementCapabilities queueMovementCapabilities(List<Download> selection,
             List<Download> queuedDownloads) {
-        if (selection == null || selection.size() != 1 || queuedDownloads == null) {
+        if (selection == null || selection.isEmpty() || queuedDownloads == null) {
             return QueueMovementCapabilities.NONE;
         }
-        Download selected = selection.getFirst();
-        if (selected == null || selected.getStatus() != Download.Status.QUEUED) {
+        java.util.Set<String> selectedIds = selection.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(download -> download.getStatus() == Download.Status.QUEUED)
+                .map(Download::getId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(
+                        java.util.LinkedHashSet::new));
+        if (selectedIds.size() != selection.size()) {
             return QueueMovementCapabilities.NONE;
         }
-        List<Download> ordered = queuedDownloads.stream()
+        List<Download> ordered = orderedQueuedDownloads(queuedDownloads);
+        long matched = ordered.stream()
+                .map(Download::getId)
+                .filter(selectedIds::contains)
+                .distinct()
+                .count();
+        if (matched != selectedIds.size()) {
+            return QueueMovementCapabilities.NONE;
+        }
+
+        boolean canMoveUp = false;
+        boolean canMoveDown = false;
+        for (int i = 0; i < ordered.size(); i++) {
+            if (!selectedIds.contains(ordered.get(i).getId())) {
+                continue;
+            }
+            canMoveUp |= i > 0 && !selectedIds.contains(ordered.get(i - 1).getId());
+            canMoveDown |= i + 1 < ordered.size()
+                    && !selectedIds.contains(ordered.get(i + 1).getId());
+        }
+        return new QueueMovementCapabilities(
+                canMoveUp, canMoveUp, canMoveDown, canMoveDown);
+    }
+
+    /**
+     * Invocation order for the existing single-record manager operations.
+     * Up/bottom run in ascending order; top/down run in reverse order so a
+     * multi-selection never reverses itself while individual moves settle.
+     */
+    static List<Download> queueMoveTargets(List<Download> selection,
+            List<Download> queuedDownloads, QueueMove move) {
+        if (!queueMovementCapabilities(selection, queuedDownloads).allows(move)) {
+            return List.of();
+        }
+        java.util.Set<String> selectedIds = selection.stream()
+                .map(Download::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.ArrayList<Download> targets = orderedQueuedDownloads(queuedDownloads).stream()
+                .filter(download -> selectedIds.contains(download.getId()))
+                .collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
+        if (move == QueueMove.TOP || move == QueueMove.DOWN) {
+            java.util.Collections.reverse(targets);
+        }
+        return List.copyOf(targets);
+    }
+
+    private static List<Download> orderedQueuedDownloads(List<Download> queuedDownloads) {
+        return queuedDownloads.stream()
                 .filter(java.util.Objects::nonNull)
                 .filter(download -> download.getStatus() == Download.Status.QUEUED)
                 .sorted(java.util.Comparator.comparingInt(Download::getQueuePosition)
@@ -764,20 +902,6 @@ public class MainWindow {
                                 java.util.Comparator.nullsLast(
                                         java.util.Comparator.naturalOrder())))
                 .toList();
-        int index = -1;
-        for (int i = 0; i < ordered.size(); i++) {
-            if (java.util.Objects.equals(ordered.get(i).getId(), selected.getId())) {
-                index = i;
-                break;
-            }
-        }
-        if (index < 0) {
-            return QueueMovementCapabilities.NONE;
-        }
-        boolean hasPrevious = index > 0;
-        boolean hasNext = index + 1 < ordered.size();
-        return new QueueMovementCapabilities(
-                hasPrevious, hasPrevious, hasNext, hasNext);
     }
 
     private void runSelectedDownloads(java.util.function.Predicate<Download> applicable,
@@ -819,8 +943,7 @@ public class MainWindow {
         }
         boolean multiple = capturedTargets.size() > 1;
         org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
-        confirmation.setTransientFor(window);
-        confirmation.setModal(true);
+        DialogSupport.configureIndependent(confirmation, window);
         confirmation.setMarkup(multiple
                 ? "<b>Delete these downloads and their files?</b>"
                 : "<b>Delete this download and its files?</b>");
@@ -928,9 +1051,9 @@ public class MainWindow {
                 builder, "name_column", org.gnome.gtk.TreeViewColumn.class);
         org.gnome.gtk.CellRenderer nameRenderer = Widgets.require(
                 builder, "name_renderer", org.gnome.gtk.CellRenderer.class);
-        org.gnome.gtk.TreeViewColumn engineColumn = Widgets.require(
+        org.gnome.gtk.TreeViewColumn resultColumn = Widgets.require(
                 builder, "tor_icon_column", org.gnome.gtk.TreeViewColumn.class);
-        org.gnome.gtk.CellRenderer engineRenderer = Widgets.require(
+        org.gnome.gtk.CellRenderer resultRenderer = Widgets.require(
                 builder, "engine_icon_renderer", org.gnome.gtk.CellRenderer.class);
         downloadsTreeview.setHasTooltip(true);
         downloadsTreeview.onQueryTooltip((x, y, keyboardMode, tooltip) -> {
@@ -954,14 +1077,12 @@ public class MainWindow {
                 // when its current cursor column is not the Name column.
                 org.gnome.gtk.TreeViewColumn tooltipColumn = keyboardMode
                         ? nameColumn : hoveredColumn.get();
-                boolean engineCell = !keyboardMode
+                boolean resultCell = !keyboardMode
                         && tooltipColumn != null
-                        && tooltipColumn.handle().equals(engineColumn.handle());
-                Download download = engineCell ? downloadAt(path) : null;
-                String text = engineCell
-                        ? downloadEngineTooltip(
-                                download == null ? null : download.getType(),
-                                tooltipColumn, engineColumn)
+                        && tooltipColumn.handle().equals(resultColumn.handle());
+                Download download = resultCell ? downloadAt(path) : null;
+                String text = resultCell
+                        ? downloadResultTooltip(download, tooltipColumn, resultColumn)
                         : downloadNameTooltip(
                                 downloadsStore, path, tooltipColumn, nameColumn);
                 if (text == null || text.isBlank()) {
@@ -970,8 +1091,8 @@ public class MainWindow {
                 tooltip.setText(text);
                 downloadsTreeview.setTooltipCell(
                         tooltip, path,
-                        engineCell ? engineColumn : nameColumn,
-                        engineCell ? engineRenderer : nameRenderer);
+                        resultCell ? resultColumn : nameColumn,
+                        resultCell ? resultRenderer : nameRenderer);
                 return true;
             } finally {
                 org.javagi.interop.MemoryCleaner.free(path.handle());
@@ -992,14 +1113,14 @@ public class MainWindow {
                 : null;
     }
 
-    static String downloadEngineTooltip(Download.Type type,
+    static String downloadResultTooltip(Download download,
             org.gnome.gtk.TreeViewColumn hoveredColumn,
-            org.gnome.gtk.TreeViewColumn engineColumn) {
-        if (type == null || hoveredColumn == null || engineColumn == null
-                || !hoveredColumn.handle().equals(engineColumn.handle())) {
+            org.gnome.gtk.TreeViewColumn resultColumn) {
+        if (download == null || hoveredColumn == null || resultColumn == null
+                || !hoveredColumn.handle().equals(resultColumn.handle())) {
             return null;
         }
-        return DownloadEnginePresentation.displayName(type);
+        return CompletionActionPresentation.tooltip(download);
     }
 
     private void showContextMenuForSelection() {
@@ -1062,7 +1183,7 @@ public class MainWindow {
                 .add("Delete", capabilities.delete(), this::onDeleteClicked)
                 .add("Delete with Files", capabilities.deleteWithFiles(), () ->
                         confirmDeleteWithFiles(selectedDownloads));
-        contextMenu.popupAt(downloadsTreeview, x, y);
+        contextMenu.popupAt(menuBar, downloadsTreeview, x, y);
     }
 
     /** Copies the selected download's magnet URI (or builds one from its info hash). */
@@ -1091,6 +1212,7 @@ public class MainWindow {
             return;
         }
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
+        DialogSupport.configureIndependent(dialog);
         dialog.setTitle("Select new destination");
         dialog.selectFolder(window, null, result -> {
             try {
@@ -1224,8 +1346,7 @@ public class MainWindow {
         }
 
         org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
-        confirmation.setTransientFor(window);
-        confirmation.setModal(true);
+        DialogSupport.configureIndependent(confirmation, window);
         confirmation.setMarkup("<b>Update this website mirror?</b>");
         confirmation.formatSecondaryText(
                 "HTTrack will revisit the remote site using the existing mirror cache. "
@@ -1386,18 +1507,7 @@ public class MainWindow {
                 downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false),
                 active -> trackActivity(offlineModeController.setOffline(active))
                         .whenComplete((ignored, failure) -> UiThread.marshal(this::refresh)));
-        // File -> Exit performs a normal exit (destroy() bypasses the
-        // close-request handler), so geometry must be saved explicitly first.
-        addAction("quit", () -> {
-            saveWindowState(uiBuilder);
-            removeWindowListeners();
-            if (finalCloseDelegate != null) {
-                window.setVisible(false);
-                finalCloseDelegate.run();
-            } else {
-                window.destroy();
-            }
-        });
+        addAction("quit", this::requestExitFromMenu);
 
         // Edit
         addAction("select-all", this::selectAllDownloads);
@@ -1618,7 +1728,7 @@ public class MainWindow {
             org.gnome.gtk.GtkBuilder builder = UiLoader.load("/ui/completion-command.ui");
             org.gnome.gtk.Window prompt = Widgets.require(builder,
                     "completion_command_dialog", org.gnome.gtk.Window.class);
-            prompt.setTransientFor(window);
+            DialogSupport.configureIndependent(prompt, window);
             org.gnome.gtk.Entry entry = Widgets.require(builder,
                     "completion_command_entry", org.gnome.gtk.Entry.class);
             org.gnome.gtk.Button cancel = Widgets.require(builder,
@@ -1773,6 +1883,7 @@ public class MainWindow {
     /** Imports links found in a local HTML file. */
     private void onImportHtml() {
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
+        DialogSupport.configureIndependent(dialog);
         dialog.setTitle("Select HTML file");
         dialog.open(window, null, result -> {
             try {
@@ -1811,7 +1922,7 @@ public class MainWindow {
         org.gnome.gtk.GtkBuilder builder = UiLoader.load("/ui/import-remote.ui");
         org.gnome.gtk.Window prompt = Widgets.require(builder,
                 "remote_import_dialog", org.gnome.gtk.Window.class);
-        prompt.setTransientFor(window);
+        DialogSupport.configureIndependent(prompt, window);
 
         ImportLimits displayedLimits = ImportLimits.from(downloadManager.getGlobalSettings());
         org.gnome.gtk.Label help = Widgets.require(builder,
@@ -1887,6 +1998,7 @@ public class MainWindow {
     /** Exports all download URLs to a text file. */
     private void onExportList() {
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
+        DialogSupport.configureIndependent(dialog);
         dialog.setTitle("Export download list");
         dialog.setInitialName("odm-downloads.txt");
         dialog.save(window, null, result -> {
@@ -1918,8 +2030,7 @@ public class MainWindow {
     private void showStatistics() {
         StatisticsPresenter.Stats st = StatisticsPresenter.aggregate(downloadManager.getAllDownloads());
         org.gnome.gtk.MessageDialog stats = new org.gnome.gtk.MessageDialog();
-        stats.setTransientFor(window);
-        stats.setModal(true);
+        DialogSupport.configureIndependent(stats, window);
         stats.setMarkup("<b>Download Statistics</b>");
         stats.formatSecondaryText("Total: " + st.total() + "\nActive: " + st.active()
                 + "\nQueued/paused: " + st.queued() + "\nFinished: " + st.finished()
@@ -2206,6 +2317,10 @@ public class MainWindow {
 
     boolean downloadNameTooltipEnabled() {
         return downloadsTreeview.getHasTooltip();
+    }
+
+    org.gnome.gio.Icon torToolbarIcon() {
+        return torIcon.getGicon();
     }
 
     PropagationPhase downloadContextClickPhase() {

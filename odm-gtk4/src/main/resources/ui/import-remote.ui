@@ -4,7 +4,6 @@
 
   <object class="GtkWindow" id="remote_import_dialog">
     <property name="title">Import Links from Remote</property>
-    <property name="modal">true</property>
     <property name="default-width">560</property>
     <child>
       <object class="GtkBox" id="remote_import_content">

@@ -13,6 +13,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.gnome.gdk.Rectangle;
 import org.gnome.glib.MainContext;
@@ -192,6 +193,10 @@ class WindowSmokeTest {
         assertEquals("Start / Resume",
                 Widgets.require(builder, "resume_button", Button.class).getTooltipText());
         Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        Image torIcon = Widgets.require(builder, "tor_icon", Image.class);
+        assertNull(torIcon.getIconName(),
+                "the toolbar must not retain the former generic VPN icon");
+        assertEquals(24, torIcon.getPixelSize());
         Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         Box toolbarSpacer = Widgets.require(builder, "toolbar_spacer", Box.class);
         Box searchToolItem = Widgets.require(builder, "search_tool_item", Box.class);
@@ -244,7 +249,7 @@ class WindowSmokeTest {
                 "actions_tab_label", Label.class).getLabel());
         TreeViewColumn statusIconColumn = Widgets.require(builder,
                 "status_icon_column", TreeViewColumn.class);
-        TreeViewColumn typeIconColumn = Widgets.require(builder,
+        TreeViewColumn resultIconColumn = Widgets.require(builder,
                 "tor_icon_column", TreeViewColumn.class);
         TreeViewColumn nameColumn = Widgets.require(builder, "name_column", TreeViewColumn.class);
         assertTrue(statusIconColumn.getTitle() == null || statusIconColumn.getTitle().isEmpty(),
@@ -252,9 +257,10 @@ class WindowSmokeTest {
         assertEquals(TreeViewColumnSizing.FIXED, statusIconColumn.getSizing());
         assertEquals(32, statusIconColumn.getFixedWidth(),
                 "the status column should remain close to the icon's natural width");
-        assertEquals(TreeViewColumnSizing.FIXED, typeIconColumn.getSizing());
-        assertTrue(typeIconColumn.getFixedWidth() <= 48,
-                "the Type column should remain icon-sized");
+        assertEquals("Result", resultIconColumn.getTitle());
+        assertEquals(TreeViewColumnSizing.FIXED, resultIconColumn.getSizing());
+        assertTrue(resultIconColumn.getFixedWidth() <= 48,
+                "the Result column should remain icon-sized");
         assertTrue(treeColumnIndex(downloadTree, statusIconColumn)
                         < treeColumnIndex(downloadTree, nameColumn),
                 "the lifecycle icon must appear before the download name");
@@ -359,6 +365,50 @@ class WindowSmokeTest {
         assertFalse(presented.get());
         awaitGtk(presented::get, "deferred context menu callback was not dispatched");
         assertTrue(presented.get());
+    }
+
+    @Test
+    @DisplayName("reopening the download context menu keeps the GTK CSS tree valid")
+    void contextMenuCanBeReopenedWithoutGtkCritical() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        ApplicationWindow window = Widgets.require(builder,
+                "main_window", ApplicationWindow.class);
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        PopoverMenuBar popoverHost = Widgets.require(builder,
+                "menu_bar", PopoverMenuBar.class);
+        org.gnome.gio.Menu menuBarModel = new org.gnome.gio.Menu();
+        org.gnome.gio.Menu fileMenu = new org.gnome.gio.Menu();
+        fileMenu.append("Example", "win.example");
+        menuBarModel.appendSubmenu("_File", fileMenu);
+        popoverHost.setMenuModel(menuBarModel);
+        AtomicReference<String> critical = new AtomicReference<>();
+        int handler = org.gnome.glib.GLib.logSetHandler("Gtk",
+                org.gnome.glib.LogLevelFlags.LEVEL_CRITICAL,
+                (domain, level, message) -> critical.compareAndSet(null, message));
+        PopupMenu menu = null;
+        window.present();
+        drainGtkEvents();
+        try {
+            for (int attempt = 0; attempt < 3; attempt++) {
+                if (menu != null) {
+                    menu.dispose();
+                }
+                menu = new PopupMenu().add("Properties", () -> { });
+                menu.popupAt(popoverHost, tree, 20, 20);
+                drainGtkEvents();
+                assertTrue(menu.getPopover().getMapped(),
+                        "context popover must remain visible with its supported host");
+            }
+            assertNull(critical.get(), () -> "GTK critical while reopening context menu: "
+                    + critical.get());
+        } finally {
+            if (menu != null) {
+                menu.dispose();
+            }
+            org.gnome.glib.GLib.logRemoveHandler("Gtk", handler);
+            window.close();
+            drainGtkEvents();
+        }
     }
 
     @Test
@@ -903,6 +953,48 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("user-facing dialogs are non-modal movable transient windows")
+    void dialogsUseIndependentWindowPolicy() {
+        String[][] dialogs = {
+            {"/ui/about.ui", "about_dialog"},
+            {"/ui/action-output.ui", "action_output_dialog"},
+            {"/ui/completion-command.ui", "completion_command_dialog"},
+            {"/ui/import-list.ui", "import_dialog"},
+            {"/ui/import-remote.ui", "remote_import_dialog"},
+            {"/ui/import-sequence.ui", "import_sequence_dialog"},
+            {"/ui/new-download.ui", "new_download_dialog"},
+            {"/ui/new-media.ui", "new_media_dialog"},
+            {"/ui/new-website.ui", "new_website_dialog"},
+            {"/ui/property.ui", "property_dialog"},
+            {"/ui/settings.ui", "settings_dialog"}
+        };
+        for (String[] specification : dialogs) {
+            Window dialog = Widgets.require(UiLoader.load(specification[0]),
+                    specification[1], Window.class);
+            assertFalse(dialog.getModal(), specification[0] + " must be movable independently");
+            dialog.destroy();
+        }
+
+        Window parent = new Window();
+        Window child = new Window();
+        child.setModal(true);
+        DialogSupport.configureIndependent(child, parent);
+        assertFalse(child.getModal());
+        assertSame(parent, child.getTransientFor());
+        assertTrue(child.getDestroyWithParent());
+
+        org.gnome.gtk.FileDialog fileDialog = new org.gnome.gtk.FileDialog();
+        DialogSupport.configureIndependent(fileDialog);
+        assertFalse(fileDialog.getModal());
+        org.gnome.gtk.AlertDialog alertDialog = new org.gnome.gtk.AlertDialog();
+        DialogSupport.configureIndependent(alertDialog);
+        assertFalse(alertDialog.getModal());
+
+        child.destroy();
+        parent.destroy();
+    }
+
+    @Test
     @DisplayName("import-list.ui parses with 1:1 original ids")
     void importListStructure() {
         GtkBuilder builder = UiLoader.load("/ui/import-list.ui");
@@ -994,29 +1086,22 @@ class WindowSmokeTest {
     @Test
     @DisplayName("MainWindow constructs against its .ui (catches require-type mismatches)")
     void mainWindowConstructs() {
-        org.manager.download.DownloadManager stub =
-                (org.manager.download.DownloadManager) java.lang.reflect.Proxy.newProxyInstance(
-                        org.manager.download.DownloadManager.class.getClassLoader(),
-                        new Class<?>[]{org.manager.download.DownloadManager.class},
-                        (proxy, method, args) -> switch (method.getName()) {
-                            case "getGlobalSettings" -> new org.manager.GlobalSettings();
-                            case "getAllDownloads" -> java.util.List.of();
-                            case "getDownloads" -> java.util.List.of();
-                            case "isClipboardMonitoringEnabled", "isTorrentFolderMonitoringEnabled",
-                                    "isMetaLinkFolderMonitoringEnabled" -> false;
-                            default -> defaultValue(method.getReturnType());
-                        });
+        org.manager.download.DownloadManager stub = emptyManager();
         MainWindow window = new MainWindow(null, stub, new org.tor.TorService("tor"),
                 new org.manager.schedule.ScheduleManager(stub));
         // Constructing is the test: every Widgets.require in the constructor
         // must resolve. (Null app: the window is a standalone toplevel here.)
         assertEquals(org.gnome.gtk.SelectionMode.MULTIPLE, window.downloadSelectionMode());
         assertTrue(window.downloadNameTooltipEnabled());
+        org.gnome.gdk.Texture torToolbarIcon = assertInstanceOf(
+                org.gnome.gdk.Texture.class, window.torToolbarIcon());
+        assertEquals(DownloadEnginePresentation.TOOLBAR_ICON_SIZE, torToolbarIcon.getWidth());
+        assertEquals(DownloadEnginePresentation.TOOLBAR_ICON_SIZE, torToolbarIcon.getHeight());
         assertEquals(PropagationPhase.CAPTURE, window.downloadContextClickPhase(),
                 "right-click handling must run before TreeView child gestures consume it");
         assertEquals(List.of("#", "Status", "Name", "Completed", "Size", "Progress",
                 "Elapsed", "Left", "Down Speed", "Up Speed", "Retry", "Start Date",
-                "End Date", "Type"), MainWindow.downloadColumnLabels());
+                "End Date", "Result"), MainWindow.downloadColumnLabels());
         assertEquals(5, window.mainMenuTopLevelCount());
         for (String key : List.of("notify", "antivirus", "subtitles",
                 "suspend", "shutdown", "custom")) {
@@ -1032,6 +1117,45 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("File Exit asks before running the one-shot shutdown delegate")
+    void fileExitRequiresConfirmation() {
+        org.manager.download.DownloadManager stub = emptyManager();
+        MainWindow window = new MainWindow(null, stub, new org.tor.TorService("tor"),
+                new org.manager.schedule.ScheduleManager(stub));
+        java.util.concurrent.atomic.AtomicInteger exits =
+                new java.util.concurrent.atomic.AtomicInteger();
+        window.setFinalCloseDelegate(exits::incrementAndGet);
+        try {
+            window.requestExitFromMenu();
+            org.gnome.gtk.MessageDialog first = window.exitConfirmationDialog();
+            assertNotNull(first);
+            assertFalse(first.getModal());
+            assertTrue(first.getDestroyWithParent());
+            assertNotNull(first.getTransientFor());
+            assertEquals(0, exits.get());
+
+            window.requestExitFromMenu();
+            assertSame(first, window.exitConfirmationDialog(),
+                    "repeated menu activation must focus one confirmation");
+            first.response(org.gnome.gtk.ResponseType.CANCEL.getValue());
+            assertNull(window.exitConfirmationDialog());
+            assertFalse(window.hasStartedFinalExit());
+            assertEquals(0, exits.get());
+
+            window.requestExitFromMenu();
+            org.gnome.gtk.MessageDialog accepted = window.exitConfirmationDialog();
+            assertNotNull(accepted);
+            accepted.response(org.gnome.gtk.ResponseType.ACCEPT.getValue());
+            assertNull(window.exitConfirmationDialog());
+            assertTrue(window.hasStartedFinalExit());
+            assertEquals(1, exits.get());
+        } finally {
+            window.dispose();
+            drainGtkEvents();
+        }
+    }
+
+    @Test
     @DisplayName("download tooltips describe only the hovered Name or Type cell")
     void downloadTooltipsDescribeHoveredCell() {
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
@@ -1043,17 +1167,29 @@ class WindowSmokeTest {
         TreePath path = TreePath.first();
         TreeViewColumn name = Widgets.require(builder, "name_column", TreeViewColumn.class);
         TreeViewColumn size = Widgets.require(builder, "size_column", TreeViewColumn.class);
-        TreeViewColumn engine = Widgets.require(builder, "tor_icon_column", TreeViewColumn.class);
+        TreeViewColumn result = Widgets.require(builder, "tor_icon_column", TreeViewColumn.class);
 
         assertEquals(fullName,
                 MainWindow.downloadNameTooltip(store, path, name, name));
         assertNull(MainWindow.downloadNameTooltip(store, path, size, name),
                 "other columns must not display the download-name tooltip");
-        assertEquals("aria2", MainWindow.downloadEngineTooltip(
-                org.manager.download.Download.Type.ARIA2, engine, engine));
-        assertNull(MainWindow.downloadEngineTooltip(
-                org.manager.download.Download.Type.ARIA2, name, engine),
-                "other columns must not display the engine tooltip");
+        org.manager.download.Download pending = new org.manager.download.Download(
+                URI.create("https://example.com/pending.bin"));
+        assertNull(MainWindow.downloadResultTooltip(pending, result, result),
+                "records without action results must not expose an engine tooltip");
+        org.manager.download.Download completed = new org.manager.download.Download(
+                URI.create("https://example.com/completed.bin"));
+        completed.setCompletionActionResults(List.of(new
+                org.manager.download.action.CompletionActionResult(
+                        "completed-action",
+                        org.manager.download.action.AfterCompletionAction.ActionType.PLAY_SOUND,
+                        "Notification",
+                        org.manager.download.action.CompletionActionResult.Status.SUCCEEDED,
+                        "Played", org.manager.download.action.AfterCompletionAction.Severity.LOW,
+                        java.time.Instant.now(), java.time.Instant.now())));
+        assertEquals("All after-completion actions succeeded (1/1)",
+                MainWindow.downloadResultTooltip(completed, result, result));
+        assertNull(MainWindow.downloadResultTooltip(completed, name, result));
     }
 
     @Test
@@ -1183,6 +1319,11 @@ class WindowSmokeTest {
         presenter.refresh(List.of(download));
         TreeIter iter = new TreeIter();
         assertTrue(downloadStore.getIterFirst(iter));
+        assertNull(themedIconName(downloadStore, iter, 11),
+                "a running action must not expose an engine icon");
+        assertEquals(CompletionActionPresentation.Outcome.RUNNING.ordinal(),
+                ListStoreCells.getInt(downloadStore, iter, 26),
+                "the Result column sort key must describe action outcome, not engine type");
         assertEquals(100, ListStoreCells.getInt(downloadStore, iter, 12));
         assertEquals("100% · Finalizing…", ListStoreCells.getString(downloadStore, iter, 14));
         presenter.pulseCompletionRows();
@@ -1192,8 +1333,40 @@ class WindowSmokeTest {
                 org.manager.download.action.CompletionActionResult.Status.SUCCEEDED,
                 "No threats detected");
         presenter.refresh(List.of(download));
+        assertEquals("emblem-ok-symbolic", themedIconName(downloadStore, iter, 11));
+        assertEquals(CompletionActionPresentation.Outcome.SUCCEEDED.ordinal(),
+                ListStoreCells.getInt(downloadStore, iter, 26));
         assertEquals(-1, ListStoreCells.getInt(downloadStore, iter, 27));
         assertEquals("100.00%", ListStoreCells.getString(downloadStore, iter, 14));
+
+        var failed = new org.manager.download.action.CompletionActionResult(
+                "failed-action",
+                org.manager.download.action.AfterCompletionAction.ActionType.EXECUTE_COMMAND,
+                "Custom command",
+                org.manager.download.action.CompletionActionResult.Status.FAILED,
+                "Command failed",
+                org.manager.download.action.AfterCompletionAction.Severity.MEDIUM,
+                java.time.Instant.now(), java.time.Instant.now());
+        download.setCompletionActionResults(List.of(
+                download.getCompletionActionResults().getFirst(), failed));
+        presenter.refresh(List.of(download));
+        assertEquals("dialog-warning-symbolic", themedIconName(downloadStore, iter, 11));
+        assertEquals(CompletionActionPresentation.Outcome.PARTIAL.ordinal(),
+                ListStoreCells.getInt(downloadStore, iter, 26));
+
+        var interrupted = new org.manager.download.action.CompletionActionResult(
+                "interrupted-action",
+                org.manager.download.action.AfterCompletionAction.ActionType.DOWNLOAD_SUBTITLES,
+                "Download subtitles",
+                org.manager.download.action.CompletionActionResult.Status.INTERRUPTED,
+                "Application exited",
+                org.manager.download.action.AfterCompletionAction.Severity.LOW,
+                java.time.Instant.now(), java.time.Instant.now());
+        download.setCompletionActionResults(List.of(failed, interrupted));
+        presenter.refresh(List.of(download));
+        assertEquals("dialog-error-symbolic", themedIconName(downloadStore, iter, 11));
+        assertEquals(CompletionActionPresentation.Outcome.FAILED.ordinal(),
+                ListStoreCells.getInt(downloadStore, iter, 26));
 
         var sound = new org.manager.download.action.CompletionActionResult(
                 "running-sound",
@@ -1205,6 +1378,8 @@ class WindowSmokeTest {
                 java.time.Instant.now(), null);
         download.setCompletionActionResults(List.of(sound));
         presenter.refresh(List.of(download));
+        assertNull(themedIconName(downloadStore, iter, 11),
+                "a non-terminal status must clear the previous outcome icon");
         assertEquals(-1, ListStoreCells.getInt(downloadStore, iter, 27));
         assertEquals("100.00%", ListStoreCells.getString(downloadStore, iter, 14),
                 "sound and power actions must not show file-finalization progress");
@@ -1471,6 +1646,35 @@ class WindowSmokeTest {
         assertEquals(1, tree.getSelection().countSelectedRows());
         assertTrue(tree.getSelection().pathIsSelected(TreePath.fromString("0")));
         assertSame(second, presenter.rowAt(0));
+    }
+
+    private static String themedIconName(ListStore store, TreeIter iter, int column) {
+        org.gnome.gobject.Value value = new org.gnome.gobject.Value();
+        store.getValue(iter, column, value);
+        try {
+            if (value.getObject() == null) {
+                return null;
+            }
+            org.gnome.gio.ThemedIcon icon = assertInstanceOf(
+                    org.gnome.gio.ThemedIcon.class, value.getObject());
+            return icon.getNames()[0];
+        } finally {
+            value.unset();
+        }
+    }
+
+    private static org.manager.download.DownloadManager emptyManager() {
+        return (org.manager.download.DownloadManager) java.lang.reflect.Proxy.newProxyInstance(
+                org.manager.download.DownloadManager.class.getClassLoader(),
+                new Class<?>[]{org.manager.download.DownloadManager.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getGlobalSettings" -> new org.manager.GlobalSettings();
+                    case "getAllDownloads", "getDownloads", "getDownloadsByStatus" ->
+                            java.util.List.of();
+                    case "isClipboardMonitoringEnabled", "isTorrentFolderMonitoringEnabled",
+                            "isMetaLinkFolderMonitoringEnabled" -> false;
+                    default -> defaultValue(method.getReturnType());
+                });
     }
 
     private static Object defaultValue(Class<?> type) {

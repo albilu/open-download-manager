@@ -156,7 +156,7 @@ public class NewMediaDialog {
         AccessibilitySupport.label(cookieFileButton, "Browser cookie file");
         AccessibilitySupport.label(folderButton, "Media destination folder");
 
-        dialog.setTransientFor(parent);
+        DialogSupport.configureIndependent(dialog, parent);
 
         StringList placeholder = new StringList(new String[0]);
         placeholder.append("Automatic (fetch info to choose a format)");

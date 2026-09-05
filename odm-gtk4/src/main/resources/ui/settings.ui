@@ -92,7 +92,6 @@
 
   <object class="GtkWindow" id="settings_dialog">
     <property name="title">Open Download Manager - Settings</property>
-    <property name="modal">true</property>
     <property name="default-width">900</property>
     <property name="default-height">680</property>
     <child>

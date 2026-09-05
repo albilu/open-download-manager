@@ -4,7 +4,6 @@
 
   <object class="GtkWindow" id="completion_command_dialog">
     <property name="title">Custom completion command</property>
-    <property name="modal">true</property>
     <property name="default-width">520</property>
     <child>
       <object class="GtkBox" id="completion_command_content">

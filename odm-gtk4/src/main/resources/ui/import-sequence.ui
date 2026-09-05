@@ -48,7 +48,6 @@
 
   <object class="GtkWindow" id="import_sequence_dialog">
     <property name="title">Import URL Sequence</property>
-    <property name="modal">true</property>
     <property name="default-width">720</property>
     <property name="default-height">560</property>
     <child>

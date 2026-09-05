@@ -18,8 +18,7 @@ final class ActionOutputDialog {
         GtkBuilder builder = UiLoader.load("/ui/action-output.ui");
         Window dialog = Widgets.require(builder, "action_output_dialog", Window.class);
         dialog.setTitle("Action Output — " + actionLabel);
-        dialog.setTransientFor(parent);
-        dialog.setDestroyWithParent(true);
+        DialogSupport.configureIndependent(dialog, parent);
 
         Label actionValue = Widgets.require(builder,
                 "action_output_action_label", Label.class);

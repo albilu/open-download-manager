@@ -392,7 +392,7 @@ public class SettingsDialog {
         AccessibilitySupport.label(spin("httrack_delay_between_files_spin"),
                 "Delay between HTTrack files in seconds");
 
-        dialog.setTransientFor(parent);
+        DialogSupport.configureIndependent(dialog, parent);
 
         initDropdown("proxy_type_combo", DialogOptions.PROXY_TYPES);
         initDropdown("file_allocation_combo", FILE_ALLOCATIONS);
@@ -885,6 +885,7 @@ public class SettingsDialog {
             java.util.function.Consumer<String> consumer) {
         Widgets.require(builder, buttonId, Button.class).onClicked(() -> {
             FileDialog fileDialog = new FileDialog();
+            DialogSupport.configureIndependent(fileDialog);
             fileDialog.setTitle(title);
             fileDialog.open(dialog, null, result -> {
                 try {

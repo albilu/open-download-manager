@@ -17,7 +17,6 @@
 
   <object class="GtkWindow" id="new_download_dialog">
     <property name="title">New Download</property>
-    <property name="modal">true</property>
     <property name="default-width">640</property>
     <property name="default-height">520</property>
     <child>

@@ -100,7 +100,7 @@ public class ImportSequenceDialog {
         AccessibilitySupport.label(charEntry, "Sequence start character");
         AccessibilitySupport.label(charVersEntry, "Sequence end character");
 
-        dialog.setTransientFor(parent);
+        DialogSupport.configureIndependent(dialog, parent);
 
         StringList modes = new StringList(new String[0]);
         for (String mode : RANGE_MODES) {

@@ -13,7 +13,6 @@
 
   <object class="GtkWindow" id="new_media_dialog">
     <property name="title">New Media Download</property>
-    <property name="modal">true</property>
     <property name="default-width">760</property>
     <property name="default-height">720</property>
     <child>

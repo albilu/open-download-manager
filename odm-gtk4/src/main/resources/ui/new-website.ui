@@ -17,7 +17,6 @@
 
   <object class="GtkWindow" id="new_website_dialog">
     <property name="title">New Website Scrape</property>
-    <property name="modal">true</property>
     <property name="default-width">760</property>
     <property name="default-height">620</property>
     <child>

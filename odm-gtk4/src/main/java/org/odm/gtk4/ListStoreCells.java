@@ -54,7 +54,9 @@ final class ListStoreCells {
 
     static void setIcon(ListStore store, TreeIter iter, int column, Icon value) {
         Value v = new Value().init(Icon.getType());
-        v.setObject((GObject) value);
+        if (value != null) {
+            v.setObject((GObject) value);
+        }
         store.setValue(iter, column, v);
         v.unset();
     }

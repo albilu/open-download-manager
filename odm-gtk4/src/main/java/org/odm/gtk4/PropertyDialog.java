@@ -55,7 +55,7 @@ public class PropertyDialog {
                 .append(networkOptions.widget());
 
         Download first = this.downloads.getFirst();
-        dialog.setTransientFor(parent);
+        DialogSupport.configureIndependent(dialog, parent);
         dialog.setTitle(this.downloads.size() == 1
                 ? "Properties — " + first.getName()
                 : "Properties — " + this.downloads.size() + " downloads");

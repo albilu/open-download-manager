@@ -107,7 +107,7 @@ public class ImportListDialog {
         AccessibilitySupport.label(Widgets.require(builder, "tor_switch", Switch.class),
                 "Route imported downloads through Tor");
 
-        dialog.setTransientFor(parent);
+        DialogSupport.configureIndependent(dialog, parent);
 
         StringList proxyTypes = new StringList(new String[0]);
         for (String type : DialogOptions.PROXY_TYPES) {
@@ -181,6 +181,7 @@ public class ImportListDialog {
     public static void chooseAndPresent(Window parent, DownloadManager downloadManager,
             Runnable onImportDone, org.tor.TorService torService) {
         FileDialog fileDialog = new FileDialog();
+        DialogSupport.configureIndependent(fileDialog);
         fileDialog.setTitle("Select URL list file");
         fileDialog.open(parent, null, result -> {
             try {
@@ -241,7 +242,7 @@ public class ImportListDialog {
         alert.setMessage("Could not import URL list");
         alert.setDetail(error.getMessage() != null
                 ? error.getMessage() : "The selected file is unreadable or too large.");
-        alert.setModal(true);
+        DialogSupport.configureIndependent(alert);
         alert.show(parent);
     }
 

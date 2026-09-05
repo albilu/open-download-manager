@@ -13,9 +13,11 @@ import org.manager.download.Download;
 final class DownloadEnginePresentation {
 
     static final int ICON_SIZE = 20;
+    static final int TOOLBAR_ICON_SIZE = 24;
     private static final String ICON_RESOURCE_DIRECTORY = "/images/engines/";
     private static final Map<Download.Type, Icon> ICONS =
             new EnumMap<>(Download.Type.class);
+    private static Icon toolbarTorIcon;
 
     private DownloadEnginePresentation() {
     }
@@ -61,17 +63,29 @@ final class DownloadEnginePresentation {
         return ICONS.computeIfAbsent(type, DownloadEnginePresentation::loadIcon);
     }
 
+    /** Bundled onion artwork at its native toolbar size. */
+    static synchronized Icon toolbarTorIcon() {
+        if (toolbarTorIcon == null) {
+            toolbarTorIcon = loadBundledIcon("/images/onion-icon-24.svg", TOOLBAR_ICON_SIZE);
+        }
+        return toolbarTorIcon;
+    }
+
     private static Icon loadIcon(Download.Type type) {
         if (type == Download.Type.ARIA2) {
             return new ThemedIcon(iconName(type));
         }
         String resource = iconResource(type).orElseThrow();
+        return loadBundledIcon(resource, ICON_SIZE);
+    }
+
+    private static Icon loadBundledIcon(String resource, int size) {
         try (var input = DownloadEnginePresentation.class.getResourceAsStream(resource)) {
             if (input == null) {
                 throw new IllegalStateException("Missing engine icon resource: " + resource);
             }
             PixbufLoader loader = PixbufLoader.withType("svg");
-            loader.setSize(ICON_SIZE, ICON_SIZE);
+            loader.setSize(size, size);
             loader.write(input.readAllBytes());
             loader.close();
             if (loader.getPixbuf() == null) {

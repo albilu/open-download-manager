@@ -186,7 +186,7 @@
                     <child>
                       <object class="GtkBox" id="tor_box">
                         <property name="spacing">4</property>
-                        <child><object class="GtkImage" id="tor_icon"><property name="icon-name">network-vpn-symbolic</property><property name="tooltip-text">Tor service</property></object></child>
+                        <child><object class="GtkImage" id="tor_icon"><property name="pixel-size">24</property><property name="tooltip-text">Tor service</property></object></child>
                         <child><object class="GtkSwitch" id="tor_switch"><property name="valign">center</property><property name="tooltip-text">Enable Tor network</property></object></child>
                       </object>
                     </child>
@@ -259,7 +259,7 @@
                                 <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title">Retry</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title">Start date</property><property name="sort-column-id">24</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title">End date</property><property name="sort-column-id">25</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Type</property><property name="sizing">fixed</property><property name="fixed-width">44</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf" id="engine_icon_renderer"/><attributes><attribute name="gicon">11</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Result</property><property name="sizing">fixed</property><property name="fixed-width">44</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf" id="engine_icon_renderer"/><attributes><attribute name="gicon">11</attribute></attributes></child></object></child>
                               </object>
                             </child>
                           </object>

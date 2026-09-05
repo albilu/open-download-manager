@@ -82,7 +82,7 @@ public final class NewWebsiteDialog {
         this.activity = new SpinnerActivity(
                 Widgets.require(builder, "new_website_spinner", Spinner.class));
 
-        dialog.setTransientFor(parent);
+        DialogSupport.configureIndependent(dialog, parent);
 
         HttrackSettings defaults = new DownloadSettingsFactory(
                 downloadManager.getGlobalSettings()).createHttrackSettings();

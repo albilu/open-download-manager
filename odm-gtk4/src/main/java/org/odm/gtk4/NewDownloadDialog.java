@@ -131,7 +131,7 @@ public class NewDownloadDialog {
                 + "Leaving it blank disables aria2 host-key verification.");
         AccessibilitySupport.label(verifyChecksumCheck, "Verify checksum at completion");
 
-        dialog.setTransientFor(parent);
+        DialogSupport.configureIndependent(dialog, parent);
 
         ListStore priorityStore = Widgets.require(builder, "file_priority_store", ListStore.class);
         for (String priority : new String[]{FileTreeSupport.PRIORITY_HIGH,

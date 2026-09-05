@@ -1,5 +1,6 @@
 package org.odm.gtk4;
 
+import org.gnome.graphene.Point;
 import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CssProvider;
@@ -8,6 +9,7 @@ import org.gnome.gtk.Gtk;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.Orientation;
 import org.gnome.gtk.Popover;
+import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.Widget;
 
 /**
@@ -83,13 +85,17 @@ public class PopupMenu {
         return this;
     }
 
-    public PopupMenu popup() {
-        popover.popup();
-        return this;
-    }
-
-    /** Parents and anchors a standalone context popover to a widget position. */
-    public PopupMenu popupAt(Widget anchor, int x, int y) {
+    /**
+     * Anchors the context popover to a widget that supports popover children,
+     * translating the pointer position from the event widget's coordinates.
+     */
+    public PopupMenu popupAt(PopoverMenuBar anchor, Widget coordinateSource,
+            int x, int y) {
+        Point anchorPoint = new Point();
+        if (!coordinateSource.computePoint(anchor, new Point(x, y), anchorPoint)) {
+            throw new IllegalStateException(
+                    "Context menu source and popover anchor must share a GTK root");
+        }
         Widget currentParent = popover.getParent();
         if (currentParent != anchor) {
             if (currentParent != null) {
@@ -97,7 +103,8 @@ public class PopupMenu {
             }
             popover.setParent(anchor);
         }
-        popover.setPointingTo(new org.gnome.gdk.Rectangle(x, y, 1, 1));
+        popover.setPointingTo(new org.gnome.gdk.Rectangle(
+                Math.round(anchorPoint.readX()), Math.round(anchorPoint.readY()), 1, 1));
         popover.popup();
         return this;
     }

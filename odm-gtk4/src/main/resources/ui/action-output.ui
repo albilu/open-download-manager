@@ -4,7 +4,6 @@
 
   <object class="GtkWindow" id="action_output_dialog">
     <property name="title">Action Output</property>
-    <property name="modal">true</property>
     <property name="default-width">760</property>
     <property name="default-height">480</property>
     <child>

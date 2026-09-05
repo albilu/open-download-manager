@@ -193,7 +193,7 @@ class MainWindowSelectionCapabilitiesTest {
     }
 
     @Test
-    void queueMovementIsSingleSelectionAndBoundaryAware() {
+    void queueMovementSupportsMultiSelectionAndRemainsBoundaryAware() {
         Download first = download("first.bin", Download.Status.QUEUED);
         Download middle = download("middle.bin", Download.Status.QUEUED);
         Download last = download("last.bin", Download.Status.QUEUED);
@@ -226,8 +226,54 @@ class MainWindowSelectionCapabilitiesTest {
         Download paused = download("paused.bin", Download.Status.PAUSED);
         assertEquals(MainWindow.QueueMovementCapabilities.NONE,
                 MainWindow.queueMovementCapabilities(List.of(paused), queue));
+
+        MainWindow.QueueMovementCapabilities leadingGroup =
+                MainWindow.queueMovementCapabilities(List.of(first, middle), queue);
+        assertFalse(leadingGroup.up());
+        assertFalse(leadingGroup.top());
+        assertTrue(leadingGroup.down());
+        assertTrue(leadingGroup.bottom());
+
+        MainWindow.QueueMovementCapabilities trailingGroup =
+                MainWindow.queueMovementCapabilities(List.of(middle, last), queue);
+        assertTrue(trailingGroup.up());
+        assertTrue(trailingGroup.top());
+        assertFalse(trailingGroup.down());
+        assertFalse(trailingGroup.bottom());
+
+        MainWindow.QueueMovementCapabilities splitGroup =
+                MainWindow.queueMovementCapabilities(List.of(first, last), queue);
+        assertTrue(splitGroup.up());
+        assertTrue(splitGroup.down());
         assertEquals(MainWindow.QueueMovementCapabilities.NONE,
-                MainWindow.queueMovementCapabilities(List.of(first, middle), queue));
+                MainWindow.queueMovementCapabilities(List.of(first, paused), queue));
+    }
+
+    @Test
+    void multiQueueMovesInvokeSingleRecordOperationsWithoutReversingSelection() {
+        Download first = download("first.bin", Download.Status.QUEUED);
+        Download middle = download("middle.bin", Download.Status.QUEUED);
+        Download last = download("last.bin", Download.Status.QUEUED);
+        first.setQueuePosition(1);
+        middle.setQueuePosition(2);
+        last.setQueuePosition(3);
+        List<Download> queue = List.of(last, first, middle);
+        List<Download> selection = List.of(middle, last);
+
+        assertEquals(List.of(middle, last), MainWindow.queueMoveTargets(
+                selection, queue, MainWindow.QueueMove.UP));
+        assertEquals(List.of(last, middle), MainWindow.queueMoveTargets(
+                selection, queue, MainWindow.QueueMove.TOP));
+        assertEquals(List.of(), MainWindow.queueMoveTargets(
+                selection, queue, MainWindow.QueueMove.DOWN));
+        assertEquals(List.of(), MainWindow.queueMoveTargets(
+                selection, queue, MainWindow.QueueMove.BOTTOM));
+
+        List<Download> leadingSelection = List.of(first, middle);
+        assertEquals(List.of(middle, first), MainWindow.queueMoveTargets(
+                leadingSelection, queue, MainWindow.QueueMove.DOWN));
+        assertEquals(List.of(first, middle), MainWindow.queueMoveTargets(
+                leadingSelection, queue, MainWindow.QueueMove.BOTTOM));
     }
 
     private static Download download(String name, Download.Status status) {

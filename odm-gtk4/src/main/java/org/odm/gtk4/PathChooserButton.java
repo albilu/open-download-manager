@@ -284,6 +284,7 @@ final class PathChooserButton {
 
     private void openDialog() {
         FileDialog fileDialog = new FileDialog();
+        DialogSupport.configureIndependent(fileDialog);
         fileDialog.setTitle(title);
         if (path != null) {
             File initial = File.forPath(path.toString());

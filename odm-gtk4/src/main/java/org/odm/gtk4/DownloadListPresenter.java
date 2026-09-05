@@ -36,7 +36,7 @@ final class DownloadListPresenter {
     static final String[] CATEGORIES = {"All", "Videos", "Audios", "Photos", "Programs", "Others"};
 
     // Visible download_store columns. Number is gint; 1-10 are strings,
-    // 11 is the engine GIcon, progress is gint, and 13-14 are strings.
+    // 11 is the after-completion outcome GIcon, progress is gint, and 13-14 are strings.
     private static final int COL_NUMBER = 0;
     private static final int COL_NAME = 1;
     private static final int COL_COMPLETE = 2;
@@ -48,7 +48,7 @@ final class DownloadListPresenter {
     private static final int COL_RETRY = 8;
     private static final int COL_START = 9;
     private static final int COL_END = 10;
-    private static final int COL_ENGINE_ICON = 11;
+    private static final int COL_RESULT_ICON = 11;
     private static final int COL_PROGRESS = 12; // gint
     private static final int COL_STATUS_ICON = 13;
     private static final int COL_PROGRESS_TEXT = 14;
@@ -65,7 +65,7 @@ final class DownloadListPresenter {
     private static final int COL_UP_SPEED_SORT = 23;
     private static final int COL_START_SORT = 24;
     private static final int COL_END_SORT = 25;
-    private static final int COL_TYPE_SORT = 26;
+    private static final int COL_COMPLETION_ACTION_SORT = 26;
     private static final int COL_PROGRESS_PULSE = 27;
 
     // status_store / category_store columns
@@ -643,8 +643,8 @@ final class DownloadListPresenter {
                 download.getCompletedAt() != null
                         ? DownloadFormats.DATE_FORMAT.format(download.getCompletedAt())
                         : "—");
-        ListStoreCells.setIcon(store, iter, COL_ENGINE_ICON,
-                DownloadEnginePresentation.icon(download.getType()));
+        ListStoreCells.setIcon(store, iter, COL_RESULT_ICON,
+                CompletionActionPresentation.icon(download));
 
         ListStoreCells.setString(store, iter, COL_DOWNLOAD_ID, download.getId());
         ListStoreCells.setInt(store, iter, COL_STATUS_SORT,
@@ -661,8 +661,8 @@ final class DownloadListPresenter {
                 download.getStartedAt() == null ? 0 : download.getStartedAt().toEpochMilli());
         ListStoreCells.setLong(store, iter, COL_END_SORT,
                 download.getCompletedAt() == null ? 0 : download.getCompletedAt().toEpochMilli());
-        ListStoreCells.setInt(store, iter, COL_TYPE_SORT,
-                download.getType() == null ? -1 : download.getType().ordinal());
+        ListStoreCells.setInt(store, iter, COL_COMPLETION_ACTION_SORT,
+                CompletionActionPresentation.summarize(download).outcome().ordinal());
     }
 
     private static long elapsedSeconds(Download download) {
