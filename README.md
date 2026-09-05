@@ -18,8 +18,6 @@ Open Download Manager (ODM) is a native download manager for Linux. It combines 
 
 ## How ODM compares
 
-> Research snapshot 2026-08-19, first-party sources only — official pages, manuals, changelogs and source files. `Yes`/`Partial`/`No`/`Unclear` per the methodology in [`docs/competitor-feature-research.md`](docs/competitor-feature-research.md), which also holds the full source list [U1]…[F2]. That document is the audit trail for the table below.
-
 Generic HTTP/FTP, BitTorrent/magnet and yt-dlp media are table stakes. The rows below focus on the areas where ODM's Linux-native, privacy and recovery stack has no single-competitor equivalent — the report's own takeaway is that *no single reviewed product documents queue + recovery + verification + proxy/Tor + browser/media integration equally well*.
 
 ### Where ODM pulls ahead — beyond generic downloads
@@ -100,10 +98,10 @@ make debug     # launch with a suspended debugger on port 5005
 
 ODM builds on the work of these outstanding open-source projects:
 
-- [aria2](https://github.com/aria2/aria2) ![GitHub stars](https://img.shields.io/github/stars/aria2/aria2?style=social) — multi-protocol download engine (HTTP/FTP, BitTorrent, Metalink) over local JSON-RPC
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) ![GitHub stars](https://img.shields.io/github/stars/yt-dlp/yt-dlp?style=social) — video and media extraction with format discovery
-- [HTTrack](https://github.com/xroche/httrack) ![GitHub stars](https://img.shields.io/github/stars/xroche/httrack?style=social) — website mirroring with depth and filter controls
 - [curl](https://github.com/curl/curl) ![GitHub stars](https://img.shields.io/github/stars/curl/curl?style=social) — process-based HTTP fallback and proxy-capable downloads
+- [aria2](https://github.com/aria2/aria2) ![GitHub stars](https://img.shields.io/github/stars/aria2/aria2?style=social) — multi-protocol download engine (HTTP/FTP, BitTorrent, Metalink) over local JSON-RPC
 - [proxychains-ng](https://github.com/rofl0r/proxychains-ng) ![GitHub stars](https://img.shields.io/github/stars/rofl0r/proxychains-ng?style=social) — SOCKS/HTTP proxy chaining
 - [Tor](https://www.torproject.org/) ![GitHub stars](https://img.shields.io/github/stars/torproject/tor?style=social) — optional privacy routing through the local SOCKS service
+- [HTTrack](https://github.com/xroche/httrack) ![GitHub stars](https://img.shields.io/github/stars/xroche/httrack?style=social) — website mirroring with depth and filter controls
 - [java-gi](https://github.com/jwharm/java-gi) ![GitHub stars](https://img.shields.io/github/stars/jwharm/java-gi?style=social) — native GTK4 desktop interface from Java
