@@ -123,4 +123,21 @@ class AfterCompletionFacadeTest {
             manager.removeAfterCompletionAction(download, action);
         }
     }
+
+    @Test
+    @Timeout(30)
+    @DisplayName("Explicit facade action can run after the automatic pass")
+    void facadeExecutesExplicitActionAfterAutomaticPass() throws Exception {
+        DownloadManagerImpl manager = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
+        Download download = new Download(new URI("http://example.test/manual-action.bin"));
+        CountingAction action = new CountingAction();
+        manager.addAfterCompletionAction(download, action);
+
+        manager.executeAfterCompletionActions(download).get(15, TimeUnit.SECONDS);
+        assertTrue(manager.executeAfterCompletionAction(download, action)
+                .get(15, TimeUnit.SECONDS));
+
+        assertEquals(2, action.executions.get());
+        assertEquals(2, download.getCompletionActionResults().size());
+    }
 }

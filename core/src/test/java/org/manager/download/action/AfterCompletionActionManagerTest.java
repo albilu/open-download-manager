@@ -217,6 +217,43 @@ class AfterCompletionActionManagerTest {
     }
 
     @Test
+    @DisplayName("Explicit actions remain repeatable after the automatic completion pass")
+    void explicitActionsBypassTheAutomaticOneShotGate() throws Exception {
+        AtomicInteger executions = new AtomicInteger();
+        TestAfterCompletionAction action = new TestAfterCompletionAction(
+                AfterCompletionAction.ActionType.DOWNLOAD_SUBTITLES, true) {
+            @Override
+            public boolean execute(Download download) {
+                executions.incrementAndGet();
+                return super.execute(download);
+            }
+        };
+
+        actionManager.executeActions(testDownload).get(5, TimeUnit.SECONDS);
+        assertTrue(actionManager.executeAction(testDownload, action)
+                .get(5, TimeUnit.SECONDS));
+        assertTrue(actionManager.executeAction(testDownload, action)
+                .get(5, TimeUnit.SECONDS));
+
+        assertEquals(2, executions.get());
+        assertEquals(2, testDownload.getCompletionActionResults().size());
+        assertEquals(2, testListener.getAllActionsCompleteCount());
+    }
+
+    @Test
+    @DisplayName("Explicit action result reports an action-level failure")
+    void explicitActionReportsFailure() throws Exception {
+        TestAfterCompletionAction action = new TestAfterCompletionAction(
+                AfterCompletionAction.ActionType.DOWNLOAD_SUBTITLES, false);
+
+        assertFalse(actionManager.executeAction(testDownload, action)
+                .get(5, TimeUnit.SECONDS));
+        assertEquals(CompletionActionResult.Status.FAILED,
+                testDownload.getCompletionActionResults().getFirst().status());
+        assertEquals(1, testListener.getAllActionsCompleteCount());
+    }
+
+    @Test
     @DisplayName("Actions execute sequentially in ActionType priority order")
     void actionsExecuteInPriorityOrder() throws Exception {
         List<AfterCompletionAction.ActionType> executionOrder =

@@ -20,7 +20,7 @@ class MainWindowSelectionCapabilitiesTest {
     Path tempDir;
 
     @Test
-    void singleOnlyActionsAreDisabledForMultipleDownloads() {
+    void multiSelectionEnablesBatchActionsSupportedByEveryDownload() {
         Download first = download("first.bin", Download.Status.COMPLETED);
         Download second = download("second.bin", Download.Status.COMPLETED);
         MainWindow.DownloadSelectionCapabilities capabilities =
@@ -32,6 +32,7 @@ class MainWindowSelectionCapabilitiesTest {
         assertFalse(capabilities.openFolder());
         assertFalse(capabilities.copyMagnet());
         assertFalse(capabilities.changeDestination());
+        assertTrue(capabilities.downloadSubtitles());
         assertTrue(capabilities.delete());
         assertTrue(capabilities.deleteWithFiles());
         assertTrue(capabilities.properties());
@@ -67,11 +68,13 @@ class MainWindowSelectionCapabilitiesTest {
         assertTrue(completedCapabilities.openFolder());
         assertTrue(completedCapabilities.copyMagnet());
         assertTrue(completedCapabilities.changeDestination());
+        assertTrue(completedCapabilities.downloadSubtitles());
 
         Download queued = download("queued.bin", Download.Status.QUEUED);
         MainWindow.DownloadSelectionCapabilities queuedCapabilities =
                 MainWindow.selectionCapabilities(List.of(queued));
         assertFalse(queuedCapabilities.openFile());
+        assertFalse(queuedCapabilities.downloadSubtitles());
         assertTrue(queuedCapabilities.changeDestination());
 
         Download active = download("active.bin", Download.Status.DOWNLOADING);
@@ -162,9 +165,27 @@ class MainWindowSelectionCapabilitiesTest {
         MainWindow.DownloadSelectionCapabilities capabilities =
                 MainWindow.selectionCapabilities(List.of(website));
 
+        assertFalse(capabilities.downloadSubtitles(),
+                "subtitle downloads do not apply to HTTrack website mirrors");
         assertTrue(capabilities.updateMirror());
         assertTrue(capabilities.openHttrackLog());
         assertFalse(capabilities.openHttrackErrorLog());
+    }
+
+    @Test
+    void batchSubtitleDownloadRequiresEverySelectedRecordToBeEligible() {
+        Download completed = download("video.mkv", Download.Status.COMPLETED);
+        Download queued = download("queued.mkv", Download.Status.QUEUED);
+        Download website = download("example.test", Download.Status.COMPLETED);
+        website.setType(Download.Type.WEBSITE_SCRAPING);
+
+        assertTrue(MainWindow.selectionCapabilities(
+                List.of(completed, download("second.mkv", Download.Status.COMPLETED)))
+                .downloadSubtitles());
+        assertFalse(MainWindow.selectionCapabilities(List.of(completed, queued))
+                .downloadSubtitles());
+        assertFalse(MainWindow.selectionCapabilities(List.of(completed, website))
+                .downloadSubtitles());
     }
 
     @Test

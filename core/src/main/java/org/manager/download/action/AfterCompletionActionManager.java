@@ -6,6 +6,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -164,6 +165,40 @@ public class AfterCompletionActionManager {
         }
         actions.removeIf(AfterCompletionAction::isGlobal);
         return executeOrdered(download, actions);
+    }
+
+    /**
+     * Executes one explicitly requested per-download action. Unlike
+     * {@link #executeActions(Download)}, this path is repeatable because a
+     * user may request an action again after the automatic completion pass
+     * has already run.
+     *
+     * @param download completed download that owns the action result
+     * @param action action requested by the user
+     * @return future resolving to {@code true} when the action succeeds
+     */
+    public CompletableFuture<Boolean> executeAction(
+            Download download, AfterCompletionAction action) {
+        java.util.Objects.requireNonNull(download, "download");
+        java.util.Objects.requireNonNull(action, "action");
+        if (action.isGlobal()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException(
+                    "Global completion actions cannot be run for one download"));
+        }
+
+        List<AfterCompletionAction> successfulActions = new ArrayList<>();
+        List<AfterCompletionAction> failedActions = new ArrayList<>();
+        return executeOne(download, action, successfulActions, failedActions)
+                .handle((ignored, error) -> {
+                    notifyAllActionsComplete(download, successfulActions, failedActions);
+                    if (error instanceof CompletionException completionException) {
+                        throw completionException;
+                    }
+                    if (error != null) {
+                        throw new CompletionException(error);
+                    }
+                    return successfulActions.contains(action);
+                });
     }
 
     /**

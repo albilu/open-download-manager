@@ -68,9 +68,9 @@ public class MainWindow {
     record DownloadSelectionCapabilities(boolean any, boolean single,
             boolean openFile, boolean openFolder, boolean pause, boolean resume,
             boolean start, boolean copyMagnet, boolean changeDestination,
-            boolean recheckData, boolean updateMirror, boolean openHttrackLog,
-            boolean openHttrackErrorLog, boolean delete, boolean deleteWithFiles,
-            boolean properties) {
+            boolean recheckData, boolean downloadSubtitles, boolean updateMirror,
+            boolean openHttrackLog, boolean openHttrackErrorLog, boolean delete,
+            boolean deleteWithFiles, boolean properties) {
     }
 
     enum DownloadActivation {
@@ -1202,6 +1202,8 @@ public class MainWindow {
                 .add("Copy Magnet URI", capabilities.copyMagnet(), this::copyMagnetUri)
                 .add("Change Destination…", capabilities.changeDestination(), this::changeDestination)
                 .add("Recheck Data", capabilities.recheckData(), this::recheckData)
+                .add("Download Subtitles", capabilities.downloadSubtitles(),
+                        this::downloadSubtitles)
                 .add("Update Website Mirror…", capabilities.updateMirror(),
                         this::updateWebsiteMirror)
                 .add("Open HTTrack Log", capabilities.openHttrackLog(), () ->
@@ -1299,6 +1301,7 @@ public class MainWindow {
                 single && magnetUri(only) != null,
                 single && canChangeDestination(only),
                 allSelectedMatch(downloads, MainWindow::canRecheckData),
+                allSelectedMatch(downloads, MainWindow::canDownloadSubtitles),
                 single && org.manager.download.HttrackMirrorSupport.canUpdate(only),
                 single && org.manager.download.HttrackMirrorSupport.hasDiagnostic(only,
                         org.manager.download.HttrackMirrorSupport.DiagnosticLog.ACTIVITY),
@@ -1337,6 +1340,12 @@ public class MainWindow {
         return org.manager.download.handler.Aria2DownloadHandler.canRecheckData(download);
     }
 
+    static boolean canDownloadSubtitles(Download download) {
+        return download != null
+                && download.getStatus() == Download.Status.COMPLETED
+                && download.getType() != Download.Type.WEBSITE_SCRAPING;
+    }
+
     private static String magnetUri(Download download) {
         if (download == null) {
             return null;
@@ -1366,6 +1375,57 @@ public class MainWindow {
             })));
         }
         trackActivity(allOf(updates));
+    }
+
+    /** Runs subtitle discovery again for the selected completed, non-HTTrack records. */
+    private void downloadSubtitles() {
+        onDownloadSelectionChanged();
+        List<Download> targets = List.copyOf(selectedDownloads);
+        if (!allSelectedMatch(targets, MainWindow::canDownloadSubtitles)) {
+            return;
+        }
+
+        List<CompletableFuture<Boolean>> actions = targets.stream()
+                .map(target -> downloadManager.executeAfterCompletionAction(target,
+                        CompletionActionPolicy.buildSubtitleAction(
+                                downloadManager.getGlobalSettings())))
+                .toList();
+        AccessibilitySupport.status(infoLabel,
+                targets.size() == 1
+                        ? "Downloading subtitles for “" + targets.getFirst().getName() + "”…"
+                        : "Downloading subtitles for " + targets.size() + " downloads…");
+        trackActivity(allOf(actions))
+                .whenComplete((ignored, error) -> UiThread.marshal(() -> {
+                    if (error != null) {
+                        AccessibilitySupport.status(infoLabel,
+                                "Could not run all subtitle downloads: " + failureMessage(error),
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                    } else {
+                        long succeeded = actions.stream()
+                                .filter(action -> Boolean.TRUE.equals(action.join()))
+                                .count();
+                        long failed = targets.size() - succeeded;
+                        if (failed > 0) {
+                            AccessibilitySupport.status(infoLabel,
+                                    targets.size() == 1
+                                            ? "Subtitle download failed for “"
+                                                    + targets.getFirst().getName()
+                                                    + "” — see Actions output"
+                                            : "Subtitle download failed for " + failed + " of "
+                                                    + targets.size()
+                                                    + " downloads — see Actions output",
+                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                        } else {
+                            AccessibilitySupport.status(infoLabel,
+                                    targets.size() == 1
+                                            ? "Subtitle action completed for “"
+                                                    + targets.getFirst().getName() + "”"
+                                            : "Subtitle actions completed for "
+                                                    + targets.size() + " downloads");
+                        }
+                    }
+                    refresh();
+                }));
     }
 
     /** Updates one completed mirror, preserving local-only files by default. */
@@ -1495,6 +1555,7 @@ public class MainWindow {
         org.gnome.gio.Menu download = new org.gnome.gio.Menu();
         download.append("Open", "win.open-file");
         download.append("Open Folder", "win.open-folder");
+        download.append("Download Subtitles", "win.download-subtitles");
         download.append("Update Website Mirror…", "win.update-website-mirror");
         download.append("Open HTTrack Log", "win.open-httrack-log");
         download.append("Open HTTrack Error Log", "win.open-httrack-error-log");
@@ -1577,6 +1638,7 @@ public class MainWindow {
         // Download
         addAction("open-file", () -> openSelected("file"));
         addAction("open-folder", () -> openSelected("folder"));
+        addAction("download-subtitles", this::downloadSubtitles);
         addAction("update-website-mirror", this::updateWebsiteMirror);
         addAction("open-httrack-log", () -> openHttrackDiagnostic(
                 org.manager.download.HttrackMirrorSupport.DiagnosticLog.ACTIVITY));
@@ -1645,6 +1707,7 @@ public class MainWindow {
         DownloadSelectionCapabilities capabilities = selectionCapabilities(selectedDownloads);
         setMenuActionEnabled("open-file", capabilities.openFile());
         setMenuActionEnabled("open-folder", capabilities.openFolder());
+        setMenuActionEnabled("download-subtitles", capabilities.downloadSubtitles());
         setMenuActionEnabled("update-website-mirror", capabilities.updateMirror());
         setMenuActionEnabled("open-httrack-log", capabilities.openHttrackLog());
         setMenuActionEnabled("open-httrack-error-log", capabilities.openHttrackErrorLog());
@@ -2537,6 +2600,46 @@ public class MainWindow {
     int mainMenuTopLevelCount() {
         org.gnome.gio.MenuModel model = menuBar.getMenuModel();
         return model == null ? 0 : model.getNItems();
+    }
+
+    boolean mainMenuSubmenuContainsAction(String submenuLabel, String detailedAction) {
+        org.gnome.gio.MenuModel model = menuBar.getMenuModel();
+        if (model == null) {
+            return false;
+        }
+        org.gnome.glib.VariantType stringType = new org.gnome.glib.VariantType("s");
+        for (int index = 0; index < model.getNItems(); index++) {
+            org.gnome.glib.Variant label = model.getItemAttributeValue(
+                    index, "label", stringType);
+            if (label != null && submenuLabel.equals(
+                    label.dupString(new org.javagi.base.Out<>()))) {
+                return menuContainsAction(model.getItemLink(index, "submenu"),
+                        detailedAction, stringType);
+            }
+        }
+        return false;
+    }
+
+    private static boolean menuContainsAction(org.gnome.gio.MenuModel model,
+            String detailedAction, org.gnome.glib.VariantType stringType) {
+        if (model == null) {
+            return false;
+        }
+        for (int index = 0; index < model.getNItems(); index++) {
+            org.gnome.glib.Variant action = model.getItemAttributeValue(
+                    index, "action", stringType);
+            if (action != null && detailedAction.equals(
+                    action.dupString(new org.javagi.base.Out<>()))) {
+                return true;
+            }
+            for (String linkName : List.of("section", "submenu")) {
+                if (menuContainsAction(model.getItemLink(index, linkName),
+                        detailedAction, stringType)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void selectRow(TreeSelection selection, SelectionConsumer consumer) {

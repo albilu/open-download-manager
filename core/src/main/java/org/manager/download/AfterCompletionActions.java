@@ -71,4 +71,15 @@ public interface AfterCompletionActions {
      * @return A future that completes when all actions are done
      */
     CompletableFuture<Void> executeAfterCompletionActions(Download download);
+
+    /**
+     * Executes one explicitly requested per-download action even when the
+     * automatic completion pass for that download has already run.
+     *
+     * @param download completed download that owns the action result
+     * @param action action requested by the user
+     * @return future resolving to {@code true} when the action succeeds
+     */
+    CompletableFuture<Boolean> executeAfterCompletionAction(
+            Download download, AfterCompletionAction action);
 }

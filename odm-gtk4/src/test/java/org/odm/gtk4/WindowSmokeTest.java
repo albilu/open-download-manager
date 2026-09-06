@@ -1153,6 +1153,8 @@ class WindowSmokeTest {
                 "Elapsed", "Left", "Down Speed", "Up Speed", "Retry", "Start Date",
                 "End Date", "Result"), MainWindow.downloadColumnLabels());
         assertEquals(5, window.mainMenuTopLevelCount());
+        assertTrue(window.mainMenuSubmenuContainsAction(
+                "_Download", "win.download-subtitles"));
         for (String key : List.of("notify", "antivirus", "subtitles",
                 "suspend", "shutdown", "custom")) {
             assertNull(window.menuActionParameterType("completion-" + key));
@@ -1163,6 +1165,7 @@ class WindowSmokeTest {
         assertTrue(window.menuActionEnabled("select-all"));
         assertFalse(window.menuActionEnabled("open-file"));
         assertFalse(window.menuActionEnabled("open-folder"));
+        assertFalse(window.menuActionEnabled("download-subtitles"));
         window.dispose();
     }
 

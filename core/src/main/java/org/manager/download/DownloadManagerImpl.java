@@ -2296,6 +2296,12 @@ public class DownloadManagerImpl implements DownloadManager {
         return getActionManager().executeActions(download);
     }
 
+    @Override
+    public CompletableFuture<Boolean> executeAfterCompletionAction(
+            Download download, AfterCompletionAction action) {
+        return getActionManager().executeAction(download, action);
+    }
+
     /**
      * Starts global power actions only after every item is terminal, no
      * handler still owns a running slot, and all per-download actions have
