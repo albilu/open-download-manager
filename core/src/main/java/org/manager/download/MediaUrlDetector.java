@@ -96,7 +96,10 @@ public final class MediaUrlDetector {
         if (!isWebUri(uri)) {
             return false;
         }
-        String host = uri.getHost().toLowerCase(Locale.ROOT);
+        String rawHost = uri.getHost().toLowerCase(Locale.ROOT);
+        String host = rawHost.endsWith(".")
+                ? rawHost.substring(0, rawHost.length() - 1)
+                : rawHost;
         return MEDIA_DOMAINS.stream()
                 .anyMatch(domain -> host.equals(domain) || host.endsWith("." + domain));
     }
