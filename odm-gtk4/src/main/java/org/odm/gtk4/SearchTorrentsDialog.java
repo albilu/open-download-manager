@@ -141,7 +141,6 @@ public final class SearchTorrentsDialog {
         button("search").onClicked(this::search);
         entry().onActivate(this::search);
         button("download").onClicked(this::download);
-        Widgets.require(builder, "torrent_files_reload", Button.class).onClicked(this::loadFiles);
         button("close").onClicked(dialog::close);
         dialog.onCloseRequest(() -> { dispose(); return false; });
         dialog.onDestroy(this::dispose);
@@ -396,8 +395,6 @@ public final class SearchTorrentsDialog {
         button("search").setSensitive(!searching && !submitting);
         button("download").setLabel(count == 0 ? "Download" : "Download (" + count + ")");
         button("download").setSensitive(count > 0 && !submitting && checked.stream().noneMatch(item -> item.loading));
-        Widgets.require(builder, "torrent_files_reload", Button.class).setSensitive(!checked.isEmpty()
-                && checked.stream().anyMatch(item -> !item.loading && item.files.isEmpty()) && !submitting);
         resultsView.setSensitive(!submitting);
         filesView.setSensitive(!submitting);
     }

@@ -334,10 +334,10 @@ class WindowSmokeTest {
         assertSame(errorContent, errorValue.getParent(),
                 "the nested label must not receive the theme's direct-link underline");
         assertSame(errorButton, errorContent.getParent());
-        assertTrue(errorButton.hasCssClass("link"),
-                "the error details action must use GTK's HTML-link presentation");
-        assertTrue(errorValue.hasCssClass("error"),
-                "the error details text must use the theme's semantic error color");
+        assertFalse(errorButton.getHasFrame(),
+                "error details must not display a button border");
+        assertFalse(errorValue.hasCssClass("error"),
+                "the error summary must use normal theme text");
         assertEquals(2, gridRow(Widgets.require(builder, "general_info_grid", Grid.class), errorButton));
         assertEquals(1, gridRow(Widgets.require(builder, "general_info_grid", Grid.class),
                 Widgets.require(builder, "info_hash_v1_value", Label.class)));
