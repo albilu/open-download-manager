@@ -246,6 +246,9 @@ public class ImportSequenceDialog {
         }
         for (int i = start; i <= end && urls.size() < count; i++) {
             urls.add(pattern.replace("{}", String.valueOf(i)));
+            if (i == end) {
+                break;
+            }
         }
         return urls;
     }

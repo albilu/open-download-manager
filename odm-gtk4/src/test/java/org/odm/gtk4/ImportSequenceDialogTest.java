@@ -39,7 +39,34 @@ class ImportSequenceDialogTest {
                 1, 10_000, "", "", 10_000, 37).size());
         assertEquals(ImportLimits.DEFAULT_MAX_URLS,
                 ImportSequenceDialog.generateSequence("item-{}", false,
-                        1, 10_000, "", "", 10_000).size());
+                1, 10_000, "", "", 10_000).size());
+    }
+
+    @Test
+    void numericRangesStopAtTheirEndWithoutIntegerWraparound() {
+        assertEquals(List.of("2147483646", "2147483647"),
+                ImportSequenceDialog.generateSequence("{}", false,
+                        Integer.MAX_VALUE - 1, Integer.MAX_VALUE, "", "", 10));
+        assertEquals(List.of("-2147483648", "-2147483647"),
+                ImportSequenceDialog.generateSequence("{}", false,
+                        Integer.MIN_VALUE, Integer.MIN_VALUE + 1, "", "", 10));
+        assertEquals(List.of("1", "2", "3"),
+                ImportSequenceDialog.generateSequence("{}", false, 3, 1, "", "", 10));
+    }
+
+    @Test
+    void everyPlaceholderIsReplacedAndBothCountLimitsApply() {
+        assertEquals(List.of("https://example.com/1/file-1.zip", "https://example.com/2/file-2.zip"),
+                ImportSequenceDialog.generateSequence("https://example.com/{}/file-{}.zip", false,
+                        1, 10, "", "", 2, 3));
+        assertEquals(List.of("c", "b"), ImportSequenceDialog.generateSequence("{}", true,
+                1, 10, "c", "a", 10, 2));
+        for (String invalid : List.of("", "ab")) {
+            assertEquals(List.of(), ImportSequenceDialog.generateSequence("{}", true,
+                    1, 10, invalid, "c", 10));
+            assertEquals(List.of(), ImportSequenceDialog.generateSequence("{}", true,
+                    1, 10, "a", invalid, 10));
+        }
     }
 
     @Test

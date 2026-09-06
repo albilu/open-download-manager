@@ -2,6 +2,7 @@ package org.odm.gtk4;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -10,6 +11,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,18 +25,12 @@ import org.manager.url.DownloadUrlPolicy;
 /**
  * HTML import / export list logic: href extraction from arbitrary
  * documents, queueing the extracted links, and building/writing the
- * plain-text export. File I/O and regex over large documents are meant to
+ * plain-text export. File I/O and parsing large documents are meant to
  * run off the GTK main loop — the dialog only orchestrates.
  */
 final class HtmlImportExport {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(HtmlImportExport.class);
-    private static final java.util.regex.Pattern HREF_PATTERN = java.util.regex.Pattern.compile(
-            "<a\\b[^>]*?\\s+href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
-            java.util.regex.Pattern.CASE_INSENSITIVE);
-    private static final java.util.regex.Pattern BASE_PATTERN = java.util.regex.Pattern.compile(
-            "<base\\b[^>]*?\\s+href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
-            java.util.regex.Pattern.CASE_INSENSITIVE);
 
     private HtmlImportExport() {
     }
@@ -40,7 +38,8 @@ final class HtmlImportExport {
     /**
      * Extracts http(s) links from an HTML document's anchor href attributes.
      * Quoted and unquoted values are supported; relative values are resolved
-     * against a valid http(s) base element. Invalid values are skipped.
+     * against a valid http(s) base element. Comments, raw text, inert template
+     * contents, empty hrefs and same-document fragments are not candidates.
      */
     static List<URI> extractHttpLinks(String html) {
         return extractHttpLinks(html, null, ImportLimits.defaults());
@@ -54,85 +53,64 @@ final class HtmlImportExport {
             ImportLimits limits) {
         ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         LinkedHashSet<URI> urls = new LinkedHashSet<>();
-        URI base = extractBaseUri(html, documentUri);
-        java.util.regex.Matcher m = HREF_PATTERN.matcher(html);
-        while (m.find() && urls.size() < effective.maxUrls()) {
+        if (html == null || html.isBlank()) {
+            return new ArrayList<>();
+        }
+        Document document = Jsoup.parse(html);
+        document.select("template").remove();
+        URI base = extractBaseUri(document, documentUri);
+        for (Element anchor : document.select("a[href]")) {
+            String raw = anchor.attr("href").strip();
+            if (raw.isEmpty() || raw.startsWith("#")) {
+                continue;
+            }
             try {
-                String raw = decodeHtmlEntities(firstGroup(m));
-                URI candidate;
-                if (raw.startsWith("//")) {
-                    candidate = base != null ? base.resolve(raw) : URI.create("https:" + raw);
-                } else {
-                    candidate = new URI(raw);
-                    if (!candidate.isAbsolute()) {
-                        if (base == null) {
-                            continue;
-                        }
-                        candidate = base.resolve(candidate);
-                    }
-                }
+                URI candidate = resolveReference(raw, base);
                 urls.add(DownloadUrlPolicy.require(candidate).requireWeb().uri());
-            } catch (Exception ignored) {
-                // non-absolute/invalid href: skip
+                if (urls.size() == effective.maxUrls()) {
+                    break;
+                }
+            } catch (IllegalArgumentException | URISyntaxException ignored) {
+                // An HTML href is a reference; only valid web sources are admitted.
             }
         }
         return new ArrayList<>(urls);
     }
 
-    private static URI extractBaseUri(String html, URI documentUri) {
-        java.util.regex.Matcher matcher = BASE_PATTERN.matcher(html);
-        if (!matcher.find()) {
-            return isHttp(documentUri) ? documentUri : null;
-        }
+    private static URI extractBaseUri(Document document, URI documentUri) {
+        URI fallback = null;
         try {
-            URI base = new URI(decodeHtmlEntities(firstGroup(matcher)));
-            if (!base.isAbsolute() && isHttp(documentUri)) {
-                base = documentUri.resolve(base);
-            }
-            return isHttp(base)
-                    ? DownloadUrlPolicy.require(base).uri()
-                    : isHttp(documentUri) ? documentUri : null;
-        } catch (Exception ignored) {
-            return isHttp(documentUri) ? documentUri : null;
+            fallback = DownloadUrlPolicy.require(documentUri).requireWeb().uri();
+        } catch (IllegalArgumentException ignored) {
+            // Local imports have no web document URL.
+        }
+        Element base = document.selectFirst("base[href]");
+        if (base == null) {
+            return fallback;
+        }
+        // Only the first real base href counts, including when it is invalid.
+        try {
+            return DownloadUrlPolicy.require(resolveReference(base.attr("href").strip(), fallback))
+                    .requireWeb().uri();
+        } catch (IllegalArgumentException | URISyntaxException ignored) {
+            return fallback;
         }
     }
 
-    private static boolean isHttp(URI uri) {
-        return uri != null && ("http".equalsIgnoreCase(uri.getScheme())
-                || "https".equalsIgnoreCase(uri.getScheme()));
-    }
-
-    private static String firstGroup(java.util.regex.Matcher matcher) {
-        for (int i = 1; i <= 3; i++) {
-            if (matcher.group(i) != null) {
-                return matcher.group(i);
-            }
+    private static URI resolveReference(String raw, URI base) throws URISyntaxException {
+        URI reference = new URI(raw);
+        if (reference.isAbsolute()) {
+            return reference;
         }
-        return "";
-    }
-
-    private static String decodeHtmlEntities(String value) {
-        String decoded = value.replace("&amp;", "&")
-                .replace("&quot;", "\"")
-                .replace("&#39;", "'")
-                .replace("&apos;", "'");
-        java.util.regex.Matcher numeric = java.util.regex.Pattern
-                .compile("&#(x[0-9a-fA-F]+|[0-9]+);").matcher(decoded);
-        StringBuffer result = new StringBuffer();
-        while (numeric.find()) {
-            try {
-                String token = numeric.group(1);
-                int codePoint = token.startsWith("x") || token.startsWith("X")
-                        ? Integer.parseInt(token.substring(1), 16)
-                        : Integer.parseInt(token);
-                numeric.appendReplacement(result, java.util.regex.Matcher.quoteReplacement(
-                        Character.toString(codePoint)));
-            } catch (IllegalArgumentException invalidEntity) {
-                numeric.appendReplacement(result, java.util.regex.Matcher.quoteReplacement(numeric.group()));
-            }
+        if (base == null) {
+            return raw.startsWith("//") ? new URI("https:" + raw) : null;
         }
-        numeric.appendTail(result);
-        return result.toString();
+        // URI.resolve treats a query-only reference as a sibling directory.
+        // HTML query links retain the document path and replace its query.
+        if (raw.startsWith("?")) {
+            return new URI(base.toString().split("[?#]", 2)[0] + raw);
+        }
+        return raw.isEmpty() ? base : base.resolve(reference);
     }
 
     /**

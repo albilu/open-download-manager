@@ -85,7 +85,9 @@ class UrlAdmissionPathsTest {
                     // protocol-relative href for bare web candidates.
                     String href = web && !input.contains("://") ? "//" + input : input;
                     Path html = directory.resolve("urls.html");
-                    Files.writeString(html, "<a href=\"" + href.replace("&", "&amp;") + "\">file</a>");
+                    Files.writeString(html, "<!-- <a href='https://wrong.example/comment'>ignored</a> -->"
+                            + "<a title=\"href='https://wrong.example/attribute'\">ignored</a>"
+                            + "<a href=\"" + href.replace("&", "&amp;") + "\">file</a>");
                     assertEquals(web ? 1 : 0, HtmlImportExport.importHtmlFile(html, manager), input);
                     if (expected != null) {
                         Download draft = DownloadSubmission.draft(manager, expected, directory, null);
