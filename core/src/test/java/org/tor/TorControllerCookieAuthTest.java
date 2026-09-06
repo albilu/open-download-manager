@@ -8,6 +8,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -113,6 +114,28 @@ class TorControllerCookieAuthTest {
             assertEquals("AUTHENTICATE " + hex(cookie), receivedLines.get(0));
         } finally {
             controller.shutdown();
+        }
+    }
+
+    @Test
+    void managedServiceCreatesControllerWithItsAuthenticationCookie() throws Exception {
+        Path dataDir = tempDir.resolve("managed-tor-data");
+        Files.createDirectories(dataDir);
+        byte[] cookie = sampleCookie();
+        Files.write(dataDir.resolve("control_auth_cookie"), cookie);
+
+        acceptOneConnection(hex(cookie));
+        TorService service = new TorService("tor", Map.of(
+                "ControlPort", String.valueOf(port()),
+                "DataDirectory", dataDir.toString()), tempDir.resolve("torrc"));
+        TorController controller = service.createController(5000);
+        try {
+            assertTrue(controller.connect().get(10, TimeUnit.SECONDS),
+                    "the managed service controller must use its own cookie directory");
+            assertEquals("AUTHENTICATE " + hex(cookie), receivedLines.get(0));
+        } finally {
+            controller.shutdown();
+            service.shutdown();
         }
     }
 

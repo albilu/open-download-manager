@@ -34,6 +34,8 @@ public class DownloadSettingsFactory {
     public static final int DEFAULT_HTTRACK_MAX_LINKS = 100_000;
     public static final double DEFAULT_HTTRACK_CONNECTIONS_PER_SECOND = 5.0;
     public static final int DEFAULT_HTTRACK_DELAY_BETWEEN_FILES_SECONDS = 0;
+    /** Runtime endpoint selected by the ODM-managed Tor service. */
+    public static final String MANAGED_TOR_SOCKS_PORT = "tor.managedSocksPort";
 
     private static final String NETWORK_MAX_CONNECTIONS = "network.maxConnections";
     private static final String NETWORK_MAX_RETRIES = "network.maxRetries";
@@ -463,7 +465,12 @@ public class DownloadSettingsFactory {
 
         // Configure for Tor
         settings.setUseProxy(true);
-        settings.setProxyAddress("socks5h://127.0.0.1:9050");
+        int socksPort = getGlobalSettings().getIntProperty(
+                MANAGED_TOR_SOCKS_PORT, 9050);
+        if (socksPort < 1 || socksPort > 65_535) {
+            socksPort = 9050;
+        }
+        settings.setProxyAddress("socks5h://127.0.0.1:" + socksPort);
         settings.setOption("http-accept-gzip", "true");
         settings.setTimeout(60);
 

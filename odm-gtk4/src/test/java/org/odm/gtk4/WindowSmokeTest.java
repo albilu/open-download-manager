@@ -326,10 +326,17 @@ class WindowSmokeTest {
         LinkButton folderButton = Widgets.require(builder,
                 "folder_open_button", LinkButton.class);
         Button errorButton = Widgets.require(builder, "info_error_button", Button.class);
+        Box errorContent = Widgets.require(builder, "info_error_content", Box.class);
         Label errorValue = Widgets.require(builder, "info_error_value", Label.class);
         assertFalse(errorButton.getSensitive());
         assertEquals(org.gnome.pango.EllipsizeMode.END, errorValue.getEllipsize());
-        assertSame(errorButton, errorValue.getParent());
+        assertSame(errorContent, errorValue.getParent(),
+                "the nested label must not receive the theme's direct-link underline");
+        assertSame(errorButton, errorContent.getParent());
+        assertTrue(errorButton.hasCssClass("link"),
+                "the error details action must use GTK's HTML-link presentation");
+        assertTrue(errorValue.hasCssClass("error"),
+                "the error details text must use the theme's semantic error color");
         assertEquals(2, gridRow(Widgets.require(builder, "general_info_grid", Grid.class), errorButton));
         assertEquals(1, gridRow(Widgets.require(builder, "general_info_grid", Grid.class),
                 Widgets.require(builder, "info_hash_v1_value", Label.class)));
@@ -373,6 +380,10 @@ class WindowSmokeTest {
                 "dht_status_label"}) {
             Widgets.require(builder, id, Label.class);
         }
+        Label infoLabel = Widgets.require(builder, "info_label", Label.class);
+        assertEquals(org.gnome.pango.EllipsizeMode.END, infoLabel.getEllipsize());
+        assertTrue(infoLabel.getSingleLineMode());
+        assertEquals(72, infoLabel.getMaxWidthChars());
         Widgets.require(builder, "activity_spinner", Spinner.class);
         assertFalse(Widgets.require(builder, "statusbar_box", Box.class).getVexpand());
         Box rightStatus = Widgets.require(builder, "statusbar_right_box", Box.class);
@@ -1226,6 +1237,42 @@ class WindowSmokeTest {
     }
 
     @Test
+    @DisplayName("New Tor Identity uses the managed service's authenticated controller")
+    void newTorIdentityUsesManagedServiceController() throws Exception {
+        org.tor.TorService service = org.mockito.Mockito.mock(org.tor.TorService.class);
+        org.tor.TorController controller = org.mockito.Mockito.mock(org.tor.TorController.class);
+        org.mockito.Mockito.when(service.isRunning()).thenReturn(true);
+        org.mockito.Mockito.when(service.createController(5000)).thenReturn(controller);
+        org.mockito.Mockito.when(controller.connect())
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(true));
+        org.mockito.Mockito.when(controller.changeIp())
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(true));
+
+        org.manager.download.DownloadManager stub = emptyManager();
+        MainWindow window = new MainWindow(null, stub, service,
+                new org.manager.schedule.ScheduleManager(stub));
+        try {
+            window.requestNewTorIdentity();
+            awaitGtk(window::activitySpinning,
+                    "the identity request did not display activity");
+            assertEquals("Requesting new Tor identity…", window.statusMessage());
+            assertFalse(window.menuActionEnabled("tor-new-identity"));
+            awaitGtk(() -> "New Tor identity requested; new connections use clean circuits"
+                    .equals(window.statusMessage()),
+                    "the authenticated identity request did not reach the status label");
+            assertFalse(window.activitySpinning());
+            assertTrue(window.menuActionEnabled("tor-new-identity"));
+            org.mockito.Mockito.verify(service).createController(5000);
+            org.mockito.Mockito.verify(controller).connect();
+            org.mockito.Mockito.verify(controller).changeIp();
+            org.mockito.Mockito.verify(controller, org.mockito.Mockito.timeout(5000)).shutdown();
+        } finally {
+            window.dispose();
+            drainGtkEvents();
+        }
+    }
+
+    @Test
     @DisplayName("File Exit asks before running the one-shot shutdown delegate")
     void fileExitRequiresConfirmation() {
         org.manager.download.DownloadManager stub = emptyManager();
@@ -1972,7 +2019,7 @@ class WindowSmokeTest {
 
     private static void awaitGtk(BooleanSupplier condition, String failureMessage)
             throws InterruptedException {
-        for (int attempt = 0; attempt < 100; attempt++) {
+        for (int attempt = 0; attempt < 300; attempt++) {
             drainGtkEvents();
             if (condition.getAsBoolean()) {
                 return;

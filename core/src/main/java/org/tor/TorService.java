@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +40,7 @@ public class TorService {
     private static final String DEFAULT_DATA_DIR = System.getProperty("java.io.tmpdir") + "/tor-odm";
     private static final String DEFAULT_LOG_LEVEL = "notice";
     private static final int DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 45;
+    private static final int HIGHEST_PORT = 65_535;
     private static final Pattern BOOTSTRAP_PROGRESS_PATTERN =
             Pattern.compile("\\bBootstrapped\\s+(\\d{1,3})%");
 
@@ -140,15 +142,14 @@ public class TorService {
                     try {
                         LOGGER.info("Starting Tor service...");
 
+                        // Resolve collisions before writing torrc. A system Tor
+                        // daemon commonly owns 9050/9051; the ODM-managed
+                        // instance must use its own endpoints rather than fail
+                        // startup or accidentally control the other daemon.
+                        selectAvailablePorts();
+
                         // Write configuration to file
                         writeConfigFile();
-
-                        // A listener that predates our child is not evidence
-                        // that the managed Tor instance is ready.
-                        if (isPortListening(getSocksPort())) {
-                            throw new IllegalStateException("Configured Tor SOCKS port is already in use: "
-                                    + getSocksPort());
-                        }
 
                         // Build command
                         List<String> command = buildTorCommand();
@@ -312,6 +313,19 @@ public class TorService {
      */
     public int getControlPort() {
         return parsePort(torConfig.getOrDefault("ControlPort", String.valueOf(DEFAULT_CONTROL_PORT)));
+    }
+
+    /**
+     * Creates a control-port client using this managed Tor instance's
+     * authentication cookie. Tor writes the cookie below its DataDirectory,
+     * which may differ from the controller's legacy fallback locations.
+     *
+     * @param connectionTimeoutMs control socket connection timeout
+     * @return a controller configured for this managed service
+     */
+    public TorController createController(int connectionTimeoutMs) {
+        return new TorController("127.0.0.1", getControlPort(), null,
+                connectionTimeoutMs, dataDirectory);
     }
 
     /**
@@ -569,13 +583,64 @@ public class TorService {
         return port;
     }
 
-    private static boolean isPortListening(int port) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", port), 250);
+    /**
+     * Selects distinct loopback ports for the managed SOCKS and control
+     * listeners. Preserve any Tor port flags following the numeric token.
+     */
+    private void selectAvailablePorts() {
+        int requestedSocksPort = getSocksPort();
+        int requestedControlPort = getControlPort();
+
+        // Prefer retaining the configured control port when only SOCKS is
+        // occupied, hence reserve that value while scanning for SOCKS.
+        int socksPort = nextAvailablePort(requestedSocksPort, requestedControlPort);
+        int controlPort = nextAvailablePort(requestedControlPort, socksPort);
+
+        if (socksPort != requestedSocksPort) {
+            LOGGER.info("Tor SOCKS port {} is unavailable; using {}",
+                    requestedSocksPort, socksPort);
+            torConfig.put("SocksPort", replacePort(
+                    torConfig.get("SocksPort"), socksPort));
+        }
+        if (controlPort != requestedControlPort) {
+            LOGGER.info("Tor control port {} is unavailable; using {}",
+                    requestedControlPort, controlPort);
+            torConfig.put("ControlPort", replacePort(
+                    torConfig.get("ControlPort"), controlPort));
+        }
+    }
+
+    private static int nextAvailablePort(int requestedPort, int excludedPort) {
+        for (int port = requestedPort; port <= HIGHEST_PORT; port++) {
+            if (port != excludedPort && canBindLoopback(port)) {
+                return port;
+            }
+        }
+        throw new IllegalStateException(
+                "No available Tor port at or above " + requestedPort);
+    }
+
+    private static boolean canBindLoopback(int port) {
+        try (ServerSocket socket = new ServerSocket()) {
+            socket.setReuseAddress(false);
+            socket.bind(new InetSocketAddress("127.0.0.1", port));
             return true;
         } catch (IOException e) {
             return false;
         }
+    }
+
+    private static String replacePort(String configured, int port) {
+        String value = configured == null ? "" : configured.strip();
+        int separator = -1;
+        for (int index = 0; index < value.length(); index++) {
+            if (Character.isWhitespace(value.charAt(index))) {
+                separator = index;
+                break;
+            }
+        }
+        return separator < 0 ? Integer.toString(port)
+                : port + value.substring(separator);
     }
 
     private boolean stopInternal() {

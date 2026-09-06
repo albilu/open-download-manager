@@ -67,7 +67,7 @@ class TorControllerIntegrationTest {
 
         // Wait a bit for control port to be ready
         // Thread.sleep(2000);
-        torController = new TorController(TEST_CONTROL_PORT, testDataDir);
+        torController = torService.createController(5000);
     }
 
     @AfterAll

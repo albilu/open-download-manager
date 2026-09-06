@@ -182,11 +182,15 @@ public final class OdmApplication {
             // the saved service state is off or startup fails.
             org.tor.TorService torService = createTorService();
             manager.setTorServiceAvailable(false, torService.getSocksPort()).join();
+            boolean torStarted = false;
             if (TorServiceController.isEnabledAtStartup(manager.getGlobalSettings())) {
                 try {
-                    boolean started = Boolean.TRUE.equals(torService.start().get(40, TimeUnit.SECONDS));
-                    manager.setTorServiceAvailable(started, torService.getSocksPort()).join();
-                    if (!started) {
+                    torStarted = Boolean.TRUE.equals(
+                            torService.start().get(40, TimeUnit.SECONDS));
+                    // Keep admission closed until persisted records have been
+                    // recovered and any old managed endpoint can be migrated.
+                    manager.setTorServiceAvailable(false, torService.getSocksPort()).join();
+                    if (!torStarted) {
                         LOGGER.warn("Tor service could not start; Tor downloads will remain paused");
                     }
                 } catch (Exception e) {
@@ -206,6 +210,11 @@ public final class OdmApplication {
 
             progress.setMessage("Initializing download engines…");
             manager.initialize().join();
+            manager.setTorServiceAvailable(
+                    torStarted, torService.getSocksPort()).join();
+            if (torStarted) {
+                manager.getGlobalSettings().save();
+            }
             if (schedulingEnabled) {
                 scheduleManager.start().join();
             }

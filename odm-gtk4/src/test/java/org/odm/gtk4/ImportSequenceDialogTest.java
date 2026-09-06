@@ -74,7 +74,7 @@ class ImportSequenceDialogTest {
         Download download = new Download(new java.net.URI("https://example.test/file-1.zip"));
         download.setSettings(new Aria2Settings());
 
-        new ImportSequenceDialog.ImportOptions(false, 0, "", 0, "", "",
+        new ImportSequenceDialog.ImportOptions(false, 9050, 0, "", 0, "", "",
                 7, 300, 40, 6, 2, "https://referrer.test/",
                 "ODM sequence", "token=xyz").apply(download);
 

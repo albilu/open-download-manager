@@ -18,6 +18,7 @@ import org.manager.download.Download;
 import org.manager.download.DownloadSettings;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.download.ExternalToolSettings;
+import org.tor.TorService;
 
 /** Reusable, GtkBuilder-backed editor for the per-record Network Options contract. */
 final class NetworkOptionsPane {
@@ -40,6 +41,7 @@ final class NetworkOptionsPane {
     private final StringList plainProxyTypes;
     private final StringList allProxyTypes;
     private final NetworkOptionControls controls;
+    private TorService torService;
     private final EnumSet<ExternalToolSettings.Capability> changedCapabilities =
             EnumSet.noneOf(ExternalToolSettings.Capability.class);
 
@@ -60,10 +62,16 @@ final class NetworkOptionsPane {
 
     /** Creates an existing-record editor initialized from the first selected record. */
     NetworkOptionsPane(List<Download> downloads) {
+        this(downloads, null);
+    }
+
+    /** Creates an existing-record editor using the managed service's current Tor port. */
+    NetworkOptionsPane(List<Download> downloads, TorService torService) {
         this();
         if (downloads == null || downloads.isEmpty()) {
             throw new IllegalArgumentException("At least one download is required");
         }
+        this.torService = torService;
         List<Download> records = List.copyOf(downloads);
         setCapabilities(PropertySettingsBatch.commonCapabilities(records));
         loadDownload(records.getFirst());
@@ -137,6 +145,7 @@ final class NetworkOptionsPane {
     }
 
     void bindTorService(org.tor.TorService service) {
+        torService = service;
         controls.bindTorService(root, service);
     }
 
@@ -144,7 +153,7 @@ final class NetworkOptionsPane {
         String address = DialogOptions.selectedProxyAddress(isTorSelected(),
                 (int) proxyType.getSelected(), proxyHost.getText(),
                 (int) proxyPort.getValue(), proxyUsername.getText(),
-                proxyPassword.getText());
+                proxyPassword.getText(), DialogOptions.torSocksPort(torService));
         if (!isTorSelected() && proxyType.getSelected() > 0 && address == null) {
             throw new IllegalArgumentException("Complete the selected proxy address");
         }
@@ -160,7 +169,8 @@ final class NetworkOptionsPane {
                 (int) connections.getValue(), (int) downloadLimit.getValue(),
                 (int) uploadLimit.getValue(), (int) retries.getValue(),
                 (int) retryDelay.getValue(), referer.getText(), userAgent.getText(),
-                cookie.getText(), isTorSelected(), (int) proxyType.getSelected(),
+                cookie.getText(), isTorSelected(), DialogOptions.torSocksPort(torService),
+                (int) proxyType.getSelected(),
                 proxyHost.getText(), (int) proxyPort.getValue(),
                 proxyUsername.getText(), proxyPassword.getText());
     }
@@ -261,8 +271,8 @@ final class NetworkOptionsPane {
             DialogOptions.ProxyFields proxy = download.isUseProxy()
                     ? DialogOptions.parseProxy(download.getProxyAddress())
                     : DialogOptions.ProxyFields.none();
-            boolean torProxy = proxy.typeIndex() == 4
-                    && "127.0.0.1".equals(proxy.host()) && proxy.port() == 9050;
+            boolean torProxy = DialogOptions.isManagedTorProxy(
+                    download.getProxyAddress(), DialogOptions.torSocksPort(torService));
             if (!controls.isSensitive(ExternalToolSettings.Capability.SOCKS_PROXY)
                     && proxy.typeIndex() > 2) {
                 proxy = DialogOptions.ProxyFields.none();

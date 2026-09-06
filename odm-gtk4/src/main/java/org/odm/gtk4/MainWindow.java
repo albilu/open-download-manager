@@ -51,6 +51,8 @@ public class MainWindow {
             "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Result");
     private static final List<String> COMPLETION_ACTION_KEYS = List.of(
             "notify", "antivirus", "subtitles", "suspend", "shutdown", "custom");
+    /** Long enough for GTK to paint and animate an immediately acknowledged NEWNYM. */
+    private static final long NEW_IDENTITY_MIN_ACTIVITY_MILLIS = 1_000;
     private static final Download.Status[] ALWAYS_VISIBLE_STATUSES = {
         Download.Status.CREATED, Download.Status.QUEUED, Download.Status.PAUSED,
         Download.Status.STARTING, Download.Status.CONNECTING, Download.Status.DOWNLOADING,
@@ -152,6 +154,8 @@ public class MainWindow {
             new java.util.concurrent.atomic.AtomicBoolean();
     /** Remembers that a coalesced refresh was requested by search/filter UI. */
     private final java.util.concurrent.atomic.AtomicBoolean refreshActivityRequested =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicBoolean torIdentityRequestInFlight =
             new java.util.concurrent.atomic.AtomicBoolean();
     /** Number of newest history records requested from the repository. */
     private int historyFetchLimit = HISTORY_PAGE_SIZE;
@@ -2312,35 +2316,68 @@ public class MainWindow {
             AccessibilitySupport.status(infoLabel, "Tor is not running");
             return;
         }
-        int controlPort;
-        try {
-            controlPort = torService.getControlPort();
-        } catch (Exception e) {
-            controlPort = 9051;
+        if (!torIdentityRequestInFlight.compareAndSet(false, true)) {
+            return;
         }
-        org.tor.TorController controller = new org.tor.TorController(
-                "127.0.0.1", controlPort, "", 5000);
+        org.tor.TorController controller;
+        try {
+            controller = torService.createController(5000);
+        } catch (Exception e) {
+            torIdentityRequestInFlight.set(false);
+            LOGGER.warn("Could not configure the Tor control client", e);
+            AccessibilitySupport.status(infoLabel,
+                    "New Tor identity unavailable (invalid control configuration)");
+            return;
+        }
+        long activityStarted = System.nanoTime();
+        long serviceEpoch = torToggleEpoch.get();
+        setMenuActionEnabled("tor-new-identity", false);
+        setTorTransitionStatus("Requesting new Tor identity…");
         CompletableFuture<Boolean> identityChange = controller.connect()
                 .thenCompose(connected -> connected
                         ? controller.changeIp()
+                        : CompletableFuture.completedFuture(false))
+                .thenCompose(changed -> Boolean.TRUE.equals(changed)
+                        ? completeAfterMinimumActivity(changed, activityStarted)
                         : CompletableFuture.completedFuture(false));
-        trackActivity(identityChange).whenComplete((changed, error) -> {
-                    String message;
-                    if (error != null) {
-                        message = "New Tor identity failed: " + error.getMessage();
-                    } else if (Boolean.TRUE.equals(changed)) {
-                        message = "New Tor identity requested";
-                    } else {
-                        message = "New Tor identity unavailable (control port closed?)";
+        trackActivity(identityChange).whenCompleteAsync((changed, error) -> {
+            try {
+                String message;
+                if (error != null) {
+                    message = "New Tor identity failed: " + error.getMessage();
+                } else if (Boolean.TRUE.equals(changed)) {
+                    message = "New Tor identity requested; new connections use clean circuits";
+                } else {
+                    message = "New Tor identity unavailable (Tor control request failed)";
+                }
+                LOGGER.info(message);
+                UiThread.marshal(() -> {
+                    if (serviceEpoch == torToggleEpoch.get()
+                            && torService.isRunning()) {
+                        finishTorTransition(message);
                     }
-                    LOGGER.info(message);
-                    try {
-                        controller.disconnect();
-                    } catch (Exception ignore) {
-                        // best-effort
-                    }
-                    UiThread.marshal(() -> AccessibilitySupport.status(infoLabel, message));
                 });
+            } finally {
+                controller.shutdown();
+                torIdentityRequestInFlight.set(false);
+                UiThread.marshal(() -> setMenuActionEnabled(
+                        "tor-new-identity", torService.isRunning()));
+            }
+        });
+    }
+
+    private static <T> CompletableFuture<T> completeAfterMinimumActivity(
+            T result, long startedAtNanos) {
+        long elapsed = System.nanoTime() - startedAtNanos;
+        long minimum = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                NEW_IDENTITY_MIN_ACTIVITY_MILLIS);
+        long remaining = Math.max(0, minimum - elapsed);
+        if (remaining == 0) {
+            return CompletableFuture.completedFuture(result);
+        }
+        return CompletableFuture.supplyAsync(() -> result,
+                CompletableFuture.delayedExecutor(
+                        remaining, java.util.concurrent.TimeUnit.NANOSECONDS));
     }
 
     /** Restores window geometry + paned positions persisted from the last session. */
@@ -2479,6 +2516,14 @@ public class MainWindow {
 
     String statusMessage() {
         return infoLabel.getLabel();
+    }
+
+    boolean activitySpinning() {
+        return activitySpinner.getSpinning();
+    }
+
+    void requestNewTorIdentity() {
+        onTorNewIdentity();
     }
 
     PropagationPhase downloadContextClickPhase() {

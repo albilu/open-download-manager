@@ -872,6 +872,9 @@ public class DownloadManagerImpl implements DownloadManager {
 
     private volatile boolean torServiceAvailable = true;
     private volatile int torSocksPort = 9050;
+    /** Ports that represented this managed service earlier in this process. */
+    private final Set<Integer> managedTorPortAliases =
+            new CopyOnWriteArraySet<>(Set.of(9050));
     private CompletableFuture<Void> torAvailabilityUpdate = CompletableFuture.completedFuture(null);
 
     @Override
@@ -879,7 +882,12 @@ public class DownloadManagerImpl implements DownloadManager {
         if (socksPort < 1 || socksPort > 65535) {
             throw new IllegalArgumentException("Invalid Tor SOCKS port: " + socksPort);
         }
+        rememberConfiguredTorPort();
+        managedTorPortAliases.add(torSocksPort);
+        managedTorPortAliases.add(9050);
         torSocksPort = socksPort;
+        managedTorPortAliases.add(socksPort);
+        synchronizeGlobalTorEndpoint(socksPort);
         // Close admission immediately, including recovery and queued work.
         torServiceAvailable = available;
         torAvailabilityUpdate = torAvailabilityUpdate.handleAsync((ignored, priorFailure) -> {
@@ -888,6 +896,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     break;
                 }
                 try {
+                    migrateManagedTorEndpoint(download, socksPort);
                     if (available) {
                         if (download.getStatus() == Download.Status.PAUSED
                                 && download.getPauseReason() == Download.PauseReason.TOR_SERVICE) {
@@ -920,11 +929,68 @@ public class DownloadManagerImpl implements DownloadManager {
         }
         try {
             URI endpoint = URI.create(proxy);
-            return endpoint.getPort() == torSocksPort
+            return managedTorPortAliases.contains(endpoint.getPort())
                     && Set.of("127.0.0.1", "localhost", "[::1]", "::1")
                             .contains(endpoint.getHost());
         } catch (IllegalArgumentException | NullPointerException invalid) {
             return false;
+        }
+    }
+
+    private void rememberConfiguredTorPort() {
+        GlobalSettings settings = getGlobalSettings();
+        if (!settings.getBooleanProperty("tor.enabled", false)) {
+            return;
+        }
+        try {
+            URI endpoint = URI.create(settings.getGlobalProxyAddress());
+            if (org.manager.download.handler.DownloadHandlerFactory
+                    .isSocksProxyAddress(endpoint.toString())
+                    && Set.of("127.0.0.1", "localhost", "[::1]", "::1")
+                            .contains(endpoint.getHost())
+                    && endpoint.getPort() > 0) {
+                managedTorPortAliases.add(endpoint.getPort());
+            }
+        } catch (IllegalArgumentException | NullPointerException invalid) {
+            // An invalid global address is handled by the normal settings path.
+        }
+    }
+
+    private void synchronizeGlobalTorEndpoint(int socksPort) {
+        GlobalSettings settings = getGlobalSettings();
+        settings.setProperty(DownloadSettingsFactory.MANAGED_TOR_SOCKS_PORT,
+                Integer.toString(socksPort));
+        if (settings.getBooleanProperty("tor.enabled", false)) {
+            settings.setGlobalProxyEnabled(true);
+            settings.setGlobalProxyAddress("socks5h://127.0.0.1:" + socksPort);
+        }
+    }
+
+    private void migrateManagedTorEndpoint(Download download, int socksPort) {
+        if (download == null || !download.isUseProxy()) {
+            return;
+        }
+        String address = download.getProxyAddress();
+        try {
+            URI endpoint = URI.create(address);
+            boolean local = Set.of("127.0.0.1", "localhost", "[::1]", "::1")
+                    .contains(endpoint.getHost());
+            boolean managed = download.getType() == Download.Type.TOR
+                    || managedTorPortAliases.contains(endpoint.getPort());
+            if (!local || !managed
+                    || !org.manager.download.handler.DownloadHandlerFactory
+                            .isSocksProxyAddress(address)
+                    || endpoint.getPort() == socksPort) {
+                return;
+            }
+            boolean inherited = download.getSettings().isProxyInherited();
+            download.getSettings().setProxyAddress(
+                    "socks5h://127.0.0.1:" + socksPort);
+            download.getSettings().setProxyInherited(inherited);
+            LOGGER.info("Updated managed Tor route for {} to SOCKS port {}",
+                    download.getId(), socksPort);
+        } catch (IllegalArgumentException | NullPointerException invalid) {
+            // Invalid proxy values remain the responsibility of route validation.
         }
     }
 

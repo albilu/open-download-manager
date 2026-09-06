@@ -1,7 +1,9 @@
 package org.odm.gtk4;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.curl.CurlSettings;
 import org.junit.jupiter.api.Test;
@@ -14,11 +16,23 @@ class DialogOptionsTest {
         assertEquals("socks5h://127.0.0.1:9050",
                 DialogOptions.selectedProxyAddress(true, 1,
                         "proxy.example", 8080, "", ""));
+        assertEquals("socks5h://127.0.0.1:19050",
+                DialogOptions.selectedProxyAddress(true, 1,
+                        "proxy.example", 8080, "", "", 19050));
         assertEquals("http://user:secret@proxy.example:8080",
                 DialogOptions.selectedProxyAddress(false, 1,
                         "proxy.example", 8080, "user", "secret"));
         assertNull(DialogOptions.selectedProxyAddress(false, 0,
                 "proxy.example", 8080, "", ""));
+    }
+
+    @Test
+    void managedTorRecognitionUsesTheExactRuntimePort() {
+        assertTrue(DialogOptions.isManagedTorProxy(
+                "socks5h://127.0.0.1:19050", 19050));
+        assertFalse(DialogOptions.isManagedTorProxy(
+                "socks5h://127.0.0.1:1080", 19050),
+                "an unrelated local SOCKS proxy must remain a manual route");
     }
 
     @Test

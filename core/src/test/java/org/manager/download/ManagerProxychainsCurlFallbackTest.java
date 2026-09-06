@@ -234,6 +234,26 @@ class ManagerProxychainsCurlFallbackTest {
     }
 
     @Test
+    void changedManagedTorPortMigratesHeldRecordsBeforeTheyResume() throws Exception {
+        manager.getGlobalSettings().setProperty("tor.enabled", "true");
+        manager.getGlobalSettings().setGlobalProxyEnabled(true)
+                .setGlobalProxyAddress("socks5h://127.0.0.1:9050");
+        manager.setTorServiceAvailable(false, 9050).join();
+        Download tor = plainSocksDownload("tor-port-migration");
+        manager.queueDownload(tor).join();
+        assertTrue(awaitTrue(() -> tor.getStatus() == Download.Status.PAUSED));
+
+        manager.setTorServiceAvailable(true, 19050)
+                .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals("socks5h://127.0.0.1:19050", tor.getProxyAddress());
+        assertEquals("socks5h://127.0.0.1:19050",
+                manager.getGlobalSettings().getGlobalProxyAddress());
+        assertEquals(Download.Status.DOWNLOADING, tor.getStatus());
+        assertEquals(1, proxychains.starts.get());
+    }
+
+    @Test
     void torrentProxychainsErrorNeverFallsBackToCurl() throws Exception {
         Download download = Download.fromTorrent(Path.of("/tmp/example.torrent"), Path.of("/tmp"));
         download.getSettings().setUseProxy(true);

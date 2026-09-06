@@ -49,7 +49,7 @@ public class PropertyDialog {
         this.statusLabel = Widgets.require(builder, "property_status_label", Label.class);
         this.applyButton = Widgets.require(builder, "apply_button", Button.class);
         this.okButton = Widgets.require(builder, "ok_button", Button.class);
-        this.networkOptions = new NetworkOptionsPane(this.downloads);
+        this.networkOptions = new NetworkOptionsPane(this.downloads, torService);
         networkOptions.bindTorService(torService);
         Widgets.require(builder, "property_network_options_host", Box.class)
                 .append(networkOptions.widget());
@@ -92,6 +92,7 @@ public class PropertyDialog {
                 network.connections(), network.downloadLimitKb(), network.uploadLimitKb(),
                 network.maxRetries(), network.retryDelaySeconds(), network.referer(),
                 network.userAgent(), network.cookie(), network.torActive(),
+                network.torSocksPort(),
                 network.proxyTypeIndex(), network.proxyHost(), network.proxyPort(),
                 network.proxyUsername(), network.proxyPassword(),
                 networkOptions.changedCapabilities(), networkOptions.isProxyChanged());

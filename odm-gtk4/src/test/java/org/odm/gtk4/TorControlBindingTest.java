@@ -99,6 +99,42 @@ class TorControlBindingTest {
         assertTrue(events.listeners.isEmpty());
     }
 
+    @Test
+    void selectedTorRouteUsesTheManagedServicesRuntimePort() throws Exception {
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty("tor.enabled", "true");
+        Download download = new Download(URI.create("https://example.test/file.bin"));
+        NetworkOptionsPane pane = new NetworkOptionsPane(
+                settings, Download.Type.ARIA2, Download.Protocol.HTTPS);
+        ServiceEvents events = new ServiceEvents();
+        when(events.service.getSocksPort()).thenReturn(19050);
+        pane.bindTorService(events.service);
+
+        pane.applyTo(download);
+
+        assertEquals("socks5h://127.0.0.1:19050", download.getProxyAddress());
+    }
+
+    @Test
+    void existingRuntimeTorRouteIsRecognizedWithoutMatchingOtherLocalSocksPorts()
+            throws Exception {
+        ServiceEvents events = new ServiceEvents();
+        when(events.service.getSocksPort()).thenReturn(19050);
+        Download torDownload = new Download(URI.create("https://example.test/tor.bin"));
+        torDownload.setUseProxy(true);
+        torDownload.setProxyAddress("socks5h://127.0.0.1:19050");
+        NetworkOptionsPane torPane = new NetworkOptionsPane(
+                List.of(torDownload), events.service);
+        assertTrue(field(torPane, "tor", Switch.class).getActive());
+
+        Download manualDownload = new Download(URI.create("https://example.test/manual.bin"));
+        manualDownload.setUseProxy(true);
+        manualDownload.setProxyAddress("socks5h://127.0.0.1:1080");
+        NetworkOptionsPane manualPane = new NetworkOptionsPane(
+                List.of(manualDownload), events.service);
+        assertFalse(field(manualPane, "tor", Switch.class).getActive());
+    }
+
     private static final class ServiceEvents {
         final TorService service = mock(TorService.class);
         final AtomicBoolean running = new AtomicBoolean();

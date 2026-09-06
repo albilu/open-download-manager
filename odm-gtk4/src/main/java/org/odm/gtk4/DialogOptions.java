@@ -5,6 +5,7 @@ import java.util.concurrent.CompletableFuture;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadNetworkCapabilities;
+import org.manager.download.DownloadSettingsFactory;
 import org.manager.download.ExternalToolSettings;
 import org.tor.TorService;
 
@@ -17,6 +18,7 @@ import org.tor.TorService;
  */
 final class DialogOptions {
 
+    static final int DEFAULT_TOR_SOCKS_PORT = 9050;
     /** Proxy type labels, index-aligned with the proxy_type_combo rows. */
     static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
     /** The user's non-Tor proxy, retained while the active route is Tor. */
@@ -35,14 +37,15 @@ final class DialogOptions {
     /** Immutable snapshot shared by every per-record Network Options panel. */
     record NetworkValues(int connections, int downloadLimitKb, int uploadLimitKb,
             int maxRetries, int retryDelaySeconds, String referer, String userAgent,
-            String cookie, boolean torActive, int proxyTypeIndex, String proxyHost,
+            String cookie, boolean torActive, int torSocksPort,
+            int proxyTypeIndex, String proxyHost,
             int proxyPort, String proxyUsername, String proxyPassword) {
 
         void applyTo(Download download) {
             applyCommon(download, connections, downloadLimitKb, uploadLimitKb,
                     maxRetries, retryDelaySeconds, referer, userAgent, cookie);
             applyProxy(download, torActive, proxyTypeIndex, proxyHost, proxyPort,
-                    proxyUsername, proxyPassword);
+                    proxyUsername, proxyPassword, torSocksPort);
         }
     }
 
@@ -121,7 +124,7 @@ final class DialogOptions {
         }
         String active = settings.isGlobalProxyEnabled()
                 ? settings.getGlobalProxyAddress() : null;
-        return isManagedTorProxy(active) ? null : active;
+        return isManagedTorProxy(active, managedTorSocksPort(settings)) ? null : active;
     }
 
     /** Stores the Preferences proxy without changing the currently active route. */
@@ -138,7 +141,7 @@ final class DialogOptions {
             return;
         }
         String active = settings.getGlobalProxyAddress();
-        if (!isManagedTorProxy(active)) {
+        if (!isManagedTorProxy(active, managedTorSocksPort(settings))) {
             rememberManualProxy(settings, active);
         }
     }
@@ -150,16 +153,22 @@ final class DialogOptions {
         settings.setGlobalProxyAddress(address);
     }
 
-    private static boolean isManagedTorProxy(String address) {
+    static boolean isManagedTorProxy(String address) {
+        return isManagedTorProxy(address, DEFAULT_TOR_SOCKS_PORT);
+    }
+
+    static boolean isManagedTorProxy(String address, int socksPort) {
         if (address == null || address.isBlank()) {
             return false;
         }
         try {
-            URI uri = URI.create(address);
+            URI uri = URI.create(address.trim());
             String scheme = uri.getScheme();
             String host = uri.getHost();
-            return scheme != null && scheme.toLowerCase().startsWith("socks5")
-                    && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host));
+            return ("socks5".equalsIgnoreCase(scheme)
+                    || "socks5h".equalsIgnoreCase(scheme))
+                    && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host))
+                    && uri.getPort() == validTorSocksPort(socksPort);
         } catch (RuntimeException invalidAddress) {
             return false;
         }
@@ -168,8 +177,41 @@ final class DialogOptions {
     /** Returns the proxy route represented by the dialog controls. */
     static String selectedProxyAddress(boolean torActive, int typeIndex,
             String host, int port, String user, String password) {
-        return torActive ? "socks5h://127.0.0.1:9050"
+        return selectedProxyAddress(torActive, typeIndex, host, port, user,
+                password, DEFAULT_TOR_SOCKS_PORT);
+    }
+
+    static String selectedProxyAddress(boolean torActive, int typeIndex,
+            String host, int port, String user, String password, int torSocksPort) {
+        return torActive ? managedTorProxyAddress(torSocksPort)
                 : buildProxyAddress(typeIndex, host, port, user, password);
+    }
+
+    static String managedTorProxyAddress(int socksPort) {
+        return "socks5h://127.0.0.1:" + validTorSocksPort(socksPort);
+    }
+
+    static int torSocksPort(TorService service) {
+        if (service == null) {
+            return DEFAULT_TOR_SOCKS_PORT;
+        }
+        try {
+            int port = service.getSocksPort();
+            return port >= 1 && port <= 65_535 ? port : DEFAULT_TOR_SOCKS_PORT;
+        } catch (RuntimeException invalidConfiguration) {
+            return DEFAULT_TOR_SOCKS_PORT;
+        }
+    }
+
+    private static int managedTorSocksPort(GlobalSettings settings) {
+        return validTorSocksPort(settings.getIntProperty(
+                DownloadSettingsFactory.MANAGED_TOR_SOCKS_PORT,
+                DEFAULT_TOR_SOCKS_PORT));
+    }
+
+    private static int validTorSocksPort(int socksPort) {
+        return socksPort >= 1 && socksPort <= 65_535
+                ? socksPort : DEFAULT_TOR_SOCKS_PORT;
     }
 
     /**
@@ -186,7 +228,14 @@ final class DialogOptions {
      */
     static void applyProxy(Download download, boolean torActive, int typeIndex,
             String host, int port, String user, String password) {
-        String proxy = selectedProxyAddress(torActive, typeIndex, host, port, user, password);
+        applyProxy(download, torActive, typeIndex, host, port, user, password,
+                DEFAULT_TOR_SOCKS_PORT);
+    }
+
+    static void applyProxy(Download download, boolean torActive, int typeIndex,
+            String host, int port, String user, String password, int torSocksPort) {
+        String proxy = selectedProxyAddress(torActive, typeIndex, host, port,
+                user, password, torSocksPort);
         if (proxy != null) {
             if (!DownloadNetworkCapabilities.supportsProxy(download, proxy)) {
                 throw new IllegalArgumentException(torActive

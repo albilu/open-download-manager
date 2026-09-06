@@ -70,7 +70,10 @@ final class TorServiceController {
                     manager.getGlobalSettings().save();
                 }
                 return manager.setTorServiceAvailable(started, service.getSocksPort())
-                        .thenApply(unused -> started);
+                        .thenApply(unused -> {
+                            manager.getGlobalSettings().save();
+                            return started;
+                        });
             });
         });
         return transition;

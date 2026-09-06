@@ -325,9 +325,22 @@
                                                     <property name="sensitive">false</property>
                                                     <property name="hexpand">true</property>
                                                     <property name="tooltip-text">Click to view the full error details</property>
-                                                    <style><class name="flat"/></style>
+                                                    <style><class name="link"/></style>
                                                     <layout><property name="row">2</property><property name="column">1</property></layout>
-                                                    <child><object class="GtkLabel" id="info_error_value"><property name="label">—</property><property name="xalign">0</property><property name="ellipsize">end</property><property name="max-width-chars">48</property></object></child>
+                                                    <child>
+                                                      <object class="GtkBox" id="info_error_content">
+                                                        <property name="orientation">horizontal</property>
+                                                        <child>
+                                                          <object class="GtkLabel" id="info_error_value">
+                                                            <property name="label">—</property>
+                                                            <property name="xalign">0</property>
+                                                            <property name="ellipsize">end</property>
+                                                            <property name="max-width-chars">48</property>
+                                                            <style><class name="error"/></style>
+                                                          </object>
+                                                        </child>
+                                                      </object>
+                                                    </child>
                                                   </object>
                                                 </child>
                                                 <child><object class="GtkLabel"><property name="label">Save folder:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
@@ -534,7 +547,17 @@
                   <object class="GtkBox" id="statusbar_content_box">
                     <property name="orientation">horizontal</property>
                     <property name="hexpand">true</property>
-                    <child><object class="GtkLabel" id="info_label"><property name="accessible-role">status</property><property name="label">Ready</property><property name="xalign">0</property><property name="hexpand">true</property></object></child>
+                    <child>
+                      <object class="GtkLabel" id="info_label">
+                        <property name="accessible-role">status</property>
+                        <property name="label">Ready</property>
+                        <property name="xalign">0</property>
+                        <property name="hexpand">true</property>
+                        <property name="ellipsize">end</property>
+                        <property name="single-line-mode">true</property>
+                        <property name="max-width-chars">72</property>
+                      </object>
+                    </child>
                     <child>
                       <object class="GtkBox" id="statusbar_right_box">
                         <property name="orientation">horizontal</property>

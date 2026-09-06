@@ -83,7 +83,7 @@ class ImportListDialogTest {
         Download download = new Download(new java.net.URI("https://example.test/file.iso"));
         download.setSettings(new Aria2Settings());
 
-        new ImportListDialog.ImportOptions(false, 0, "", 0, "", "",
+        new ImportListDialog.ImportOptions(false, 9050, 0, "", 0, "", "",
                 12, 256, 64, 9, 4, "https://referrer.test/",
                 "ODM import", "session=abc").apply(download);
 

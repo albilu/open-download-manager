@@ -339,6 +339,17 @@ class DownloadSettingsFactoryTest {
     }
 
     @Test
+    void managedTorSettingsUseTheRuntimeSelectedSocksPort() {
+        GlobalSettings global = new GlobalSettings();
+        global.setProperty(DownloadSettingsFactory.MANAGED_TOR_SOCKS_PORT, "19050");
+
+        Aria2Settings settings = new DownloadSettingsFactory(global)
+                .createTorSettings();
+
+        assertEquals("socks5h://127.0.0.1:19050", settings.getProxyAddress());
+    }
+
+    @Test
     @DisplayName("with the global proxy disabled no proxy is configured")
     void noProxyWhenDisabled() {
         GlobalSettings global = new GlobalSettings()

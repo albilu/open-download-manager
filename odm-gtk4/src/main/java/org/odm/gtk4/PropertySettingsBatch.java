@@ -25,7 +25,7 @@ final class PropertySettingsBatch {
     record Values(int maxConnections, int downloadLimitKb, int uploadLimitKb,
             int maxRetries, int retryDelaySeconds, String referer,
             String userAgent, String cookie, boolean torActive,
-            int proxyTypeIndex, String proxyHost, int proxyPort,
+            int torSocksPort, int proxyTypeIndex, String proxyHost, int proxyPort,
             String proxyUsername, String proxyPassword,
             Set<ExternalToolSettings.Capability> changedCapabilities,
             boolean proxyChanged) {
@@ -42,7 +42,8 @@ final class PropertySettingsBatch {
                 String proxyUsername, String proxyPassword) {
             this(maxConnections, downloadLimitKb, uploadLimitKb, maxRetries,
                     retryDelaySeconds, referer, userAgent, cookie, torActive,
-                    proxyTypeIndex, proxyHost, proxyPort, proxyUsername, proxyPassword,
+                    DialogOptions.DEFAULT_TOR_SOCKS_PORT, proxyTypeIndex,
+                    proxyHost, proxyPort, proxyUsername, proxyPassword,
                     EnumSet.of(ExternalToolSettings.Capability.CONNECTIONS,
                             ExternalToolSettings.Capability.DOWNLOAD_LIMIT,
                             ExternalToolSettings.Capability.UPLOAD_LIMIT,
@@ -51,6 +52,20 @@ final class PropertySettingsBatch {
                             ExternalToolSettings.Capability.REFERER,
                             ExternalToolSettings.Capability.USER_AGENT,
                             ExternalToolSettings.Capability.COOKIE), true);
+        }
+
+        Values(int maxConnections, int downloadLimitKb, int uploadLimitKb,
+                int maxRetries, int retryDelaySeconds, String referer,
+                String userAgent, String cookie, boolean torActive,
+                int proxyTypeIndex, String proxyHost, int proxyPort,
+                String proxyUsername, String proxyPassword,
+                Set<ExternalToolSettings.Capability> changedCapabilities,
+                boolean proxyChanged) {
+            this(maxConnections, downloadLimitKb, uploadLimitKb, maxRetries,
+                    retryDelaySeconds, referer, userAgent, cookie, torActive,
+                    DialogOptions.DEFAULT_TOR_SOCKS_PORT, proxyTypeIndex,
+                    proxyHost, proxyPort, proxyUsername, proxyPassword,
+                    changedCapabilities, proxyChanged);
         }
 
         static Values defaults() {
@@ -104,7 +119,7 @@ final class PropertySettingsBatch {
                     DialogOptions.applyProxy(download, values.torActive(),
                             values.proxyTypeIndex(), values.proxyHost(),
                             values.proxyPort(), values.proxyUsername(),
-                            values.proxyPassword());
+                            values.proxyPassword(), values.torSocksPort());
                 }
             }
         } catch (RuntimeException failure) {

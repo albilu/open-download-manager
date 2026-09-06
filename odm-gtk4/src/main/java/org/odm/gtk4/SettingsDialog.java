@@ -303,6 +303,7 @@ public class SettingsDialog {
 
     /** 7x24 toggle buttons of the scheduler grid (row 0 = Monday). */
     private final ToggleButton[][] schedulerToggles = new ToggleButton[7][24];
+    private final org.tor.TorService torService;
     private Label schedulerSelectionLabel;
     private boolean loadingSchedulerGrid;
     private boolean schedulerGridEdited;
@@ -325,6 +326,7 @@ public class SettingsDialog {
         this.downloadManager = downloadManager;
         this.scheduleManager = scheduleManager;
         this.torPreferenceHandler = torPreferenceHandler;
+        this.torService = torService;
         this.builder = UiLoader.load("/ui/settings.ui");
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
         this.settingsNotebook = Widgets.require(builder, "settings_notebook", Notebook.class);
@@ -1297,7 +1299,9 @@ public class SettingsDialog {
                 entry("proxy_password_entry").getText());
         DialogOptions.rememberManualProxy(s, manualProxyAddress);
         String proxyAddress = torEnabled
-                ? "socks5h://127.0.0.1:9050" : manualProxyAddress;
+                ? DialogOptions.managedTorProxyAddress(
+                        DialogOptions.torSocksPort(torService))
+                : manualProxyAddress;
         s.setGlobalProxyEnabled(proxyAddress != null);
         s.setGlobalProxyAddress(proxyAddress);
         // Aria2

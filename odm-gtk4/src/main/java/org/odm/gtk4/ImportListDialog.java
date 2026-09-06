@@ -390,6 +390,7 @@ public class ImportListDialog {
     private ImportOptions captureOptions() {
         return new ImportOptions(
                 Widgets.require(builder, "tor_switch", Switch.class).getActive(),
+                DialogOptions.torSocksPort(torService),
                 (int) Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected(),
                 Widgets.require(builder, "proxy_host_entry", Entry.class).getText(),
                 (int) Widgets.require(builder, "proxy_port_spin", SpinButton.class).getValue(),
@@ -410,13 +411,14 @@ public class ImportListDialog {
                 options::apply, importLimits.maxUrls());
     }
 
-    record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,
+    record ImportOptions(boolean tor, int torSocksPort, int proxyType,
+            String proxyHost, int proxyPort,
             String proxyUser, String proxyPassword, int connections, int downloadLimitKb,
             int uploadLimitKb, int retries, int retryDelay, String referer,
             String userAgent, String cookie) {
         void apply(Download download) {
             DialogOptions.applyProxy(download, tor, proxyType, proxyHost, proxyPort,
-                    proxyUser, proxyPassword);
+                    proxyUser, proxyPassword, torSocksPort);
             DialogOptions.applyCommon(download, connections, downloadLimitKb,
                     uploadLimitKb, retries, retryDelay, referer, userAgent, cookie);
         }
