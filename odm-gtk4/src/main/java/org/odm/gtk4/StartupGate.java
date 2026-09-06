@@ -46,7 +46,11 @@ final class StartupGate {
     record CoreRefs(
             DownloadManager manager,
             TorService torService,
-            ScheduleManager scheduleManager) {
+            ScheduleManager scheduleManager,
+            org.jackett.JackettService jackettService) {
+        CoreRefs(DownloadManager manager, TorService torService, ScheduleManager scheduleManager) {
+            this(manager, torService, scheduleManager, null);
+        }
     }
 
     /** Starts the asynchronous core initialization, reporting progress. */

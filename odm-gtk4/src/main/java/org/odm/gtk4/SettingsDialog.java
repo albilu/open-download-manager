@@ -31,8 +31,8 @@ import org.manager.download.DownloadSettingsFactory;
 import org.manager.tools.ToolManagerFactory;
 
 /**
- * Settings dialog — 1:1 GTK4 port of settings.glade (6 tabs: General, Network,
- * Aria2, Yt-dlp, HTTrack, Advanced; Cancel/Reset/Apply/OK). Every control is
+ * Settings dialog (General, Network, Aria2, Yt-dlp, HTTrack, Search Engine,
+ * Advanced; Cancel/Reset/Apply/OK). Every control is
  * real: core values persist via GlobalSettings.save(); engine defaults are
  * stored as GlobalSettings properties and applied by DownloadSettingsFactory
  * when per-download settings are created.
@@ -319,10 +319,19 @@ public class SettingsDialog {
         this(parent, downloadManager, scheduleManager, torPreferenceHandler, null);
     }
 
+    private final JackettSettingsPane jackett;
+
     public SettingsDialog(Window parent, DownloadManager downloadManager,
             org.manager.schedule.ScheduleManager scheduleManager,
             java.util.function.Consumer<Boolean> torPreferenceHandler,
             org.tor.TorService torService) {
+        this(parent, downloadManager, scheduleManager, torPreferenceHandler, torService, null);
+    }
+
+    public SettingsDialog(Window parent, DownloadManager downloadManager,
+            org.manager.schedule.ScheduleManager scheduleManager,
+            java.util.function.Consumer<Boolean> torPreferenceHandler,
+            org.tor.TorService torService, org.jackett.JackettService jackettService) {
         this.downloadManager = downloadManager;
         this.scheduleManager = scheduleManager;
         this.torPreferenceHandler = torPreferenceHandler;
@@ -330,6 +339,8 @@ public class SettingsDialog {
         this.builder = UiLoader.load("/ui/settings.ui");
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
         this.settingsNotebook = Widgets.require(builder, "settings_notebook", Notebook.class);
+        this.jackett = new JackettSettingsPane(dialog, downloadManager.getGlobalSettings(), jackettService);
+        settingsNotebook.insertPage(jackett.widget(), new Label("Search Engine"), 5);
         this.statusLabel = Widgets.require(builder, "settings_status_label", Label.class);
         this.availableSpaceLabel = Widgets.require(builder, "available_space_label", Label.class);
         this.antivirusDetectionLabel = Widgets.require(
@@ -452,6 +463,7 @@ public class SettingsDialog {
         bindSeedingPolicyControls();
         dialog.onCloseRequest(() -> {
             closed.set(true);
+            jackett.close();
             return false;
         });
 
@@ -1026,6 +1038,10 @@ public class SettingsDialog {
                 yield "HTTrack";
             }
             case 5 -> {
+                jackett.reset();
+                yield "Search Engine";
+            }
+            case 6 -> {
                 loadAdvanced(defaults);
                 yield "Advanced";
             }
@@ -1036,6 +1052,7 @@ public class SettingsDialog {
     }
 
     private void load(GlobalSettings s, boolean useRuntimeMonitoringState) {
+        jackett.load(s);
         loadGeneral(s, useRuntimeMonitoringState);
         loadNetwork(s);
         loadAria2(s);
@@ -1252,6 +1269,7 @@ public class SettingsDialog {
 
     private SettingsApplication collectSettings() {
         GlobalSettings s = downloadManager.getGlobalSettings().copy();
+        jackett.collect(s);
         boolean previousStartAtLogin = s.getBooleanProperty("ui.startAtLogin", false);
         // tor proxy default
         s.setProperty("tor.enabled", String.valueOf(torSwitchGet()));

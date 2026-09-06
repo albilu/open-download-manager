@@ -64,7 +64,7 @@ public final class OdmApplication {
                     LOGGER.info("onActivate: constructing MainWindow");
                     coreShutdown.capture(refs);
                     MainWindow mainWindow = new MainWindow(
-                            app, refs.manager(), refs.torService(), refs.scheduleManager());
+                            app, refs.manager(), refs.torService(), refs.scheduleManager(), refs.jackettService());
                     installGracefulShutdown(app, startupHolder[0], mainWindow,
                             coreShutdown, trayHolder, appShuttingDown);
                     LOGGER.info("onActivate: MainWindow constructed");
@@ -227,8 +227,14 @@ public final class OdmApplication {
 
             progress.setMessage("Starting privacy and scheduling services…");
 
+            org.jackett.JackettService jackett = new org.jackett.JackettService(manager::getGlobalSettings);
+            if (manager.getGlobalSettings().getBooleanProperty(org.jackett.JackettSettings.START_WITH_ODM, false)) {
+                progress.setMessage("Starting Jackett…");
+                try { jackett.start(); }
+                catch (Exception error) { LOGGER.warn("Jackett startup failed: {}", error.getMessage()); }
+            }
             progress.setMessage("Ready");
-            return new StartupGate.CoreRefs(manager, torService, scheduleManager);
+            return new StartupGate.CoreRefs(manager, torService, scheduleManager, jackett);
         });
     }
 
@@ -264,6 +270,10 @@ public final class OdmApplication {
     static void releaseOwnedServices(StartupGate.CoreRefs refs) {
         if (refs == null) {
             return;
+        }
+        if (refs.jackettService() != null) {
+            try { refs.jackettService().close(); }
+            catch (Exception error) { LOGGER.warn("Jackett shutdown failed: {}", error.getMessage()); }
         }
         if (refs.scheduleManager() != null) {
             try {

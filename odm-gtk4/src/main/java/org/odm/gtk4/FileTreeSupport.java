@@ -48,6 +48,9 @@ final class FileTreeSupport {
         }
     }
 
+    /** A separate torrent root; file indices are local to each group. */
+    record Group(String id, String name, List<Entry> entries) { }
+
     private static final class Node {
 
         private final String key;
@@ -111,6 +114,24 @@ final class FileTreeSupport {
     static boolean reconcile(TreeStore store, Map<String, TreeRowReference> references,
             List<Entry> entries, Path displayBase) {
         Node root = build(entries, displayBase);
+        return reconcile(store, references, root);
+    }
+
+    static boolean reconcileGroups(TreeStore store, Map<String, TreeRowReference> references,
+            List<Group> groups) {
+        Node root = new Node("ROOT", "", "", null);
+        for (Group group : groups) {
+            String key = "G:" + group.id();
+            Node folder = new Node(key, group.name(), group.name(), null);
+            Node files = build(group.entries(), null, key + ":");
+            folder.children.putAll(files.children);
+            root.children.put(key, folder);
+        }
+        root.aggregate();
+        return reconcile(store, references, root);
+    }
+
+    private static boolean reconcile(TreeStore store, Map<String, TreeRowReference> references, Node root) {
         LinkedHashMap<String, Node> rows = new LinkedHashMap<>();
         flatten(root, rows);
 
@@ -207,6 +228,16 @@ final class FileTreeSupport {
         return result;
     }
 
+    static List<Integer> selectedIndexes(TreeStore store, TreeIter group) {
+        List<Integer> result = new ArrayList<>();
+        visitLeaves(store, group, iter -> {
+            if (TreeStoreCells.getBoolean(store, iter, SELECTED_COLUMN)) {
+                result.add(TreeStoreCells.getInt(store, iter, INDEX_COLUMN));
+            }
+        });
+        return result;
+    }
+
     static List<Integer> allIndexes(TreeStore store) {
         List<Integer> result = new ArrayList<>();
         visitLeaves(store, iter -> result.add(
@@ -251,6 +282,10 @@ final class FileTreeSupport {
     }
 
     private static Node build(List<Entry> entries, Path displayBase) {
+        return build(entries, displayBase, "");
+    }
+
+    private static Node build(List<Entry> entries, Path displayBase, String prefix) {
         Node root = new Node("ROOT", "", "", null);
         int duplicate = 0;
         for (Entry entry : entries == null ? List.<Entry>of() : entries) {
@@ -263,7 +298,7 @@ final class FileTreeSupport {
                     displayPath.append('/');
                 }
                 displayPath.append(component);
-                String childKey = "D:" + displayPath;
+                String childKey = prefix + "D:" + displayPath;
                 Node existing = parent.children.get(childKey);
                 if (existing == null) {
                     existing = new Node(childKey, component, displayPath.toString(), null);
@@ -276,9 +311,9 @@ final class FileTreeSupport {
                 displayPath.append('/');
             }
             displayPath.append(name);
-            String key = "F:" + entry.index() + ":" + entry.path();
+            String key = prefix + "F:" + entry.index() + ":" + entry.path();
             while (parent.children.containsKey(key)) {
-                key = "F:" + entry.index() + ":" + entry.path() + "#" + (++duplicate);
+                key = prefix + "F:" + entry.index() + ":" + entry.path() + "#" + (++duplicate);
             }
             parent.children.put(key, new Node(key, name, displayPath.toString(), entry));
         }

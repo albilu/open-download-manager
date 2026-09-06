@@ -94,6 +94,13 @@ class OdmApplicationTeardownTest {
     }
 
     @Test
+    void releaseOwnedServicesClosesJackett() {
+        org.jackett.JackettService jackett = org.mockito.Mockito.mock(org.jackett.JackettService.class);
+        OdmApplication.releaseOwnedServices(new StartupGate.CoreRefs(newStubManager(), null, null, jackett));
+        org.mockito.Mockito.verify(jackett).close();
+    }
+
+    @Test
     @Timeout(60)
     @DisplayName("the shared core shutdown is single-flight and stops the manager")
     void coreShutdownIsSingleFlightAndStopsManager() {

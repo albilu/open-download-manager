@@ -215,8 +215,16 @@ public class MainWindow {
     /** Builder reference kept for window-state persistence from menu actions. */
     private final GtkBuilder uiBuilder;
 
+    private final org.jackett.JackettService jackettService;
+
     public MainWindow(Application app, DownloadManager downloadManager, org.tor.TorService torService,
             org.manager.schedule.ScheduleManager scheduleManager) {
+        this(app, downloadManager, torService, scheduleManager, null);
+    }
+
+    public MainWindow(Application app, DownloadManager downloadManager, org.tor.TorService torService,
+            org.manager.schedule.ScheduleManager scheduleManager, org.jackett.JackettService jackettService) {
+        this.jackettService = jackettService;
         this.downloadManager = downloadManager;
         this.torService = torService;
         this.torServiceController = new TorServiceController(downloadManager, torService);
@@ -778,7 +786,11 @@ public class MainWindow {
     }
 
     private void onSettingsClicked() {
-        new SettingsDialog(window, downloadManager, scheduleManager, active -> {
+        createSettingsDialog().present();
+    }
+
+    private SettingsDialog createSettingsDialog() {
+        return new SettingsDialog(window, downloadManager, scheduleManager, active -> {
             if (trayPreferenceHandler != null) {
                 trayPreferenceHandler.accept(downloadManager.getGlobalSettings()
                         .getBooleanProperty("ui.systemTray", false));
@@ -787,7 +799,12 @@ public class MainWindow {
             // Rebuild settings-backed actions (subtitles, antivirus, custom)
             // so changes apply without requiring a restart or re-selection.
             installCompletionActions();
-        }, torService).present();
+        }, torService, jackettService);
+    }
+
+    private void onSearchTorrents() {
+        new SearchTorrentsDialog(window, downloadManager, jackettService, torService,
+                () -> UiThread.marshal(this::refresh)).present();
     }
 
     private void onSearchChanged() {
@@ -1503,6 +1520,7 @@ public class MainWindow {
         file.append("New Download", "win.new-download");
         file.append("New Media Download", "win.new-media");
         file.append("New Website Scrape", "win.scrape");
+        file.append("Search Torrents", "win.search-torrents");
         org.gnome.gio.Menu batch = new org.gnome.gio.Menu();
         batch.append("Import URL Sequence", "win.import-sequence");
         batch.append("Import from Text File", "win.import-file");
@@ -1588,6 +1606,7 @@ public class MainWindow {
         // File
         addAction("new-download", this::onAddClicked);
         addAction("new-media", this::onNewMediaClicked);
+        addAction("search-torrents", this::onSearchTorrents);
         addAction("scrape", this::onScraperClicked);
         addAction("import-sequence", () -> new ImportSequenceDialog(window, downloadManager,
                 () -> UiThread.marshal(this::refresh), torService).present());

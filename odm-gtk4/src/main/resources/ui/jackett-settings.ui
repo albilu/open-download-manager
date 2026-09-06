@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <object class="GtkListStore" id="jackett_indexers_store">
+    <columns><column type="gboolean"/><column type="gchararray"/><column type="gchararray"/><column type="gchararray"/><column type="gchararray"/><column type="gboolean"/></columns>
+  </object>
+  <object class="GtkBox" id="jackett_settings_page">
+    <property name="orientation">vertical</property><property name="spacing">8</property>
+    <property name="margin-start">12</property><property name="margin-end">12</property>
+    <property name="margin-top">12</property><property name="margin-bottom">12</property>
+    <child><object class="GtkLabel" id="jackett_status_label"><property name="xalign">0</property><property name="wrap">true</property><property name="accessible-role">status</property></object></child>
+    <child><object class="GtkBox"><property name="spacing">8</property>
+      <child><object class="GtkButton" id="jackett_install_button"><property name="label">Install / Update</property></object></child>
+      <child><object class="GtkButton" id="jackett_start_button"><property name="label">Start</property></object></child>
+      <child><object class="GtkButton" id="jackett_stop_button"><property name="label">Stop</property></object></child>
+    </object></child>
+    <child><object class="GtkBox"><property name="spacing">8</property>
+      <child><object class="GtkCheckButton" id="jackett_autostart_check"><property name="label">Start installed Jackett with ODM</property></object></child>
+    </object></child>
+    <child><object class="GtkLabel"><property name="label">Select Indexers</property><property name="wrap">true</property><property name="xalign">0</property></object></child>
+    <child><object class="GtkScrolledWindow"><property name="vexpand">true</property><property name="min-content-height">200</property>
+      <child><object class="GtkTreeView" id="jackett_indexers_view"><property name="model">jackett_indexers_store</property><property name="tooltip-column">3</property>
+        <child><object class="GtkTreeViewColumn"><property name="title">Use</property><property name="sort-column-id">0</property><child><object class="GtkCellRendererToggle" id="jackett_indexer_toggle"><property name="activatable">true</property></object><attributes><attribute name="active">0</attribute><attribute name="sensitive">5</attribute></attributes></child></object></child>
+        <child><object class="GtkTreeViewColumn"><property name="title">Public indexer</property><property name="expand">true</property><property name="sort-column-id">2</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+        <child><object class="GtkTreeViewColumn"><property name="title">Test status</property><property name="sort-column-id">4</property><property name="resizable">true</property><child><object class="GtkCellRendererText"><property name="ellipsize">end</property><property name="max-width-chars">36</property></object><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+      </object></child>
+    </object></child>
+    <child><object class="GtkBox"><property name="spacing">8</property>
+      <child><object class="GtkButton" id="jackett_refresh_button"><property name="label">Refresh indexers</property></object></child>
+    </object></child>
+    <child><object class="GtkLabel" id="jackett_action_status"><property name="xalign">0</property><property name="wrap">true</property><property name="accessible-role">status</property></object></child>
+  </object>
+</interface>

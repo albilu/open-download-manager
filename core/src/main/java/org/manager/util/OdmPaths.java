@@ -15,6 +15,13 @@ public final class OdmPaths {
     private OdmPaths() {
     }
 
+    /** User configuration, separate from installed tools and runtime state. */
+    public static Path configDirectory() {
+        String configured = System.getenv("XDG_CONFIG_HOME");
+        return (configured != null && !configured.isBlank() ? Path.of(configured)
+                : Path.of(System.getProperty("user.home"), ".config")).resolve("odm");
+    }
+
     /**
      * Resolves the XDG data directory for ODM state files, honoring
      * XDG_DATA_HOME and defaulting to ~/.local/share/odm.
