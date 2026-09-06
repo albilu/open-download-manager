@@ -16,7 +16,7 @@ import org.gnome.glib.Source;
 import org.javagi.gobject.SignalConnection;
 import org.manager.clipboard.ClipboardListener;
 import org.manager.clipboard.ClipboardMonitor;
-import org.manager.clipboard.UrlDetector;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Toolkit-native clipboard monitor for the GTK app: subscribes to the
@@ -156,7 +156,7 @@ public class GdkClipboardMonitor implements ClipboardMonitor {
 
     @Override
     public boolean containsValidUrls(String text) {
-        return text != null && UrlDetector.containsUrls(text);
+        return text != null && DownloadUrlPolicy.containsUrls(text);
     }
 
     /** Coalesces rapid change notifications into one read per idle cycle. */
@@ -211,7 +211,8 @@ public class GdkClipboardMonitor implements ClipboardMonitor {
             return;
         }
 
-        List<URI> urls = UrlDetector.extractUrls(normalized);
+        List<URI> urls = DownloadUrlPolicy.extract(normalized).stream()
+                .map(DownloadUrlPolicy.ValidatedSource::uri).toList();
         if (!urls.isEmpty()) {
             LOGGER.info("Detected " + urls.size() + " URL(s) in clipboard (GDK)");
             notifyListeners(l -> l.onUrlsDetected(urls, normalized));

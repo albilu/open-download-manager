@@ -257,7 +257,8 @@ public class ImportSequenceDialog {
         currentPreviewUrls = List.of();
         validateButton.setSensitive(false);
         activity.track(CompletableFuture.supplyAsync(
-                () -> input.generate(importLimits.maxUrls())))
+                () -> DownloadSubmission.validUrls(input.generate(importLimits.maxUrls()),
+                        importLimits.maxUrls())))
                 .whenComplete((urls, error) -> UiThread.marshal(() -> {
                     if (epoch != previewEpoch) {
                         return;
@@ -336,25 +337,8 @@ public class ImportSequenceDialog {
     }
 
     private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
-        List<CompletableFuture<Boolean>> admissions = new ArrayList<>();
-        for (String url : urls.stream().limit(importLimits.maxUrls()).toList()) {
-            try {
-                Download download = downloadManager.createDownload(
-                        org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
-                options.apply(download);
-                admissions.add(downloadManager.queueDownload(download)
-                        .handle((ignored, error) -> {
-                            if (error != null) {
-                                LOGGER.debug("URL-sequence queue admission failed", error);
-                                return false;
-                            }
-                            return true;
-                        }));
-            } catch (Exception e) {
-                LOGGER.debug("Skipped an invalid URL-sequence entry", e);
-            }
-        }
-        return (int) admissions.stream().filter(CompletableFuture::join).count();
+        return DownloadSubmission.queueUrls(downloadManager, urls, destination,
+                options::apply, importLimits.maxUrls());
     }
 
     void close() {

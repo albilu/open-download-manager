@@ -25,6 +25,7 @@ import org.gnome.gtk.TreeView;
 import org.gnome.gtk.Window;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * New Download dialog with Download, Files, and per-download engine/network
@@ -236,9 +237,10 @@ public class NewDownloadDialog {
             return;
         }
         try {
-            java.net.URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
-            Download.Protocol protocol = Download.Protocol.fromUri(uri);
-            Download.Type type = org.manager.download.MediaUrlDetector.isMediaUrl(uri)
+            DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(url);
+            java.net.URI uri = source.uri();
+            Download.Protocol protocol = source.protocol();
+            Download.Type type = org.manager.download.MediaUrlDetector.isMediaSource(source)
                     ? Download.Type.YOUTUBE : Download.Type.ARIA2;
             updateNetworkCapabilities(type, protocol);
             setSftpHostKeyVisible(protocol == Download.Protocol.SFTP);
@@ -331,7 +333,7 @@ public class NewDownloadDialog {
     }
 
     private java.net.URI safeCurrentUri() {
-        return org.manager.clipboard.UrlDetector.normalizeAndValidate(urlEntry.getText())
+        return DownloadUrlPolicy.parse(urlEntry.getText()).map(DownloadUrlPolicy.ValidatedSource::uri)
                 .orElse(null);
     }
 
@@ -667,7 +669,7 @@ public class NewDownloadDialog {
             throw new IllegalArgumentException("Enter a URL or choose a torrent/metalink file.");
         }
         return DownloadSubmission.draft(downloadManager,
-                org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination, null);
+                DownloadUrlPolicy.require(url).uri(), destination, null);
     }
 
     private void applyOptions(Download download) {

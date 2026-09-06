@@ -65,6 +65,16 @@ class Aria2FilePreviewTest {
     }
 
     @Test
+    void invalidMetadataCandidatesAreRejectedBeforeAria2IsInvoked() {
+        for (String input : List.of("ordinary-text", "README.md", "magnet:?xt=urn:btih:short",
+                "https://example.com:70000/file.torrent", "file:///tmp/arbitrary.txt")) {
+            assertThrows(CompletionException.class,
+                    () -> handler.previewDownloadFiles(URI.create(input)).join());
+        }
+        assertEquals(0, client.addUriCalls.get());
+    }
+
+    @Test
     void socksMagnetPreviewFailsBeforeAnyDirectAriaTaskCanStart() {
         URI magnet = URI.create("magnet:?xt=urn:btih:"
                 + "0123456789abcdef0123456789abcdef01234567");

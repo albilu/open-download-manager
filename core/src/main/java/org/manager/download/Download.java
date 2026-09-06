@@ -18,6 +18,7 @@ import org.manager.download.action.CompletionActionResult;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Represents a download task in the download manager.
@@ -224,12 +225,22 @@ public class Download {
     }
 
     /**
-     * Creates a new Download instance with the specified URI.
+     * Creates a draft model with the specified URI. New input adapters should
+     * prefer {@link #fromSource}; manager admission validates drafts again.
      *
      * @param uri The URI to download from
      */
     public Download(URI uri) {
         this();
+        initializeSource(uri, MediaUrlDetector.isMediaUrl(uri));
+    }
+
+    private Download(DownloadUrlPolicy.ValidatedSource source) {
+        this();
+        initializeSource(source.uri(), MediaUrlDetector.isMediaSource(source));
+    }
+
+    private void initializeSource(URI uri, boolean media) {
         setUri(uri);
 
         // Set type based on URI. Media detection must come before the generic
@@ -237,7 +248,7 @@ public class Download {
         // (m3u8/DASH/fragmented MP4) are handled by the yt-dlp engine, while
         // everything else (including direct media file links, which benefit
         // from aria2 multi-connection) goes to aria2.
-        if (MediaUrlDetector.isMediaUrl(uri)) {
+        if (media) {
             this.type = Type.YOUTUBE; // Use yt-dlp handler for media URLs
         } else {
             // Protocol describes the source; Type independently selects the
@@ -272,6 +283,11 @@ public class Download {
         if (this.name == null || this.name.isEmpty()) {
             setName("download_" + this.id.substring(0, 8));
         }
+    }
+
+    /** Creates a draft from a source admitted by the shared URL policy. */
+    public static Download fromSource(DownloadUrlPolicy.ValidatedSource source) {
+        return new Download(source);
     }
 
     /**
@@ -516,6 +532,46 @@ public class Download {
         synchronized (lock) {
             this.uri = uri;
             this.protocol = deriveProtocol();
+        }
+    }
+
+    /**
+     * Validates a complete source snapshot before queueing, starting or resuming.
+     * Setters remain available to restore historical records, including ones
+     * which no longer satisfy admission policy. No source is changed until all
+     * URLs pass, and explicit descriptor/engine choices survive normalization.
+     */
+    public DownloadUrlPolicy.ValidatedSource validateSourcesForTransfer() {
+        synchronized (lock) {
+            DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(uri);
+            if (type == null) {
+                throw new IllegalArgumentException("Download type is required");
+            }
+            if (type == Type.YOUTUBE || type == Type.WEBSITE_SCRAPING) {
+                source.requireWeb();
+            } else if (type == Type.CURL) {
+                source.requireDirectTransfer();
+            }
+            List<URI> normalizedMirrors = mirrors.stream()
+                    .map(value -> DownloadUrlPolicy.require(value).requireDirectTransfer().uri())
+                    .toList();
+            Map<String, List<String>> normalizedOverrides = new java.util.LinkedHashMap<>();
+            sourceOverrides.forEach((key, values) -> {
+                if (values.isEmpty()) {
+                    throw new IllegalArgumentException("Keep at least one source for each file");
+                }
+                normalizedOverrides.put(key, values.stream()
+                        .map(value -> DownloadUrlPolicy.require(value)
+                                .requireDirectTransfer().uri().toString())
+                        .toList());
+            });
+            uri = source.uri();
+            if (protocol == null) {
+                protocol = source.protocol();
+            }
+            mirrors = new ArrayList<>(normalizedMirrors);
+            sourceOverrides = Map.copyOf(normalizedOverrides);
+            return source;
         }
     }
 

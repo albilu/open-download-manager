@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
 import org.manager.download.DownloadOperations;
 import org.manager.tools.BoundedHttpFetcher;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * HTML import / export list logic: href extraction from arbitrary
@@ -70,11 +71,7 @@ final class HtmlImportExport {
                         candidate = base.resolve(candidate);
                     }
                 }
-                URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(candidate);
-                if ("http".equalsIgnoreCase(uri.getScheme())
-                        || "https".equalsIgnoreCase(uri.getScheme())) {
-                    urls.add(uri);
-                }
+                urls.add(DownloadUrlPolicy.require(candidate).requireWeb().uri());
             } catch (Exception ignored) {
                 // non-absolute/invalid href: skip
             }
@@ -93,7 +90,7 @@ final class HtmlImportExport {
                 base = documentUri.resolve(base);
             }
             return isHttp(base)
-                    ? org.manager.clipboard.UrlDetector.requireValidDownloadUri(base)
+                    ? DownloadUrlPolicy.require(base).uri()
                     : isHttp(documentUri) ? documentUri : null;
         } catch (Exception ignored) {
             return isHttp(documentUri) ? documentUri : null;
@@ -203,12 +200,10 @@ final class HtmlImportExport {
     static List<String> fetchRemoteHtmlLinks(URI source, String proxyAddress,
             ImportLimits limits) {
         ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
-        if (!isHttp(source)) {
-            throw new IllegalArgumentException("Only HTTP(S) HTML sources are supported");
-        }
+        URI normalizedSource = DownloadUrlPolicy.require(source).requireWeb().uri();
         try {
             BoundedHttpFetcher.FetchResult response = BoundedHttpFetcher.fetchResult(
-                    source, effective.maxSourceBytes(), Duration.ofSeconds(10),
+                    normalizedSource, effective.maxSourceBytes(), Duration.ofSeconds(10),
                     Duration.ofSeconds(30), proxyAddress);
             if (!isHtmlContentType(response.contentType())) {
                 throw new IllegalArgumentException("The remote source is not HTML");
@@ -224,21 +219,8 @@ final class HtmlImportExport {
         }
     }
 
-    private static int queueLinks(List<URI> urls, DownloadOperations operations) {
-        int queued = 0;
-        for (URI uri : urls) {
-            try {
-                operations.queueDownload(operations.createDownload(uri, null));
-                queued++;
-            } catch (Exception ignored) {
-                // A single rejected link must not abort the remainder.
-            }
-        }
-        return queued;
-    }
-
     private static int queueLinkStrings(List<String> urls, DownloadOperations operations) {
-        return queueLinks(urls.stream().map(URI::create).toList(), operations);
+        return DownloadSubmission.queueUrls(operations, urls, null, download -> { }, urls.size());
     }
 
     private static boolean isHtmlContentType(String contentType) {

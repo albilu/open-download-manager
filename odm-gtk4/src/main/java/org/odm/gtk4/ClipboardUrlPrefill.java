@@ -8,6 +8,7 @@ import org.gnome.gtk.Entry;
 import org.gnome.gtk.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.manager.url.DownloadUrlPolicy;
 
 /** Asynchronously prefills blank URL fields from the desktop clipboard. */
 final class ClipboardUrlPrefill {
@@ -50,17 +51,14 @@ final class ClipboardUrlPrefill {
         if (accepts == null) {
             return Optional.empty();
         }
-        return org.manager.clipboard.UrlDetector.extractUrls(clipboardContent).stream()
+        return DownloadUrlPolicy.extract(clipboardContent).stream()
+                .map(DownloadUrlPolicy.ValidatedSource::uri)
                 .filter(accepts)
                 .findFirst();
     }
 
     static boolean isWebPage(URI uri) {
-        if (uri == null || uri.getScheme() == null || uri.getHost() == null
-                || uri.getHost().isBlank()) {
-            return false;
-        }
-        return "http".equalsIgnoreCase(uri.getScheme())
-                || "https".equalsIgnoreCase(uri.getScheme());
+        return uri != null && DownloadUrlPolicy.parse(uri.toString())
+                .map(DownloadUrlPolicy.ValidatedSource::isWeb).orElse(false);
     }
 }

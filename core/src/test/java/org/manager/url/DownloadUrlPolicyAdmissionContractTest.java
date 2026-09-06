@@ -1,4 +1,4 @@
-package org.manager.clipboard;
+package org.manager.url;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -21,13 +21,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 
 /**
- * Admission-boundary contract for every caller that relies on {@link UrlDetector}.
- * The cases deliberately cover both direct entry fields ({@code normalizeAndValidate})
- * and free-form clipboard/import text ({@code extractUrls}).
+ * Admission-boundary contract for every caller that relies on {@link DownloadUrlPolicy}.
+ * The cases deliberately cover both direct entry fields ({@code parse})
+ * and free-form clipboard/import text ({@code extract}).
  */
 @DisplayName("URL candidate admission contract")
 @Isolated("temporarily changes the JVM default locale")
-class UrlDetectorAdmissionContractTest {
+class DownloadUrlPolicyAdmissionContractTest {
 
     private static final String HEX_INFO_HASH =
             "0123456789abcdef0123456789abcdef01234567";
@@ -40,9 +40,9 @@ class UrlDetectorAdmissionContractTest {
     void acceptsAndNormalizesSupportedDirectInputs(String input, String expected) {
         URI expectedUri = URI.create(expected);
 
-        assertEquals(expectedUri, UrlDetector.normalizeAndValidate(input).orElseThrow());
-        assertEquals(expectedUri, UrlDetector.requireValidDownloadUrl(input));
-        assertTrue(UrlDetector.isValidDownloadUrl(expectedUri));
+        assertEquals(expectedUri, DownloadUrlPolicy.parse(input).orElseThrow().uri());
+        assertEquals(expectedUri, DownloadUrlPolicy.require(input).uri());
+        assertTrue(DownloadUrlPolicy.isValidDownloadUri(expectedUri));
     }
 
     static Stream<Arguments> acceptedDirectInputs() {
@@ -90,8 +90,8 @@ class UrlDetectorAdmissionContractTest {
     @MethodSource("clipboardExtractionCases")
     @DisplayName("extracts complete URLs from realistic clipboard wrappers")
     void extractsCompleteUrlsFromClipboardWrappers(String clipboardText, String expected) {
-        assertEquals(List.of(URI.create(expected)), UrlDetector.extractUrls(clipboardText));
-        assertTrue(UrlDetector.containsUrls(clipboardText));
+        assertEquals(List.of(URI.create(expected)), DownloadUrlPolicy.extract(clipboardText).stream().map(DownloadUrlPolicy.ValidatedSource::uri).toList());
+        assertTrue(DownloadUrlPolicy.containsUrls(clipboardText));
     }
 
     static Stream<Arguments> clipboardExtractionCases() {
@@ -142,18 +142,18 @@ class UrlDetectorAdmissionContractTest {
     @MethodSource("rejectedDirectInputs")
     @DisplayName("rejects unsupported, malformed, and ambiguous direct inputs")
     void rejectsUnsupportedMalformedAndAmbiguousDirectInputs(String input) {
-        assertTrue(UrlDetector.normalizeAndValidate(input).isEmpty(), input);
+        assertTrue(DownloadUrlPolicy.parse(input).isEmpty(), input);
         assertThrows(IllegalArgumentException.class,
-                () -> UrlDetector.requireValidDownloadUrl(input), input);
+                () -> DownloadUrlPolicy.require(input), input);
     }
 
     @ParameterizedTest
     @NullAndEmptySource
     @DisplayName("rejects missing direct input")
     void rejectsMissingDirectInput(String input) {
-        assertTrue(UrlDetector.normalizeAndValidate(input).isEmpty());
+        assertTrue(DownloadUrlPolicy.parse(input).isEmpty());
         assertThrows(IllegalArgumentException.class,
-                () -> UrlDetector.requireValidDownloadUrl(input));
+                () -> DownloadUrlPolicy.require(input).uri());
     }
 
     static Stream<String> rejectedDirectInputs() {
@@ -178,6 +178,8 @@ class UrlDetectorAdmissionContractTest {
                 "file:///tmp/arbitrary.txt", "file:relative.torrent",
                 "file://localhost/tmp/item.torrent", "file:///tmp/item.torrent?download=1",
                 "file:///tmp/item.torrent#fragment", "file:///tmp/item%00.torrent",
+                "magnet://example.com/?xt=urn:btih:" + HEX_INFO_HASH,
+                "magnet:xt=urn:btih:" + HEX_INFO_HASH,
                 "magnet:?dn=missing-exact-topic", "magnet:?xt=urn:btih:short",
                 "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef0123456g",
                 "magnet:?xt=urn:btmh:1220abcd",
@@ -188,8 +190,8 @@ class UrlDetectorAdmissionContractTest {
     @MethodSource("nonUrlClipboardText")
     @DisplayName("does not promote ordinary clipboard text to downloads")
     void doesNotPromoteOrdinaryClipboardText(String text) {
-        assertEquals(List.of(), UrlDetector.extractUrls(text), text);
-        assertFalse(UrlDetector.containsUrls(text), text);
+        assertEquals(List.of(), DownloadUrlPolicy.extract(text).stream().map(DownloadUrlPolicy.ValidatedSource::uri).toList(), text);
+        assertFalse(DownloadUrlPolicy.containsUrls(text), text);
     }
 
     static Stream<String> nonUrlClipboardText() {
@@ -226,7 +228,7 @@ class UrlDetectorAdmissionContractTest {
     @MethodSource("malformedClipboardCandidates")
     @DisplayName("does not salvage a valid-looking substring from a bad token")
     void doesNotPartiallySalvageMalformedClipboardCandidates(String text) {
-        assertEquals(List.of(), UrlDetector.extractUrls(text), text);
+        assertEquals(List.of(), DownloadUrlPolicy.extract(text).stream().map(DownloadUrlPolicy.ValidatedSource::uri).toList(), text);
     }
 
     static Stream<String> malformedClipboardCandidates() {
@@ -252,9 +254,9 @@ class UrlDetectorAdmissionContractTest {
     @MethodSource("rejectedParsedUris")
     @DisplayName("applies the same rejection rules to already-parsed URIs")
     void rejectsUnsupportedOrInvalidParsedUris(URI uri) {
-        assertFalse(UrlDetector.isValidDownloadUrl(uri), uri.toString());
+        assertFalse(DownloadUrlPolicy.isValidDownloadUri(uri), uri.toString());
         assertThrows(IllegalArgumentException.class,
-                () -> UrlDetector.requireValidDownloadUri(uri));
+                () -> DownloadUrlPolicy.require(uri));
     }
 
     static Stream<URI> rejectedParsedUris() {
@@ -273,6 +275,8 @@ class UrlDetectorAdmissionContractTest {
                 URI.create("file:///tmp/item.torrent?download=1"),
                 URI.create("file:///tmp/item.torrent#fragment"),
                 URI.create("file:///tmp/item%00.torrent"),
+                URI.create("magnet://example.com/?xt=urn:btih:" + HEX_INFO_HASH),
+                URI.create("magnet:xt=urn:btih:" + HEX_INFO_HASH),
                 URI.create("magnet:?dn=missing-exact-topic"),
                 URI.create("magnet:?xt=urn:btih:short"),
                 URI.create("magnet:?xt=urn:unknown:" + HEX_INFO_HASH));
@@ -281,9 +285,9 @@ class UrlDetectorAdmissionContractTest {
     @Test
     @DisplayName("a null parsed URI is rejected")
     void rejectsNullParsedUri() {
-        assertFalse(UrlDetector.isValidDownloadUrl(null));
+        assertFalse(DownloadUrlPolicy.isValidDownloadUri(null));
         assertThrows(IllegalArgumentException.class,
-                () -> UrlDetector.requireValidDownloadUri(null));
+                () -> DownloadUrlPolicy.require((URI) null));
     }
 
     @Test
@@ -296,7 +300,7 @@ class UrlDetectorAdmissionContractTest {
                 URI.create("https://example.com/a.zip"),
                 URI.create("https://example.net/b.zip"),
                 URI.create("ftp://ftp.example.org/c.iso")),
-                UrlDetector.extractUrls(text));
+                DownloadUrlPolicy.extract(text).stream().map(DownloadUrlPolicy.ValidatedSource::uri).toList());
     }
 
     @Test
@@ -305,12 +309,12 @@ class UrlDetectorAdmissionContractTest {
         String text = "https://example.com/a.zip file:///tmp/b.meta4 "
                 + "magnet:?xt=urn:btih:" + HEX_INFO_HASH + " example.org/c.iso";
 
-        List<URI> extracted = UrlDetector.extractUrls(text);
+        List<URI> extracted = DownloadUrlPolicy.extract(text).stream().map(DownloadUrlPolicy.ValidatedSource::uri).toList();
 
         assertEquals(4, extracted.size());
-        assertTrue(extracted.stream().allMatch(UrlDetector::isValidDownloadUrl));
+        assertTrue(extracted.stream().allMatch(DownloadUrlPolicy::isValidDownloadUri));
         assertEquals(extracted,
-                extracted.stream().map(UrlDetector::requireValidDownloadUri).toList());
+                extracted.stream().map(DownloadUrlPolicy::require).map(DownloadUrlPolicy.ValidatedSource::uri).toList());
     }
 
     @Test
@@ -319,7 +323,7 @@ class UrlDetectorAdmissionContractTest {
         URI outer = URI.create(
                 "https://example.com/redirect?target=https://cdn.example.org/file.zip");
 
-        assertEquals(List.of(outer), UrlDetector.extractUrls(outer.toString()));
+        assertEquals(List.of(outer), DownloadUrlPolicy.extract(outer.toString()).stream().map(DownloadUrlPolicy.ValidatedSource::uri).toList());
     }
 
     @Test
@@ -350,7 +354,7 @@ class UrlDetectorAdmissionContractTest {
         }
 
         assertTimeoutPreemptively(Duration.ofSeconds(5),
-                () -> assertEquals(List.of(), UrlDetector.extractUrls(noise.toString())));
+                () -> assertEquals(List.of(), DownloadUrlPolicy.extract(noise.toString())));
     }
 
     @Test
@@ -361,10 +365,11 @@ class UrlDetectorAdmissionContractTest {
         String heavilyWrapped = "https://example.com/file.zip" + ")".repeat(100_000);
 
         assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
-            assertEquals(List.of(), UrlDetector.extractUrls(dottedNoise));
-            assertEquals(List.of(), UrlDetector.extractUrls(oversizedHost));
+            assertEquals(List.of(), DownloadUrlPolicy.extract(dottedNoise));
+            assertEquals(List.of(), DownloadUrlPolicy.extract(oversizedHost));
             assertEquals(List.of(URI.create("https://example.com/file.zip")),
-                    UrlDetector.extractUrls(heavilyWrapped));
+                    DownloadUrlPolicy.extract(heavilyWrapped).stream()
+                            .map(DownloadUrlPolicy.ValidatedSource::uri).toList());
         });
     }
 
@@ -375,7 +380,7 @@ class UrlDetectorAdmissionContractTest {
         try {
             Locale.setDefault(Locale.forLanguageTag("tr-TR"));
             assertEquals(URI.create("https://example.com/FILE.ISO"),
-                    UrlDetector.requireValidDownloadUrl("HTTPS://example.com/FILE.ISO"));
+                    DownloadUrlPolicy.require("HTTPS://example.com/FILE.ISO").uri());
         } finally {
             Locale.setDefault(original);
         }

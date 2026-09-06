@@ -27,6 +27,7 @@ import org.manager.download.DownloadManager;
 import org.manager.download.DownloadSettingsFactory;
 import org.ytdlp.YtDlpClient;
 import org.ytdlp.YtDlpSettings;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * New Media dialog: yt-dlp workflow with metadata discovery. Fetching info
@@ -249,11 +250,12 @@ public class NewMediaDialog {
         if (url.isBlank()) { return; }
         invalidateMetadata();
         final YtDlpSettings previewSettings;
+        final URI source;
         try {
-            URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
+            source = DownloadUrlPolicy.require(url).requireWeb().uri();
             previewSettings = (YtDlpSettings) defaultSettings.copy();
             applyAuthenticationOptions(previewSettings);
-            Download previewDownload = new Download(uri);
+            Download previewDownload = new Download(source);
             previewDownload.setType(Download.Type.YOUTUBE);
             previewDownload.setSettings(previewSettings);
             networkOptions.applyTo(previewDownload);
@@ -265,7 +267,7 @@ public class NewMediaDialog {
         long generation = metadataGeneration;
         AccessibilitySupport.status(statusLabel, "Fetching media info…");
         metadataFuture = DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService)
-                .thenCompose(ignored -> ytDlpClient.previewMedia(url, previewSettings));
+                .thenCompose(ignored -> ytDlpClient.previewMedia(source.toString(), previewSettings));
         refreshButtons();
         metadataFuture.whenComplete((info, failure) -> UiThread.marshal(() -> {
             if (closed.get() || generation != metadataGeneration) { return; }
@@ -312,7 +314,7 @@ public class NewMediaDialog {
     private void onStart() {
         if (closed.get() || submissionInFlight) { return; }
         try {
-            URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(urlEntry.getText());
+            URI uri = DownloadUrlPolicy.require(urlEntry.getText()).requireWeb().uri();
             Download download = DownloadSubmission.draft(downloadManager, uri, destinationFolder,
                     Download.Type.YOUTUBE);
             applyMediaOptions(download);

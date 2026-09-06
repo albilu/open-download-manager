@@ -151,14 +151,19 @@ class DialogSubmissionTest {
         Entry url = field(dialog, "urlEntry", Entry.class);
         Button fetch = field(dialog, "fetchInfoButton", Button.class);
         try {
-            url.setText("http://[");
-            invoke(dialog, "onFetchInfo");
-            assertTrue(fetch.getSensitive());
-            url.setText("http://127.0.0.1/first");
+            for (String invalid : List.of("http://[", "ordinary text", "README.md",
+                    "magnet:?xt=urn:btih:" + "a".repeat(40))) {
+                url.setText(invalid);
+                invoke(dialog, "onFetchInfo");
+                assertTrue(fetch.getSensitive());
+            }
+            verify(client, never()).previewMedia(anyString(), any());
+            url.setText("Example.COM/first");
             CompletableFuture<YtDlpClient.VideoInfo> first = new CompletableFuture<>();
             CompletableFuture<YtDlpClient.VideoInfo> second = new CompletableFuture<>();
             when(client.previewMedia(anyString(), any())).thenReturn(first, second);
             invoke(dialog, "onFetchInfo");
+            verify(client).previewMedia(eq("https://example.com/first"), any());
             assertFalse(fetch.getSensitive());
             url.setText("http://127.0.0.1/second");
             assertTrue(fetch.getSensitive());
@@ -171,6 +176,28 @@ class DialogSubmissionTest {
             second.complete(info);
             pump(fetch::getSensitive);
             assertTrue(field(dialog, "infoLabel", Label.class).getLabel().contains("Current metadata"));
+        } finally { window.close(); }
+    }
+
+    @Test void sequencePreviewExcludesRandomTextAndUsesNormalizedUrls() throws Exception {
+        ImportSequenceDialog sequence = new ImportSequenceDialog(null, manager, () -> { });
+        Window window = field(sequence, "dialog", Window.class);
+        window.present();
+        try {
+            field(sequence, "numStartSpin", SpinButton.class).setValue(1);
+            field(sequence, "numVersSpin", SpinButton.class).setValue(1);
+            field(sequence, "numCountSpin", SpinButton.class).setValue(1);
+            Entry entry = field(sequence, "uriEntry", Entry.class);
+            Button accept = field(sequence, "validateButton", Button.class);
+            SpinnerActivity activity = field(sequence, "activity", SpinnerActivity.class);
+            entry.setText("Example.COM/file-{}.zip");
+            pump(accept::getSensitive);
+            assertEquals(List.of("https://example.com/file-1.zip"),
+                    field(sequence, "currentPreviewUrls", List.class));
+            entry.setText("random item-{}");
+            pump(() -> activity.activeCount() == 0);
+            assertFalse(accept.getSensitive());
+            assertEquals(List.of(), field(sequence, "currentPreviewUrls", List.class));
         } finally { window.close(); }
     }
 

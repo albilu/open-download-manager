@@ -59,6 +59,7 @@ import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Implementation of the DownloadManager interface using a modular handler
@@ -305,11 +306,11 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public Download createDownload(URI uri, Path destination) {
-        URI normalizedUri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(uri);
+        DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(uri);
 
         try {
             return ErrorHandler.executeWithRetry(
-                    () -> createDownloadInternal(normalizedUri, destination),
+                    () -> createDownloadInternal(source, destination),
                     ErrorHandler.RetryConfig.noRetry(),
                     "create download");
         } catch (Exception e) {
@@ -322,6 +323,9 @@ public class DownloadManagerImpl implements DownloadManager {
     public Download createTorrentDownload(Path torrentFile, Path destination) {
         if (torrentFile == null) {
             throw new IllegalArgumentException("Torrent file path cannot be null");
+        }
+        if (DownloadUrlPolicy.require(torrentFile.toUri()).protocol() != Download.Protocol.TORRENT) {
+            throw new IllegalArgumentException("A local torrent descriptor is required");
         }
 
         try {
@@ -337,11 +341,11 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public Download createMagnetDownload(URI magnetUri, Path destination) {
-        URI normalizedUri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(magnetUri);
-        if (Download.Protocol.fromUri(normalizedUri) != Download.Protocol.MAGNET) {
+        DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(magnetUri);
+        if (source.protocol() != Download.Protocol.MAGNET) {
             throw new IllegalArgumentException("A magnet URI is required");
         }
-        Download download = new Download(normalizedUri);
+        Download download = Download.fromSource(source);
         download.setType(Download.Type.ARIA2);
         if (destination != null) {
             download.setDestination(destination);
@@ -359,8 +363,11 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public Download createMetaLinkDownload(URI metaLinkUri, Path destination) {
-        URI normalizedUri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(metaLinkUri);
-        Download download = new Download(normalizedUri);
+        DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(metaLinkUri);
+        if (source.protocol() == Download.Protocol.MAGNET) {
+            throw new IllegalArgumentException("A Metalink source is required");
+        }
+        Download download = Download.fromSource(source);
         download.setProtocol(Download.Protocol.METALINK);
         download.setType(Download.Type.ARIA2);
         if (destination != null) {
@@ -379,8 +386,8 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public Download createYoutubeDownload(URI videoUrl, Path destination, Map<String, String> options) {
-        URI normalizedUri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(videoUrl);
-        Download download = new Download(normalizedUri);
+        DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(videoUrl).requireWeb();
+        Download download = Download.fromSource(source);
         download.setType(Download.Type.YOUTUBE);
         if (destination != null) {
             download.setDestination(destination);
@@ -406,8 +413,8 @@ public class DownloadManagerImpl implements DownloadManager {
 
     @Override
     public Download createWebsiteDownload(URI websiteUrl, Path destination, Map<String, String> options) {
-        URI normalizedUri = org.manager.clipboard.UrlDetector.requireValidDownloadUri(websiteUrl);
-        Download download = new Download(normalizedUri);
+        DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(websiteUrl).requireWeb();
+        Download download = Download.fromSource(source);
         download.setType(Download.Type.WEBSITE_SCRAPING);
         if (destination != null) {
             download.setDestination(destination);
@@ -463,9 +470,7 @@ public class DownloadManagerImpl implements DownloadManager {
                         "queue download: " + download.getId());
             } catch (Exception e) {
                 LOGGER.warn("Failed to queue download: " + download.getId(), e);
-                downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
-                download.setErrorMessage(e.getMessage());
-                notifyDownloadError(download, e.getMessage());
+                rejectBeforeStart(download, messageOf(e));
                 throw new CompletionException("Failed to queue download: " + download.getId(), e);
             }
         }, executorManager.getGeneralExecutor());
@@ -506,6 +511,7 @@ public class DownloadManagerImpl implements DownloadManager {
             if (download == null) {
                 throw new IllegalArgumentException("Download cannot be null");
             }
+            download.validateSourcesForTransfer();
             if (holdForUnavailableTor(download)) {
                 if (admissionAlreadyClaimed) {
                     releaseRunningSlot(download.getId());
@@ -639,9 +645,7 @@ public class DownloadManagerImpl implements DownloadManager {
                     failStart(download, generation, messageOf(e), e);
                 } else {
                     releaseRunningSlot(download.getId());
-                    downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
-                    download.setErrorMessage(messageOf(e));
-                    notifyDownloadError(download, messageOf(e));
+                    rejectBeforeStart(download, messageOf(e));
                     startNextQueuedDownload();
                 }
             }
@@ -656,6 +660,17 @@ public class DownloadManagerImpl implements DownloadManager {
         }
         String message = cause.getMessage();
         return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
+    }
+
+    /** Rejected drafts must not enter the repository's history or status indexes. */
+    private void rejectBeforeStart(Download download, String message) {
+        if (downloadRepository.getDownload(download.getId()) != null) {
+            downloadRepository.updateDownloadStatus(download, Download.Status.ERROR);
+        } else {
+            download.setStatus(Download.Status.ERROR);
+        }
+        download.setErrorMessage(message);
+        notifyDownloadError(download, message);
     }
 
     /** Completes a failed start exactly once and releases its admission slot. */
@@ -1041,6 +1056,15 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private void resumeDownloadInternal(Download download) {
+        if (download == null) {
+            throw new IllegalArgumentException("Download cannot be null");
+        }
+        try {
+            download.validateSourcesForTransfer();
+        } catch (IllegalArgumentException invalidSource) {
+            rejectBeforeStart(download, invalidSource.getMessage());
+            throw invalidSource;
+        }
         if (holdForUnavailableTor(download)) {
             return;
         }
@@ -1456,7 +1480,13 @@ public class DownloadManagerImpl implements DownloadManager {
     @Override
     public CompletableFuture<List<DownloadFileInfo>> previewDownloadFiles(
             URI source, String proxyAddress) {
-        Download.Protocol protocol = Download.Protocol.fromUri(source);
+        final DownloadUrlPolicy.ValidatedSource validated;
+        try {
+            validated = DownloadUrlPolicy.require(source);
+        } catch (IllegalArgumentException invalidSource) {
+            return CompletableFuture.failedFuture(invalidSource);
+        }
+        Download.Protocol protocol = validated.protocol();
         if (protocol != Download.Protocol.TORRENT
                 && protocol != Download.Protocol.MAGNET
                 && protocol != Download.Protocol.METALINK) {
@@ -1474,7 +1504,7 @@ public class DownloadManagerImpl implements DownloadManager {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("aria2 is unavailable for file metadata preview"));
         }
-        return handler.previewDownloadFiles(source, proxyAddress);
+        return handler.previewDownloadFiles(validated.uri(), proxyAddress);
     }
 
     @Override
@@ -2541,9 +2571,9 @@ public class DownloadManagerImpl implements DownloadManager {
     /**
      * Internal method to create a download with error handling.
      */
-    private Download createDownloadInternal(URI uri, Path destination) {
+    private Download createDownloadInternal(DownloadUrlPolicy.ValidatedSource source, Path destination) {
         try {
-            Download download = new Download(uri);
+            Download download = Download.fromSource(source);
 
             Path finalDestination = destination != null ? destination
                     : getGlobalSettings().getDefaultDownloadDirectory();
@@ -2598,6 +2628,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 throw new RuntimeException("Cannot queue downloads while shutting down");
             }
 
+            download.validateSourcesForTransfer();
             download.setManualStartRequired(manualStartRequired);
             download.setQueuePosition(nextQueuePosition());
             if (downloadRepository.getDownload(download.getId()) == null) {

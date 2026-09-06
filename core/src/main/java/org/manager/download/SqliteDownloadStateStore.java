@@ -346,6 +346,8 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         // Rebuild through the Jackson creator constructor so the persisted id
         // and createdAt survive; everything else is restored through setters
         Download download = new Download(rs.getString("id"), readInstant(rs, "created_at"));
+        // Retain historical sources even when current URL policy rejects them.
+        // The manager validates the full source snapshot before queue/start/resume.
         download.setUri(URI.create(rs.getString("uri")));
         String persistedProtocol = rs.getString("protocol");
         if (persistedProtocol != null && !persistedProtocol.isBlank()) {

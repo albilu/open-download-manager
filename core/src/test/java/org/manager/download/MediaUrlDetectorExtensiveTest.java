@@ -242,6 +242,10 @@ class MediaUrlDetectorExtensiveTest {
         "https:///watch/123",
         "http:/youtube.com/watch/123",
         "https://[2001:db8:::1]/watch/123",
+        "https://youtube.com:0/watch/123",
+        "https://youtube.com:/watch/123",
+        "https://youtube.com:65536/watch/123",
+        "https://youtube.com:70000/live.m3u8",
         "https://youtube.com/%zz"
     })
     @DisplayName("string helpers reject missing, malformed, relative, and non-web inputs")
@@ -345,7 +349,7 @@ class MediaUrlDetectorExtensiveTest {
     }
 
     @Test
-    @DisplayName("very long paths are classified in bounded time")
+    @DisplayName("long paths respect shared admission limits in bounded time")
     void longPathsAreSafe() {
         URI ordinary = URI.create("https://example.test/"
                 + "segment/".repeat(20_000) + "page");
@@ -354,7 +358,10 @@ class MediaUrlDetectorExtensiveTest {
 
         assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
             assertFalse(MediaUrlDetector.isMediaUrl(ordinary));
-            assertTrue(MediaUrlDetector.isMediaUrl(manifest));
+            assertFalse(MediaUrlDetector.isMediaUrl(manifest),
+                    "an oversized manifest URL cannot bypass the central length limit");
+            assertTrue(MediaUrlDetector.isMediaUrl(URI.create("https://example.test/"
+                    + "segment/".repeat(2_000) + "index.m3u8")));
         });
     }
 

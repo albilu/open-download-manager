@@ -87,6 +87,32 @@ class Aria2SourcesTest {
     }
 
     @Test
+    void mirrorNormalizationReachesAria2AndDuplicateChecks() throws Exception {
+        String original = "http://127.0.0.1:1/file.bin";
+        Download download = new Download(URI.create(original));
+        download.setDestination(directory);
+        String gid = client.addUriRpc(new String[]{original}, Map.of("pause", "true", "dir", directory.toString()));
+        handler.registerTrackedDownload(download, List.of(gid));
+        var file = handler.getDownloadSources(download).getFirst();
+        String input = "  Mirror.Example.COM/file.bin?token=a%2Bb&part=1  ";
+        String normalized = "https://mirror.example.com/file.bin?token=a%2Bb&part=1";
+
+        handler.changeDownloadSource(download, file, null, input, false).get(10, TimeUnit.SECONDS);
+        assertEquals(List.of(original, normalized), download.getSourceUris());
+        assertEquals(List.of(original, normalized), client.getUris(gid).stream()
+                .map(row -> row.get("uri").toString()).toList());
+        assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> handler.changeDownloadSource(download, file, null, input, false).get(10, TimeUnit.SECONDS));
+        for (String invalid : List.of("ordinary text", "README.md", "mailto:a@example.com",
+                "https://example.com:70000/file.bin", "magnet:?xt=urn:btih:short")) {
+            assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> handler.changeDownloadSource(download, file, null, invalid, false).get(10, TimeUnit.SECONDS));
+        }
+        assertEquals(List.of(original, normalized), download.getSourceUris());
+        assertEquals(2, client.getUris(gid).size());
+    }
+
+    @Test
     void liveServersAndRemoteModificationTimeComeFromRealAria2() throws Exception {
         global.setProperty("aria2.remoteTime", "true");
         try (var server = new MockWebServer()) {

@@ -3,6 +3,7 @@ package org.manager.download;
 import java.net.URI;
 import java.util.Locale;
 import java.util.Set;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Core-owned routing classification for media URLs. The download domain
@@ -93,9 +94,10 @@ public final class MediaUrlDetector {
 
     /** URI overload used by the download and clipboard layers. */
     public static boolean isKnownMediaHost(URI uri) {
-        if (!isWebUri(uri)) {
-            return false;
-        }
+        return isWebUri(uri) && hasKnownMediaHost(uri);
+    }
+
+    private static boolean hasKnownMediaHost(URI uri) {
         String rawHost = uri.getHost().toLowerCase(Locale.ROOT);
         String host = rawHost.endsWith(".")
                 ? rawHost.substring(0, rawHost.length() - 1)
@@ -142,6 +144,15 @@ public final class MediaUrlDetector {
         if (!isWebUri(uri)) {
             return false;
         }
+        return isMediaSource(DownloadUrlPolicy.require(uri));
+    }
+
+    /** Routing for a source which has already passed the shared admission policy. */
+    public static boolean isMediaSource(DownloadUrlPolicy.ValidatedSource source) {
+        if (source == null || !source.isWeb()) {
+            return false;
+        }
+        URI uri = source.uri();
         String extension = pathExtension(uri);
         if (MEDIA_STREAM_EXTENSIONS.contains(extension)) {
             return true;
@@ -149,7 +160,7 @@ public final class MediaUrlDetector {
         if (DIRECT_FILE_EXTENSIONS.contains(extension)) {
             return false;
         }
-        return isKnownMediaHost(uri);
+        return hasKnownMediaHost(uri);
     }
 
     private static URI parseWebUri(String value) {
@@ -165,12 +176,9 @@ public final class MediaUrlDetector {
     }
 
     private static boolean isWebUri(URI uri) {
-        if (uri == null || uri.getScheme() == null || uri.getHost() == null
-                || uri.getHost().isBlank()) {
-            return false;
-        }
-        return "http".equalsIgnoreCase(uri.getScheme())
-                || "https".equalsIgnoreCase(uri.getScheme());
+        return DownloadUrlPolicy.isValidDownloadUri(uri)
+                && ("http".equalsIgnoreCase(uri.getScheme())
+                || "https".equalsIgnoreCase(uri.getScheme()));
     }
 
     private static String pathExtension(URI uri) {

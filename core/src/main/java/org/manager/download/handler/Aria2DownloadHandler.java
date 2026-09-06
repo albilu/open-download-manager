@@ -39,6 +39,7 @@ import org.manager.download.DownloadFileInfo;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.tools.ToolManagerFactory;
 import org.aria2.Aria2ToolManager;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Download handler for HTTP, FTP, BitTorrent, and Magnet link downloads using
@@ -2169,12 +2170,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                             || !isLiveTrackedGid(download, selected.gid())) {
                         throw new IllegalStateException("Start or resume this download before editing mirrors");
                     }
-                    if (add != null) {
-                        URI uri = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(add);
-                        if (!Download.Protocol.fromUri(uri).isDirectTransfer()) {
-                            throw new IllegalArgumentException("A mirror must be an HTTP, HTTPS, FTP or SFTP URL");
-                        }
-                    }
+                    String normalizedAdd = add == null ? null : DownloadUrlPolicy.require(add)
+                            .requireDirectTransfer().uri().toString();
                     Map<String, Object> file = aria2Client.getFiles(selected.gid()).stream()
                             .filter(row -> Integer.toString(selected.index()).equals(String.valueOf(row.get("index"))))
                             .findFirst().orElseThrow(() -> new IllegalStateException("The source file is no longer available"));
@@ -2186,10 +2183,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     if (remove != null && !uris.remove(remove)) {
                         throw new IllegalArgumentException("This mirror is no longer in the source list");
                     }
-                    if (add != null && uris.contains(add)) {
+                    if (normalizedAdd != null && uris.contains(normalizedAdd)) {
                         throw new IllegalArgumentException("This mirror is already in the source list");
                     }
-                    if (add != null) { uris.add(prefer ? 0 : uris.size(), add); }
+                    if (normalizedAdd != null) { uris.add(prefer ? 0 : uris.size(), normalizedAdd); }
                     if (uris.isEmpty()) { throw new IllegalArgumentException("Keep at least one mirror for this file"); }
                     if (!isLiveTrackedGid(download, selected.gid())) {
                         throw new IllegalStateException("This download's engine task has ended");
@@ -2197,7 +2194,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     List<Integer> counts = aria2Client.changeUri(selected.gid(), selected.index(),
                             sourceMaps(file.get("uris")).stream().map(row -> row.get("uri").toString())
                                     .filter(uri -> uri.equals(remove)).toList(),
-                            add == null ? List.of() : List.of(add), prefer ? 0 : uris.size());
+                            normalizedAdd == null ? List.of() : List.of(normalizedAdd), prefer ? 0 : uris.size());
                     long removedOccurrences = sourceMaps(file.get("uris")).stream()
                             .filter(row -> Objects.equals(remove, row.get("uri"))).count();
                     if (counts.size() != 2 || counts.get(0) != removedOccurrences
@@ -2255,21 +2252,22 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             URI source, String proxyAddress) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                DownloadUrlPolicy.ValidatedSource validated = DownloadUrlPolicy.require(source);
                 String effectiveProxy = proxyAddress != null && !proxyAddress.isBlank()
                         ? proxyAddress
                         : globalSettings.isGlobalProxyEnabled()
                                 ? globalSettings.getGlobalProxyAddress() : null;
-                Download.Protocol protocol = Download.Protocol.fromUri(source);
+                Download.Protocol protocol = validated.protocol();
                 return switch (protocol) {
                     case TORRENT, METALINK -> DescriptorFileInspector.inspect(
-                            readPreviewDescriptor(source, effectiveProxy), protocol);
+                            readPreviewDescriptor(validated.uri(), effectiveProxy), protocol);
                     case MAGNET -> {
                         if (DownloadHandlerFactory.isSocksProxyAddress(effectiveProxy)) {
                             throw new IOException("Magnet metadata preview cannot use the selected "
                                     + "SOCKS/Tor route without starting its proxychains transfer");
                         }
                         ensureInitialized();
-                        yield previewMagnetFiles(source, effectiveProxy);
+                        yield previewMagnetFiles(validated.uri(), effectiveProxy);
                     }
                     default -> List.of();
                 };

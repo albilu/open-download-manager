@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 import org.manager.download.MediaUrlDetector;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Service that integrates clipboard monitoring with the download manager. This
@@ -169,7 +170,8 @@ public class ClipboardService implements ClipboardListener {
                 return Collections.emptyList();
             }
 
-            List<URI> urls = UrlDetector.extractUrls(clipboardContent);
+            List<URI> urls = DownloadUrlPolicy.extract(clipboardContent).stream()
+                    .map(DownloadUrlPolicy.ValidatedSource::uri).toList();
             if (urls.isEmpty()) {
                 LOGGER.info("No valid URLs found in clipboard content");
                 return Collections.emptyList();

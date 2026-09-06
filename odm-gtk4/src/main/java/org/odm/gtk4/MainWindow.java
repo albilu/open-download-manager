@@ -30,6 +30,7 @@ import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeSelection;
 import org.gnome.gtk.TreeStore;
 import org.gnome.gtk.TreeView;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Main window — 1:1 GTK4 port of main-window.glade. Same widget ids and
@@ -1968,12 +1969,8 @@ public class MainWindow {
             }
             final java.net.URI source;
             try {
-                source = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(
-                        sourceEntry.getText().strip());
-                if (!("http".equalsIgnoreCase(source.getScheme())
-                        || "https".equalsIgnoreCase(source.getScheme()))) {
-                    throw new IllegalArgumentException("Only HTTP(S) pages are supported");
-                }
+                source = DownloadUrlPolicy.require(
+                        sourceEntry.getText().strip()).requireWeb().uri();
             } catch (Exception invalid) {
                 AccessibilitySupport.status(status, "Enter a valid HTTP(S) page URL",
                         org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);

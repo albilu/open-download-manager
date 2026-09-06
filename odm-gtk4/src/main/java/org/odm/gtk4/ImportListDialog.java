@@ -289,11 +289,8 @@ public class ImportListDialog {
     private void loadUrls(List<String> lines) {
         urlStore.clear();
         List<String> extensions = new ArrayList<>();
-        for (String rawLine : lines.stream().limit(importLimits.maxUrls()).toList()) {
-            String line = rawLine.trim();
-            if (line.isEmpty() || line.startsWith("#")) {
-                continue;
-            }
+        List<String> candidates = DownloadSubmission.validUrls(lines, importLimits.maxUrls());
+        for (String line : candidates) {
             String ext = extensionOf(line);
             TreeIter iter = new TreeIter();
             urlStore.append(iter);
@@ -306,7 +303,7 @@ public class ImportListDialog {
         }
         rebuildExtensionFilter(extensions);
         refreshNetworkCapabilities();
-        LOGGER.info("Loaded " + Math.min(lines.size(), importLimits.maxUrls())
+        LOGGER.info("Loaded " + candidates.size()
                 + " URLs into import list");
     }
 
@@ -409,19 +406,8 @@ public class ImportListDialog {
     }
 
     private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
-        int queued = 0;
-        for (String url : urls.stream().limit(importLimits.maxUrls()).toList()) {
-            try {
-                Download download = downloadManager.createDownload(
-                        org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url), destination);
-                options.apply(download);
-                downloadManager.queueDownload(download);
-                queued++;
-            } catch (Exception e) {
-                LOGGER.debug("Skipped an invalid URL-list entry", e);
-            }
-        }
-        return queued;
+        return DownloadSubmission.queueUrls(downloadManager, urls, destination,
+                options::apply, importLimits.maxUrls());
     }
 
     record ImportOptions(boolean tor, int proxyType, String proxyHost, int proxyPort,

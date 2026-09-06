@@ -115,6 +115,8 @@ class HtmlImportExportTest {
             DownloadOperations operations = mock(DownloadOperations.class);
             when(operations.createDownload(any(), isNull()))
                     .thenAnswer(inv -> new Download(inv.getArgument(0)));
+            when(operations.queueDownload(any()))
+                    .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
 
             int queued = HtmlImportExport.importRemoteHtml(source, operations, null);
 
@@ -156,6 +158,8 @@ class HtmlImportExportTest {
         DownloadOperations operations = mock(DownloadOperations.class);
         when(operations.createDownload(any(), isNull()))
                 .thenAnswer(inv -> new Download(inv.getArgument(0)));
+        when(operations.queueDownload(any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
         // third createDownload throws: that link is skipped, the rest queue
         when(operations.createDownload(java.net.URI.create("https://example.com/nope"), null))
                 .thenThrow(new RuntimeException("boom"));

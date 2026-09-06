@@ -18,6 +18,7 @@ import org.manager.download.DownloadNetworkCapabilities;
 import org.manager.download.DownloadSettings;
 import org.manager.download.DownloadSettingsFactory;
 import org.manager.download.ExternalToolSettings;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Applies the engine/protocol capability contract to a dialog's Network
@@ -215,8 +216,7 @@ final class NetworkOptionControls {
         if (sources != null) {
             for (String source : sources) {
                 try {
-                    URI uri = org.manager.clipboard.UrlDetector
-                            .requireValidDownloadUrl(source);
+                    URI uri = DownloadUrlPolicy.require(source).uri();
                     Download.Type type = org.manager.download.MediaUrlDetector.isMediaUrl(uri)
                             ? Download.Type.YOUTUBE : Download.Type.ARIA2;
                     Route route = new Route(type, Download.Protocol.fromUri(uri));

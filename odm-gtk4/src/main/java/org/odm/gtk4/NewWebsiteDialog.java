@@ -21,6 +21,7 @@ import org.manager.download.DownloadManager;
 import org.manager.download.DownloadSettingsFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.manager.url.DownloadUrlPolicy;
 
 /** New Website Scrape dialog backed by the declarative {@code new-website.ui}. */
 public final class NewWebsiteDialog {
@@ -154,10 +155,7 @@ public final class NewWebsiteDialog {
             return;
         }
         try {
-            java.net.URI source = org.manager.clipboard.UrlDetector.requireValidDownloadUrl(url);
-            if (!ClipboardUrlPrefill.isWebPage(source)) {
-                throw new IllegalArgumentException("Website scraping requires an HTTP(S) URL");
-            }
+            java.net.URI source = DownloadUrlPolicy.require(url).requireWeb().uri();
             Download download = DownloadSubmission.draft(downloadManager, source,
                     defaultDestination(), Download.Type.WEBSITE_SCRAPING);
             if (!(download.getSettings() instanceof HttrackSettings settings)) {

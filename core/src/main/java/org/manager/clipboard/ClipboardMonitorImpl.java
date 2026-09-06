@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.manager.url.DownloadUrlPolicy;
 
 /**
  * Implementation of ClipboardMonitor using Java's AWT Clipboard API. Monitors
@@ -232,7 +233,7 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
 
     @Override
     public boolean containsValidUrls(String text) {
-        return UrlDetector.containsUrls(text);
+        return DownloadUrlPolicy.containsUrls(text);
     }
 
     @Override
@@ -301,7 +302,8 @@ public class ClipboardMonitorImpl implements ClipboardMonitor {
         if (content == null || content.trim().isEmpty()) {
             eventType = ClipboardEvent.ClipboardEventType.CONTENT_CLEARED;
         } else {
-            detectedUrls.addAll(UrlDetector.extractUrls(content));
+            detectedUrls.addAll(DownloadUrlPolicy.extract(content).stream()
+                    .map(DownloadUrlPolicy.ValidatedSource::uri).toList());
             eventType = detectedUrls.isEmpty()
                     ? ClipboardEvent.ClipboardEventType.CONTENT_CHANGED
                     : ClipboardEvent.ClipboardEventType.URLS_DETECTED;
