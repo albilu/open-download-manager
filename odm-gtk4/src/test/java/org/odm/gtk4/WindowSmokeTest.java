@@ -13,6 +13,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.gnome.gdk.Rectangle;
@@ -35,6 +36,7 @@ import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Image;
 import org.gnome.gtk.Label;
+import org.gnome.gtk.LinkButton;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.Notebook;
@@ -321,7 +323,8 @@ class WindowSmokeTest {
                 "connections_value", "seeds_peers_value"}) {
             Widgets.require(builder, id, Label.class);
         }
-        Button folderButton = Widgets.require(builder, "folder_open_button", Button.class);
+        LinkButton folderButton = Widgets.require(builder,
+                "folder_open_button", LinkButton.class);
         Button errorButton = Widgets.require(builder, "info_error_button", Button.class);
         Label errorValue = Widgets.require(builder, "info_error_value", Label.class);
         assertFalse(errorButton.getSensitive());
@@ -336,6 +339,9 @@ class WindowSmokeTest {
         Label folderValue = Widgets.require(builder, "folder_value", Label.class);
         assertSame(folderContent, folderValue.getParent());
         assertSame(folderButton, folderContent.getParent());
+        assertTrue(folderButton.hasCssClass("link"),
+                "the save folder action must use GTK's HTML-link presentation");
+        assertEquals("file:///", folderButton.getUri());
         assertFalse(folderButton.getSensitive(),
                 "the folder action must remain disabled until a destination is selected");
         Widgets.require(builder, "engine_icon", Image.class);
@@ -1126,6 +1132,9 @@ class WindowSmokeTest {
                 org.gnome.gdk.Texture.class, window.torToolbarIcon());
         assertEquals(DownloadEnginePresentation.TOOLBAR_ICON_SIZE, torToolbarIcon.getWidth());
         assertEquals(DownloadEnginePresentation.TOOLBAR_ICON_SIZE, torToolbarIcon.getHeight());
+        assertEquals("Enable Tor service", window.torSwitchTooltip());
+        assertEquals("Tor service: Stopped", window.torIconTooltip());
+        assertFalse(window.torSwitchActive());
         assertEquals(PropagationPhase.CAPTURE, window.downloadContextClickPhase(),
                 "right-click handling must run before TreeView child gestures consume it");
         assertEquals(List.of("#", "Status", "Name", "Completed", "Size", "Progress",
@@ -1143,6 +1152,77 @@ class WindowSmokeTest {
         assertFalse(window.menuActionEnabled("open-file"));
         assertFalse(window.menuActionEnabled("open-folder"));
         window.dispose();
+    }
+
+    @Test
+    @DisplayName("Tor progress updates status while toolbar tooltips retain distinct roles")
+    void torBootstrapProgressUpdatesToolbarPresentation() throws Exception {
+        assertEquals("Tor service: Stopping…",
+                MainWindow.torServiceStateTooltip(false, true, false, 100));
+        AtomicBoolean running = new AtomicBoolean();
+        AtomicBoolean starting = new AtomicBoolean(true);
+        AtomicInteger progress = new AtomicInteger();
+        AtomicReference<org.tor.TorService.TorServiceListener> listener =
+                new AtomicReference<>();
+        org.tor.TorService service = org.mockito.Mockito.mock(org.tor.TorService.class);
+        org.mockito.Mockito.when(service.isRunning()).thenAnswer(ignored -> running.get());
+        org.mockito.Mockito.when(service.isStarting()).thenAnswer(ignored -> starting.get());
+        org.mockito.Mockito.when(service.getBootstrapProgress())
+                .thenAnswer(ignored -> progress.get());
+        org.mockito.Mockito.doAnswer(invocation -> {
+            listener.set(invocation.getArgument(0));
+            return null;
+        }).when(service).addListener(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.doAnswer(invocation -> {
+            listener.compareAndSet(invocation.getArgument(0), null);
+            return null;
+        }).when(service).removeListener(org.mockito.ArgumentMatchers.any());
+
+        org.manager.download.DownloadManager stub = emptyManager();
+        MainWindow window = new MainWindow(null, stub, service,
+                new org.manager.schedule.ScheduleManager(stub));
+        window.present();
+        try {
+            awaitGtk(() -> listener.get() != null,
+                    "the main window did not subscribe to Tor lifecycle events");
+            assertTrue(window.torSwitchActive());
+            assertEquals("Disable Tor service", window.torSwitchTooltip());
+            assertEquals("Tor service: Bootstrapping — 0%", window.torIconTooltip());
+
+            progress.set(37);
+            listener.get().onServiceEvent(
+                    org.tor.TorService.TorServiceEvent.BOOTSTRAP_PROGRESS);
+            awaitGtk(() -> "Tor bootstrap: 37%".equals(window.statusMessage()),
+                    "Tor bootstrap progress was not displayed in the status label");
+            assertEquals("Disable Tor service", window.torSwitchTooltip());
+            assertEquals("Tor service: Bootstrapping — 37%", window.torIconTooltip());
+
+            progress.set(100);
+            starting.set(false);
+            running.set(true);
+            listener.get().onServiceEvent(
+                    org.tor.TorService.TorServiceEvent.BOOTSTRAP_COMPLETE);
+            awaitGtk(() -> "Tor bootstrap: 100%".equals(window.statusMessage()),
+                    "Tor bootstrap completion was not displayed");
+            assertEquals("Disable Tor service", window.torSwitchTooltip());
+            assertEquals("Tor service: Running", window.torIconTooltip());
+
+            listener.get().onServiceEvent(org.tor.TorService.TorServiceEvent.STARTED);
+            awaitGtk(() -> "Tor service started".equals(window.statusMessage()),
+                    "Tor running state was not displayed");
+            running.set(false);
+            listener.get().onServiceEvent(org.tor.TorService.TorServiceEvent.STOPPED);
+            awaitGtk(() -> "Tor service stopped".equals(window.statusMessage()),
+                    "Tor stopped state was not displayed");
+            assertFalse(window.torSwitchActive());
+            assertEquals("Enable Tor service", window.torSwitchTooltip());
+            assertEquals("Tor service: Stopped", window.torIconTooltip());
+        } finally {
+            window.dispose();
+            drainGtkEvents();
+        }
+        awaitGtk(() -> listener.get() == null,
+                "the main window did not release its Tor lifecycle listener");
     }
 
     @Test

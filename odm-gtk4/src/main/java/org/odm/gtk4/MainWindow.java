@@ -14,6 +14,7 @@ import org.gnome.gtk.GestureClick;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Image;
 import org.gnome.gtk.Label;
+import org.gnome.gtk.LinkButton;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.PopoverMenuBar;
 import org.gnome.gtk.PropagationPhase;
@@ -120,7 +121,7 @@ public class MainWindow {
     private final Label infoHashValue;
     private final Label errorValue;
     private final Button errorDetailsButton;
-    private final Button folderOpenButton;
+    private final LinkButton folderOpenButton;
     private final Label folderValue;
     private final Image engineIcon;
     private final Image torIcon;
@@ -198,8 +199,12 @@ public class MainWindow {
             new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicBoolean torDesiredRunning =
             new java.util.concurrent.atomic.AtomicBoolean();
+    /** Prevents service-driven switch updates from being treated as user requests. */
+    private boolean syncingTorSwitch;
     private final java.util.concurrent.atomic.AtomicReference<org.tor.TorLeakChecker> torLeakChecker =
             new java.util.concurrent.atomic.AtomicReference<>();
+    /** Current Tor start/stop message, protected from routine list refreshes. */
+    private String torTransitionStatus;
     /** Download ids with at least one running completion action; GTK-thread confined. */
     private final java.util.Set<String> runningCompletionDownloads = new java.util.HashSet<>();
     private int completionPulseSourceId;
@@ -245,7 +250,7 @@ public class MainWindow {
         this.infoHashValue = Widgets.require(builder, "info_hash_v1_value", Label.class);
         this.errorValue = Widgets.require(builder, "info_error_value", Label.class);
         this.errorDetailsButton = Widgets.require(builder, "info_error_button", Button.class);
-        this.folderOpenButton = Widgets.require(builder, "folder_open_button", Button.class);
+        this.folderOpenButton = Widgets.require(builder, "folder_open_button", LinkButton.class);
         this.folderValue = Widgets.require(builder, "folder_value", Label.class);
         this.engineIcon = Widgets.require(builder, "engine_icon", Image.class);
         this.torIcon = Widgets.require(builder, "tor_icon", Image.class);
@@ -399,7 +404,10 @@ public class MainWindow {
         moveDownButton.onClicked(() -> moveSelectedDownloads(QueueMove.DOWN));
         moveBottomButton.onClicked(() -> moveSelectedDownloads(QueueMove.BOTTOM));
         Widgets.require(builder, "settings_button", Button.class).onClicked(this::onSettingsClicked);
-        folderOpenButton.onClicked(this::openDisplayedSaveFolder);
+        folderOpenButton.onActivateLink(() -> {
+            openDisplayedSaveFolder();
+            return true;
+        });
         errorDetailsButton.onClicked(() -> {
             if (selectedDownload != null && selectedDownload.getErrorMessage() != null) {
                 ActionOutputDialog.presentError(window, selectedDownload.getName(),
@@ -410,9 +418,11 @@ public class MainWindow {
         searchEntry.onSearchChanged(this::onSearchChanged);
         // tor_switch: wired below
         this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
-        torDesiredRunning.set(torService.isRunning());
-        torSwitchSet(torService.isRunning());
+        torDesiredRunning.set(torService.isRunning() || torService.isStarting());
+        syncTorToolbarPresentation();
         torSwitch.onStateSet(this::onTorToggled);
+        TorControlBinding.bindEvents(window, torService,
+                this::syncTorToolbarPresentation, this::onTorServiceEvent);
         this.menuBar = Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
         this.leftPanelWidget = Widgets.require(builder, "left_panel", org.gnome.gtk.Widget.class);
         this.infoPanelWidget = Widgets.require(builder, "info_panel_box", org.gnome.gtk.Widget.class);
@@ -425,7 +435,7 @@ public class MainWindow {
         AccessibilitySupport.label(downloadsTreeview, "Downloads");
         installDownloadTooltips(builder);
         AccessibilitySupport.label(searchEntry, "Search downloads");
-        AccessibilitySupport.label(torSwitch, "Global Tor routing");
+        AccessibilitySupport.label(torSwitch, "Tor service");
         AccessibilitySupport.label(menuBar, "Application menu");
         AccessibilitySupport.label(folderOpenButton, "Open displayed save folder");
         Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
@@ -2097,30 +2107,150 @@ public class MainWindow {
     }
 
     private boolean onTorToggled(boolean active) {
+        if (syncingTorSwitch) {
+            return false;
+        }
         long epoch = torToggleEpoch.incrementAndGet();
         torDesiredRunning.set(active);
         if (!active) {
             shutdownTorLeakChecker();
         }
+        syncTorToolbarPresentation();
+        setTorTransitionStatus(active
+                ? torBootstrapStatus(torService.getBootstrapProgress())
+                : "Stopping Tor service…");
         trackActivity(torServiceController.setEnabled(active)).whenComplete((running, error) -> {
             if (epoch != torToggleEpoch.get()) {
                 return;
             }
             if (active && Boolean.TRUE.equals(running)) {
                 LOGGER.info("Tor service started; saved download routes retained");
-                verifyTorCircuit(epoch);
+                UiThread.marshal(() -> {
+                    if (epoch == torToggleEpoch.get()) {
+                        torDesiredRunning.set(true);
+                        syncTorToolbarPresentation();
+                        finishTorTransition("Tor service started");
+                        verifyTorCircuit(epoch);
+                    }
+                });
             } else if (active) {
                 LOGGER.warn("Tor failed to start" + (error != null ? ": " + error.getMessage() : ""));
                 torDesiredRunning.set(false);
-                torSwitchSet(false);
+                UiThread.marshal(() -> {
+                    if (epoch == torToggleEpoch.get()) {
+                        syncTorToolbarPresentation();
+                        finishTorTransition("Tor service failed to start");
+                    }
+                });
             } else if (error != null) {
                 LOGGER.warn("Tor service shutdown failed", error);
-                torSwitchSet(torService.isRunning());
+                torDesiredRunning.set(torService.isRunning());
+                UiThread.marshal(() -> {
+                    if (epoch == torToggleEpoch.get()) {
+                        syncTorToolbarPresentation();
+                        finishTorTransition("Tor service could not be stopped");
+                    }
+                });
             } else {
                 LOGGER.info("Tor service stopped; Tor downloads are paused");
+                UiThread.marshal(() -> {
+                    if (epoch == torToggleEpoch.get()) {
+                        syncTorToolbarPresentation();
+                        finishTorTransition("Tor service stopped");
+                    }
+                });
             }
         });
         return false;
+    }
+
+    /** Applies service events to the shared status label and toolbar controls. */
+    private void onTorServiceEvent(org.tor.TorService.TorServiceEvent event) {
+        if (event == org.tor.TorService.TorServiceEvent.STARTED && torService.isRunning()) {
+            torDesiredRunning.set(true);
+        } else if (event == org.tor.TorService.TorServiceEvent.STOPPED
+                && !torService.isRunning() && !torService.isStarting()) {
+            torDesiredRunning.set(false);
+        }
+        syncTorToolbarPresentation();
+
+        String message = switch (event) {
+            case BOOTSTRAP_PROGRESS, BOOTSTRAP_COMPLETE ->
+                    torDesiredRunning.get()
+                            && (torService.isStarting() || torService.isRunning())
+                            ? torBootstrapStatus(torService.getBootstrapProgress()) : null;
+            case STARTED -> "Tor service started";
+            case STOPPED -> "Tor service stopped";
+            case ERROR -> "Tor service reported an error";
+        };
+        if (message != null) {
+            if (event == org.tor.TorService.TorServiceEvent.BOOTSTRAP_PROGRESS
+                    || event == org.tor.TorService.TorServiceEvent.BOOTSTRAP_COMPLETE) {
+                setTorTransitionStatus(message);
+            } else {
+                finishTorTransition(message);
+            }
+        }
+    }
+
+    private void setTorTransitionStatus(String message) {
+        torTransitionStatus = message;
+        AccessibilitySupport.status(infoLabel, message);
+    }
+
+    private void finishTorTransition(String message) {
+        torTransitionStatus = null;
+        AccessibilitySupport.status(infoLabel, message);
+    }
+
+    private void syncTorToolbarPresentation() {
+        boolean requested = torDesiredRunning.get();
+        boolean running = torService.isRunning();
+        boolean starting = torService.isStarting();
+        String switchTooltip = torSwitchActionTooltip(requested);
+        String iconTooltip = torServiceStateTooltip(requested, running, starting,
+                torService.getBootstrapProgress());
+        // The switch reflects the requested state while asynchronous start or
+        // stop work settles; service events reconcile it with the actual state.
+        if (torSwitch.getActive() != requested) {
+            syncingTorSwitch = true;
+            try {
+                torSwitch.setActive(requested);
+            } finally {
+                syncingTorSwitch = false;
+            }
+        }
+        torSwitch.setTooltipText(switchTooltip);
+        torIcon.setTooltipText(iconTooltip);
+    }
+
+    /** The switch tooltip describes what toggling it will do. */
+    static String torSwitchActionTooltip(boolean requested) {
+        return requested ? "Disable Tor service" : "Enable Tor service";
+    }
+
+    /** The onion icon tooltip reports the service's current lifecycle state. */
+    static String torServiceStateTooltip(boolean requested, boolean running,
+            boolean starting, int bootstrapProgress) {
+        if (!requested && (running || starting)) {
+            return "Tor service: Stopping…";
+        }
+        if (running) {
+            return "Tor service: Running";
+        }
+        if (requested || starting) {
+            return "Tor service: Bootstrapping — "
+                    + normalizedTorProgress(bootstrapProgress) + "%";
+        }
+        return "Tor service: Stopped";
+    }
+
+    static String torBootstrapStatus(int bootstrapProgress) {
+        return "Tor bootstrap: " + normalizedTorProgress(bootstrapProgress) + "%";
+    }
+
+    private static int normalizedTorProgress(int progress) {
+        return Math.max(0, Math.min(100, progress));
     }
 
     /**
@@ -2211,10 +2341,6 @@ public class MainWindow {
                     }
                     UiThread.marshal(() -> AccessibilitySupport.status(infoLabel, message));
                 });
-    }
-
-    private void torSwitchSet(boolean active) {
-        UiThread.marshal(() -> torSwitch.setActive(active));
     }
 
     /** Restores window geometry + paned positions persisted from the last session. */
@@ -2310,8 +2436,10 @@ public class MainWindow {
     }
 
     private void updateDownloadListStatus() {
-        infoLabel.setLabel(downloadListStatusText(
-                selectedDownloads.size(), loadedHistoryCount, knownDownloadCount));
+        infoLabel.setLabel(torTransitionStatus != null
+                ? torTransitionStatus
+                : downloadListStatusText(
+                        selectedDownloads.size(), loadedHistoryCount, knownDownloadCount));
     }
 
     static String downloadListStatusText(int selectedCount, int loadedCount, int totalCount) {
@@ -2335,6 +2463,22 @@ public class MainWindow {
 
     org.gnome.gio.Icon torToolbarIcon() {
         return torIcon.getGicon();
+    }
+
+    String torSwitchTooltip() {
+        return torSwitch.getTooltipText();
+    }
+
+    String torIconTooltip() {
+        return torIcon.getTooltipText();
+    }
+
+    boolean torSwitchActive() {
+        return torSwitch.getActive();
+    }
+
+    String statusMessage() {
+        return infoLabel.getLabel();
     }
 
     PropagationPhase downloadContextClickPhase() {
@@ -2612,6 +2756,7 @@ public class MainWindow {
             addedOnValue.setLabel("—");
             infoHashValue.setLabel("—");
             folderValue.setLabel("—");
+            updateFolderLinkUri(null);
             folderOpenButton.setSensitive(false);
             engineIcon.clear();
             engineValue.setLabel("—");
@@ -2627,6 +2772,7 @@ public class MainWindow {
         infoHashValue.setLabel(selectedDownload.getInfoHash() != null ? selectedDownload.getInfoHash() : "—");
         Path saveFolder = displayedSaveFolder(selectedDownload);
         folderValue.setLabel(saveFolder != null ? saveFolder.toString() : "—");
+        updateFolderLinkUri(saveFolder);
         folderOpenButton.setSensitive(saveFolder != null);
         engineIcon.setFromGicon(DownloadEnginePresentation.icon(selectedDownload.getType()));
         engineValue.setLabel(DownloadEnginePresentation.displayName(selectedDownload.getType()));
@@ -2637,6 +2783,13 @@ public class MainWindow {
                 ? selectedDownload.getSeeders() + " seed(s)"
                 : "—");
         detailTabsPresenter.load();
+    }
+
+    private void updateFolderLinkUri(Path saveFolder) {
+        String uri = saveFolder == null ? "file:///" : saveFolder.toUri().toASCIIString();
+        if (!uri.equals(folderOpenButton.getUri())) {
+            folderOpenButton.setUri(uri);
+        }
     }
 
 }

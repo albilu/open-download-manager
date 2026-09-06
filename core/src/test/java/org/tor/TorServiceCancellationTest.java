@@ -1,5 +1,6 @@
 package org.tor;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,7 +10,9 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -39,15 +42,31 @@ class TorServiceCancellationTest {
                 "ControlPort", String.valueOf(controlPort),
                 "DataDirectory", tempDir.resolve("data").toString()),
                 tempDir.resolve("torrc"));
+        CountDownLatch bootstrapUpdate = new CountDownLatch(1);
+        AtomicInteger observedProgress = new AtomicInteger(-1);
+        service.addListener(event -> {
+            if (event == TorService.TorServiceEvent.BOOTSTRAP_PROGRESS) {
+                observedProgress.set(service.getBootstrapProgress());
+                bootstrapUpdate.countDown();
+            }
+        });
 
         try {
             CompletableFuture<Boolean> starting = service.start();
             assertTrue(awaitFile(marker), "the fake Tor process should have started");
+            assertTrue(bootstrapUpdate.await(3, TimeUnit.SECONDS),
+                    "the fake Tor bootstrap percentage should be published");
+            assertTrue(service.isStarting());
+            assertEquals(5, observedProgress.get(),
+                    "listeners should observe the parsed bootstrap percentage");
 
             assertTrue(service.stop());
             assertFalse(starting.get(8, TimeUnit.SECONDS),
                     "a stop request must invalidate a pending bootstrap");
             assertFalse(service.isRunning());
+            assertFalse(service.isStarting());
+            assertEquals(0, service.getBootstrapProgress(),
+                    "stopping Tor should clear stale bootstrap progress");
 
             // stopInternal marks process monitoring as stopping. That must not
             // make the later whole-service shutdown return early.

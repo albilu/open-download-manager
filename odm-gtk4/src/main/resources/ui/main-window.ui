@@ -332,12 +332,12 @@
                                                 </child>
                                                 <child><object class="GtkLabel"><property name="label">Save folder:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
                                                 <child>
-                                                  <object class="GtkButton" id="folder_open_button">
+                                                  <object class="GtkLinkButton" id="folder_open_button">
                                                     <property name="sensitive">false</property>
                                                     <property name="hexpand">true</property>
                                                     <property name="halign">fill</property>
+                                                    <property name="uri">file:///</property>
                                                     <property name="tooltip-text">Open the download folder</property>
-                                                    <style><class name="flat"/></style>
                                                     <layout><property name="row">3</property><property name="column">1</property></layout>
                                                     <child>
                                                       <object class="GtkBox" id="folder_open_content">

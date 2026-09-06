@@ -18,7 +18,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +39,8 @@ public class TorService {
     private static final String DEFAULT_DATA_DIR = System.getProperty("java.io.tmpdir") + "/tor-odm";
     private static final String DEFAULT_LOG_LEVEL = "notice";
     private static final int DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 45;
+    private static final Pattern BOOTSTRAP_PROGRESS_PATTERN =
+            Pattern.compile("\\bBootstrapped\\s+(\\d{1,3})%");
 
     // Process management
     private final AtomicReference<Process> torProcess = new AtomicReference<>();
@@ -47,6 +52,8 @@ public class TorService {
     private final AtomicBoolean desiredRunning = new AtomicBoolean(false);
     /** Set only after Tor reports a fully built circuit (100% bootstrap). */
     private final AtomicBoolean bootstrapComplete = new AtomicBoolean(false);
+    /** Latest progress for the current launch, in the inclusive range 0..100. */
+    private final AtomicInteger bootstrapProgress = new AtomicInteger(0);
     /** Serializes start(): concurrent callers coalesce onto one process. */
     private final Object startLock = new Object();
 
@@ -148,6 +155,7 @@ public class TorService {
 
                         // Start process
                         bootstrapComplete.set(false);
+                        bootstrapProgress.set(0);
                         ProcessBuilder processBuilder = new ProcessBuilder(command);
                         processBuilder.environment().put("HOME", System.getProperty("user.home"));
                         // Don't redirect error stream - we'll handle stdout and stderr separately
@@ -316,6 +324,25 @@ public class TorService {
     }
 
     /**
+     * Whether a start has been requested but Tor has not finished bootstrapping.
+     *
+     * @return true while the managed service is starting
+     */
+    public boolean isStarting() {
+        return desiredRunning.get() && !isRunning.get();
+    }
+
+    /**
+     * Returns the latest bootstrap percentage for the current service run.
+     * The value resets to zero when a new start begins or the service stops.
+     *
+     * @return bootstrap progress in the inclusive range 0..100
+     */
+    public int getBootstrapProgress() {
+        return bootstrapProgress.get();
+    }
+
+    /**
      * Adds a service listener.
      *
      * @param listener The listener to add
@@ -465,12 +492,21 @@ public class TorService {
      * logged because it can contain local paths and configuration details.
      */
     private void handleTorOutput(String line, boolean stderr) {
-        if (line.contains("Bootstrapped 100%")) {
-            if (bootstrapComplete.compareAndSet(false, true)) {
-                notifyListeners(TorServiceEvent.BOOTSTRAP_COMPLETE);
+        Matcher bootstrapMatcher = BOOTSTRAP_PROGRESS_PATTERN.matcher(line);
+        if (bootstrapMatcher.find()) {
+            int parsedProgress = Integer.parseInt(bootstrapMatcher.group(1));
+            if (parsedProgress <= 100) {
+                int previousProgress = bootstrapProgress.getAndAccumulate(
+                        parsedProgress, Math::max);
+                int currentProgress = Math.max(previousProgress, parsedProgress);
+                if (currentProgress == 100) {
+                    if (bootstrapComplete.compareAndSet(false, true)) {
+                        notifyListeners(TorServiceEvent.BOOTSTRAP_COMPLETE);
+                    }
+                } else {
+                    notifyListeners(TorServiceEvent.BOOTSTRAP_PROGRESS);
+                }
             }
-        } else if (line.contains("Bootstrapped")) {
-            notifyListeners(TorServiceEvent.BOOTSTRAP_PROGRESS);
         }
 
         if (line.contains("[err]")) {
@@ -543,6 +579,7 @@ public class TorService {
     }
 
     private boolean stopInternal() {
+        desiredRunning.set(false);
         isShuttingDown.set(true);
 
         Process process = torProcess.getAndSet(null);
@@ -558,6 +595,8 @@ public class TorService {
                 }
 
                 isRunning.set(false);
+                bootstrapComplete.set(false);
+                bootstrapProgress.set(0);
                 notifyListeners(TorServiceEvent.STOPPED);
                 LOGGER.info("Tor service stopped");
                 return true;
@@ -571,6 +610,8 @@ public class TorService {
         }
 
         isRunning.set(false);
+        bootstrapComplete.set(false);
+        bootstrapProgress.set(0);
         return true;
     }
 
