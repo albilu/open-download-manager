@@ -47,6 +47,7 @@ public class ChecksumValidationAction implements AfterCompletionAction {
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private String actualChecksum;
     private Path validatedFile;
+    private String outcomeMessage = "Checksum validation did not complete";
 
     /**
      * Creates a new ChecksumValidationAction.
@@ -84,10 +85,17 @@ public class ChecksumValidationAction implements AfterCompletionAction {
         // cancel() issued before execute() must be honored, not wiped.
         actualChecksum = null;
         validatedFile = null;
+        outcomeMessage = "Checksum validation did not complete";
+
+        if (download == null) {
+            outcomeMessage = "No download was provided";
+            return false;
+        }
 
         // Validate download has a destination
         if (download.getDestination() == null) {
             LOGGER.warn("Cannot validate checksum: download destination is not set");
+            outcomeMessage = "Download destination is not set";
             return false;
         }
 
@@ -95,29 +103,35 @@ public class ChecksumValidationAction implements AfterCompletionAction {
         if (outputCount > 1) {
             LOGGER.warn("Cannot validate one checksum against a multi-file download: "
                     + outputCount + " outputs");
+            outcomeMessage = "Cannot validate one checksum against a multi-file download ("
+                    + outputCount + " outputs)";
             return false;
         }
 
         validatedFile = download.getPrimaryOutputPath();
         if (validatedFile == null) {
             LOGGER.warn("Cannot validate checksum: output path is unknown");
+            outcomeMessage = "Downloaded file path is unknown";
             return false;
         }
 
         // Check if file exists
         if (!Files.exists(validatedFile)) {
             LOGGER.warn("Cannot validate checksum: file does not exist: " + validatedFile);
+            outcomeMessage = "Downloaded file does not exist: " + validatedFile;
             return false;
         }
 
         if (!Files.isRegularFile(validatedFile)) {
             LOGGER.warn("Cannot validate checksum: output is not a regular file: " + validatedFile);
+            outcomeMessage = "Downloaded output is not a regular file: " + validatedFile;
             return false;
         }
 
         // Check if file is readable
         if (!Files.isReadable(validatedFile)) {
             LOGGER.warn("Cannot validate checksum: file is not readable: " + validatedFile);
+            outcomeMessage = "Downloaded file is not readable: " + validatedFile;
             return false;
         }
 
@@ -130,6 +144,7 @@ public class ChecksumValidationAction implements AfterCompletionAction {
 
             if (cancelled.get()) {
                 LOGGER.info("Checksum validation was cancelled");
+                outcomeMessage = "Checksum validation was canceled";
                 return false;
             }
 
@@ -140,23 +155,31 @@ public class ChecksumValidationAction implements AfterCompletionAction {
                 LOGGER.info("Checksum validation PASSED for file: " + validatedFile);
                 LOGGER.info("Expected: " + expectedChecksum);
                 LOGGER.info("Actual: " + actualChecksum);
+                outcomeMessage = "Checksum matched";
                 return true;
             } else {
                 LOGGER.error("Checksum validation FAILED for file: " + validatedFile);
                 LOGGER.error("Expected: " + expectedChecksum);
                 LOGGER.error("Actual: " + actualChecksum);
                 LOGGER.error("Algorithm: " + algorithm.getAlgorithmName());
+                outcomeMessage = "Checksum mismatch";
                 return false;
             }
 
         } catch (IOException e) {
             LOGGER.error("I/O error during checksum validation: " + e.getMessage(), e);
+            outcomeMessage = cancelled.get()
+                    ? "Checksum validation was canceled"
+                    : "Checksum I/O error: " + errorMessage(e);
             return false;
         } catch (NoSuchAlgorithmException e) {
             LOGGER.error("Unsupported checksum algorithm: " + algorithm.getAlgorithmName(), e);
+            outcomeMessage = "Unsupported checksum algorithm: "
+                    + algorithm.getAlgorithmName();
             return false;
         } catch (Exception e) {
             LOGGER.error("Unexpected error during checksum validation: " + e.getMessage(), e);
+            outcomeMessage = "Checksum validation failed: " + errorMessage(e);
             return false;
         }
     }
@@ -179,14 +202,34 @@ public class ChecksumValidationAction implements AfterCompletionAction {
     }
 
     @Override
+    public String getResultMessage() {
+        return outcomeMessage;
+    }
+
+    @Override
+    public String getFailureMessage() {
+        return outcomeMessage;
+    }
+
+    @Override
     public String getOutput() {
         StringBuilder output = new StringBuilder();
         output.append("File: ").append(validatedFile == null ? "—" : validatedFile)
                 .append('\n');
         output.append("Algorithm: ").append(algorithm.getAlgorithmName()).append('\n');
+        output.append("Comparison: ").append(caseSensitive
+                ? "case-sensitive" : "case-insensitive").append('\n');
         output.append("Expected: ").append(expectedChecksum).append('\n');
-        output.append("Actual: ").append(actualChecksum == null ? "—" : actualChecksum);
+        output.append("Actual: ").append(actualChecksum == null ? "—" : actualChecksum)
+                .append('\n');
+        output.append("Result: ").append(outcomeMessage);
         return output.toString();
+    }
+
+    private static String errorMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank()
+                ? error.getClass().getSimpleName() : message;
     }
 
     @Override

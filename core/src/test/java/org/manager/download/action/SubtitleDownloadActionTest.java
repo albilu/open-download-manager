@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.manager.download.Download;
@@ -43,11 +44,17 @@ class SubtitleDownloadActionTest {
         RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
         RecordingYtDlpClient ytDlp = new RecordingYtDlpClient(true);
 
-        assertTrue(action(List.of("fr", "it"), subliminal, ytDlp).execute(download));
+        SubtitleDownloadAction action = action(List.of("fr", "it"), subliminal, ytDlp);
+        assertTrue(action.execute(download));
 
         assertEquals(List.of(video), subliminal.mediaFiles);
         assertEquals(List.of(List.of("it")), subliminal.languageCalls);
         assertTrue(ytDlp.settingsCalls.isEmpty());
+        assertTrue(action.getOutput().contains("Engine: Subliminal"));
+        assertTrue(action.getOutput().contains("Media: " + video));
+        assertTrue(action.getOutput().contains("Requested languages: it"));
+        assertTrue(action.getOutput().contains("Process output:\nSubtitle saved"));
+        assertTrue(action.getOutput().contains("Overall result: Succeeded"));
     }
 
     @Test
@@ -59,9 +66,11 @@ class SubtitleDownloadActionTest {
                 URI.create("https://example.com/movie.mp4"), video, Download.Type.ARIA2);
         RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
 
-        assertTrue(action(List.of("fr", "it"), subliminal,
-                new RecordingYtDlpClient(true)).execute(download));
+        SubtitleDownloadAction action = action(List.of("fr", "it"), subliminal,
+                new RecordingYtDlpClient(true));
+        assertTrue(action.execute(download));
         assertTrue(subliminal.mediaFiles.isEmpty());
+        assertTrue(action.getOutput().contains("All preferred subtitles already exist"));
     }
 
     @Test
@@ -80,7 +89,8 @@ class SubtitleDownloadActionTest {
         RecordingSubliminalClient subliminal = new RecordingSubliminalClient(true);
         RecordingYtDlpClient ytDlp = new RecordingYtDlpClient(true);
 
-        assertTrue(action(List.of("fr", "it"), subliminal, ytDlp).execute(download));
+        SubtitleDownloadAction action = action(List.of("fr", "it"), subliminal, ytDlp);
+        assertTrue(action.execute(download));
 
         assertTrue(subliminal.mediaFiles.isEmpty());
         assertEquals(List.of(download.getUri().toString()), ytDlp.urls);
@@ -93,6 +103,10 @@ class SubtitleDownloadActionTest {
         assertEquals("clip.%(ext)s", settings.getOutputTemplate());
         assertEquals("socks5://127.0.0.1:1080", settings.getProxyAddress());
         assertEquals("/tmp/cookies.txt", settings.getCookieFile());
+        assertTrue(action.getOutput().contains("Engine: yt-dlp"));
+        assertTrue(action.getOutput().contains("Output directory: " + tempDir));
+        assertTrue(action.getOutput().contains("Requested languages: it"));
+        assertTrue(action.getOutput().contains("Overall result: Succeeded"));
     }
 
     @Test
@@ -126,8 +140,61 @@ class SubtitleDownloadActionTest {
         Download download = completedDownload(
                 URI.create("https://example.com/movie.mkv"), video, Download.Type.ARIA2);
 
-        assertFalse(action(List.of("fr"), new RecordingSubliminalClient(false),
-                new RecordingYtDlpClient(true)).execute(download));
+        SubtitleDownloadAction action = action(List.of("fr"),
+                new RecordingSubliminalClient(false), new RecordingYtDlpClient(true));
+
+        assertFalse(action.execute(download));
+        assertTrue(action.getOutput().contains("Process exit code: 2"));
+        assertTrue(action.getOutput().contains("Process output:\nProvider lookup failed"));
+        assertTrue(action.getOutput().contains(
+                "Result: Subtitle request failed: Subliminal exited with code 2"));
+    }
+
+    @Test
+    void successfulSubtitleActionPersistsDetailedOutput() throws Exception {
+        Path video = Files.writeString(tempDir.resolve("movie.mkv"), "video");
+        Download download = completedDownload(
+                URI.create("https://example.com/movie.mkv"), video, Download.Type.ARIA2);
+        SubtitleDownloadAction subtitles = action(List.of("fr"),
+                new RecordingSubliminalClient(true), new RecordingYtDlpClient(true));
+        AfterCompletionActionManager manager = new AfterCompletionActionManager();
+        try {
+            manager.addAction(download, subtitles);
+
+            manager.executeActions(download).get(5, TimeUnit.SECONDS);
+
+            CompletionActionResult result = download.getCompletionActionResults().getFirst();
+            assertEquals(CompletionActionResult.Status.SUCCEEDED, result.status());
+            assertTrue(result.output().contains("Engine: Subliminal"));
+            assertTrue(result.output().contains("Requested languages: fr"));
+            assertTrue(result.output().contains("Process output:\nSubtitle saved"));
+            assertTrue(result.output().contains("Overall result: Succeeded"));
+        } finally {
+            manager.shutdown();
+        }
+    }
+
+    @Test
+    void failedSubtitleActionPersistsSubliminalProcessDiagnostics() throws Exception {
+        Path video = Files.writeString(tempDir.resolve("movie.mkv"), "video");
+        Download download = completedDownload(
+                URI.create("https://example.com/movie.mkv"), video, Download.Type.ARIA2);
+        SubtitleDownloadAction subtitles = action(List.of("fr"),
+                new RecordingSubliminalClient(false), new RecordingYtDlpClient(true));
+        AfterCompletionActionManager manager = new AfterCompletionActionManager();
+        try {
+            manager.addAction(download, subtitles);
+
+            manager.executeActions(download).get(5, TimeUnit.SECONDS);
+
+            CompletionActionResult result = download.getCompletionActionResults().getFirst();
+            assertEquals(CompletionActionResult.Status.FAILED, result.status());
+            assertTrue(result.output().contains("Process exit code: 2"));
+            assertTrue(result.output().contains("Process output:\nProvider lookup failed"));
+            assertTrue(result.output().contains("Subliminal exited with code 2"));
+        } finally {
+            manager.shutdown();
+        }
     }
 
     private SubtitleDownloadAction action(List<String> languages,
@@ -152,17 +219,22 @@ class SubtitleDownloadActionTest {
         private final List<Path> mediaFiles = new ArrayList<>();
         private final List<List<String>> languageCalls = new ArrayList<>();
         private final boolean result;
+        private final String processOutput;
 
         private RecordingSubliminalClient(boolean result) {
             super("/custom/subliminal");
             this.result = result;
+            processOutput = result ? "Subtitle saved\n" : "Provider lookup failed\n";
         }
 
         @Override
-        public boolean download(Path mediaFile, SubliminalSettings settings, String operationId) {
+        public DownloadResult downloadWithResult(
+                Path mediaFile, SubliminalSettings settings, String operationId) {
             mediaFiles.add(mediaFile);
             languageCalls.add(settings.getLanguages());
-            return result;
+            return new DownloadResult(result, result ? 0 : 2, processOutput,
+                    result ? "Subliminal completed successfully"
+                            : "Subliminal exited with code 2");
         }
     }
 

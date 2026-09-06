@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,6 +52,10 @@ class ChecksumValidationActionTest {
         assertEquals(expectedChecksum.toLowerCase(), action.getActualChecksum().toLowerCase());
         assertEquals(testFile, action.getValidatedFile());
         assertFalse(action.isCancelled());
+        assertFalse(action.getOutput().isBlank());
+        assertTrue(action.getOutput().contains("Actual: " + action.getActualChecksum()));
+        assertTrue(action.getOutput().contains("Result: Checksum matched"));
+        assertEquals("Checksum matched", action.getResultMessage());
     }
 
     @Test
@@ -77,6 +82,10 @@ class ChecksumValidationActionTest {
 
         assertFalse(result, "Validation should fail with incorrect checksum");
         assertNotEquals(incorrectChecksum, action.getActualChecksum());
+        assertEquals("Checksum mismatch", action.getFailureMessage());
+        assertTrue(action.getOutput().contains("Expected: " + incorrectChecksum));
+        assertTrue(action.getOutput().contains("Actual: " + action.getActualChecksum()));
+        assertTrue(action.getOutput().contains("Result: Checksum mismatch"));
     }
 
     @Test
@@ -120,6 +129,8 @@ class ChecksumValidationActionTest {
 
         assertFalse(result, "Validation should fail when file doesn't exist");
         assertNull(action.getActualChecksum());
+        assertTrue(action.getOutput().contains(
+                "Result: Downloaded file does not exist: " + downloadWithMissingFile.getPrimaryOutputPath()));
     }
 
     @Test
@@ -133,6 +144,31 @@ class ChecksumValidationActionTest {
 
         assertFalse(result, "Validation should fail when download destination is null");
         assertNull(action.getActualChecksum());
+        assertFalse(action.getOutput().isBlank());
+        assertTrue(action.getOutput().contains("Actual: —"));
+        assertTrue(action.getOutput().contains("Result: Download destination is not set"));
+    }
+
+    @Test
+    void failedChecksumPersistsComputedComparisonDetails() throws Exception {
+        String incorrectChecksum = "0123456789abcdef0123456789abcdef";
+        ChecksumValidationAction action = new ChecksumValidationAction(
+                ChecksumValidationAction.ChecksumAlgorithm.MD5, incorrectChecksum);
+        AfterCompletionActionManager manager = new AfterCompletionActionManager();
+        try {
+            manager.addAction(testDownload, action);
+
+            manager.executeActions(testDownload).get(5, TimeUnit.SECONDS);
+
+            CompletionActionResult result = testDownload.getCompletionActionResults().getFirst();
+            assertEquals(CompletionActionResult.Status.FAILED, result.status());
+            assertEquals("Checksum mismatch", result.message());
+            assertTrue(result.output().contains("Expected: " + incorrectChecksum));
+            assertTrue(result.output().contains("Actual: " + action.getActualChecksum()));
+            assertTrue(result.output().contains("Result: Checksum mismatch"));
+        } finally {
+            manager.shutdown();
+        }
     }
 
     @Test

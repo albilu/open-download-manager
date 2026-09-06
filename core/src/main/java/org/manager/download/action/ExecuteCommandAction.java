@@ -53,6 +53,8 @@ public class ExecuteCommandAction implements AfterCompletionAction {
     private volatile boolean cancelled;
     private volatile String commandOutput = "";
     private volatile String outcomeMessage = "Action did not complete successfully";
+    private volatile Path commandFile;
+    private volatile Integer commandExitCode;
 
     /**
      * Creates an action that runs the given command template.
@@ -90,6 +92,9 @@ public class ExecuteCommandAction implements AfterCompletionAction {
     public boolean execute(Download download) {
         commandOutput = "";
         outcomeMessage = "Action did not complete successfully";
+        commandFile = null;
+        commandExitCode = null;
+        process = null;
         if (commandTemplate.isBlank()) {
             LOGGER.warn("Custom command is empty; nothing to execute");
             outcomeMessage = "Custom command is empty";
@@ -101,6 +106,7 @@ public class ExecuteCommandAction implements AfterCompletionAction {
             outcomeMessage = "Downloaded file path is unknown";
             return false;
         }
+        commandFile = filePath;
 
         List<String> command = tokenize(substitute(commandTemplate, download, filePath));
         if (command.isEmpty()) {
@@ -109,15 +115,17 @@ public class ExecuteCommandAction implements AfterCompletionAction {
             return false;
         }
 
+        CompletableFuture<String> output = null;
         try {
             LOGGER.info("Executing configured after-completion command");
             process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            CompletableFuture<String> output = captureOutput(process);
+            output = captureOutput(process);
             boolean finished = timeoutSeconds > 0
                     ? process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
                     : waitForUninterruptibly();
             if (cancelled) {
                 commandOutput = awaitOutput(output);
+                commandExitCode = exitCodeOf(process);
                 outcomeMessage = "Custom command was canceled";
                 return false;
             }
@@ -126,11 +134,13 @@ public class ExecuteCommandAction implements AfterCompletionAction {
                 process.destroyForcibly();
                 process.waitFor(5, TimeUnit.SECONDS);
                 commandOutput = awaitOutput(output);
+                commandExitCode = exitCodeOf(process);
                 outcomeMessage = "Custom command timed out after " + timeoutSeconds + " seconds";
                 return false;
             }
             commandOutput = awaitOutput(output);
             int exit = process.exitValue();
+            commandExitCode = exit;
             if (exit != 0) {
                 LOGGER.warn("Custom command exited with code " + exit);
                 outcomeMessage = "Custom command exited with code " + exit;
@@ -143,9 +153,14 @@ public class ExecuteCommandAction implements AfterCompletionAction {
             outcomeMessage = "Could not run custom command: " + e.getMessage();
             return false;
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
             LOGGER.warn("Custom command execution interrupted");
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
+            commandOutput = awaitOutput(output);
+            commandExitCode = exitCodeOf(process);
             outcomeMessage = "Custom command execution was interrupted";
+            Thread.currentThread().interrupt();
             return false;
         }
     }
@@ -172,7 +187,19 @@ public class ExecuteCommandAction implements AfterCompletionAction {
 
     @Override
     public String getOutput() {
-        return commandOutput;
+        StringBuilder output = new StringBuilder();
+        output.append("File: ").append(commandFile == null ? "—" : commandFile)
+                .append("\nExit code: ")
+                .append(commandExitCode == null ? "—" : commandExitCode)
+                .append("\nProcess output:");
+        if (commandOutput == null || commandOutput.isBlank()) {
+            output.append(" (none)");
+        } else {
+            output.append('\n').append(commandOutput);
+        }
+        startLine(output);
+        output.append("Result: ").append(outcomeMessage);
+        return output.toString();
     }
 
     @Override
@@ -281,16 +308,31 @@ public class ExecuteCommandAction implements AfterCompletionAction {
         return captured;
     }
 
-    private static String awaitOutput(CompletableFuture<String> output)
-            throws InterruptedException {
+    private static String awaitOutput(CompletableFuture<String> output) {
+        if (output == null) {
+            return "";
+        }
         try {
             return output.get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "[Interrupted while collecting command output]";
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             return "[Could not read command output: "
                     + (cause == null ? e.getMessage() : cause.getMessage()) + "]";
         } catch (TimeoutException e) {
             return "[Command output reader did not finish]";
+        }
+    }
+
+    private static Integer exitCodeOf(Process process) {
+        return process == null || process.isAlive() ? null : process.exitValue();
+    }
+
+    private static void startLine(StringBuilder output) {
+        if (!output.isEmpty() && output.charAt(output.length() - 1) != '\n') {
+            output.append('\n');
         }
     }
 }

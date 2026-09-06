@@ -10,6 +10,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -43,6 +44,9 @@ class AntivirusCheckActionTest {
         assertFalse(action.isThreatDetected());
         assertFalse(action.isScanning());
         assertEquals("", action.getScanResult());
+        assertTrue(action.getOutput().contains("Process output: (none)"));
+        assertTrue(action.getOutput().contains(
+                "Result: Custom scanner command completed without output"));
     }
 
     @Test
@@ -74,6 +78,9 @@ class AntivirusCheckActionTest {
         assertFalse(action.isThreatDetected());
         assertTrue(action.getResultMessage().contains("inspect its output"));
         assertTrue(action.getScanResult().contains("EICAR"));
+        assertTrue(action.getOutput().contains("Exit code: 0"));
+        assertTrue(action.getOutput().contains(
+                "Process output:\nsample.txt: EICAR-TROJAN Found"));
     }
 
     @Test
@@ -85,6 +92,38 @@ class AntivirusCheckActionTest {
 
         assertFalse(action.execute(completedDownload(file)));
         assertFalse(action.isThreatDetected(), "scanner failure is not a threat verdict");
+        assertTrue(action.getOutput().contains("Exit code: 2"));
+        assertTrue(action.getOutput().contains("Process output:\nmalware suspicious"));
+        assertTrue(action.getOutput().contains(
+                "Result: Antivirus scanner exited with code 2"));
+    }
+
+    @Test
+    void failedScanPersistsActualProcessDiagnostics() throws Exception {
+        Path file = Files.writeString(tempDir.resolve("sample.txt"), "hello");
+        Path script = scannerScript("""
+                #!/bin/sh
+                echo 'stdout scan detail'
+                echo 'stderr engine failure' >&2
+                exit 4
+                """);
+        AntivirusCheckAction action = new AntivirusCheckAction(script + " {file}", 30);
+        Download download = completedDownload(file);
+        AfterCompletionActionManager manager = new AfterCompletionActionManager();
+        try {
+            manager.addAction(download, action);
+
+            manager.executeActions(download).get(5, TimeUnit.SECONDS);
+
+            CompletionActionResult result = download.getCompletionActionResults().getFirst();
+            assertEquals(CompletionActionResult.Status.FAILED, result.status());
+            assertEquals("Antivirus scanner exited with code 4", result.message());
+            assertTrue(result.output().contains("Exit code: 4"));
+            assertTrue(result.output().contains("stdout scan detail"));
+            assertTrue(result.output().contains("stderr engine failure"));
+        } finally {
+            manager.shutdown();
+        }
     }
 
     @Test
@@ -105,11 +144,14 @@ class AntivirusCheckActionTest {
     @Timeout(30)
     void scanTimeoutStopsScanner() throws Exception {
         Path file = Files.writeString(tempDir.resolve("sample.txt"), "hello");
-        AntivirusCheckAction action = new AntivirusCheckAction("sleep 30", 1);
+        Path scanner = scannerScript("#!/bin/sh\necho before-timeout\nexec sleep 30\n");
+        AntivirusCheckAction action = new AntivirusCheckAction(scanner + " {file}", 1);
 
         assertFalse(action.execute(completedDownload(file)));
         assertFalse(action.isScanning());
-        assertNull(action.getScanResult(), "no result may be published for a timed-out scan");
+        assertTrue(action.getScanResult().contains("before-timeout"));
+        assertTrue(action.getOutput().contains("Process output:\nbefore-timeout"));
+        assertTrue(action.getOutput().contains("Result: Antivirus scan timed out after 1 seconds"));
     }
 
     @Test
@@ -117,7 +159,8 @@ class AntivirusCheckActionTest {
     @Timeout(30)
     void cancelTerminatesRunningScan() throws Exception {
         Path file = Files.writeString(tempDir.resolve("sample.txt"), "hello");
-        AntivirusCheckAction action = new AntivirusCheckAction("sleep 30", 0);
+        Path scanner = scannerScript("#!/bin/sh\necho before-cancel\nexec sleep 30\n");
+        AntivirusCheckAction action = new AntivirusCheckAction(scanner + " {file}", 0);
         Download download = completedDownload(file);
 
         Thread worker = new Thread(() -> action.execute(download));
@@ -130,6 +173,8 @@ class AntivirusCheckActionTest {
         assertTrue(action.cancel());
         worker.join(10_000);
         assertFalse(worker.isAlive(), "execute must return after the scan process was destroyed");
+        assertTrue(action.getOutput().contains("Process output:\nbefore-cancel"));
+        assertTrue(action.getOutput().contains("Result: Antivirus scan was canceled"));
     }
 
     @Test
@@ -148,15 +193,19 @@ class AntivirusCheckActionTest {
         Download noDestination = new Download(URI.create("https://example.test/a.txt"));
         noDestination.setDestination(null);
         assertFalse(action.execute(noDestination));
+        assertTrue(action.getOutput().contains("Result: Download destination is not set"));
 
         Download noOutput = new Download(URI.create("https://example.test/b.txt"));
         noOutput.setDestination(tempDir);
         noOutput.setOutputPaths(List.of());
         assertFalse(action.execute(noOutput));
+        assertFalse(action.getOutput().isBlank());
+        assertTrue(action.getOutput().contains("Result:"));
 
         Download ghostFile = completedDownload(tempDir.resolve("ghost.bin"));
         assertFalse(action.execute(ghostFile));
         assertFalse(action.isScanning());
+        assertTrue(action.getOutput().contains("Downloaded file does not exist"));
     }
 
     @Test

@@ -1,14 +1,16 @@
 package org.manager.download.action;
 
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.manager.download.Download;
@@ -20,6 +22,8 @@ import org.manager.download.Download;
 public class AntivirusCheckAction implements AfterCompletionAction {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AntivirusCheckAction.class);
+    private static final int MAX_CAPTURED_OUTPUT_CHARS = 1_000_000;
+    private static final int OUTPUT_READER_TIMEOUT_SECONDS = 5;
 
     public enum AntivirusType {
         CLAMAV, // ClamAV scanner
@@ -29,12 +33,15 @@ public class AntivirusCheckAction implements AfterCompletionAction {
     private final AntivirusType antivirusType;
     private final String executablePath;
     private String customCommand;
-    private Process scanProcess;
-    private CompletableFuture<Void> scanFuture;
+    private volatile Process scanProcess;
+    private volatile CompletableFuture<String> scanFuture;
     private final int timeoutSeconds;
     private volatile boolean isScanning;
+    private volatile boolean scanCancelled;
     private String unavailableReason;
-    private String scanResult;
+    private volatile String scanResult;
+    private Path scannedFile;
+    private Integer scanExitCode;
     private boolean threatDetected;
     private String outcomeMessage = "Antivirus scan did not complete";
 
@@ -98,6 +105,9 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         scanProcess = null;
         scanFuture = null;
         scanResult = null;
+        scannedFile = null;
+        scanExitCode = null;
+        scanCancelled = false;
         threatDetected = false;
         outcomeMessage = "Antivirus scan did not complete";
 
@@ -119,6 +129,7 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             outcomeMessage = "Downloaded file path is unknown";
             return false;
         }
+        scannedFile = sourceFile;
 
         // Check if source file exists
         if (!Files.exists(sourceFile)) {
@@ -143,20 +154,9 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             scanProcess = processBuilder.start();
             isScanning = true;
 
-            // Collect output in a separate thread
-            StringBuilder output = new StringBuilder();
-            scanFuture = CompletableFuture.runAsync(() -> {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(scanProcess.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
-
-
-                    }
-                } catch (IOException e) {
-                    LOGGER.warn("Error reading scan output", e);
-                }
-            });
+            // Drain merged stdout/stderr concurrently so a verbose scanner
+            // cannot fill its pipe and block before the timeout is observed.
+            scanFuture = captureOutput(scanProcess);
 
             // Wait for the scan to complete with timeout
             boolean completed;
@@ -165,7 +165,9 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                 if (!completed) {
                     LOGGER.warn("Antivirus scan timed out after " + timeoutSeconds + " seconds");
                     scanProcess.destroyForcibly();
-                    scanFuture.cancel(true);
+                    scanProcess.waitFor(5, TimeUnit.SECONDS);
+                    scanExitCode = exitCodeOf(scanProcess);
+                    scanResult = awaitOutput(scanFuture);
                     isScanning = false;
                     outcomeMessage = "Antivirus scan timed out after "
                             + timeoutSeconds + " seconds";
@@ -176,27 +178,25 @@ public class AntivirusCheckAction implements AfterCompletionAction {
                 completed = true;
             }
 
-            // Wait for output collection to complete
-            try {
-                scanFuture.join();
-            } catch (java.util.concurrent.CancellationException e) {
-                isScanning = false;
+            scanResult = awaitOutput(scanFuture);
+            isScanning = false;
+            if (scanCancelled) {
+                scanExitCode = exitCodeOf(scanProcess);
                 outcomeMessage = "Antivirus scan was canceled";
                 return false;
             }
-            isScanning = false;
-
-            // Store the scan result
-            scanResult = output.toString();
 
             // Check exit value
             int exitValue = scanProcess.exitValue();
+            scanExitCode = exitValue;
             boolean success = exitValue == 0 || (antivirusType == AntivirusType.CLAMAV && exitValue == 1);
 
             threatDetected = antivirusType == AntivirusType.CLAMAV && exitValue == 1;
             if (success) {
                 outcomeMessage = antivirusType == AntivirusType.CUSTOM
-                        ? "Custom scanner command completed; inspect its output"
+                        ? scanResult.isBlank()
+                                ? "Custom scanner command completed without output"
+                                : "Custom scanner command completed; inspect its output"
                         : threatDetected ? "Threats detected" : "No threats detected";
                 LOGGER.info("Antivirus scan finished: {}", outcomeMessage);
             } else {
@@ -212,9 +212,14 @@ public class AntivirusCheckAction implements AfterCompletionAction {
             return false;
         } catch (InterruptedException e) {
             LOGGER.warn("Antivirus scan was interrupted", e);
-            Thread.currentThread().interrupt();
+            if (scanProcess != null && scanProcess.isAlive()) {
+                scanProcess.destroyForcibly();
+            }
+            scanResult = awaitOutput(scanFuture);
+            scanExitCode = exitCodeOf(scanProcess);
             isScanning = false;
             outcomeMessage = "Antivirus scan was interrupted";
+            Thread.currentThread().interrupt();
             return false;
         }
     }
@@ -281,7 +286,77 @@ public class AntivirusCheckAction implements AfterCompletionAction {
 
     @Override
     public String getOutput() {
-        return scanResult == null ? "" : scanResult;
+        StringBuilder output = new StringBuilder();
+        output.append("Scanner: ").append(getAntivirusName())
+                .append("\nFile: ").append(scannedFile == null ? "—" : scannedFile)
+                .append("\nExit code: ")
+                .append(scanExitCode == null ? "—" : scanExitCode)
+                .append("\nProcess output:");
+        if (scanResult == null || scanResult.isBlank()) {
+            output.append(" (none)");
+        } else {
+            output.append('\n').append(scanResult);
+        }
+        startLine(output);
+        output.append("Result: ").append(outcomeMessage);
+        return output.toString();
+    }
+
+    private static CompletableFuture<String> captureOutput(Process process) {
+        CompletableFuture<String> captured = new CompletableFuture<>();
+        Thread.ofVirtual().name("odm-antivirus-output").start(() -> {
+            try (InputStreamReader reader = new InputStreamReader(
+                    process.getInputStream(), StandardCharsets.UTF_8)) {
+                StringBuilder retained = new StringBuilder();
+                boolean truncated = false;
+                char[] buffer = new char[8192];
+                int count;
+                while ((count = reader.read(buffer)) != -1) {
+                    int remaining = MAX_CAPTURED_OUTPUT_CHARS - retained.length();
+                    if (remaining > 0) {
+                        retained.append(buffer, 0, Math.min(count, remaining));
+                    }
+                    truncated |= count > remaining;
+                }
+                if (truncated) {
+                    retained.append("\n\n[Antivirus output truncated by ODM]");
+                }
+                captured.complete(retained.toString());
+            } catch (IOException e) {
+                captured.completeExceptionally(e);
+            }
+        });
+        return captured;
+    }
+
+    private static String awaitOutput(CompletableFuture<String> output) {
+        if (output == null) {
+            return "";
+        }
+        try {
+            return output.get(OUTPUT_READER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "[Interrupted while collecting antivirus output]";
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            String message = cause == null ? e.getMessage() : cause.getMessage();
+            return "[Could not read antivirus output: "
+                    + (message == null || message.isBlank()
+                            ? e.getClass().getSimpleName() : message) + "]";
+        } catch (TimeoutException e) {
+            return "[Antivirus output reader did not finish]";
+        }
+    }
+
+    private static Integer exitCodeOf(Process process) {
+        return process == null || process.isAlive() ? null : process.exitValue();
+    }
+
+    private static void startLine(StringBuilder output) {
+        if (!output.isEmpty() && output.charAt(output.length() - 1) != '\n') {
+            output.append('\n');
+        }
     }
 
     private String getAntivirusName() {
@@ -302,10 +377,8 @@ public class AntivirusCheckAction implements AfterCompletionAction {
         }
 
         try {
+            scanCancelled = true;
             scanProcess.destroyForcibly();
-            if (scanFuture != null) {
-                scanFuture.cancel(true);
-            }
             isScanning = false;
             LOGGER.info("Antivirus scan canceled");
             return true;

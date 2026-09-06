@@ -59,6 +59,7 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
     private final YtDlpClient ytDlpClient;
     private final Set<String> activeYtDlpOperations = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private volatile String actionOutput = "";
 
     /** Creates an action using the configured tool-manager paths. */
     public SubtitleDownloadAction(SubliminalSettings settings) {
@@ -95,61 +96,110 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
 
     @Override
     public boolean execute(Download download) {
-        if (download == null || cancelled.get()) {
+        actionOutput = "";
+        StringBuilder output = new StringBuilder();
+        if (download == null) {
+            appendLine(output, "Result", "No download was provided");
+            actionOutput = output.toString();
             return false;
         }
+        if (cancelled.get()) {
+            appendLine(output, "Result", "Subtitle download was canceled before it started");
+            actionOutput = output.toString();
+            return false;
+        }
+        boolean success;
         try {
-            return download.getType() == Download.Type.YOUTUBE
-                    ? downloadWithYtDlp(download)
-                    : downloadWithSubliminal(download);
+            success = download.getType() == Download.Type.YOUTUBE
+                    ? downloadWithYtDlp(download, output)
+                    : downloadWithSubliminal(download, output);
         } catch (Exception e) {
             LOGGER.warn("Subtitle completion action failed", e);
-            return false;
+            appendLine(output, "Result", "Subtitle action failed: " + errorMessage(e));
+            success = false;
         }
+        appendLine(output, "Overall result", success
+                ? "Succeeded" : cancelled.get() ? "Canceled" : "Failed");
+        actionOutput = output.toString();
+        return success;
     }
 
-    private boolean downloadWithSubliminal(Download download) {
+    private boolean downloadWithSubliminal(Download download, StringBuilder output) {
         List<Path> videos = completedMediaFiles(download, VIDEO_EXTENSIONS);
+        appendLine(output, "Engine", "Subliminal");
+        appendLine(output, "Preferred languages", String.join(", ", settings.getLanguages()));
+        if (videos.isEmpty()) {
+            appendLine(output, "Result",
+                    "No supported media files were found; no subtitle download was needed");
+            return true;
+        }
+
         boolean success = true;
         for (int index = 0; index < videos.size() && !cancelled.get(); index++) {
             Path video = videos.get(index);
+            appendLine(output, "Media", video.toString());
             List<String> missing = missingLanguages(video);
             if (missing.isEmpty()) {
+                appendLine(output, "Result", "All preferred subtitles already exist");
                 continue;
             }
             SubliminalSettings operationSettings = settings.copy().setLanguages(missing);
-            success &= subliminalClient.download(video, operationSettings,
+            appendLine(output, "Requested languages", String.join(", ", missing));
+            SubliminalClient.DownloadResult result = subliminalClient.downloadWithResult(
+                    video, operationSettings,
                     download.getId() + ":subliminal:" + index);
+            appendLine(output, "Process exit code",
+                    result.exitCode() == null ? "—" : result.exitCode().toString());
+            appendProcessOutput(output, result.output());
+            appendLine(output, "Result", result.successful()
+                    ? "Subtitle request completed successfully"
+                    : "Subtitle request failed: " + result.detail());
+            success &= result.successful();
+        }
+        if (cancelled.get()) {
+            appendLine(output, "Result", "Subtitle download was canceled");
         }
         return !cancelled.get() && success;
     }
 
-    private boolean downloadWithYtDlp(Download download) {
+    private boolean downloadWithYtDlp(Download download, StringBuilder output) {
+        appendLine(output, "Engine", "yt-dlp");
         if (download.getUri() == null) {
+            appendLine(output, "Result", "The source URL is unavailable");
             return false;
         }
+        appendLine(output, "Source", download.getUri().toString());
         List<Path> outputs = completedMediaFiles(download, YTDLP_MEDIA_EXTENSIONS);
         if (outputs.isEmpty()) {
+            appendLine(output, "Result", "No completed media files were found");
             return false;
+        }
+        for (Path mediaFile : outputs) {
+            appendLine(output, "Media", mediaFile.toString());
         }
 
         List<String> preferredLanguages = download.getSettings() instanceof YtDlpSettings media
                 && media.getSubtitleLanguages() != null
                 && !media.getSubtitleLanguages().isEmpty()
                 ? media.getSubtitleLanguages() : settings.getLanguages();
+        appendLine(output, "Preferred languages", String.join(", ", preferredLanguages));
         LinkedHashSet<String> missing = new LinkedHashSet<>();
-        for (Path output : outputs) {
-            missing.addAll(missingLanguages(output, preferredLanguages));
+        for (Path mediaFile : outputs) {
+            missing.addAll(missingLanguages(mediaFile, preferredLanguages));
         }
         if (missing.isEmpty()) {
+            appendLine(output, "Result", "All preferred subtitles already exist");
             return true;
         }
 
         Path subtitleDirectory = download.getDestination() != null
                 ? download.getDestination() : outputs.getFirst().getParent();
         if (subtitleDirectory == null) {
+            appendLine(output, "Result", "The subtitle output directory is unavailable");
             return false;
         }
+        appendLine(output, "Output directory", subtitleDirectory.toString());
+        appendLine(output, "Requested languages", String.join(", ", missing));
 
         YtDlpSettings ytSettings = subtitleSettings(download.getSettings());
         ytSettings.setWriteSubtitles(true)
@@ -173,19 +223,30 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
                 return false;
             }
             future.get(settings.getTimeout().toMillis(), TimeUnit.MILLISECONDS);
-            return !cancelled.get();
+            if (cancelled.get()) {
+                appendLine(output, "Result", "Subtitle download was canceled");
+                return false;
+            }
+            appendLine(output, "Result", "Subtitle request completed successfully");
+            return true;
         } catch (TimeoutException e) {
             ytDlpClient.cancelDownload(operationId);
             LOGGER.warn("yt-dlp subtitle download timed out for " + download.getUri());
+            appendLine(output, "Result", "Subtitle request timed out after "
+                    + settings.getTimeout().toSeconds() + " seconds");
             return false;
         } catch (CancellationException e) {
+            appendLine(output, "Result", "Subtitle download was canceled");
             return false;
         } catch (ExecutionException e) {
             LOGGER.warn("yt-dlp subtitle download failed", e.getCause());
+            appendLine(output, "Result", "Subtitle request failed: "
+                    + errorMessage(e.getCause() == null ? e : e.getCause()));
             return false;
         } catch (InterruptedException e) {
             ytDlpClient.cancelDownload(operationId);
             Thread.currentThread().interrupt();
+            appendLine(output, "Result", "Subtitle download was interrupted");
             return false;
         } finally {
             activeYtDlpOperations.remove(operationId);
@@ -293,6 +354,11 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
     }
 
     @Override
+    public String getOutput() {
+        return actionOutput;
+    }
+
+    @Override
     public boolean cancel() {
         cancelled.set(true);
         subliminalClient.shutdown();
@@ -300,5 +366,32 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
             ytDlpClient.cancelDownload(operationId);
         }
         return true;
+    }
+
+    private static void appendLine(StringBuilder output, String label, String value) {
+        startLine(output);
+        output.append(label).append(": ").append(value);
+    }
+
+    private static void appendProcessOutput(StringBuilder output, String processOutput) {
+        startLine(output);
+        output.append("Process output:");
+        if (processOutput == null || processOutput.isBlank()) {
+            output.append(" (none)");
+        } else {
+            output.append('\n').append(processOutput);
+        }
+    }
+
+    private static void startLine(StringBuilder output) {
+        if (!output.isEmpty() && output.charAt(output.length() - 1) != '\n') {
+            output.append('\n');
+        }
+    }
+
+    private static String errorMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank()
+                ? error.getClass().getSimpleName() : message;
     }
 }
