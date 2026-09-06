@@ -53,7 +53,7 @@ class CompletionActionPresentationTest {
         CompletionActionPresentation.Summary summary =
                 CompletionActionPresentation.summarize(download);
         assertEquals(CompletionActionPresentation.Outcome.SUCCEEDED, summary.outcome());
-        assertEquals("emblem-ok-symbolic",
+        assertEquals("checkbox-checked-symbolic",
                 CompletionActionPresentation.outcomeIconName(summary.outcome()));
         assertEquals("All after-completion actions succeeded (2/2)",
                 CompletionActionPresentation.tooltip(download));

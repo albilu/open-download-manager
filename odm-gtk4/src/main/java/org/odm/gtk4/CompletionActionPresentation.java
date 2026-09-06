@@ -62,13 +62,28 @@ final class CompletionActionPresentation {
     /** Shows only a terminal aggregate outcome; non-terminal cells stay empty. */
     static Icon icon(Download download) {
         Outcome outcome = summarize(download).outcome();
+        return outcomeIcon(outcome);
+    }
+
+    static Icon outcomeIcon(Outcome outcome) {
         String iconName = outcomeIconName(outcome);
         if (iconName == null) {
             return null;
         }
         synchronized (OUTCOME_ICONS) {
-            return OUTCOME_ICONS.computeIfAbsent(outcome, ignored -> new ThemedIcon(iconName));
+            return OUTCOME_ICONS.computeIfAbsent(outcome, ignored -> createOutcomeIcon(outcome));
         }
+    }
+
+    private static Icon createOutcomeIcon(Outcome outcome) {
+        if (outcome == Outcome.SUCCEEDED) {
+            return ThemedIcon.fromNames(new String[]{
+                "checkbox-checked-symbolic",
+                "emblem-default",
+                "checkmark-symbolic"
+            });
+        }
+        return new ThemedIcon(outcomeIconName(outcome));
     }
 
     static String tooltip(Download download) {
@@ -91,7 +106,7 @@ final class CompletionActionPresentation {
 
     static String outcomeIconName(Outcome outcome) {
         return switch (outcome) {
-            case SUCCEEDED -> "emblem-ok-symbolic";
+            case SUCCEEDED -> "checkbox-checked-symbolic";
             case PARTIAL -> "dialog-warning-symbolic";
             case FAILED -> "dialog-error-symbolic";
             case NONE, RUNNING -> null;

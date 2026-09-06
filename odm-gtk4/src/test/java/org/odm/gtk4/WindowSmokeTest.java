@@ -35,6 +35,7 @@ import org.gnome.gtk.Grid;
 import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Image;
+import org.gnome.gtk.IconTheme;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.LinkButton;
 import org.gnome.gtk.ListStore;
@@ -1595,7 +1596,7 @@ class WindowSmokeTest {
                 org.manager.download.action.CompletionActionResult.Status.SUCCEEDED,
                 "No threats detected");
         presenter.refresh(List.of(download));
-        assertEquals("emblem-ok-symbolic", themedIconName(downloadStore, iter, 11));
+        assertEquals("checkbox-checked-symbolic", themedIconName(downloadStore, iter, 11));
         assertEquals(CompletionActionPresentation.Outcome.SUCCEEDED.ordinal(),
                 ListStoreCells.getInt(downloadStore, iter, 26));
         assertEquals(-1, ListStoreCells.getInt(downloadStore, iter, 27));
@@ -1645,6 +1646,23 @@ class WindowSmokeTest {
         assertEquals(-1, ListStoreCells.getInt(downloadStore, iter, 27));
         assertEquals("100.00%", ListStoreCells.getString(downloadStore, iter, 14),
                 "sound and power actions must not show file-finalization progress");
+    }
+
+    @Test
+    @DisplayName("completion result icons exist in the active GTK icon theme")
+    void completionResultIconsExistInGtkTheme() {
+        IconTheme theme = IconTheme.getForDisplay(org.gnome.gdk.Display.getDefault());
+        for (CompletionActionPresentation.Outcome outcome : List.of(
+                CompletionActionPresentation.Outcome.SUCCEEDED,
+                CompletionActionPresentation.Outcome.PARTIAL,
+                CompletionActionPresentation.Outcome.FAILED)) {
+            org.gnome.gio.Icon icon = CompletionActionPresentation.outcomeIcon(outcome);
+            assertNotNull(icon);
+            assertTrue(theme.hasGicon(icon),
+                    () -> CompletionActionPresentation.outcomeIconName(outcome)
+                            + " and its fallbacks are unavailable in GTK icon theme "
+                            + theme.getThemeName());
+        }
     }
 
     @Test
