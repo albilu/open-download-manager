@@ -103,7 +103,8 @@
           <object class="GtkBox" id="website_actions_box">
             <property name="orientation">horizontal</property>
             <property name="spacing">8</property>
-            <child><object class="GtkSpinner" id="new_website_spinner"><property name="hexpand">true</property><property name="halign">start</property></object></child>
+            <property name="halign">end</property>
+            <child><object class="GtkSpinner" id="new_website_spinner"><property name="valign">center</property></object></child>
             <child><object class="GtkButton" id="website_cancel_button"><property name="label">Cancel</property></object></child>
             <child><object class="GtkButton" id="website_start_button"><property name="label">Start Scrape</property><property name="css-classes">['suggested-action']</property></object></child>
           </object>

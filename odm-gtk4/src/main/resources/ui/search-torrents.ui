@@ -114,7 +114,7 @@
       </object></child>
       <child><object class="GtkLabel" id="torrent_status_label"><property name="accessible-role">status</property><property name="xalign">0</property><property name="ellipsize">end</property></object></child>
       <child><object class="GtkBox"><property name="spacing">8</property><property name="halign">end</property>
-        <child><object class="GtkSpinner" id="torrent_spinner"/></child>
+        <child><object class="GtkSpinner" id="torrent_spinner"><property name="valign">center</property></object></child>
         <child><object class="GtkButton" id="torrent_close_button"><property name="label">Close</property></object></child>
         <child><object class="GtkButton" id="torrent_download_button"><property name="label">Download</property><property name="sensitive">false</property></object></child>
       </object></child>

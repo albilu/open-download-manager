@@ -213,10 +213,10 @@
             <property name="margin-end">12</property>
             <property name="margin-top">8</property>
             <property name="margin-bottom">12</property>
+            <property name="halign">end</property>
             <child>
-              <object class="GtkBox">
-                <property name="hexpand">true</property>
-                <child><object class="GtkSpinner" id="import_spinnet"/></child>
+              <object class="GtkSpinner" id="import_spinnet">
+                <property name="valign">center</property>
               </object>
             </child>
             <child><object class="GtkButton" id="cancel_button"><property name="label">Cancel</property></object></child>
