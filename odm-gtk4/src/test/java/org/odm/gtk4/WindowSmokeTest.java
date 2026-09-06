@@ -272,8 +272,9 @@ class WindowSmokeTest {
         Widgets.require(builder, "engine_icon_renderer", org.gnome.gtk.CellRendererPixbuf.class);
         Widgets.require(builder, "download_progress_renderer", CellRendererProgress.class);
         assertTrue(nameColumn.getMinWidth() >= 200);
-        assertTrue(nameColumn.getMaxWidth() >= 360 && nameColumn.getMaxWidth() <= 480,
-                "the name column must stay readable without consuming the entire table");
+        assertFalse(nameColumn.getExpand());
+        assertEquals(420, nameColumn.getMaxWidth(),
+                "the name column must stay within its maximum width");
         CellRendererText nameRenderer = Widgets.require(builder,
                 "name_renderer", CellRendererText.class);
         assertEquals(org.gnome.pango.EllipsizeMode.END,
@@ -1221,11 +1222,13 @@ class WindowSmokeTest {
     }
 
     @Test
-    @DisplayName("Result remains icon-sized in a wide table and after visibility changes")
-    void resultColumnDoesNotAbsorbSpareWidth() throws Exception {
+    @DisplayName("Name stays capped without an empty column after Result")
+    void nameColumnKeepsMaximumWidth() throws Exception {
         GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
         ApplicationWindow window = Widgets.require(builder, "main_window", ApplicationWindow.class);
         TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        TreeViewColumn name = Widgets.require(builder, "name_column", TreeViewColumn.class);
+        TreeViewColumn endDate = Widgets.require(builder, "end_date_column", TreeViewColumn.class);
         TreeViewColumn result = Widgets.require(builder, "tor_icon_column", TreeViewColumn.class);
         Widgets.require(builder, "download_store", ListStore.class).append(new TreeIter());
         window.setDefaultSize(1000, 640);
@@ -1233,9 +1236,16 @@ class WindowSmokeTest {
         try {
             awaitGtk(() -> tree.getWidth() > 600 && result.getWidth() > 0,
                     "GTK did not allocate the wide download table");
+            assertEquals(MainWindow.downloadColumnLabels().size(), tree.getColumns().size(),
+                    "the download table must contain only its selectable data columns");
+            assertSame(result, tree.getColumns().getLast(),
+                    "no empty column should appear after Result");
+            assertEquals(420, name.getWidth());
             assertEquals(40, result.getWidth(), "Result must not fill unused space at the right edge");
             for (TreeViewColumn column : tree.getColumns()) {
-                if (!column.handle().equals(result.handle()) && column.getSortColumnId() >= 0) {
+                if (!column.handle().equals(name.handle())
+                        && !column.handle().equals(endDate.handle())
+                        && !column.handle().equals(result.handle())) {
                     column.setVisible(false);
                 }
             }
@@ -1245,8 +1255,15 @@ class WindowSmokeTest {
                 Thread.sleep(10);
             }
             assertEquals(40, result.getWidth());
-            assertTrue(tree.getWidth() > result.getWidth() + 400,
-                    "the test must leave spare space that could otherwise stretch Result");
+            assertEquals(420, name.getWidth(),
+                    "Name must keep its cap when other columns are hidden");
+            assertEquals(tree.getWidth(), name.getWidth() + endDate.getWidth() + result.getWidth(),
+                    "the visible data columns must fill the table");
+            endDate.setVisible(false);
+            awaitGtk(() -> name.getWidth() + result.getWidth() == tree.getWidth(),
+                    "GTK did not redistribute space after hiding the date columns");
+            assertEquals(420, name.getWidth(),
+                    "Name must keep its cap even without an expandable date column");
             assertEquals("Result", MainWindow.downloadColumnLabels().get(13),
                     "the visibility selector must keep the full label");
         } finally {
