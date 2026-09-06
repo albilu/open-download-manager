@@ -194,6 +194,7 @@ public class YtDlpDownloadTask {
                     status.set(Status.COMPLETED);
                     completedAt = Instant.now();
                     progress.set(100.0f);
+                    speed.set(0.0f);
                     LOGGER.info("Download completed for task " + taskId + ": " + filename);
                     forwardToListener(l -> l.onComplete(filename));
                 }

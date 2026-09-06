@@ -447,10 +447,11 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         LOGGER.warn("Ignoring invalid yt-dlp output path", invalidPath);
                     }
                 }
-                download.setStatus(Download.Status.COMPLETED);
                 if (download.getSize() > 0) {
                     download.setDownloaded(download.getSize());
                 }
+                download.setSpeed(0);
+                download.setStatus(Download.Status.COMPLETED);
                 notifyDownloadComplete(download);
             }
 

@@ -959,7 +959,7 @@ public class Download {
     }
 
     public float getProgress() {
-        return archiveOnlyCompletion && status == Status.COMPLETED ? 100 : progress;
+        return status == Status.COMPLETED ? 100 : progress;
     }
 
     public Instant getCreatedAt() {

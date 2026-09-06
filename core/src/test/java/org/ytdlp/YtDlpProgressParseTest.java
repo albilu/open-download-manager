@@ -77,6 +77,21 @@ class YtDlpProgressParseTest {
     }
 
     @Test
+    void fractionalEstimatePreservesExactDownloadedBytes() {
+        YtDlpClient client = new YtDlpClient("yt-dlp");
+        try {
+            Capture capture = new Capture();
+            client.parseProgressForTest(
+                    "[download] 42.3% of ~1.00MiB at 1.00MiB/s |odmbytes|471859|1048576.5",
+                    capture);
+            assertEquals(471_859, capture.downloaded.get());
+            assertEquals(1_048_576, capture.total.get());
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    @Test
     @DisplayName("Legacy progress line (older yt-dlp) still parses")
     void legacyLineStillParses() {
         YtDlpClient client = new YtDlpClient("yt-dlp");

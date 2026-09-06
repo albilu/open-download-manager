@@ -11,7 +11,10 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -945,7 +948,7 @@ public class YtDlpClient {
 
                 // Monitor progress
                 String filename = null;
-                boolean progressReported = false;
+                var completedFilenames = new LinkedHashSet<String>();
                 int skipped = 0;
                 String reportedError = null;
                 if (callback != null) { callback.onSkipped(0); }
@@ -966,6 +969,9 @@ public class YtDlpClient {
                         // extension). Publishing each distinct path also
                         // keeps cancellation cleanup authoritative.
                         String reportedFilename = extractFilename(line);
+                        if (reportedFilename != null && line.startsWith("|odmfile|")) {
+                            completedFilenames.add(reportedFilename);
+                        }
                         if (reportedFilename != null && !reportedFilename.equals(filename)) {
                             filename = reportedFilename;
                             // Publish the destination the moment yt-dlp
@@ -980,7 +986,7 @@ public class YtDlpClient {
 
                         // Parse progress
                         if (callback != null) {
-                            progressReported |= parseProgress(line, callback);
+                            parseProgress(line, callback);
                         }
 
                         // Check for errors
@@ -1001,12 +1007,15 @@ public class YtDlpClient {
                                 "yt-dlp exited successfully without reporting an output file");
                     }
                     if (callback != null) {
-                        // Very small and already-present files can complete
-                        // without yt-dlp emitting an intermediate progress
-                        // line. Preserve the callback contract by publishing
-                        // a terminal snapshot before completion.
-                        if (!progressReported && filename != null) {
-                            long completedBytes = completedFileSize(filename, outputPath);
+                        // Stream counters reset between video/audio and do
+                        // not include merging or conversion. Always publish
+                        // the size of the final outputs, including every
+                        // playlist entry, before announcing completion.
+                        if (filename != null) {
+                            if (completedFilenames.isEmpty()) {
+                                completedFilenames.add(filename);
+                            }
+                            long completedBytes = completedFileSize(completedFilenames, outputPath);
                             callback.onProgress(100.0f, completedBytes, completedBytes, 0.0f);
                         }
                         callback.onComplete(filename);
@@ -1156,15 +1165,14 @@ public class YtDlpClient {
         command.add("-o");
         command.add(outputTemplate);
 
-        // Progress and logging. The template emits machine-parsable lines
-        // with EXACT downloaded/total byte counts; the legacy "[download]
-        // 42.3% of ~10.00MiB" output only carries rounded values, and
-        // deriving downloadedBytes from percent x total drifted.
+        // Keep downloaded bytes exact and prefer the known total over an
+        // estimate. --print implies quiet mode, so progress must be explicit.
         command.add("--newline");
+        command.add("--progress");
         command.add("--progress-template");
         command.add("download:[download] %(progress._percent_str)s of "
                 + "%(progress._total_bytes_estimate_str)s at %(progress._speed_str)s "
-                + "|odmbytes|%(progress.downloaded_bytes)s|%(progress.total_bytes_estimate)s");
+                + "|odmbytes|%(progress.downloaded_bytes)s|%(progress.total_bytes,progress.total_bytes_estimate)s");
         // A stable machine marker covers merged/post-processed files and
         // already-present outputs without depending on localized prose.
         command.add("--print");
@@ -1553,9 +1561,10 @@ public class YtDlpClient {
                 String[] parts = line.substring(exactMarker + "|odmbytes|".length()).split("\\|");
                 long downloadedBytes = Long.parseLong(parts[0].trim());
                 String totalRaw = parts.length > 1 ? parts[1].trim() : "";
-                // total_bytes_estimate is "NA"/empty until yt-dlp knows
+                // Missing totals are NA/empty; fragment estimates can be
+                // fractional even though downloaded_bytes is an integer.
                 long totalBytes = totalRaw.isEmpty() || "NA".equals(totalRaw) || "None".equals(totalRaw)
-                        ? 0 : Long.parseLong(totalRaw);
+                        ? 0 : new BigDecimal(totalRaw).setScale(0, RoundingMode.DOWN).longValueExact();
 
                 // Percentage and speed still come from the human-readable
                 // prefix when present
@@ -1570,7 +1579,7 @@ public class YtDlpClient {
 
                 callback.onProgress(percentage, downloadedBytes, totalBytes, speedBps);
                 return true;
-            } catch (NumberFormatException e) {
+            } catch (NumberFormatException | ArithmeticException e) {
                 // Fall through to the legacy parser
             }
         }
@@ -1603,14 +1612,25 @@ public class YtDlpClient {
         parseProgress(line, callback);
     }
 
-    private long completedFileSize(String filename, Path outputPath) {
+    private long completedFileSize(Iterable<String> filenames, Path outputPath) {
         try {
-            Path completedPath = Path.of(filename);
-            if (!completedPath.isAbsolute() && outputPath != null) {
-                completedPath = outputPath.resolve(completedPath);
+            var completedPaths = new LinkedHashSet<Path>();
+            for (String filename : filenames) {
+                Path completedPath = Path.of(filename);
+                if (!completedPath.isAbsolute() && outputPath != null) {
+                    completedPath = outputPath.resolve(completedPath);
+                }
+                completedPaths.add(completedPath.toAbsolutePath().normalize());
             }
-            return Files.isRegularFile(completedPath) ? Files.size(completedPath) : 0L;
-        } catch (IOException | IllegalArgumentException | SecurityException e) {
+            long size = 0;
+            for (Path completedPath : completedPaths) {
+                if (!Files.isRegularFile(completedPath)) {
+                    return 0;
+                }
+                size = Math.addExact(size, Files.size(completedPath));
+            }
+            return size;
+        } catch (IOException | IllegalArgumentException | SecurityException | ArithmeticException e) {
             LOGGER.debug("Unable to inspect completed yt-dlp output size", e);
             return 0L;
         }

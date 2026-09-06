@@ -337,6 +337,16 @@ class DownloadTest {
         }
 
         @Test
+        void completedDownloadHasFullProgressEvenWithoutKnownSize() {
+            download.setDownloaded(100);
+            download.setStatus(Download.Status.COMPLETED);
+            assertEquals(100, download.getProgress());
+
+            download.setStatus(Download.Status.DOWNLOADING);
+            assertEquals(0, download.getProgress());
+        }
+
+        @Test
         @DisplayName("Should handle progress over 100%")
         void shouldHandleProgressOver100Percent() {
             download.setSize(1000);
