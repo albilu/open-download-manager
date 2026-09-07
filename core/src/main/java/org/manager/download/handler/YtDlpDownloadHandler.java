@@ -311,8 +311,10 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
     /**
      * Best-effort removal of a canceled yt-dlp download's output. Deletion
-     * authority is exclusively the paths the task recorded from yt-dlp's own
-     * output — display names are guesses, and guesses must not delete files.
+     * authority is exclusively paths reported by yt-dlp: the download retains
+     * them after task cleanup and across restarts, while a live task may also
+     * hold late reports received during cancellation. Display names must never
+     * authorize deletion.
      * Every candidate is validated by {@link #eligibleOutputPath} and then by
      * real-path containment: a symlinked subdirectory of the destination
      * resolves outside it and must never redirect deletion. The {@code .part}
@@ -329,7 +331,11 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             return;
         }
         Path normalizedDestination = destination.toAbsolutePath().normalize();
-        java.util.List<String> recorded = task != null ? task.getRecordedOutputPaths() : java.util.List.of();
+        java.util.Set<String> recorded = new java.util.LinkedHashSet<>();
+        download.getOutputPaths().forEach(path -> recorded.add(path.toString()));
+        if (task != null) {
+            recorded.addAll(task.getRecordedOutputPaths());
+        }
         if (recorded.isEmpty()) {
             DELETE_LOGGER.warn("No yt-dlp output paths recorded for " + download.getId()
                     + "; refusing deletion (display names are not deletion authority)");

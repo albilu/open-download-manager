@@ -32,8 +32,8 @@ import org.ytdlp.YtDlpSettings;
  * Cancellation ordering at the handler level: mark cancelled (invalidating
  * callbacks), request process termination, wait for confirmed task
  * completion, and only then delete validated outputs. A late process
- * callback must never replace CANCELED on the download, and a missing task
- * or deleteFiles=false must never delete anything.
+ * callback must never replace CANCELED on the download. Missing recorded
+ * paths or deleteFiles=false must never delete anything.
  */
 @DisplayName("yt-dlp handler cancels in order: invalidate, terminate, await, delete")
 class YtDlpCancelOrderingTest {
@@ -238,7 +238,7 @@ class YtDlpCancelOrderingTest {
 
         handler.cancelDownload(download, true).get(20, TimeUnit.SECONDS);
 
-        assertTrue(Files.exists(guess), "no task means no deletion authority");
+        assertTrue(Files.exists(guess), "no recorded paths means no deletion authority");
         assertEquals(Download.Status.CANCELED, download.getStatus());
     }
 }

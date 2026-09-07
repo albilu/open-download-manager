@@ -21,6 +21,8 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.manager.schedule.ScheduleSettings;
 import org.manager.download.action.AfterCompletionAction;
 import org.manager.download.action.CompletionActionResult;
@@ -51,6 +53,47 @@ class SqliteDownloadStateStoreTest {
             SqliteDownloadStateStore.StateSnapshot snapshot = store.load();
             assertTrue(snapshot.downloads().isEmpty());
             assertTrue(snapshot.activeIds().isEmpty());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void restoredMediaDeletionUsesItsRecordedOutputs(boolean deleteFiles) throws Exception {
+        Path destination = Files.createDirectories(tempDir.resolve("downloads"));
+        Path video = Files.writeString(destination.resolve("Vidéo ： ＂actualité＂ • news.webm"), "media");
+        Path secondVideo = Files.writeString(destination.resolve("next episode.webm"), "more media");
+        Path partial = Files.writeString(Path.of(video + ".part"), "partial media");
+        Path unrelated = Files.writeString(destination.resolve("display-name.webm"), "keep me");
+        Download original = new Download(URI.create("https://example.test/playlist"));
+        original.setType(Download.Type.YOUTUBE);
+        original.setSettings(new org.ytdlp.YtDlpSettings());
+        original.setDestination(destination);
+        original.setName(unrelated.getFileName().toString());
+        original.recordOutputPath(video);
+        original.recordOutputPath(secondVideo);
+        original.setStatus(Download.Status.COMPLETED);
+        try (var store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            store.save(List.of(original), Set.of());
+        }
+
+        org.ytdlp.YtDlpFactory.clearInstance();
+        try (var store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper);
+                var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            Download restored = store.load().downloads().getFirst();
+            var globals = new org.manager.GlobalSettings();
+            var handler = new org.manager.download.handler.YtDlpDownloadHandler(globals,
+                    new DownloadSettingsFactory(globals), executor,
+                    new org.manager.tools.ToolManagerFactory(globals, tempDir.resolve("tools")));
+
+            handler.cancelDownload(restored, deleteFiles).get(15, java.util.concurrent.TimeUnit.SECONDS);
+
+            assertEquals(!deleteFiles, Files.exists(video), "restored media must respect deleteFiles");
+            assertEquals(!deleteFiles, Files.exists(secondVideo), "all recorded playlist outputs are covered");
+            assertEquals(!deleteFiles, Files.exists(partial), "recorded output's .part follows deleteFiles");
+            assertTrue(Files.exists(unrelated), "the display name does not authorize deletion");
+            assertTrue(Files.isDirectory(destination), "the destination directory must remain");
+        } finally {
+            org.ytdlp.YtDlpFactory.clearInstance();
         }
     }
 

@@ -57,11 +57,11 @@ public class YtDlpDownloadTask {
 
     /**
      * Output paths produced by THIS task's own execution (the destinations
-     * yt-dlp reported for the current run). These — and only these — are
-     * deletion authority when a canceled download removes its files: a
-     * display-name guess must never delete anything. Cleared when the task
-     * restarts (resume), because a restarted run is a new generation whose
-     * recorded paths must not survive.
+     * yt-dlp reported for the current run). These supplement the paths
+     * retained on the Download for file deletion, including late reports
+     * received during cancellation. A display-name guess must never delete
+     * anything. Cleared when the task restarts (resume); the Download keeps
+     * reported paths across runs and after this task is reclaimed.
      */
     private final java.util.concurrent.ConcurrentLinkedQueue<String> recordedOutputPaths =
             new java.util.concurrent.ConcurrentLinkedQueue<>();

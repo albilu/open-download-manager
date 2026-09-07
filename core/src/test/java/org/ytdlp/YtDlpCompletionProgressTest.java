@@ -94,7 +94,7 @@ class YtDlpCompletionProgressTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void realMediaDownloadPublishesFinalModelBeforeCompletion(boolean aria2) throws Exception {
+    void realMediaDownloadPublishesFinalModelAndDeletesFilesAfterTaskCleanup(boolean aria2) throws Exception {
         GlobalSettings globals = new GlobalSettings();
         globals.setDefaultDownloadDirectory(tempDir);
         globals.setProperty("ytdlp.skipDownloaded", "false");
@@ -143,6 +143,24 @@ class YtDlpCompletionProgressTest {
                 assertEquals(0, result.getSpeed());
                 assertTrue(knownTotalUpdates.get() >= 2,
                         "yt-dlp must report a known stream total as well as the final file snapshot");
+
+                YtDlpFactory factory = YtDlpFactory.getInstance(globals, tools);
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+                while (factory.getDownloadTask(download.getId()) != null && System.nanoTime() < deadline) {
+                    Thread.sleep(10);
+                }
+                assertNull(factory.getDownloadTask(download.getId()),
+                        "completed task must be reclaimed before testing deletion");
+                assertTrue(download.getOutputPaths().contains(tempDir.resolve("final.mp4")),
+                        "the reported output must remain on the download after task cleanup");
+                download.setName("display-only.mp4");
+                Path unrelated = Files.writeString(tempDir.resolve("display-only.mp4"), "unrelated file");
+
+                handler.cancelDownload(download, true).get(15, TimeUnit.SECONDS);
+
+                assertFalse(Files.exists(tempDir.resolve("final.mp4")),
+                        "delete with files must still remove completed media after task cleanup");
+                assertTrue(Files.exists(unrelated), "display names must never authorize deletion");
             } finally {
                 handler.shutdown().get(15, TimeUnit.SECONDS);
                 YtDlpFactory.clearInstance();

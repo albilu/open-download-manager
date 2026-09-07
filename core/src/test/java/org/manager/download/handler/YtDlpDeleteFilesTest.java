@@ -19,7 +19,7 @@ import org.ytdlp.YtDlpSettings;
 /**
  * cancelDownload(deleteFiles=true) must remove the downloaded output.
  * Deletion authority is exclusively the output paths yt-dlp itself reported
- * for this run (recorded by the task); every candidate must validate as
+ * (retained by the download or its task); every candidate must validate as
  * confined to the destination. A display-name guess never deletes anything,
  * and neither may an absolute or traversal path that would escape the
  * destination.
@@ -101,6 +101,43 @@ class YtDlpDeleteFilesTest {
     }
 
     @Test
+    void deletesPreviouslyRecordedOutputsAlongWithLateTaskReports() throws Exception {
+        Path previous = Files.writeString(tempDir.resolve("previous.webm"), "earlier run");
+        Path late = Files.writeString(tempDir.resolve("current.webm.part"), "current run");
+        Download download = new Download(java.net.URI.create("http://example.test/v"));
+        download.setDestination(tempDir);
+        download.recordOutputPath(previous);
+        StartedTask started = new StartedTask(tempDir);
+        started.task.cancel();
+        started.ytDlpReported("current.webm");
+
+        YtDlpDownloadHandler.deleteYtDlpOutput(download, started.task);
+
+        assertFalse(Files.exists(previous), "outputs retained across runs must be deleted");
+        assertFalse(Files.exists(late), "late reports held only by the task must also be deleted");
+    }
+
+    @Test
+    void persistedPathsStillRequireDestinationContainment() throws Exception {
+        Path destination = Files.createDirectories(tempDir.resolve("downloads"));
+        Path outside = Files.createDirectories(tempDir.resolve("outside"));
+        Path victim = Files.writeString(outside.resolve("video.webm"), "keep me");
+        Files.createSymbolicLink(destination.resolve("channel"), outside);
+        Path done = Files.writeString(destination.resolve("video.webm"), "downloaded media");
+        Download download = new Download(java.net.URI.create("http://example.test/v"));
+        download.setDestination(destination);
+        download.recordOutputPath(victim);
+        download.recordOutputPath(Path.of("../outside/video.webm"));
+        download.recordOutputPath(Path.of("channel/video.webm"));
+        download.recordOutputPath(done);
+
+        YtDlpDownloadHandler.deleteYtDlpOutput(download, null);
+
+        assertTrue(Files.exists(victim), "persisted paths cannot escape the destination, even via symlinks");
+        assertFalse(Files.exists(done), "a confined persisted output must be deleted without a task");
+    }
+
+    @Test
     @DisplayName("An absolute reported path beneath the destination is honored")
     void absoluteReportedPathInsideDestinationIsAllowed() throws Exception {
         // yt-dlp prints absolute destinations depending on version
@@ -172,8 +209,8 @@ class YtDlpDeleteFilesTest {
     }
 
     @Test
-    @DisplayName("No task at all means no deletion")
-    void nullTaskMeansNoDeletion() throws Exception {
+    @DisplayName("No task or persisted outputs means no deletion")
+    void nullTaskWithoutRecordedOutputsMeansNoDeletion() throws Exception {
         Path guess = tempDir.resolve("my-video.mp4.part");
         Files.writeString(guess, "half");
 
@@ -183,7 +220,7 @@ class YtDlpDeleteFilesTest {
 
         YtDlpDownloadHandler.deleteYtDlpOutput(download, null);
 
-        assertTrue(Files.exists(guess), "without a task there is no authority to delete");
+        assertTrue(Files.exists(guess), "without recorded paths there is no authority to delete");
     }
 
     @Test
