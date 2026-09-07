@@ -534,7 +534,7 @@ public class MainWindow {
         downloadManager.addAfterCompletionActionListener(windowCompletionListener);
 
         // Clipboard detection flow: in silent mode core creates QUEUED
-        // downloads on its own; otherwise pop the new-download dialog with
+        // downloads on its own; otherwise open the matching download dialog with
         // the detected URL prefilled. Callbacks arrive on monitor threads,
         // so everything widget-touching goes through UiThread.
         try {
@@ -550,13 +550,21 @@ public class MainWindow {
                         return;
                     }
                     UiThread.marshal(() -> {
-                        NewDownloadDialog dialog = new NewDownloadDialog(window, downloadManager,
-                                () -> UiThread.marshal(MainWindow.this::refresh), torService);
-                        dialog.prefillUrl(urls.get(0).toString());
+                        java.net.URI source = urls.getFirst();
+                        if (org.manager.download.MediaUrlDetector.isMediaUrl(source)) {
+                            NewMediaDialog dialog = new NewMediaDialog(window, downloadManager,
+                                    () -> UiThread.marshal(MainWindow.this::refresh), torService);
+                            dialog.prefillUrl(source.toString());
+                            dialog.present();
+                        } else {
+                            NewDownloadDialog dialog = new NewDownloadDialog(window, downloadManager,
+                                    () -> UiThread.marshal(MainWindow.this::refresh), torService);
+                            dialog.prefillUrl(source.toString());
+                            dialog.present();
+                        }
                         if (urls.size() > 1) {
                             LOGGER.info(urls.size() + " URLs detected; offering the first");
                         }
-                        dialog.present();
                     });
                 }
             };

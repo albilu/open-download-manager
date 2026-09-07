@@ -71,7 +71,7 @@ public class SettingsDialog {
             Map.entry("clipboard_monitor_check",
                     "Detect supported download URLs copied by other applications."),
             Map.entry("clipboard_silent_check",
-                    "Add detected clipboard URLs without opening the New Download dialog."),
+                    "Add detected clipboard URLs without opening a confirmation dialog."),
             Map.entry("system_tray_check",
                     "Show the ODM status icon in the desktop system tray when supported."),
             Map.entry("startup_check",

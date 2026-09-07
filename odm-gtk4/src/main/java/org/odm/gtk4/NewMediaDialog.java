@@ -249,6 +249,13 @@ public class NewMediaDialog {
         urlEntry.grabFocus();
     }
 
+    /** Prefills the detected URL before showing clipboard confirmation. */
+    public void prefillUrl(String url) {
+        if (url != null && !url.isBlank()) {
+            urlEntry.setText(url);
+        }
+    }
+
     /** Triggers asynchronous metadata/format discovery for the entered URL. */
     private void refreshButtons() {
         boolean available = !closed.get() && !submissionInFlight
