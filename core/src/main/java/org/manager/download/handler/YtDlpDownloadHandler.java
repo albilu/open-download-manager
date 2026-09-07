@@ -100,7 +100,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 setDefaultDestinationIfNeeded(download);
 
                 // Override output
-                overrideOutputPath(download);
+                boolean overrideOutputs = overrideOutputPath(download);
 
                 // Set download status to connecting
                 download.setStatus(Download.Status.CONNECTING);
@@ -141,7 +141,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
                 // Start the download; the completion watcher is generation
                 // scoped so a retired run's late callback stays inert
-                watchRun(download, task, task.start());
+                watchRun(download, task, task.start(overrideOutputs));
 
                 // Update download status
                 download.setStatus(Download.Status.DOWNLOADING);
@@ -156,6 +156,14 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 throw new RuntimeException("Failed to start yt-dlp download", e);
             }
         }, executor);
+    }
+
+    @Override
+    protected Path initialOutputPath(Download download) {
+        // A media page's display name (often "watch") is not its output.
+        // yt-dlp resolves generated names before invoking its downloader.
+        return download.getRequestedFileName() != null || !download.getOutputPaths().isEmpty()
+                ? super.initialOutputPath(download) : null;
     }
 
     @Override

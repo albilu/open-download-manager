@@ -132,6 +132,11 @@ public class YtDlpDownloadTask {
      * @return CompletableFuture that completes when the download finishes
      */
     public CompletableFuture<String> start() {
+        return start(false);
+    }
+
+    /** Applies output replacement to this initial run only; resume() uses the native file policy. */
+    public CompletableFuture<String> start(boolean overrideOutputs) {
         if (downloadFuture != null) {
             return downloadFuture;
         }
@@ -218,7 +223,9 @@ public class YtDlpDownloadTask {
             // collected); the derived downloadFuture below is completed
             // eagerly by cancel(), so awaiting the run future is the only
             // confirmed-completion signal.
-            CompletableFuture<String> run = client.download(url, settings, outputPath, callback, processId);
+            CompletableFuture<String> run = overrideOutputs
+                    ? client.download(url, settings, outputPath, callback, processId, true)
+                    : client.download(url, settings, outputPath, callback, processId);
             runFuture = run;
             downloadFuture = run.whenComplete((result, throwable) -> {
                 if (throwable != null && !cancelled.get() && isCurrentGeneration(generation)

@@ -101,11 +101,14 @@ class YtDlpPauseLifecycleTest {
     @Timeout(120)
     @DisplayName("Pause keeps the task mapping so the next resume works")
     void pauseKeepsTaskMappingForResume() throws Exception {
+        when(settings.isOverrideOutputPath()).thenReturn(true);
         Download download = newDownload("pause");
         handler.startDownload(download).get(30, TimeUnit.SECONDS);
         YtDlpDownloadTask task = factory.getDownloadTask(download.getId());
         assertNotNull(task, "started download must be tracked");
         awaitRunning(task);
+        Path arguments = tempDir.resolve("fake-yt-dlp.args");
+        assertTrue(Files.readAllLines(arguments).contains("--force-overwrites"));
 
         handler.pauseDownload(download).get(30, TimeUnit.SECONDS);
         assertTrue(task.awaitRunCompletion(java.time.Duration.ofSeconds(15)),
@@ -121,6 +124,9 @@ class YtDlpPauseLifecycleTest {
         awaitRunning(task);
         assertEquals(YtDlpDownloadTask.Status.DOWNLOADING, task.getStatus(),
                 "the resumed run must be running again");
+        assertFalse(Files.readAllLines(arguments).contains("--force-overwrites"),
+                "resume must not replace the partial output of this record");
+        assertFalse(Files.readAllLines(arguments).contains("--no-continue"));
     }
 
     @Test
@@ -162,6 +168,7 @@ class YtDlpPauseLifecycleTest {
         YtDlpDownloadTask original = factory.getDownloadTask(download.getId());
         assertNotNull(original);
         awaitRunning(original);
+        assertTrue(Files.readAllLines(tempDir.resolve("fake-yt-dlp.args")).contains("--force-overwrites"));
         assertFalse(Files.exists(output), "a new download overrides the existing output before starting");
         Files.writeString(output, "partially downloaded content");
 
@@ -182,6 +189,8 @@ class YtDlpPauseLifecycleTest {
         assertNotNull(factory.getDownloadTask(download.getId()),
                 "the old run's late callback must not remove the replacement");
         awaitRunning(replacement);
+        assertFalse(Files.readAllLines(tempDir.resolve("fake-yt-dlp.args")).contains("--force-overwrites"),
+                "replacing a task must not repeat the initial file override");
         assertEquals(YtDlpDownloadTask.Status.DOWNLOADING, replacement.getStatus(),
                 "the replacement must still be running after the old run settled");
         assertFalse(replacement.isCancelled(), "the replacement must not be cancelled");

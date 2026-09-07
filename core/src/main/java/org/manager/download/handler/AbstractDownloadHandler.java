@@ -388,11 +388,12 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
         }
     }
 
-    /** Applies path override only before a new record's first engine start. */
-    protected void overrideOutputPath(Download download) {
+    /** Applies path override once and reports whether this first run should replace its outputs. */
+    protected boolean overrideOutputPath(Download download) {
         if (download == null) {
-            return;
+            return false;
         }
+        var override = new java.util.concurrent.atomic.AtomicBoolean();
         download.prepareInitialOutputPath(() -> {
             if (globalSettings != null) {
                 download.setOverrideOutputPath(globalSettings.isOverrideOutputPath());
@@ -400,10 +401,9 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
             if (!download.isOverrideOutputPath() || download.getDestination() == null) {
                 return;
             }
+            override.set(true);
 
-            Path output = download.getRequestedFileName() != null
-                    ? download.getDestination().resolve(download.getRequestedFileName())
-                    : download.getPrimaryOutputPath();
+            Path output = initialOutputPath(download);
             if (output == null || !Files.exists(output, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 return;
             }
@@ -417,5 +417,13 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
                 throw new IllegalStateException("Could not delete existing download path: " + output, error);
             }
         });
+        return override.get();
+    }
+
+    /** Output known before the engine has resolved any remote metadata. */
+    protected Path initialOutputPath(Download download) {
+        return download.getRequestedFileName() != null
+                ? download.getDestination().resolve(download.getRequestedFileName())
+                : download.getPrimaryOutputPath();
     }
 }

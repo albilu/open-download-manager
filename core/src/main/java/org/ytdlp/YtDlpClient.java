@@ -971,6 +971,12 @@ public class YtDlpClient {
      */
     public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
             ProgressCallback callback, String processId) {
+        return download(url, settings, outputPath, callback, processId, false);
+    }
+
+    /** Replaces resolved media outputs before the first transfer without changing saved resume settings. */
+    public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
+            ProgressCallback callback, String processId, boolean overrideOutputs) {
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         return CompletableFuture.supplyAsync(() -> {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
@@ -978,7 +984,7 @@ public class YtDlpClient {
             try (var prepared = MediaRequestContext.prepare(settings);
                     var network = RoutedMediaTools.prepare(configuredProxy(prepared.settings()))) {
                 // Build command
-                List<String> command = buildDownloadCommand(url, prepared.settings(), outputPath);
+                List<String> command = buildDownloadCommand(url, prepared.settings(), outputPath, overrideOutputs);
                 if (settings.isUseDownloadArchive()) {
                     archive = new MediaDownloadArchive(archiveDatabase);
                     command.addAll(command.size() - 1, List.of("--download-archive", archive.path().toString(),
@@ -1216,6 +1222,11 @@ public class YtDlpClient {
     }
 
     List<String> buildDownloadCommand(String url, YtDlpSettings settings, Path outputPath) {
+        return buildDownloadCommand(url, settings, outputPath, false);
+    }
+
+    List<String> buildDownloadCommand(String url, YtDlpSettings settings, Path outputPath,
+            boolean overrideOutputs) {
         List<String> command = command();
 
         // Output template
@@ -1354,6 +1365,11 @@ public class YtDlpClient {
                     ? org.manager.tools.ToolPaths.aria2c() : aria2cPath);
 
             String aria2cArgs = settings.buildAria2cArgs();
+            if (overrideOutputs) {
+                // The saved --continue=true must not resurrect an earlier
+                // download's partial output during this initial replacement.
+                aria2cArgs += " --continue=false";
+            }
             if (!honorExternalAria2Configuration) {
                 aria2cArgs = "--no-conf" + (aria2cArgs == null || aria2cArgs.isBlank()
                         ? "" : " " + aria2cArgs);
@@ -1382,6 +1398,13 @@ public class YtDlpClient {
             }
         }
 
+        if (overrideOutputs) {
+            // yt-dlp unlinks existing resolved outputs before invoking the
+            // native/aria2 downloader, including merged or converted names.
+            // This is a run argument, never a persisted download preference.
+            command.add("--force-overwrites");
+            command.add("--no-continue");
+        }
         command.add(url);
         return command;
     }
