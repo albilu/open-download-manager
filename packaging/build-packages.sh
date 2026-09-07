@@ -25,8 +25,10 @@ JAR="$ROOT/odm-gtk4/target/odm-gtk4-${PROJECT_VERSION}-jar-with-dependencies.jar
 log() { echo "[odm-package] $*"; }
 
 # Modules from jdeps over the shaded jar (+ crypto/naming/management for
-# TLS, WebSocket client usage, and runtime introspection)
-JDK_MODULES="java.base,java.desktop,java.sql,java.logging,java.net.http,jdk.httpserver,jdk.crypto.ec,java.naming,java.management"
+# TLS, WebSocket client usage, and runtime introspection). Playwright extracts
+# its driver through zipfs and Gson uses Unsafe for browser protocol objects;
+# these dynamically loaded modules are not reported by jdeps.
+JDK_MODULES="java.base,java.desktop,java.sql,java.logging,java.net.http,jdk.httpserver,jdk.crypto.ec,jdk.zipfs,jdk.unsupported,java.naming,java.management"
 
 log "Building shaded jar..."
 # Packaging deliberately skips tests, so it must also skip JaCoCo's test
@@ -149,6 +151,7 @@ optdepend = tor: anonymous downloads
 optdepend = ffmpeg: video processing
 optdepend = python-subliminal: generic subtitle downloads
 optdepend = clamav: completion-time malware scanning
+optdepend = chromium: headless media discovery when page extraction fails
 packager = ODM Development Team <dev@odm-project.org>
 size = $((size * 1024))
 builddate = ${builddate}

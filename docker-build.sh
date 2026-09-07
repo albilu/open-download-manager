@@ -40,7 +40,7 @@ run() {
     prepare_m2
     local xa="$(xauth_args)"
     log "Running application with GUI..."
-    docker run --rm \
+    docker run --init --rm \
         -v "$(pwd):/app" \
         -v "$(pwd)/docker-data:/app/data" \
         -v "$HOME/.m2:/home/developer/.m2" \
@@ -57,7 +57,7 @@ debug() {
     prepare_m2
     local xa="$(xauth_args)"
     log "Running application in debug mode (port 5005) with GUI..."
-    docker run --rm \
+    docker run --init --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         -e DISPLAY=$DISPLAY \
@@ -80,7 +80,7 @@ dev() {
     prepare_m2
     local xa="$(xauth_args)"
     log "Starting development container..."
-    docker run -it --rm \
+    docker run --init -it --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         -e DISPLAY=$DISPLAY \
@@ -94,7 +94,7 @@ dev() {
 test() {
     prepare_m2
     log "Running tests..."
-    docker run --rm \
+    docker run --init --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         -e PROXYCHAINS_AVAILABLE=true \
@@ -108,7 +108,7 @@ test() {
 test_integration() {
     prepare_m2
     log "Running integration tests..."
-    docker run --rm \
+    docker run --init --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         -e PROXYCHAINS_AVAILABLE=true \
@@ -121,7 +121,7 @@ test_integration() {
 compile() {
     prepare_m2
     log "Building application..."
-    docker run --rm \
+    docker run --init --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         $IMAGE_NAME \
@@ -139,7 +139,7 @@ package() {
         return 2
     fi
     log "Creating packages (version ${version})..."
-    docker run --rm \
+    docker run --init --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
         $IMAGE_NAME \

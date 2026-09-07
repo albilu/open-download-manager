@@ -18,6 +18,7 @@ import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
 import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.StringList;
+import org.gnome.gtk.Spinner;
 import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.TreeView;
@@ -27,11 +28,12 @@ import org.manager.download.DownloadManager;
 import org.manager.download.DownloadSettingsFactory;
 import org.ytdlp.YtDlpClient;
 import org.ytdlp.YtDlpSettings;
+import org.ytdlp.MediaInfoResolver;
 import org.manager.url.DownloadUrlPolicy;
 
 /**
  * New Media dialog: yt-dlp workflow with metadata discovery. Fetching info
- * runs a lightweight yt-dlp preview asynchronously and populates the format
+ * runs yt-dlp asynchronously, with headless discovery after extraction failure, and populates the format
  * or playlist list; the chosen format, audio-only, playlist, subtitle, cookie,
  * container, and SponsorBlock options are applied to the per-download
  * {@link YtDlpSettings}. All async results are marshalled back through
@@ -45,15 +47,18 @@ public class NewMediaDialog {
     private final DownloadManager downloadManager;
     private final Runnable onDownloadQueued;
     private final org.tor.TorService torService;
-    private final YtDlpClient ytDlpClient;
+    private final MediaInfoResolver mediaInfoResolver;
     private final YtDlpSettings defaultSettings;
     private final NetworkOptionsPane networkOptions;
     private final java.util.concurrent.atomic.AtomicBoolean closed =
             new java.util.concurrent.atomic.AtomicBoolean(false);
-    private volatile java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> metadataFuture;
+    private volatile java.util.concurrent.CompletableFuture<MediaInfoResolver.Result> metadataFuture;
+    private MediaInfoResolver.Result resolvedMedia;
+    private org.javagi.gobject.SignalConnection<?> parentUnrealize;
 
     private final Entry urlEntry;
     private final Button fetchInfoButton;
+    private final Spinner metadataSpinner;
     private final Label statusLabel;
     private final Label infoLabel;
     private final DropDown formatDrop;
@@ -92,6 +97,11 @@ public class NewMediaDialog {
 
     public NewMediaDialog(Window parent, DownloadManager downloadManager,
             Runnable onDownloadQueued, org.tor.TorService torService) {
+        this(parent, downloadManager, onDownloadQueued, torService, null);
+    }
+
+    NewMediaDialog(Window parent, DownloadManager downloadManager,
+            Runnable onDownloadQueued, org.tor.TorService torService, MediaInfoResolver resolver) {
         this.downloadManager = downloadManager;
         this.onDownloadQueued = onDownloadQueued;
         this.torService = torService;
@@ -99,15 +109,16 @@ public class NewMediaDialog {
         this.defaultSettings = (YtDlpSettings) new DownloadSettingsFactory(globalSettings)
                 .createSettings(Download.Type.YOUTUBE);
         String ytDlpPath = globalSettings.getYtDlpPath();
-        this.ytDlpClient = new YtDlpClient(
+        this.mediaInfoResolver = resolver != null ? resolver : new MediaInfoResolver(new YtDlpClient(
                 ytDlpPath != null ? ytDlpPath : "yt-dlp",
                 globalSettings.isHonorExternalYtDlpConfiguration(),
-                globalSettings.isHonorExternalAria2Configuration());
+                globalSettings.isHonorExternalAria2Configuration()));
 
         GtkBuilder builder = UiLoader.load("/ui/new-media.ui");
         this.dialog = Widgets.require(builder, "new_media_dialog", Window.class);
         this.urlEntry = Widgets.require(builder, "media_url_entry", Entry.class);
         this.fetchInfoButton = Widgets.require(builder, "fetch_info_button", Button.class);
+        this.metadataSpinner = Widgets.require(builder, "media_info_spinner", Spinner.class);
         this.statusLabel = Widgets.require(builder, "media_status_label", Label.class);
         this.infoLabel = Widgets.require(builder, "media_info_label", Label.class);
         this.formatDrop = Widgets.require(builder, "format_drop", DropDown.class);
@@ -197,6 +208,7 @@ public class NewMediaDialog {
             refreshButtons();
         });
         networkOptions.onProxyChanged(this::invalidateMetadata);
+        networkOptions.onRequestChanged(this::invalidateMetadata);
         browserProfileEntry.onChanged(this::invalidateMetadata);
         browserCookieDrop.onNotify("selected", ignored -> invalidateMetadata());
         urlEntry.onActivate(this::onFetchInfo);
@@ -219,6 +231,15 @@ public class NewMediaDialog {
             closeMetadataClient();
             return false;
         });
+        dialog.onDestroy(this::closeMetadataClient);
+        // GtkWindow.destroy() can precede object disposal while Java still holds a wrapper.
+        dialog.onUnrealize(this::closeMetadataClient);
+        if (parent != null) {
+            parentUnrealize = parent.onUnrealize(() -> {
+                closeMetadataClient();
+                dialog.close();
+            });
+        }
     }
 
     public void present() {
@@ -234,10 +255,17 @@ public class NewMediaDialog {
                 && (metadataFuture == null || metadataFuture.isDone());
         fetchInfoButton.setSensitive(available);
         startButton.setSensitive(available && !urlEntry.getText().isBlank());
+        boolean fetching = !closed.get() && metadataFuture != null && !metadataFuture.isDone();
+        metadataSpinner.setVisible(fetching);
+        if (fetching) { metadataSpinner.start(); } else { metadataSpinner.stop(); }
     }
 
     private void invalidateMetadata() {
         metadataGeneration++;
+        resolvedMedia = null;
+        formats.clear();
+        formatDrop.setSensitive(false);
+        infoLabel.setVisible(false);
         var previous = metadataFuture;
         metadataFuture = null;
         if (previous != null) { previous.cancel(true); }
@@ -266,18 +294,23 @@ public class NewMediaDialog {
         }
         long generation = metadataGeneration;
         AccessibilitySupport.status(statusLabel, "Fetching media info…");
-        metadataFuture = DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService)
-                .thenCompose(ignored -> ytDlpClient.previewMedia(source.toString(), previewSettings));
+        metadataFuture = mediaInfoResolver.fetch(source, previewSettings,
+                DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService),
+                message -> UiThread.marshal(() -> {
+                    if (!closed.get() && generation == metadataGeneration) {
+                        AccessibilitySupport.status(statusLabel, message);
+                    }
+                }));
         refreshButtons();
         metadataFuture.whenComplete((info, failure) -> UiThread.marshal(() -> {
             if (closed.get() || generation != metadataGeneration) { return; }
             metadataFuture = null;
             refreshButtons();
             if (failure == null) {
-                onInfoFetched(url, info);
+                resolvedMedia = info;
+                onInfoFetched(url, info.info());
             } else {
-                AccessibilitySupport.status(statusLabel, "Could not fetch info: " + rootMessage(failure)
-                        + " — you can still download with the default best format.",
+                AccessibilitySupport.status(statusLabel, "Could not fetch info: " + rootMessage(failure),
                         org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             }
         }));
@@ -315,12 +348,19 @@ public class NewMediaDialog {
         if (closed.get() || submissionInFlight) { return; }
         try {
             URI uri = DownloadUrlPolicy.require(urlEntry.getText()).requireWeb().uri();
-            Download download = DownloadSubmission.draft(downloadManager, uri, destinationFolder,
+            MediaInfoResolver.Result resolved = resolvedMedia;
+            if (resolved != null && !resolved.enteredUrl().equals(uri)) { resolved = null; }
+            Download download = DownloadSubmission.draft(downloadManager,
+                    resolved == null ? uri : resolved.downloadUrl(), destinationFolder,
                     Download.Type.YOUTUBE);
             applyMediaOptions(download);
             networkOptions.applyTo(download);
+            if (resolved != null && resolved.context() != null) {
+                resolved.context().applyTo((YtDlpSettings) download.getSettings());
+            }
             submissionInFlight = true;
-            invalidateMetadata();
+            metadataGeneration++;
+            refreshButtons();
             AccessibilitySupport.status(statusLabel, "Adding media download to queue…");
             Download submitted = download;
             DownloadSubmission.submit(downloadManager, submitted,
@@ -639,11 +679,15 @@ public class NewMediaDialog {
         synchronized (closed) {
             if (!closed.compareAndSet(false, true)) { return; }
         }
-        java.util.concurrent.CompletableFuture<YtDlpClient.VideoInfo> pending = metadataFuture;
+        if (parentUnrealize != null) {
+            parentUnrealize.disconnect();
+            parentUnrealize = null;
+        }
+        java.util.concurrent.CompletableFuture<MediaInfoResolver.Result> pending = metadataFuture;
         if (pending != null) {
             pending.cancel(true);
         }
-        java.util.concurrent.CompletableFuture.runAsync(ytDlpClient::shutdown);
+        java.util.concurrent.CompletableFuture.runAsync(mediaInfoResolver::close);
     }
 
     private static String describeFormat(YtDlpClient.VideoFormat format) {

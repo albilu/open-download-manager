@@ -55,6 +55,28 @@ class SqliteDownloadStateStoreTest {
     }
 
     @Test
+    void discoveredMediaRetainsItsUrlAndRequestContextAcrossRestart() {
+        URI media = URI.create("https://cdn.example/movie.mp4?token=a%2Fb");
+        Download download = new Download(media);
+        download.setType(Download.Type.YOUTUBE);
+        var settings = new org.ytdlp.YtDlpSettings();
+        var context = new org.ytdlp.MediaRequestContext("https://example.com/page", "https://example.com/page",
+                "Browser UA", "https://example.com",
+                "# Netscape HTTP Cookie File\ncdn.example\tFALSE\t/\tTRUE\t0\tsession\tsecret\n");
+        context.applyTo(settings);
+        download.setSettings(settings);
+        try (var store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            store.save(List.of(download), Set.of());
+        }
+        try (var store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
+            var restored = store.load().downloads().getFirst();
+            assertEquals(media, restored.getUri());
+            assertEquals(context, ((org.ytdlp.YtDlpSettings) restored.getSettings()).getMediaRequestContext());
+            assertNull(((org.ytdlp.YtDlpSettings) restored.getSettings()).getCookieFile());
+        }
+    }
+
+    @Test
     void retriesMirrorsRemoteTimeAndArchivePolicySurviveRestart() {
         Download download = new Download(URI.create("https://example.test/original.bin"));
         download.recordRetry();

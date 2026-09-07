@@ -38,6 +38,19 @@ RUN apt-get update && apt-get install -y \
     tree \
     && rm -rf /var/lib/apt/lists/*
 
+# Install the matching Chromium build for headless media discovery. Keep the
+# browser available to the non-root development user; probes never download it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/odm-playwright
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+COPY pom.xml /tmp/odm-browser/pom.xml
+COPY core/pom.xml /tmp/odm-browser/core/pom.xml
+RUN mvn -q -f /tmp/odm-browser/core/pom.xml exec:java \
+        -Dexec.mainClass=com.microsoft.playwright.CLI \
+        -Dexec.args="install --with-deps --no-shell chromium" \
+        -Dexec.classpathScope=runtime && \
+    chmod -R a+rX /opt/odm-playwright && \
+    rm -rf /tmp/odm-browser /root/.m2 /var/lib/apt/lists/*
+
 # JAVA_HOME is already set by the temurin base image
 
 # Match the checkout owner, including CI runners whose UID is not 1000.

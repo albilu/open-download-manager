@@ -23,7 +23,12 @@ class DialogSubmissionTest {
     DownloadManagerImpl actual;
     DownloadManager manager;
 
-    @BeforeAll static void gtk() { Gtk.init(); }
+    @BeforeAll static void gtk() {
+        Gtk.init();
+        // Initialize GLib types here before DownloadManager background callbacks start.
+        org.gnome.glib.GLib.getMonotonicTime();
+        MainContext.default_();
+    }
 
     @BeforeEach void setup() {
         actual = (DownloadManagerImpl) DownloadManagerFactory.getInstance();
@@ -43,6 +48,32 @@ class DialogSubmissionTest {
             case "media" -> new NewMediaDialog(null, manager, () -> { });
             default -> new NewWebsiteDialog(null, manager, () -> { });
         };
+    }
+
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void mediaFetchInheritsGlobalProxyOrTorBeforeAnyExtraction(boolean torEnabled) throws Exception {
+        var global = new org.manager.GlobalSettings()
+                .setGlobalProxyEnabled(true).setGlobalProxyAddress("http://proxy.example:8080");
+        global.setProperty("tor.enabled", Boolean.toString(torEnabled));
+        var isolatedManager = mock(DownloadManager.class);
+        when(isolatedManager.getGlobalSettings()).thenReturn(global);
+        var torService = mock(org.tor.TorService.class);
+        when(torService.isRunning()).thenReturn(true);
+        when(torService.getSocksPort()).thenReturn(19050);
+        var resolver = mock(org.ytdlp.MediaInfoResolver.class);
+        when(resolver.fetch(any(), any(), any(), any())).thenReturn(new CompletableFuture<>());
+        var dialog = new NewMediaDialog(null, isolatedManager, () -> { }, torService, resolver);
+        Window window = field(dialog, "dialog", Window.class);
+        window.present();
+        try {
+            field(dialog, "urlEntry", Entry.class).setText("https://example.com/page");
+            invoke(dialog, "onFetchInfo");
+            var settings = org.mockito.ArgumentCaptor.forClass(org.ytdlp.YtDlpSettings.class);
+            verify(resolver).fetch(eq(URI.create("https://example.com/page")), settings.capture(), any(), any());
+            assertTrue(settings.getValue().isUseProxy());
+            assertEquals(torEnabled ? "socks5h://127.0.0.1:19050" : "http://proxy.example:8080",
+                    settings.getValue().getProxyAddress());
+        } finally { window.close(); }
     }
 
     @ParameterizedTest @ValueSource(strings = {"file", "media", "website"})
@@ -141,13 +172,10 @@ class DialogSubmissionTest {
     }
 
     @Test void invalidAndSupersededMetadataRequestsRestoreControlsWithoutStaleCallbacks() throws Exception {
-        NewMediaDialog dialog = (NewMediaDialog) dialog("media");
+        var resolver = mock(org.ytdlp.MediaInfoResolver.class);
+        NewMediaDialog dialog = new NewMediaDialog(null, manager, () -> { }, null, resolver);
         Window window = field(dialog, "dialog", Window.class);
         window.present();
-        YtDlpClient client = mock(YtDlpClient.class);
-        YtDlpClient original = field(dialog, "ytDlpClient", YtDlpClient.class);
-        original.shutdown();
-        setField(dialog, "ytDlpClient", client);
         Entry url = field(dialog, "urlEntry", Entry.class);
         Button fetch = field(dialog, "fetchInfoButton", Button.class);
         try {
@@ -157,13 +185,13 @@ class DialogSubmissionTest {
                 invoke(dialog, "onFetchInfo");
                 assertTrue(fetch.getSensitive());
             }
-            verify(client, never()).previewMedia(anyString(), any());
+            verify(resolver, never()).fetch(any(), any(), any(), any());
             url.setText("Example.COM/first");
-            CompletableFuture<YtDlpClient.VideoInfo> first = new CompletableFuture<>();
-            CompletableFuture<YtDlpClient.VideoInfo> second = new CompletableFuture<>();
-            when(client.previewMedia(anyString(), any())).thenReturn(first, second);
+            CompletableFuture<org.ytdlp.MediaInfoResolver.Result> first = new CompletableFuture<>();
+            CompletableFuture<org.ytdlp.MediaInfoResolver.Result> second = new CompletableFuture<>();
+            when(resolver.fetch(any(), any(), any(), any())).thenReturn(first, second);
             invoke(dialog, "onFetchInfo");
-            verify(client).previewMedia(eq("https://example.com/first"), any());
+            verify(resolver).fetch(eq(URI.create("https://example.com/first")), any(), any(), any());
             assertFalse(fetch.getSensitive());
             url.setText("http://127.0.0.1/second");
             assertTrue(fetch.getSensitive());
@@ -173,7 +201,8 @@ class DialogSubmissionTest {
             assertFalse(fetch.getSensitive(), "old completion must not enable a newer fetch");
             YtDlpClient.VideoInfo info = new YtDlpClient.VideoInfo();
             info.setTitle("Current metadata");
-            second.complete(info);
+            URI current = URI.create("http://127.0.0.1/second");
+            second.complete(new org.ytdlp.MediaInfoResolver.Result(current, current, info, null));
             pump(fetch::getSensitive);
             assertTrue(field(dialog, "infoLabel", Label.class).getLabel().contains("Current metadata"));
         } finally { window.close(); }
@@ -199,6 +228,117 @@ class DialogSubmissionTest {
             assertFalse(accept.getSensitive());
             assertEquals(List.of(), field(sequence, "currentPreviewUrls", List.class));
         } finally { window.close(); }
+    }
+
+    @Test void mediaSubmissionUsesTheDiscoveredUrlFormatAndRequestContext() throws Exception {
+        var resolver = mock(org.ytdlp.MediaInfoResolver.class);
+        URI page = URI.create("https://example.com/page");
+        URI source = URI.create("https://cdn.example/movie.mp4?token=a%2Fb");
+        var context = new org.ytdlp.MediaRequestContext(page.toString(), page.toString(), "Browser UA",
+                "https://example.com", "# Netscape HTTP Cookie File\n");
+        var info = new YtDlpClient.VideoInfo();
+        var format = new YtDlpClient.VideoFormat();
+        format.setFormatId("720");
+        info.setFormats(List.of(format));
+        when(resolver.fetch(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new org.ytdlp.MediaInfoResolver.Result(page, source, info, context)));
+        var dialog = new NewMediaDialog(null, manager, () -> { }, null, resolver);
+        Window window = field(dialog, "dialog", Window.class);
+        window.present();
+        try {
+            field(dialog, "urlEntry", Entry.class).setText(page.toString());
+            invoke(dialog, "onFetchInfo");
+            pump(() -> fieldUnchecked(dialog, "formatDrop", DropDown.class).getSensitive());
+            field(dialog, "formatDrop", DropDown.class).setSelected(1);
+            assertEquals(page.toString(), field(dialog, "urlEntry", Entry.class).getText());
+            invoke(dialog, "onStart");
+            pump(() -> !actual.getAllDownloads().isEmpty());
+            Download download = actual.getAllDownloads().iterator().next();
+            assertEquals(source, download.getUri());
+            var settings = (org.ytdlp.YtDlpSettings) download.getSettings();
+            assertEquals(context, settings.getMediaRequestContext());
+            assertEquals("720", settings.getFormat());
+            assertEquals("Browser UA", settings.getUserAgent());
+            assertEquals(page.toString(), settings.getReferer());
+        } finally { window.close(); }
+    }
+
+    @Test void requestChangesInvalidateResolvedMediaAndClosingCancelsTheWholeFetch() throws Exception {
+        var resolver = mock(org.ytdlp.MediaInfoResolver.class);
+        URI page = URI.create("https://example.com/page");
+        var info = new YtDlpClient.VideoInfo();
+        var pending = new CompletableFuture<org.ytdlp.MediaInfoResolver.Result>();
+        when(resolver.fetch(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new org.ytdlp.MediaInfoResolver.Result(page, URI.create("https://cdn.example/file.mp4"), info,
+                        new org.ytdlp.MediaRequestContext(page.toString(), page.toString(), "UA", "", ""))), pending);
+        var dialog = new NewMediaDialog(null, manager, () -> { }, null, resolver);
+        Window window = field(dialog, "dialog", Window.class);
+        window.present();
+        try {
+            field(dialog, "urlEntry", Entry.class).setText(page.toString());
+            invoke(dialog, "onFetchInfo");
+            pump(() -> fieldUnchecked(dialog, "infoLabel", Label.class).getVisible());
+            assertNotNull(field(dialog, "resolvedMedia", org.ytdlp.MediaInfoResolver.Result.class));
+            var network = field(dialog, "networkOptions", NetworkOptionsPane.class);
+            field(network, "referer", Entry.class).setText("https://example.com/changed");
+            assertNull(field(dialog, "resolvedMedia", org.ytdlp.MediaInfoResolver.Result.class));
+            assertFalse(field(dialog, "formatDrop", DropDown.class).getSensitive());
+            invoke(dialog, "onFetchInfo");
+            assertTrue(field(dialog, "metadataSpinner", Spinner.class).getVisible());
+            window.close();
+            assertTrue(pending.isCancelled());
+            verify(resolver, timeout(3000)).close();
+        } finally { window.close(); }
+    }
+
+    @Test void aRejectedMediaQueueSubmissionKeepsTheResolvedSourceForRetry() throws Exception {
+        var resolver = mock(org.ytdlp.MediaInfoResolver.class);
+        URI page = URI.create("https://example.com/page");
+        URI media = URI.create("https://cdn.example/movie.mp4");
+        when(resolver.fetch(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(
+                new org.ytdlp.MediaInfoResolver.Result(page, media, new YtDlpClient.VideoInfo(),
+                        new org.ytdlp.MediaRequestContext(page.toString(), page.toString(), "UA", "", ""))));
+        var dialog = new NewMediaDialog(null, manager, () -> { }, null, resolver);
+        Window window = field(dialog, "dialog", Window.class);
+        window.present();
+        try {
+            field(dialog, "urlEntry", Entry.class).setText(page.toString());
+            invoke(dialog, "onFetchInfo");
+            pump(() -> fieldUnchecked(dialog, "infoLabel", Label.class).getVisible());
+            doReturn(CompletableFuture.failedFuture(new IllegalStateException("rejected")))
+                    .doAnswer(call -> actual.queueDownload(call.getArgument(0)))
+                    .when(manager).queueDownload(any(Download.class));
+            invoke(dialog, "onStart");
+            pump(() -> fieldUnchecked(dialog, "statusLabel", Label.class).getLabel().contains("Press Download to retry"));
+            invoke(dialog, "onStart");
+            pump(() -> !actual.getAllDownloads().isEmpty());
+            assertEquals(media, actual.getAllDownloads().iterator().next().getUri());
+        } finally { window.close(); }
+    }
+
+    private static <T> T fieldUnchecked(Object object, String name, Class<T> type) {
+        try { return field(object, name, type); }
+        catch (Exception failure) { throw new AssertionError(failure); }
+    }
+
+    @Test void destroyingTheParentStopsAnOpenMediaFetch() throws Exception {
+        var resolver = mock(org.ytdlp.MediaInfoResolver.class);
+        var pending = new CompletableFuture<org.ytdlp.MediaInfoResolver.Result>();
+        when(resolver.fetch(any(), any(), any(), any())).thenReturn(pending);
+        Window parent = new Window();
+        parent.present();
+        var dialog = new NewMediaDialog(parent, manager, () -> { }, null, resolver);
+        Window window = field(dialog, "dialog", Window.class);
+        window.present();
+        try {
+            pump(() -> parent.getRealized() && window.getRealized());
+            field(dialog, "urlEntry", Entry.class).setText("https://example.com/page");
+            invoke(dialog, "onFetchInfo");
+            parent.destroy();
+            assertFalse(parent.getRealized(), "parent should unrealize immediately");
+            pump(pending::isCancelled);
+            verify(resolver, timeout(3000)).close();
+        } finally { window.destroy(); parent.destroy(); }
     }
 
     private static void invoke(Object object, String name) throws Exception {

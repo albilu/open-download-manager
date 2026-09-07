@@ -173,6 +173,7 @@ public class YtDlpSettings extends DownloadSettings {
     private String playlistItemSpec = null;
     private boolean geoBypass = true;
     private String cookieFile = null;
+    private MediaRequestContext mediaRequestContext;
     private BrowserCookieSource browserCookieSource = BrowserCookieSource.NONE;
     private String browserCookieProfile = null;
     private ContainerProfile containerProfile = ContainerProfile.AUTOMATIC;
@@ -751,6 +752,14 @@ public class YtDlpSettings extends DownloadSettings {
         return cookieFile;
     }
 
+    public MediaRequestContext getMediaRequestContext() {
+        return mediaRequestContext;
+    }
+
+    public void setMediaRequestContext(MediaRequestContext context) {
+        mediaRequestContext = context;
+    }
+
     /**
      * Sets the cookie file path.
      *
@@ -1230,6 +1239,7 @@ public class YtDlpSettings extends DownloadSettings {
         copy.playlistItemSpec = this.playlistItemSpec;
         copy.geoBypass = this.geoBypass;
         copy.cookieFile = this.cookieFile;
+        copy.mediaRequestContext = this.mediaRequestContext;
         copy.browserCookieSource = this.browserCookieSource;
         copy.browserCookieProfile = this.browserCookieProfile;
         copy.containerProfile = this.containerProfile;

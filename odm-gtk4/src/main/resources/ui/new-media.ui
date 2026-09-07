@@ -47,7 +47,7 @@
               <object class="GtkBox" id="media_url_controls">
                 <property name="orientation">horizontal</property><property name="spacing">8</property><property name="hexpand">true</property>
                 <layout><property name="row">0</property><property name="column">1</property></layout>
-                <child><object class="GtkEntry" id="media_url_entry"><property name="hexpand">true</property><property name="placeholder-text">Video page, playlist, or m3u8/DASH manifest URL</property></object></child>
+                <child><object class="GtkEntry" id="media_url_entry"><property name="hexpand">true</property><property name="placeholder-text">Video page, playlist, manifest, or direct media URL</property></object></child>
                 <child><object class="GtkButton" id="fetch_info_button"><property name="label">Fetch info</property></object></child>
               </object>
             </child>
@@ -145,6 +145,7 @@
             <property name="orientation">horizontal</property><property name="spacing">8</property>
             <property name="halign">end</property>
             <property name="valign">end</property>
+            <child><object class="GtkSpinner" id="media_info_spinner"><property name="visible">false</property><property name="valign">center</property></object></child>
             <child><object class="GtkButton" id="media_cancel_button"><property name="label">Cancel</property></object></child>
             <child><object class="GtkButton" id="media_start_button"><property name="label">Download</property><property name="sensitive">false</property></object></child>
           </object>

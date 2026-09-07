@@ -19,6 +19,7 @@ optdepends=(
     'ffmpeg: video processing'
     'python-subliminal: generic subtitle downloads'
     'clamav: completion-time malware scanning'
+    'chromium: headless media discovery when page extraction fails'
 )
 source=("opt-open-download-manager.tar")
 noextract=()

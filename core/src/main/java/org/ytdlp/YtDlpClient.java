@@ -602,8 +602,8 @@ public class YtDlpClient {
         String processId = "metadata-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
-            try {
-                List<String> command = buildMetadataCommand(url, settings,
+            try (var prepared = MediaRequestContext.prepare(settings)) {
+                List<String> command = buildMetadataCommand(url, prepared.settings(),
                         proxyAddress, false);
 
                 String output = runMetadataCommand(command, processId, launch);
@@ -652,20 +652,24 @@ public class YtDlpClient {
         String processId = "playlist-preview-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
-            try {
-                List<String> command = buildMetadataCommand(url, settings,
+            try (var prepared = MediaRequestContext.prepare(settings)) {
+                List<String> command = buildMetadataCommand(url, prepared.settings(),
                         proxyAddress, true);
                 String output = runMetadataCommand(command, processId, launch);
                 String jsonLine = output.lines()
                         .filter(line -> line.trim().startsWith("{"))
                         .findFirst()
-                        .orElseThrow(() -> new RuntimeException(
+                        .orElseThrow(() -> new MediaExtractionException(
                                 "yt-dlp produced no JSON media preview"));
                 return parseVideoInfo(OBJECT_MAPPER.readTree(jsonLine));
             } catch (CancellationException e) {
                 throw e;
             } catch (Exception e) {
-                LOGGER.error("Failed to preview media", e);
+                if (e instanceof MediaExtractionException) {
+                    LOGGER.debug("The media URL did not expose yt-dlp metadata");
+                } else {
+                    LOGGER.error("Failed to preview media", e);
+                }
                 throw new RuntimeException("Failed to preview media: " + e.getMessage(), e);
             }
         }, executor);
@@ -673,6 +677,48 @@ public class YtDlpClient {
             if (result.isCancelled()) {
                 activeProcesses.terminate(processId, 1);
             }
+        });
+        return result;
+    }
+
+    /** Distinguishes an extractor failure from cancellation or a missing executable. */
+    public static final class MediaExtractionException extends RuntimeException {
+        MediaExtractionException(String message) { super(message); }
+    }
+
+    /** Exports the selected browser's cookies using yt-dlp's existing profile support. */
+    CompletableFuture<String> exportBrowserCookies(String url, YtDlpSettings settings) {
+        String processId = "browser-cookies-" + UUID.randomUUID();
+        var launch = activeProcesses.reserve(processId);
+        CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> {
+            Path jar = null;
+            try {
+                jar = Files.createTempFile("odm-browser-cookies-", ".txt");
+                Files.writeString(jar, "# Netscape HTTP Cookie File\n");
+                var command = command("--cookies-from-browser", settings.getBrowserCookieArgument(),
+                        "--cookies", jar.toString(), "--skip-download");
+                addProxy(command, configuredProxy(settings));
+                command.add(url);
+                try { runMetadataCommand(command, processId, launch); }
+                catch (MediaExtractionException failedPage) {
+                    // yt-dlp saves the cookie jar even if this page has no extractor.
+                }
+                if (Files.size(jar) == 0 || Files.size(jar) > 1024 * 1024) {
+                    throw new IOException("Could not read the selected browser's cookies");
+                }
+                return Files.readString(jar);
+            } catch (Exception failure) {
+                throw new java.util.concurrent.CompletionException(failure);
+            } finally {
+                launch.unregister();
+                if (jar != null) {
+                    try { Files.deleteIfExists(jar); }
+                    catch (IOException failure) { LOGGER.debug("Could not remove temporary cookies", failure); }
+                }
+            }
+        }, executor);
+        result.whenComplete((ignored, failure) -> {
+            if (result.isCancelled()) { activeProcesses.terminate(processId, 0); }
         });
         return result;
     }
@@ -702,8 +748,8 @@ public class YtDlpClient {
         String processId = "formats-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<List<VideoFormat>> result = CompletableFuture.supplyAsync(() -> {
-            try {
-                List<String> command = buildFormatsCommand(url, settings, proxyAddress);
+            try (var prepared = MediaRequestContext.prepare(settings)) {
+                List<String> command = buildFormatsCommand(url, prepared.settings(), proxyAddress);
 
                 List<String> lines = runMetadataCommand(command, processId, launch).lines().toList();
 
@@ -793,6 +839,11 @@ public class YtDlpClient {
 
     private static void addAuthenticationOptions(List<String> command,
             YtDlpSettings settings) {
+        MediaRequestContext context = settings.getMediaRequestContext();
+        if (context != null && !context.origin().isBlank()) {
+            command.add("--add-header");
+            command.add("Origin:" + context.origin());
+        }
         // An explicitly chosen Netscape cookie file is the per-download
         // override. Never submit two mutable cookie stores to yt-dlp.
         if (settings.getCookieFile() != null && !settings.getCookieFile().isBlank()) {
@@ -865,15 +916,16 @@ public class YtDlpClient {
 
             if (!process.waitFor(METADATA_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 activeProcesses.terminate(processId, 1);
-                throw new RuntimeException("yt-dlp metadata request timed out after 60 seconds");
+                throw new MediaExtractionException("yt-dlp metadata request timed out after 60 seconds");
             }
             reader.join(TimeUnit.SECONDS.toMillis(5));
             Throwable readerError = readFailure.get();
             if (readerError != null) {
                 throw new RuntimeException(readerError.getMessage(), readerError);
             }
+            if (launch.isCancelled()) { throw new CancellationException(); }
             if (process.exitValue() != 0) {
-                throw new RuntimeException("yt-dlp metadata command failed with exit code "
+                throw new MediaExtractionException("yt-dlp metadata command failed with exit code "
                         + process.exitValue());
             }
             return output.toString();
@@ -920,9 +972,9 @@ public class YtDlpClient {
         return CompletableFuture.supplyAsync(() -> {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
             MediaDownloadArchive archive = null;
-            try {
+            try (var prepared = MediaRequestContext.prepare(settings)) {
                 // Build command
-                List<String> command = buildDownloadCommand(url, settings, outputPath);
+                List<String> command = buildDownloadCommand(url, prepared.settings(), outputPath);
                 if (settings.isUseDownloadArchive()) {
                     archive = new MediaDownloadArchive(archiveDatabase);
                     command.addAll(command.size() - 1, List.of("--download-archive", archive.path().toString(),
@@ -1065,12 +1117,12 @@ public class YtDlpClient {
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         return CompletableFuture.runAsync(() -> {
             ExternalProcessRegistry.Registration registration = null;
-            try {
+            try (var prepared = MediaRequestContext.prepare(settings)) {
                 if (outputDirectory != null) {
                     Files.createDirectories(outputDirectory);
                 }
                 ProcessBuilder builder = new ProcessBuilder(
-                        buildSubtitleCommand(url, settings, outputDirectory))
+                        buildSubtitleCommand(url, prepared.settings(), outputDirectory))
                         .redirectErrorStream(true)
                         .redirectOutput(ProcessBuilder.Redirect.DISCARD);
                 registration = launch.start(builder);

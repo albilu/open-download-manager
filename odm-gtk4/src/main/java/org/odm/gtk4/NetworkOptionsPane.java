@@ -49,6 +49,7 @@ final class NetworkOptionsPane {
     private boolean updating;
     private boolean mixedValues;
     private Runnable proxyChangeListener = () -> { };
+    private Runnable requestChangeListener = () -> { };
 
     /** Creates a new-record editor initialized from the global Network defaults. */
     NetworkOptionsPane(GlobalSettings globalSettings, Download.Type type,
@@ -162,6 +163,10 @@ final class NetworkOptionsPane {
 
     void onProxyChanged(Runnable listener) {
         proxyChangeListener = Objects.requireNonNull(listener);
+    }
+
+    void onRequestChanged(Runnable listener) {
+        requestChangeListener = Objects.requireNonNull(listener);
     }
 
     DialogOptions.NetworkValues values() {
@@ -355,6 +360,11 @@ final class NetworkOptionsPane {
     private void mark(ExternalToolSettings.Capability capability) {
         if (!updating) {
             changedCapabilities.add(capability);
+            if (capability == ExternalToolSettings.Capability.REFERER
+                    || capability == ExternalToolSettings.Capability.USER_AGENT
+                    || capability == ExternalToolSettings.Capability.COOKIE) {
+                requestChangeListener.run();
+            }
         }
     }
 
