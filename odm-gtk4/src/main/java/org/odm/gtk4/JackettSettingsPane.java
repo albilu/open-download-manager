@@ -5,6 +5,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,11 +27,15 @@ import org.manager.GlobalSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Preferences and automatic public-indexer checks for the owned search engine. */
+/** Preferences and user-requested public-indexer checks for the owned search engine. */
 final class JackettSettingsPane {
     private static final Logger LOGGER = LoggerFactory.getLogger(JackettSettingsPane.class);
+    // One service is owned by each ODM session. Retain completed results without
+    // keeping an ended session alive or writing test status to settings on disk.
+    private static final Map<JackettService, Map<String, CheckResult>> SESSION_TESTS = new WeakHashMap<>();
     private final GtkBuilder builder;
     private final JackettService service;
+    private final Map<String, CheckResult> sessionTests;
     private GlobalSettings settings;
     private final Box root;
     private final ListStore store;
@@ -62,6 +67,10 @@ final class JackettSettingsPane {
 
     JackettSettingsPane(Window parent, GlobalSettings settings, JackettService service) {
         this.service = service;
+        synchronized (SESSION_TESTS) {
+            sessionTests = service == null ? new HashMap<>()
+                    : SESSION_TESTS.computeIfAbsent(service, ignored -> new HashMap<>());
+        }
         builder = UiLoader.load("/ui/jackett-settings.ui");
         root = Widgets.require(builder, "jackett_settings_page", Box.class);
         store = Widgets.require(builder, "jackett_indexers_store", ListStore.class);
@@ -79,6 +88,7 @@ final class JackettSettingsPane {
             run("Stopping Jackett…", () -> { service.stop(); return null; }, ignored -> { });
         });
         button("refresh").onClicked(this::refreshIndexers);
+        button("test").onClicked(this::testIndexers);
         Widgets.require(builder, "jackett_indexer_toggle", CellRendererToggle.class).onToggled(this::toggleIndexer);
         root.onDestroy(this::close);
         updateStatus();
@@ -146,6 +156,7 @@ final class JackettSettingsPane {
         boolean starting = service != null && service.status().state() == JackettService.State.STARTING;
         button("stop").setSensitive(service != null && !stopping && (running || starting));
         button("refresh").setSensitive(running && !busy);
+        button("test").setSensitive(running && !busy && !stopping && !indexers.isEmpty() && checks.isEmpty());
         tree.setSensitive(!busy && running && !stopping);
     }
 
@@ -175,12 +186,18 @@ final class JackettSettingsPane {
                 selected.addAll(JackettSettings.selectedIndexers(settings, indexers)); selectionLoaded = true;
             }
             selected.retainAll(configured);
-            tests.clear();
+            restoreTestResults();
             populate();
-            rows.stream().sorted(java.util.Comparator.comparing(row -> !selected.contains(row.id())))
-                    .forEach(row -> check(row, IndexerAction.PROBE));
             updateCheckSummary();
         });
+    }
+
+    private void testIndexers() {
+        if (busy || closed || stopping || service == null || !checks.isEmpty()
+                || service.status().state() != JackettService.State.RUNNING) { return; }
+        indexers.stream().sorted(java.util.Comparator.comparing(row -> !selected.contains(row.id())))
+                .forEach(row -> check(row, IndexerAction.PROBE));
+        updateCheckSummary();
     }
 
     private void populate() {
@@ -210,7 +227,7 @@ final class JackettSettingsPane {
         String detail = result == null || result.detail().isBlank() ? null
                 : org.gnome.glib.GLib.markupEscapeText(result.detail(), -1);
         ListStoreCells.setString(store, iter, 3, detail);
-        ListStoreCells.setString(store, iter, 4, result == null ? "Waiting…" : result.status());
+        ListStoreCells.setString(store, iter, 4, result == null ? "Not tested" : result.status());
         ListStoreCells.setBoolean(store, iter, 5, !configuring.contains(id));
     }
 
@@ -236,12 +253,13 @@ final class JackettSettingsPane {
                 JackettClient client = service.client();
                 if (action == IndexerAction.REMOVE) {
                     client.unconfigure(row.id());
-                    return new CheckResult(false, "Waiting…", "");
+                    return new CheckResult(false, "Not tested", "");
                 }
                 if (action == IndexerAction.CONFIGURE && !saved) {
                     client.configure(row.id(), client.configuration(row.id()));
                     saved = true;
                 }
+                if (action == IndexerAction.CONFIGURE) { return new CheckResult(saved, "Not tested", ""); }
                 if (closed || checkEpoch.get() != epoch) { throw new java.util.concurrent.CancellationException(); }
                 client.test(row.id());
                 return new CheckResult(saved, "Passed", "");
@@ -253,11 +271,14 @@ final class JackettSettingsPane {
             }
         }, action == IndexerAction.PROBE ? probes : configurationChanges);
         checks.put(row.id(), check);
+        updateCheckSummary();
         check.whenComplete((result, error) -> UiThread.marshal(() -> {
             if (closed || checkEpoch.get() != epoch || checks.get(row.id()) != check) { return; }
             checks.remove(row.id()); configuring.remove(row.id());
             CheckResult outcome = error == null ? result : new CheckResult(alreadyConfigured, "Failed", message(error));
             tests.put(row.id(), outcome);
+            if (action == IndexerAction.PROBE) { sessionTests.put(row.id(), outcome); }
+            else { sessionTests.remove(row.id()); }
             if (outcome.configured()) {
                 configured.add(row.id());
                 if (action == IndexerAction.CONFIGURE) { selected.add(row.id()); }
@@ -268,7 +289,6 @@ final class JackettSettingsPane {
                     ? new JackettClient.Indexer(indexer.id(), indexer.name(), outcome.configured(), outcome.detail(), indexer.categories())
                     : indexer).toList();
             updateRow(row.id()); updateCheckSummary();
-            if (action == IndexerAction.REMOVE && !outcome.configured()) { check(row, IndexerAction.PROBE); }
         }));
     }
 
@@ -276,12 +296,26 @@ final class JackettSettingsPane {
         checkEpoch.incrementAndGet();
         checks.values().forEach(check -> check.cancel(true));
         checks.clear(); configuring.clear();
+        restoreTestResults();
+    }
+
+    private void restoreTestResults() {
+        tests.clear();
+        for (JackettClient.Indexer indexer : indexers) {
+            CheckResult previous = sessionTests.get(indexer.id());
+            if (previous != null) { tests.put(indexer.id(), previous); }
+        }
     }
 
     private void updateCheckSummary() {
         long passed = tests.values().stream().filter(result -> result.status().equals("Passed")).count();
-        actionStatus.setLabel(checks.isEmpty() ? passed + " of " + indexers.size() + " indexers passed."
-                : "Testing indexers… " + (indexers.size() - checks.size()) + "/" + indexers.size());
+        long tested = tests.values().stream().filter(result -> result.status().equals("Passed")
+                || result.status().equals("Failed")).count();
+        boolean testing = tests.values().stream().anyMatch(result -> result.status().equals("Testing…"));
+        actionStatus.setLabel(testing ? "Testing indexers… " + tested + "/" + indexers.size()
+                : !checks.isEmpty() ? "Updating indexers…"
+                : tested > 0 ? passed + " of " + tested + " indexers passed." : "");
+        updateControls();
     }
 
     private <T> void run(String text, java.util.concurrent.Callable<T> action, java.util.function.Consumer<T> success) {

@@ -78,8 +78,6 @@ public class SettingsDialog {
                     "Start ODM automatically when the desktop session begins."),
             Map.entry("start_automatically_check",
                     "Automatically start downloads admitted by clipboard and folder monitoring; user-triggered dialogs and imports are unaffected."),
-            Map.entry("override_output_path_check",
-                    "Delete the existing output file or folder before starting a new download. Existing downloads keep the engine's resume policy."),
             Map.entry("move_torrent_check",
                     "After creating a download from a selected descriptor, move the original .torrent, .metalink, or .meta4 file to the Linux/XDG Trash."),
             Map.entry("enable_auto_save_check",
@@ -198,6 +196,8 @@ public class SettingsDialog {
                     "Minimum pause in seconds between file requests; 0 adds no ODM delay."),
 
             // Advanced
+            Map.entry("override_output_path_check",
+                    "Delete the existing output file or folder before starting a new download. Existing downloads keep the engine's resume policy."),
             Map.entry("enable_scheduling_check",
                     "Apply the weekly grid globally: inactive hours pause active downloads and prevent queued downloads from starting."),
             Map.entry("retain_completed_canceled_history_check",
@@ -1086,7 +1086,6 @@ public class SettingsDialog {
                 : s.getBooleanProperty("folder.monitorEnabled", false));
         check("system_tray_check").setActive(s.getBooleanProperty("ui.systemTray", false));
         check("start_automatically_check").setActive(s.getBooleanProperty("ui.startAutomatically", true));
-        check("override_output_path_check").setActive(s.isOverrideOutputPath());
         check("move_torrent_check").setActive(s.getBooleanProperty("ui.moveTorrent", false));
         check("startup_check").setActive(s.getBooleanProperty("ui.startAtLogin", false));
         check("clipboard_silent_check").setActive(s.getBooleanProperty("ui.clipboardSilent", false));
@@ -1185,6 +1184,7 @@ public class SettingsDialog {
     }
 
     private void loadAdvanced(GlobalSettings s) {
+        check("override_output_path_check").setActive(s.isOverrideOutputPath());
         check("retain_completed_canceled_history_check").setActive(
                 s.isRetainCompletedAndCanceledHistory());
         check("automatic_cleanup_check").setActive(s.isAutomaticCleanupEnabled());
@@ -1295,7 +1295,6 @@ public class SettingsDialog {
                 check("retain_completed_canceled_history_check").getActive());
         s.setProperty("ui.systemTray", String.valueOf(check("system_tray_check").getActive()));
         s.setProperty("ui.startAutomatically", String.valueOf(check("start_automatically_check").getActive()));
-        s.setOverrideOutputPath(check("override_output_path_check").getActive());
         s.setProperty("ui.moveTorrent", String.valueOf(check("move_torrent_check").getActive()));
         s.setProperty("ui.startAtLogin", String.valueOf(check("startup_check").getActive()));
         boolean clipboardSilent = check("clipboard_silent_check").getActive();
@@ -1403,6 +1402,7 @@ public class SettingsDialog {
         s.setProperty("httrack.delayBetweenFilesSeconds", String.valueOf(
                 (int) spin("httrack_delay_between_files_spin").getValue()));
         // Advanced
+        s.setOverrideOutputPath(check("override_output_path_check").getActive());
         s.setAutomaticCleanupEnabled(check("automatic_cleanup_check").getActive());
         s.setCleanupIntervalHours((long) spin("cleanup_interval_spin").getValue());
         s.setMaxDownloadsInMemory((int) spin("max_history_records_spin").getValue());

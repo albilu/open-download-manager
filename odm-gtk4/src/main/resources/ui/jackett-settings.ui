@@ -15,7 +15,7 @@
       <child><object class="GtkButton" id="jackett_stop_button"><property name="label">Stop</property></object></child>
     </object></child>
     <child><object class="GtkBox"><property name="spacing">8</property>
-      <child><object class="GtkCheckButton" id="jackett_autostart_check"><property name="label">Start installed Jackett with ODM</property></object></child>
+      <child><object class="GtkCheckButton" id="jackett_autostart_check"><property name="label">Start with ODM</property></object></child>
     </object></child>
     <child><object class="GtkLabel"><property name="label">Select Indexers</property><property name="wrap">true</property><property name="xalign">0</property></object></child>
     <child><object class="GtkScrolledWindow"><property name="vexpand">true</property><property name="min-content-height">200</property>
@@ -27,6 +27,7 @@
     </object></child>
     <child><object class="GtkBox"><property name="spacing">8</property>
       <child><object class="GtkButton" id="jackett_refresh_button"><property name="label">Refresh indexers</property></object></child>
+      <child><object class="GtkButton" id="jackett_test_button"><property name="label">Test</property><property name="tooltip-text">Test all listed indexers</property></object></child>
     </object></child>
     <child><object class="GtkLabel" id="jackett_action_status"><property name="xalign">0</property><property name="wrap">true</property><property name="accessible-role">status</property></object></child>
   </object>

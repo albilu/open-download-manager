@@ -234,7 +234,9 @@ class SearchTorrentsDialogTest {
             assertEquals("linux", snapshot.getProperty(JackettSettings.INDEXERS, ""));
             GtkBuilder builder = field(pane, "builder", GtkBuilder.class);
             for (String id : List.of("jackett_archive_button", "jackett_dashboard_button", "jackett_port_spin",
-                    "jackett_configure_button", "jackett_test_button", "jackett_paths_label")) { assertNull(builder.getObject(id)); }
+                    "jackett_configure_button", "jackett_paths_label")) { assertNull(builder.getObject(id)); }
+            assertEquals("Test", button(pane, "test").getLabel());
+            assertFalse(button(pane, "test").getSensitive());
             pane.reset(); pane.collect(snapshot);
             assertEquals("", snapshot.getProperty(JackettSettings.INDEXERS, "missing"));
             assertEquals("19117", snapshot.getProperty(JackettSettings.PORT, ""), "a hidden implementation setting must not be overwritten by the pane");
@@ -242,7 +244,29 @@ class SearchTorrentsDialogTest {
         } finally { pane.close(); parent.destroy(); }
     }
 
-    @Test void indexersAreProbedAutomaticallyAndCheckingAppliesTheirDefaultConfiguration() throws Exception {
+    @Test void openingAndRefreshingSettingsDoesNotProbeIndexers() throws Exception {
+        JackettClient client = mock(JackettClient.class);
+        when(client.publicIndexers()).thenReturn(List.of(new JackettClient.Indexer("linux", "Linux", true, "", List.of())));
+        for (int i = 0; i < 2; i++) {
+            SettingsDialog dialog = new SettingsDialog(null, manager(), null, null, null, service(client));
+            Window window = field(dialog, "dialog", Window.class);
+            try {
+                JackettSettingsPane pane = field(dialog, "jackett", JackettSettingsPane.class);
+                Button test = button(pane, "test");
+                pump(test::getSensitive);
+                ListStore store = field(pane, "store", ListStore.class);
+                assertEquals("Not tested", rowStatus(store, "linux"));
+                verify(client, never()).test(anyString());
+                button(pane, "refresh").emitClicked();
+                pump(test::getSensitive);
+                assertEquals("Not tested", rowStatus(store, "linux"));
+                verify(client, never()).test(anyString());
+            } finally { window.destroy(); }
+        }
+        verify(client, times(4)).publicIndexers();
+    }
+
+    @Test void indexersAreTestedOnDemandAndCheckingAppliesTheirDefaultConfiguration() throws Exception {
         JackettClient client = mock(JackettClient.class);
         when(client.publicIndexers()).thenReturn(List.of(new JackettClient.Indexer("good", "Good", false, "", List.of()),
                 new JackettClient.Indexer("bad", "Bad", false, "", List.of()), new JackettClient.Indexer("existing", "Existing", true, "", List.of())));
@@ -258,6 +282,7 @@ class SearchTorrentsDialogTest {
         JackettSettingsPane pane = new JackettSettingsPane(parent, settings, service(client));
         try {
             ListStore store = field(pane, "store", ListStore.class);
+            testIndexers(pane);
             pump(() -> rowStatus(store, "good").equals("Passed") && rowStatus(store, "bad").equals("Failed"));
             verify(client).test("good"); verify(client).test("bad"); verify(client).test("existing");
             verify(client, never()).configure(anyString(), any());
@@ -267,7 +292,8 @@ class SearchTorrentsDialogTest {
             ((TreeSortable) store).setSortColumnId(2, SortType.DESCENDING);
             toggleIndexer(pane, store, "good");
             pump(() -> rowChecked(store, "good"));
-            verify(client).configure(eq("good"), eq(defaults)); verify(client, times(2)).test("good");
+            verify(client).configure(eq("good"), eq(defaults)); verify(client).test("good");
+            assertEquals("Not tested", rowStatus(store, "good"));
             toggleIndexer(pane, store, "existing");
             toggleIndexer(pane, store, "bad");
             pump(() -> rowStatus(store, "bad").equals("Setup failed"));
@@ -276,6 +302,102 @@ class SearchTorrentsDialogTest {
             assertEquals(Set.of("good", "existing"), Set.of(saved.getProperty(JackettSettings.INDEXERS, "").split(",")));
             verify(client, never()).configure(eq("existing"), any());
         } finally { pane.close(); parent.destroy(); }
+    }
+
+    @Test void completedIndexerResultsSurviveReopeningAndRefreshAndCanBeRetested() throws Exception {
+        JackettClient client = mock(JackettClient.class);
+        when(client.publicIndexers()).thenReturn(List.of(
+                new JackettClient.Indexer("good", "Good", true, "", List.of()),
+                new JackettClient.Indexer("bad", "Bad", true, "", List.of())));
+        doNothing().doThrow(new IOException("new failure")).when(client).test("good");
+        doThrow(new IOException("old failure")).doNothing().when(client).test("bad");
+        JackettService session = service(client);
+
+        for (int opening = 0; opening < 3; opening++) {
+            SettingsDialog dialog = new SettingsDialog(null, manager(), null, null, null, session);
+            Window window = field(dialog, "dialog", Window.class);
+            try {
+                JackettSettingsPane pane = field(dialog, "jackett", JackettSettingsPane.class);
+                ListStore store = field(pane, "store", ListStore.class);
+                Button test = button(pane, "test");
+                pump(test::getSensitive);
+                if (opening == 0) {
+                    assertEquals("Not tested", rowStatus(store, "good"));
+                    test.emitClicked();
+                    pump(test::getSensitive);
+                } else if (opening == 1) {
+                    assertEquals("Passed", rowStatus(store, "good"));
+                    assertEquals("Failed", rowStatus(store, "bad"));
+                    assertEquals("old failure", ListStoreCells.getString(store, indexerIter(store, "bad"), 3));
+                    assertFalse(indexerTooltip(pane, store, "good"));
+                    button(pane, "refresh").emitClicked();
+                    pump(test::getSensitive);
+                    assertEquals("Passed", rowStatus(store, "good"));
+                    assertEquals("Failed", rowStatus(store, "bad"));
+                    verify(client).test("good"); verify(client).test("bad");
+                    test.emitClicked();
+                    pump(test::getSensitive);
+                }
+                assertEquals(opening == 0 ? "Passed" : "Failed", rowStatus(store, "good"));
+                assertEquals(opening == 0 ? "Failed" : "Passed", rowStatus(store, "bad"));
+                assertEquals("1 of 2 indexers passed.", field(pane, "actionStatus", Label.class).getLabel());
+                if (opening > 0) {
+                    assertEquals("new failure", ListStoreCells.getString(store, indexerIter(store, "good"), 3));
+                    assertFalse(indexerTooltip(pane, store, "bad"));
+                }
+            } finally { window.close(); }
+        }
+        verify(client, times(2)).test("good"); verify(client, times(2)).test("bad");
+
+        // A new application session owns a new service and starts without test history.
+        SettingsDialog nextSession = new SettingsDialog(null, manager(), null, null, null, service(client));
+        Window window = field(nextSession, "dialog", Window.class);
+        try {
+            JackettSettingsPane pane = field(nextSession, "jackett", JackettSettingsPane.class);
+            Button test = button(pane, "test");
+            pump(test::getSensitive);
+            ListStore store = field(pane, "store", ListStore.class);
+            assertEquals("Not tested", rowStatus(store, "good"));
+            assertEquals("Not tested", rowStatus(store, "bad"));
+            assertEquals("", field(pane, "actionStatus", Label.class).getLabel());
+            verify(client, times(2)).test("good"); verify(client, times(2)).test("bad");
+        } finally { window.close(); }
+    }
+
+    @Test void closingDuringRetestPreservesTheLastCompletedResult() throws Exception {
+        JackettClient client = mock(JackettClient.class);
+        when(client.publicIndexers()).thenReturn(List.of(new JackettClient.Indexer("linux", "Linux", true, "", List.of())));
+        CompletableFuture<Void> finishRetest = new CompletableFuture<>();
+        AtomicInteger calls = new AtomicInteger();
+        AtomicInteger finished = new AtomicInteger();
+        doAnswer(call -> {
+            if (calls.incrementAndGet() == 1) { throw new IOException("last completed failure"); }
+            finishRetest.join();
+            finished.incrementAndGet();
+            return null;
+        }).when(client).test("linux");
+        JackettService session = service(client);
+        Window parent = new Window();
+        JackettSettingsPane first = new JackettSettingsPane(parent, new GlobalSettings(), session);
+        try {
+            ListStore store = field(first, "store", ListStore.class);
+            testIndexers(first);
+            pump(() -> rowStatus(store, "linux").equals("Failed"));
+            testIndexers(first);
+            pump(() -> calls.get() == 2);
+            assertEquals("Testing…", rowStatus(store, "linux"));
+        } finally { first.close(); finishRetest.complete(null); }
+        pump(() -> finished.get() == 1);
+
+        JackettSettingsPane reopened = new JackettSettingsPane(parent, new GlobalSettings(), session);
+        try {
+            Button test = button(reopened, "test");
+            pump(test::getSensitive);
+            ListStore store = field(reopened, "store", ListStore.class);
+            assertEquals("Failed", rowStatus(store, "linux"));
+            assertEquals("last completed failure", ListStoreCells.getString(store, indexerIter(store, "linux"), 3));
+            verify(client, times(2)).test("linux");
+        } finally { reopened.close(); parent.destroy(); }
     }
 
     @Test void uncheckingWaitsForTheProbeRemovesConfigurationAndRecheckingUsesDefaults() throws Exception {
@@ -294,14 +416,16 @@ class SearchTorrentsDialogTest {
         JackettSettingsPane pane = new JackettSettingsPane(parent, values, service(client));
         try {
             ListStore store = field(pane, "store", ListStore.class);
+            testIndexers(pane);
             pump(() -> probes.get() == 1);
+            assertFalse(button(pane, "test").getSensitive(), "an in-flight test cannot be started again");
             assertTrue(rowChecked(store, "linux"));
             toggleIndexer(pane, store, "linux");
             assertEquals("Removing…", rowStatus(store, "linux"));
             assertTrue(rowChecked(store, "linux"), "the check remains until Jackett confirms removal");
             verify(client, never()).unconfigure(anyString());
             releaseProbe.countDown();
-            pump(() -> !rowChecked(store, "linux") && rowStatus(store, "linux").equals("Passed"));
+            pump(() -> !rowChecked(store, "linux") && rowStatus(store, "linux").equals("Not tested"));
             verify(client).unconfigure("linux");
             GlobalSettings saved = values.copy(); pane.collect(saved);
             assertEquals("", saved.getProperty(JackettSettings.INDEXERS, "missing"));
@@ -309,6 +433,10 @@ class SearchTorrentsDialogTest {
             toggleIndexer(pane, store, "linux");
             pump(() -> rowChecked(store, "linux"));
             verify(client).configure("linux", defaults);
+            verify(client).test("linux");
+            testIndexers(pane);
+            pump(() -> rowStatus(store, "linux").equals("Passed"));
+            verify(client, times(2)).test("linux");
             pane.collect(saved); assertEquals("linux", saved.getProperty(JackettSettings.INDEXERS, ""));
         } finally { releaseProbe.countDown(); pane.close(); parent.destroy(); }
     }
@@ -322,7 +450,7 @@ class SearchTorrentsDialogTest {
         JackettSettingsPane pane = new JackettSettingsPane(parent, values, service(client));
         try {
             ListStore store = field(pane, "store", ListStore.class);
-            pump(() -> rowStatus(store, "linux").equals("Passed"));
+            pump(() -> rowStatus(store, "linux").equals("Not tested"));
             toggleIndexer(pane, store, "linux");
             pump(() -> rowStatus(store, "linux").equals("Removal failed"));
             assertTrue(rowChecked(store, "linux"));
@@ -330,8 +458,9 @@ class SearchTorrentsDialogTest {
             assertEquals("linux", saved.getProperty(JackettSettings.INDEXERS, ""));
             assertTrue(indexerTooltip(pane, store, "linux"));
             toggleIndexer(pane, store, "linux");
-            pump(() -> !rowChecked(store, "linux") && rowStatus(store, "linux").equals("Passed"));
+            pump(() -> !rowChecked(store, "linux") && rowStatus(store, "linux").equals("Not tested"));
             verify(client, times(2)).unconfigure("linux");
+            verify(client, never()).test(anyString());
             assertFalse(indexerTooltip(pane, store, "linux"));
         } finally { pane.close(); parent.destroy(); }
     }
@@ -353,6 +482,7 @@ class SearchTorrentsDialogTest {
         JackettSettingsPane pane = new JackettSettingsPane(parent, values, service(client));
         try {
             ListStore store = field(pane, "store", ListStore.class);
+            testIndexers(pane);
             pump(() -> slowProbes.getCount() == 0 && rowStatus(store, "id0").equals("Passed"));
             toggleIndexer(pane, store, "id0");
             pump(() -> !rowChecked(store, "id0"));
@@ -377,6 +507,7 @@ class SearchTorrentsDialogTest {
         JackettSettingsPane pane = new JackettSettingsPane(parent, values, service(client));
         try {
             ListStore store = field(pane, "store", ListStore.class);
+            testIndexers(pane);
             pump(() -> active.get() == 4);
             assertTrue(field(pane, "tree", TreeView.class).getSensitive());
             toggleIndexer(pane, store, "id6");
@@ -398,12 +529,18 @@ class SearchTorrentsDialogTest {
             assertEquals("Advanced", notebook.getTabLabelText(notebook.getNthPage(6)));
             GtkBuilder builder = field(dialog, "builder", GtkBuilder.class);
             CheckButton scheduler = Widgets.require(builder, "enable_scheduling_check", CheckButton.class);
+            CheckButton override = Widgets.require(builder, "override_output_path_check", CheckButton.class);
+            override.setActive(true);
             scheduler.setActive(true);
+            dialog.resetTabToDefaults(0);
+            assertTrue(override.getActive(), "General reset must preserve the Advanced override setting");
             dialog.resetTabToDefaults(5);
             assertTrue(scheduler.getActive());
+            assertTrue(override.getActive());
             assertTrue(dialog.statusText().startsWith("Search Engine defaults"));
             dialog.resetTabToDefaults(6);
             assertFalse(scheduler.getActive());
+            assertFalse(override.getActive());
             assertTrue(dialog.statusText().startsWith("Advanced defaults"));
         } finally { window.destroy(); }
     }
@@ -436,6 +573,14 @@ class SearchTorrentsDialogTest {
 
     private static Button button(SearchTorrentsDialog dialog, String name) throws Exception {
         return Widgets.require(field(dialog, "builder", GtkBuilder.class), "torrent_" + name + "_button", Button.class);
+    }
+    private static Button button(JackettSettingsPane pane, String name) throws Exception {
+        return Widgets.require(field(pane, "builder", GtkBuilder.class), "jackett_" + name + "_button", Button.class);
+    }
+    private static void testIndexers(JackettSettingsPane pane) throws Exception {
+        Button test = button(pane, "test");
+        pump(test::getSensitive);
+        test.emitClicked();
     }
     private static void toggle(SearchTorrentsDialog dialog, String path) throws Exception {
         Widgets.require(field(dialog, "builder", GtkBuilder.class), "torrent_result_toggle", CellRendererToggle.class).emitToggled(path);

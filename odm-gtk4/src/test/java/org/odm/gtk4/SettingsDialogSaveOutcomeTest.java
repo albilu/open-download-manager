@@ -39,7 +39,6 @@ class SettingsDialogSaveOutcomeTest {
             "folder_recursive_check", "move_to_trash_check", "clipboard_monitor_check",
             "clipboard_silent_check", "system_tray_check", "startup_check",
             "start_automatically_check", "move_torrent_check", "enable_auto_save_check",
-            "override_output_path_check",
             // Network
             "max_connections_spin", "retry_limit_spin", "retry_after",
             "max_download_speed_spin", "max_upload_speed_spin", "referer_entry",
@@ -63,6 +62,7 @@ class SettingsDialogSaveOutcomeTest {
             "httrack_max_duration_spin", "httrack_max_links_spin",
             "httrack_connections_per_second_spin", "httrack_delay_between_files_spin",
             // Advanced
+            "override_output_path_check",
             "enable_scheduling_check", "retain_completed_canceled_history_check",
             "automatic_cleanup_check", "cleanup_interval_spin", "max_history_records_spin",
             "max_completed_records_spin", "completed_retention_spin", "error_retention_spin",
@@ -337,7 +337,8 @@ class SettingsDialogSaveOutcomeTest {
             dialog.applySettings();
             GlobalSettings reset = settings.get();
             assertEquals(3, reset.getMaxConcurrentDownloads());
-            assertFalse(reset.isOverrideOutputPath());
+            assertTrue(reset.isOverrideOutputPath(),
+                    "Override file path now belongs to Advanced and must survive a General-tab reset");
             assertTrue(reset.isAutomaticCleanupEnabled(),
                     "Advanced values must survive a General-tab reset");
             assertEquals(6900, reset.getAria2RpcPort(),
