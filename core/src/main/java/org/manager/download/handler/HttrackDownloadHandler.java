@@ -98,6 +98,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
 
                 // Set default destination if none provided
                 setDefaultDestinationIfNeeded(download);
+                overrideOutputPath(download);
 
                 HttrackSettings storedSettings = download.getSettings() instanceof HttrackSettings value
                         ? value : null;
@@ -107,14 +108,6 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                 Path existingMirror = reuseExistingMirror
                         ? org.manager.download.HttrackMirrorSupport.mirrorDirectory(download)
                         : null;
-
-                // New mirrors avoid collisions by choosing a unique project
-                // name. Continue/update runs must instead reopen the original
-                // mirror and its hts-cache, including legacy records that do
-                // not yet have a persisted outputPaths entry.
-                if (!reuseExistingMirror) {
-                    overrideOutputPath(download);
-                }
 
                 // Set download status to connecting
                 download.setStatus(Download.Status.CONNECTING);

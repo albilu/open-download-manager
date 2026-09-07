@@ -252,6 +252,16 @@ public class GlobalSettings {
         return this;
     }
 
+    /** Delete the existing output path only before a new download's first engine start. */
+    public boolean isOverrideOutputPath() {
+        return getBooleanProperty("download.overrideOutputPath", false);
+    }
+
+    public GlobalSettings setOverrideOutputPath(boolean override) {
+        setProperty("download.overrideOutputPath", Boolean.toString(override));
+        return this;
+    }
+
     /**
      * Whether completed and canceled records remain in ODM's history database
      * across restarts. Error and resumable records are always retained.

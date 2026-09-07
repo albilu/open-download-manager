@@ -370,6 +370,7 @@
                 <child>
                   <object class="GtkBox" id="advanced_page">
                     <property name="orientation">vertical</property>
+                    <child><object class="GtkCheckButton" id="override_output_path_check"><property name="label">Override file path</property><property name="margin-start">12</property><property name="margin-end">12</property><property name="margin-top">14</property></object></child>
                     <child>
                       <object class="GtkGrid" id="advanced_layout_grid">
                     <property name="hexpand">true</property><property name="vexpand">true</property>

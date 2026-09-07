@@ -39,6 +39,7 @@ class SettingsDialogSaveOutcomeTest {
             "folder_recursive_check", "move_to_trash_check", "clipboard_monitor_check",
             "clipboard_silent_check", "system_tray_check", "startup_check",
             "start_automatically_check", "move_torrent_check", "enable_auto_save_check",
+            "override_output_path_check",
             // Network
             "max_connections_spin", "retry_limit_spin", "retry_after",
             "max_download_speed_spin", "max_upload_speed_spin", "referer_entry",
@@ -132,6 +133,30 @@ class SettingsDialogSaveOutcomeTest {
 
     private SettingsDialog buildDialog() {
         return new SettingsDialog(null, newStubManager(), null);
+    }
+
+    @Test
+    @Timeout(60)
+    void overridePathDefaultsOffAndPersistsAfterApply() throws Exception {
+        Path configHome = tempDir.resolve("override-config");
+        Files.createDirectories(configHome);
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null);
+            assertFalse(dialog.overrideOutputPath());
+            dialog.setOverrideOutputPath(true);
+            assertFalse(initial.isOverrideOutputPath());
+            dialog.applySettings();
+            assertTrue(settings.get().isOverrideOutputPath());
+            GlobalSettings loaded = new GlobalSettings();
+            loaded.load();
+            assertTrue(loaded.isOverrideOutputPath());
+            SettingsDialog reopened = new SettingsDialog(null,
+                    newStubManager(new AtomicReference<>(loaded)), null);
+            assertTrue(reopened.overrideOutputPath());
+        });
     }
 
     @Test
@@ -294,6 +319,7 @@ class SettingsDialogSaveOutcomeTest {
             GlobalSettings initial = new GlobalSettings();
             initial.setDefaultDownloadDirectory(tempDir);
             initial.setMaxConcurrentDownloads(17);
+            initial.setOverrideOutputPath(true);
             initial.setAutomaticCleanupEnabled(true);
             initial.setAria2RpcPort(6900);
             initial.setHonorExternalAria2Configuration(true);
@@ -311,6 +337,7 @@ class SettingsDialogSaveOutcomeTest {
             dialog.applySettings();
             GlobalSettings reset = settings.get();
             assertEquals(3, reset.getMaxConcurrentDownloads());
+            assertFalse(reset.isOverrideOutputPath());
             assertTrue(reset.isAutomaticCleanupEnabled(),
                     "Advanced values must survive a General-tab reset");
             assertEquals(6900, reset.getAria2RpcPort(),

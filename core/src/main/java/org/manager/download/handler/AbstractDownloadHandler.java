@@ -388,37 +388,34 @@ public abstract class AbstractDownloadHandler implements DownloadHandler, Downlo
         }
     }
 
+    /** Applies path override only before a new record's first engine start. */
     protected void overrideOutputPath(Download download) {
-        // if destination.resolve(name) exists && isOverrideOutput
-
         if (download == null) {
             return;
         }
+        download.prepareInitialOutputPath(() -> {
+            if (globalSettings != null) {
+                download.setOverrideOutputPath(globalSettings.isOverrideOutputPath());
+            }
+            if (!download.isOverrideOutputPath() || download.getDestination() == null) {
+                return;
+            }
 
-        String name = download.getRequestedFileName() != null
-                ? download.getRequestedFileName() : download.getName();
-        if (download.getDestination() == null || name == null || name.isBlank()) {
-            return;
-        }
-        org.manager.util.PathSafety.requireSafeFileName(name);
-        Path output = download.getDestination().resolve(name);
-        // Never delete an existing output before the engine has accepted the
-        // transfer.  Apart from destroying resumable partial data, a launch
-        // failure after this point used to destroy a complete file without
-        // producing any replacement.  "Override" now means that the engine
-        // receives the requested path and applies its own atomic/resume
-        // policy; the non-override branch still chooses a unique name.
-        if (Files.exists(output) && !download.isOverrideOutputPath()) {
-            // increment counter
-            int counter = 1;
-            while (Files.exists(output.resolveSibling(name + "_" + counter))) {
-                counter++;
+            Path output = download.getRequestedFileName() != null
+                    ? download.getDestination().resolve(download.getRequestedFileName())
+                    : download.getPrimaryOutputPath();
+            if (output == null || !Files.exists(output, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                return;
             }
-            String uniqueName = name + "_" + counter;
-            download.setName(uniqueName);
-            if (download.getRequestedFileName() != null) {
-                download.setRequestedFileName(uniqueName);
+            try {
+                if (download.getUri() != null && "file".equalsIgnoreCase(download.getUri().getScheme())
+                        && Files.isSameFile(output, Path.of(download.getUri()))) {
+                    return; // A local torrent/Metalink source is not the download output.
+                }
+                org.manager.util.PathSafety.deleteTreeConfined(output, download.getDestination());
+            } catch (java.io.IOException error) {
+                throw new IllegalStateException("Could not delete existing download path: " + output, error);
             }
-        }
+        });
     }
 }

@@ -152,7 +152,9 @@ public class Download {
     private volatile String requestedFileName;
     /** Actual output artifacts reported by the selected download engine. */
     private final List<Path> outputPaths;
-    private volatile boolean overrideOutputPath = true;
+    private volatile boolean overrideOutputPath = false;
+    /** Runtime-only: restored records always leave existing output to the engine. */
+    private boolean initialOutputPreparationPending;
     private volatile URI uri;
     private volatile Protocol protocol;
     private volatile List<URI> mirrors;
@@ -202,6 +204,7 @@ public class Download {
      */
     public Download() {
         this(UUID.randomUUID().toString(), Instant.now());
+        initialOutputPreparationPending = true;
     }
 
     /**
@@ -515,6 +518,23 @@ public class Download {
     public void setOverrideOutputPath(boolean overrideOutputPath) {
         synchronized (lock) {
             this.overrideOutputPath = overrideOutputPath;
+        }
+    }
+
+    /**
+     * Prepares a new record's output once, before its first engine start.
+     * Retries, resumes and restored records retain the engine's file policy.
+     * A failed preparation must succeed before a later start can proceed.
+     */
+    public void prepareInitialOutputPath(Runnable preparation) {
+        synchronized (lock) {
+            if (!initialOutputPreparationPending) {
+                return;
+            }
+            if (startedAt == null) {
+                preparation.run();
+            }
+            initialOutputPreparationPending = false;
         }
     }
 

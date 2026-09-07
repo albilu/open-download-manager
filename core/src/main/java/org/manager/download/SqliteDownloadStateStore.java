@@ -52,7 +52,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 name TEXT,
                 requested_file_name TEXT,
                 output_paths TEXT,
-                override_output_path INTEGER NOT NULL DEFAULT 1,
+                override_output_path INTEGER NOT NULL DEFAULT 0,
                 uri TEXT NOT NULL,
                 protocol TEXT,
                 mirrors TEXT,

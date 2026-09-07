@@ -32,7 +32,7 @@ class ManagerStateRehydrationTest {
         private final AtomicInteger gidSeq = new AtomicInteger();
 
         FakeHandler() {
-            super(null, null, null);
+            super(ApplicationContext.getGlobalSettings(), null, null);
         }
 
         @Override
@@ -50,6 +50,7 @@ class ManagerStateRehydrationTest {
 
         @Override
         public CompletableFuture<String> startDownload(Download download) {
+            overrideOutputPath(download);
             return CompletableFuture.completedFuture("fake-gid-" + gidSeq.incrementAndGet());
         }
 
@@ -104,7 +105,11 @@ class ManagerStateRehydrationTest {
             Download resumable = new Download(new URI("http://example.test/resumable.bin"));
             resumable.setType(Download.Type.ARIA2);
             resumable.setName("resumable.bin");
+            resumable.setDestination(tempDir);
+            resumable.setOverrideOutputPath(true);
+            Path partialOutput = Files.writeString(tempDir.resolve("resumable.bin"), "partial content");
             resumable.setStatus(Download.Status.CONNECTING);
+            assertNull(resumable.getStartedAt(), "recovery must also protect records without progress yet");
             Download idlePaused = new Download(new URI("http://example.test/idle-paused.bin"));
             idlePaused.setType(Download.Type.ARIA2);
             idlePaused.setName("idle-paused.bin");
@@ -151,6 +156,7 @@ class ManagerStateRehydrationTest {
                     org.manager.StartupCoordinator.DOWNLOAD_HANDLER_FACTORY);
             ApplicationContext.getGlobalSettings().setProperty(
                     "ui.startAutomatically", "false");
+            ApplicationContext.getGlobalSettings().setOverrideOutputPath(true);
 
             manager.loadState().join();
 
@@ -173,6 +179,8 @@ class ManagerStateRehydrationTest {
             boolean indexedDownloading = awaitTrue(() -> manager.getDownloadsByStatus(Download.Status.DOWNLOADING)
                     .stream().anyMatch(d -> d.getId().equals(resumable.getId())));
             assertTrue(indexedDownloading, "the resumed download must be indexed DOWNLOADING");
+            assertEquals("partial content", Files.readString(partialOutput),
+                    "rebuilding the engine must preserve the existing record's output");
             assertTrue(awaitTrue(() -> manager.getDownload(queued.getId()).getStatus()
                     == Download.Status.DOWNLOADING),
                     "accepted QUEUED work must enter the startup pump regardless of the monitor setting");

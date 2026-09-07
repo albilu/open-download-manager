@@ -153,13 +153,21 @@ class YtDlpPauseLifecycleTest {
     @Timeout(120)
     @DisplayName("An old run's late callback cannot remove the changeSettings replacement")
     void oldRunCallbackCannotRemoveReplacement() throws Exception {
+        when(settings.isOverrideOutputPath()).thenReturn(true);
         Download download = newDownload("replace");
+        download.setRequestedFileName("video.mp4");
+        Files.createDirectories(download.getDestination());
+        Path output = Files.writeString(download.getDestination().resolve("video.mp4"), "old output");
         handler.startDownload(download).get(30, TimeUnit.SECONDS);
         YtDlpDownloadTask original = factory.getDownloadTask(download.getId());
         assertNotNull(original);
         awaitRunning(original);
+        assertFalse(Files.exists(output), "a new download overrides the existing output before starting");
+        Files.writeString(output, "partially downloaded content");
 
         handler.changeSettings(download).get(60, TimeUnit.SECONDS);
+        assertEquals("partially downloaded content", Files.readString(output),
+                "replacing the engine task must leave partial output for the engine to resume");
 
         YtDlpDownloadTask replacement = factory.getDownloadTask(download.getId());
         assertNotNull(replacement, "the replacement must be tracked");
