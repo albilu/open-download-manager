@@ -602,10 +602,12 @@ public class YtDlpClient {
         String processId = "metadata-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
-            try (var prepared = MediaRequestContext.prepare(settings)) {
+            try (var prepared = MediaRequestContext.prepare(settings);
+                    var network = RoutedMediaTools.prepare(proxyAddress)) {
                 List<String> command = buildMetadataCommand(url, prepared.settings(),
                         proxyAddress, false);
 
+                network.applyTo(command);
                 String output = runMetadataCommand(command, processId, launch);
                 String jsonLine = null;
                 for (String line : output.lines().toList()) {
@@ -652,9 +654,11 @@ public class YtDlpClient {
         String processId = "playlist-preview-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<VideoInfo> result = CompletableFuture.supplyAsync(() -> {
-            try (var prepared = MediaRequestContext.prepare(settings)) {
+            try (var prepared = MediaRequestContext.prepare(settings);
+                    var network = RoutedMediaTools.prepare(proxyAddress)) {
                 List<String> command = buildMetadataCommand(url, prepared.settings(),
                         proxyAddress, true);
+                network.applyTo(command);
                 String output = runMetadataCommand(command, processId, launch);
                 String jsonLine = output.lines()
                         .filter(line -> line.trim().startsWith("{"))
@@ -748,9 +752,11 @@ public class YtDlpClient {
         String processId = "formats-" + UUID.randomUUID();
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         CompletableFuture<List<VideoFormat>> result = CompletableFuture.supplyAsync(() -> {
-            try (var prepared = MediaRequestContext.prepare(settings)) {
+            try (var prepared = MediaRequestContext.prepare(settings);
+                    var network = RoutedMediaTools.prepare(proxyAddress)) {
                 List<String> command = buildFormatsCommand(url, prepared.settings(), proxyAddress);
 
+                network.applyTo(command);
                 List<String> lines = runMetadataCommand(command, processId, launch).lines().toList();
 
                 // Parse formats from JSON or text output
@@ -811,15 +817,12 @@ public class YtDlpClient {
     }
 
     private static String configuredProxy(YtDlpSettings settings) {
-        return settings != null && settings.isUseProxy()
-                ? settings.getProxyAddress() : null;
+        return org.manager.tools.NetworkProcessPolicy.selectedProxy(settings);
     }
 
     private static void addProxy(List<String> command, String proxyAddress) {
-        if (proxyAddress != null && !proxyAddress.isBlank()) {
-            command.add("--proxy");
-            command.add(proxyAddress);
-        }
+        command.add("--proxy");
+        command.add(org.manager.tools.NetworkProcessPolicy.proxyAddress(proxyAddress));
     }
 
     private static void addRequestOptions(List<String> command,
@@ -885,7 +888,7 @@ public class YtDlpClient {
     /** Runs a short-lived metadata command with strict ownership, size and time bounds. */
     private String runMetadataCommand(List<String> command, String processId,
             ExternalProcessRegistry.LaunchReservation launch) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(command);
+        ProcessBuilder pb = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command));
         pb.redirectErrorStream(true);
         ExternalProcessRegistry.Registration registration = null;
         try {
@@ -972,7 +975,8 @@ public class YtDlpClient {
         return CompletableFuture.supplyAsync(() -> {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
             MediaDownloadArchive archive = null;
-            try (var prepared = MediaRequestContext.prepare(settings)) {
+            try (var prepared = MediaRequestContext.prepare(settings);
+                    var network = RoutedMediaTools.prepare(configuredProxy(prepared.settings()))) {
                 // Build command
                 List<String> command = buildDownloadCommand(url, prepared.settings(), outputPath);
                 if (settings.isUseDownloadArchive()) {
@@ -983,12 +987,14 @@ public class YtDlpClient {
                     command.add(command.size() - 1, "--no-download-archive");
                 }
 
+                network.applyTo(command);
+
                 // Create output directory if it doesn't exist
                 if (outputPath != null) {
                     Files.createDirectories(outputPath);
                 }
 
-                ProcessBuilder pb = new ProcessBuilder(command);
+                ProcessBuilder pb = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command));
                 pb.redirectErrorStream(true);
                 if (outputPath != null) {
                     pb.directory(outputPath.toFile());
@@ -1117,12 +1123,14 @@ public class YtDlpClient {
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         return CompletableFuture.runAsync(() -> {
             ExternalProcessRegistry.Registration registration = null;
-            try (var prepared = MediaRequestContext.prepare(settings)) {
+            try (var prepared = MediaRequestContext.prepare(settings);
+                    var network = RoutedMediaTools.prepare(configuredProxy(prepared.settings()))) {
                 if (outputDirectory != null) {
                     Files.createDirectories(outputDirectory);
                 }
-                ProcessBuilder builder = new ProcessBuilder(
-                        buildSubtitleCommand(url, prepared.settings(), outputDirectory))
+                List<String> command = buildSubtitleCommand(url, prepared.settings(), outputDirectory);
+                network.applyTo(command);
+                ProcessBuilder builder = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command))
                         .redirectErrorStream(true)
                         .redirectOutput(ProcessBuilder.Redirect.DISCARD);
                 registration = launch.start(builder);
@@ -1289,10 +1297,7 @@ public class YtDlpClient {
         }
 
         // Proxy settings
-        if (settings.isUseProxy() && settings.getProxyAddress() != null) {
-            command.add("--proxy");
-            command.add(settings.getProxyAddress());
-        }
+        addProxy(command, configuredProxy(settings));
 
         addAuthenticationOptions(command, settings);
 
@@ -1333,9 +1338,7 @@ public class YtDlpClient {
         // useAria2c flag is authoritative: the old wiring consulted the
         // additional-options map ("use-aria2c"), which setUseAria2c(true)
         // never populated, so the external downloader never engaged.
-        boolean nativeSocks = settings.isUseProxy()
-                && org.manager.download.handler.DownloadHandlerFactory
-                        .isSocksProxyAddress(settings.getProxyAddress());
+        boolean nativeSocks = settings.isUseProxy();
         if (nativeSocks) {
             // yt-dlp passes --proxy to external aria2 as --all-proxy, which
             // cannot accept SOCKS. Explicitly select native to also override
@@ -1446,11 +1449,7 @@ public class YtDlpClient {
             command.add("--output");
             command.add("subtitle:" + settings.getOutputTemplate());
         }
-        if (settings.isUseProxy() && settings.getProxyAddress() != null
-                && !settings.getProxyAddress().isBlank()) {
-            command.add("--proxy");
-            command.add(settings.getProxyAddress());
-        }
+        addProxy(command, configuredProxy(settings));
         addRetryOptions(command, settings);
         if (settings.getReferer() != null && !settings.getReferer().isBlank()) {
             command.add("--referer");

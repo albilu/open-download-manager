@@ -255,9 +255,14 @@ public class DownloadHandlerFactory {
         // Restored PROXYCHAINS records need the same availability check as
         // fresh aria2 records. A previous Curl fallback stays on Curl.
         String effectiveProxy = effectiveProxyAddress(download);
+        if (effectiveProxy != null && effectiveProxy.startsWith("https://")
+                && (download.getType() == Download.Type.ARIA2 || download.getType() == Download.Type.PROXYCHAINS)) {
+            if (prepareCurlProxyFallback(download)) { return handlers.get(Download.Type.CURL); }
+            throw new IllegalArgumentException("The selected HTTPS proxy cannot carry this aria2 protocol");
+        }
         boolean socksRoutingRequired = (download.getType() == Download.Type.ARIA2
                 || download.getType() == Download.Type.PROXYCHAINS)
-                && isSocksProxyAddress(effectiveProxy);
+                && requiresProxychains(download, effectiveProxy);
         if (socksRoutingRequired) {
             // This method owns the complete privacy-preserving fallback
             // chain. Do not continue into the ordinary direct fallback path.
@@ -295,8 +300,10 @@ public class DownloadHandlerFactory {
      */
     private DownloadHandler routeSocksDownload(Download download, String proxy) {
         DownloadSettings settings = download.getSettings();
+        boolean inherited = settings.isProxyInherited();
         settings.setUseProxy(true);
         settings.setProxyAddress(proxy);
+        settings.setProxyInherited(inherited);
         DownloadHandler proxychains = handlers.get(Download.Type.PROXYCHAINS);
         if (proxychains != null) {
             Download.Type originalType = download.getType();
@@ -338,7 +345,7 @@ public class DownloadHandlerFactory {
         String proxy = effectiveProxyAddress(download);
         return isCurlTransfer(download)
                 && !isAria2OnlyDownload(download)
-                && isSocksProxyAddress(proxy)
+                && (isSocksProxyAddress(proxy) || (proxy != null && proxy.startsWith("https://")))
                 && isValidProxyAddress(proxy)
                 && handlers.get(Download.Type.CURL) != null;
     }
@@ -398,16 +405,16 @@ public class DownloadHandlerFactory {
      * proxy when configured, otherwise the global proxy when enabled.
      */
     private String effectiveProxyAddress(Download download) {
-        if (download.getSettings() != null
-                && download.getSettings().isUseProxy()
-                && download.getSettings().getProxyAddress() != null) {
-            return download.getSettings().getProxyAddress();
-        }
-        if (globalSettings.isGlobalProxyEnabled()
-                && globalSettings.getGlobalProxyAddress() != null) {
-            return globalSettings.getGlobalProxyAddress();
-        }
-        return null;
+        return new org.manager.download.DownloadSettingsFactory(globalSettings)
+                .effectiveProxy(download.getSettings());
+    }
+
+    public static boolean requiresProxychains(Download download, String proxy) {
+        return proxy != null && !proxy.isBlank()
+                && (isSocksProxyAddress(proxy) || (download.getProtocol() != null
+                    && (download.getProtocol().supportsPeerDetails()
+                        || download.getProtocol() == Download.Protocol.METALINK
+                        || download.getProtocol() == Download.Protocol.SFTP)));
     }
 
     public static boolean isSocksProxyAddress(String address) {

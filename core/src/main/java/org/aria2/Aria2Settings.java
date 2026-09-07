@@ -864,6 +864,19 @@ public class Aria2Settings extends DownloadSettings {
             options.put(entry.getKey(), entry.getValue());
         }
 
+        // Clear all native bypass and protocol-specific routes, including daemon defaults.
+        String route = org.manager.tools.NetworkProcessPolicy.selectedProxy(this);
+        if (route.startsWith("https://")) {
+            throw new IllegalArgumentException("aria2 does not support TLS to an HTTPS proxy");
+        }
+        if (!route.isEmpty()) {
+            options.put("follow-torrent", "false");
+            options.put("follow-metalink", "false");
+        }
+        options.put("no-proxy", "");
+        for (String key : java.util.List.of("all-proxy", "http-proxy", "https-proxy", "ftp-proxy")) {
+            options.put(key, route);
+        }
         return options;
     }
 

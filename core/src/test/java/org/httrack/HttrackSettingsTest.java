@@ -312,13 +312,13 @@ class HttrackSettingsTest {
         // When
         settings.addAdditionalOption("i", "");
         settings.addAdditionalOption("v", "");
-        settings.addAdditionalOption("f", "logfile.txt");
+        settings.addAdditionalOption("f", "2");
 
         // Then
         List<String> commandLine = settings.buildCommandLine();
         assertTrue(commandLine.contains("-i"), "Command line should contain -i option");
         assertTrue(commandLine.contains("-v"), "Command line should contain -v option");
-        assertTrue(commandLine.contains("-flogfile.txt"),
+        assertTrue(commandLine.contains("-f2"),
                 "HTTrack single-letter options concatenate their value");
     }
 

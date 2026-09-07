@@ -95,6 +95,8 @@ public class DownloadManagerImpl implements DownloadManager {
     private final Object generationLock = new Object();
     /** Serializes the check-and-add concurrency-slot claim (the admission decision). */
     private final Object admissionLock = new Object();
+    private final Object networkSettingsLock = new Object();
+    private volatile boolean networkRestartInProgress;
 
     private enum AdmissionResult {
         CLAIMED,
@@ -512,6 +514,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 throw new IllegalArgumentException("Download cannot be null");
             }
             download.validateSourcesForTransfer();
+            new DownloadSettingsFactory(getGlobalSettings()).applyInheritedProxy(download.getSettings());
             if (holdForUnavailableTor(download)) {
                 if (admissionAlreadyClaimed) {
                     releaseRunningSlot(download.getId());
@@ -720,7 +723,8 @@ public class DownloadManagerImpl implements DownloadManager {
             if (runningDownloadIds.contains(downloadId)) {
                 return AdmissionResult.DUPLICATE;
             }
-            if (runningDownloads.get() >= getGlobalSettings().getMaxConcurrentDownloads()) {
+            if (networkRestartInProgress
+                    || runningDownloads.get() >= getGlobalSettings().getMaxConcurrentDownloads()) {
                 return AdmissionResult.FULL;
             }
             runningDownloadIds.add(downloadId);
@@ -1127,6 +1131,7 @@ public class DownloadManagerImpl implements DownloadManager {
         }
         try {
             download.validateSourcesForTransfer();
+            new DownloadSettingsFactory(getGlobalSettings()).applyInheritedProxy(download.getSettings());
         } catch (IllegalArgumentException invalidSource) {
             rejectBeforeStart(download, invalidSource.getMessage());
             throw invalidSource;
@@ -1154,6 +1159,20 @@ public class DownloadManagerImpl implements DownloadManager {
         }
 
         DownloadHandler active = activeHandlers.get(download.getId());
+        String resumeRoute = effectiveProxyAddress(download);
+        boolean wrappedResume = org.manager.download.handler.DownloadHandlerFactory
+                .requiresProxychains(download, resumeRoute);
+        boolean tlsResume = resumeRoute != null && resumeRoute.startsWith("https://");
+        if (active != null && ((active.getSupportedType() == Download.Type.ARIA2
+                && (wrappedResume || tlsResume || aria2RouteChanged(download)))
+                || (active.getSupportedType() == Download.Type.PROXYCHAINS && !wrappedResume))) {
+            // Retire the paused task before choosing an engine for the current
+            // inherited route. Partial files keep their normal resume policy.
+            restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
+                    "selected proxy route").join();
+            startDownloadInternal(download);
+            return;
+        }
         if (active == null) {
             // Recovered process-backed handlers have no in-memory task. A
             // normal start rebuilds yt-dlp/HTTrack tasks and aria2 GID maps,
@@ -1217,12 +1236,14 @@ public class DownloadManagerImpl implements DownloadManager {
         return CompletableFuture.supplyAsync(() -> {
             DownloadHandler active = activeHandlers.get(download.getId());
             boolean socksRoute = org.manager.download.handler.DownloadHandlerFactory
-                    .isSocksProxyAddress(effectiveProxyAddress(download));
+                    .requiresProxychains(download, effectiveProxyAddress(download));
 
             if (active != null && active.getSupportedType() == Download.Type.ARIA2
-                    && socksRoute) {
+                    && (socksRoute || aria2RouteChanged(download)
+                            || java.util.Objects.toString(effectiveProxyAddress(download), "")
+                            .startsWith("https://"))) {
                 return restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
-                        "SOCKS proxychains route");
+                        "selected proxy route");
             }
             if (active != null && active.getSupportedType() == Download.Type.PROXYCHAINS
                     && !socksRoute) {
@@ -1255,12 +1276,8 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private String effectiveProxyAddress(Download download) {
-        if (download.getSettings() != null && download.getSettings().isUseProxy()
-                && download.getSettings().getProxyAddress() != null) {
-            return download.getSettings().getProxyAddress();
-        }
-        GlobalSettings global = getGlobalSettings();
-        return global.isGlobalProxyEnabled() ? global.getGlobalProxyAddress() : null;
+        return new org.manager.download.DownloadSettingsFactory(getGlobalSettings())
+                .effectiveProxy(download.getSettings());
     }
 
     @Override
@@ -1919,6 +1936,12 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private void applyGlobalSettingsToActiveDownloadsInternal() {
+        synchronized (networkSettingsLock) {
+            applyNetworkSettingsToActiveDownloads();
+        }
+    }
+
+    private void applyNetworkSettingsToActiveDownloads() {
         try {
             boolean proxyEnabled = getGlobalSettings().isGlobalProxyEnabled();
             String proxyAddress = getGlobalSettings().getGlobalProxyAddress();
@@ -1926,6 +1949,10 @@ public class DownloadManagerImpl implements DownloadManager {
                     && org.manager.download.handler.DownloadHandlerFactory
                             .isSocksProxyAddress(proxyAddress);
             DownloadHandler handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
+            if (handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2
+                    && aria2.needsPrivacyRestart()) {
+                restartAria2ForNetworkPrivacy(aria2);
+            }
             if (!socksProxyEnabled
                     && handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler) {
                 aria2Handler.applyGlobalRuntimeOptions();
@@ -1948,13 +1975,13 @@ public class DownloadManagerImpl implements DownloadManager {
                 boolean changed = false;
                 if (proxyEnabled && proxyAddress != null && !proxyAddress.isBlank()) {
                     if (!DownloadNetworkCapabilities.supportsProxy(download, proxyAddress)) {
-                        if (!settings.isUseProxy() || inherited) {
+                        if (inherited) {
                             download.setErrorMessage("Selected global proxy is unsupported for this download");
                             pauseDownload(download).join();
                         }
                         continue;
                     }
-                    if (!settings.isUseProxy() || inherited) {
+                    if (inherited) {
                         changed = !settings.isUseProxy()
                                 || !java.util.Objects.equals(settings.getProxyAddress(), proxyAddress);
                         settings.setUseProxy(true);
@@ -1962,22 +1989,24 @@ public class DownloadManagerImpl implements DownloadManager {
                         settings.setProxyInherited(true);
                     }
                 } else if (inherited) {
+                    changed = settings.isUseProxy() || settings.getProxyAddress() != null;
                     settings.setUseProxy(false);
                     settings.setProxyAddress(null);
-                    settings.setProxyInherited(false);
-                    changed = true;
+                    settings.setProxyInherited(true);
                 }
 
                 DownloadHandler active = entry.getValue();
-                if (changed && socksProxyEnabled && download.getType() == Download.Type.ARIA2) {
+                boolean wrappedRoute = org.manager.download.handler.DownloadHandlerFactory
+                        .requiresProxychains(download, settings.isUseProxy() ? settings.getProxyAddress() : null);
+                if (changed && download.getType() == Download.Type.ARIA2) {
                     restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
-                            "SOCKS proxychains route");
+                            "selected proxy route").join();
                     continue;
                 }
                 if (changed && inherited && download.getType() == Download.Type.PROXYCHAINS
-                        && !socksProxyEnabled) {
+                        && !wrappedRoute) {
                     restartActiveDownloadForProxyRoute(download, Download.Type.ARIA2,
-                            "native aria2 route");
+                            "native aria2 route").join();
                     continue;
                 }
                 if (changed) {
@@ -1996,10 +2025,56 @@ public class DownloadManagerImpl implements DownloadManager {
         }
     }
 
+    /** Retires a daemon's discovery sockets while keeping records and partial files resumable. */
+    private void restartAria2ForNetworkPrivacy(org.manager.download.handler.Aria2DownloadHandler handler)
+            throws IOException {
+        synchronized (admissionLock) { networkRestartInProgress = true; }
+        try {
+            List<Download> owned = activeHandlers.entrySet().stream()
+                    .filter(entry -> entry.getValue().getSupportedType() == Download.Type.ARIA2)
+                    .map(entry -> downloadRepository.getDownload(entry.getKey()))
+                    .filter(java.util.Objects::nonNull).toList();
+            Set<String> restart = owned.stream().filter(d -> isResumableActiveStatus(d.getStatus()))
+                    .map(Download::getId).collect(java.util.stream.Collectors.toSet());
+            for (Download download : owned) {
+                downloadRepository.updateDownloadStatus(download, Download.Status.PAUSED);
+                DownloadHandler previous = activeHandlers.remove(download.getId());
+                if (previous instanceof RetryEventInterceptor retry) { retry.interceptReplaced(download.getId()); }
+                gidToIdMap.entrySet().removeIf(entry -> download.getId().equals(entry.getValue()));
+                download.setGid(null);
+            }
+            try {
+                handler.restartForNetworkPrivacy();
+            } catch (IOException | RuntimeException failure) {
+                for (Download download : owned) {
+                    releaseRunningSlot(download.getId());
+                    download.setErrorMessage("Network policy change failed; download remains paused");
+                    notifyDownloadPause(download);
+                }
+                throw failure;
+            }
+            for (Download download : owned) {
+                if (restart.contains(download.getId())) {
+                    startDownloadInternal(download, true);
+                } else {
+                    releaseRunningSlot(download.getId());
+                }
+            }
+        } finally {
+            synchronized (admissionLock) { networkRestartInProgress = false; }
+            startNextQueuedDownload();
+        }
+    }
+
+    private boolean aria2RouteChanged(Download download) {
+        DownloadHandler handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
+        return handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2
+                && aria2.needsRouteHandoff(download);
+    }
+
     /**
-     * Stops a running process before changing the engine that owns its route.
-     * A failed pause is surfaced and never followed by a start on the new
-     * route; this keeps privacy changes fail-closed.
+     * Stops the previous task before changing its route. A failed stop is
+     * surfaced and never followed by a start on the new route.
      */
     private CompletableFuture<Void> restartActiveDownloadForProxyRoute(
             Download download, Download.Type targetType,
@@ -2701,6 +2776,7 @@ public class DownloadManagerImpl implements DownloadManager {
             }
 
             download.validateSourcesForTransfer();
+            new DownloadSettingsFactory(getGlobalSettings()).applyInheritedProxy(download.getSettings());
             download.setManualStartRequired(manualStartRequired);
             download.setQueuePosition(nextQueuePosition());
             if (downloadRepository.getDownload(download.getId()) == null) {

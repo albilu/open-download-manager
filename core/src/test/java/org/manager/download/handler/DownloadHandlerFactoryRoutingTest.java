@@ -145,8 +145,8 @@ class DownloadHandlerFactoryRoutingTest {
     @DisplayName("SOCKS HTTP downloads take the proxychains route and set proxy settings")
     void socksRoutingSetsProxySettings() {
         Download download = download("http://e.test/a.bin", Download.Type.ARIA2);
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
 
         DownloadHandler routed = factory.getHandler(download);
         assertSame(proxychains, routed);
@@ -181,14 +181,14 @@ class DownloadHandlerFactoryRoutingTest {
     @DisplayName("curl proxy fallback preparation validates the download and proxies")
     void curlProxyFallbackPreparation() throws Exception {
         Download torrent = Download.fromTorrent(Path.of("/tmp/example.torrent"), Path.of("/tmp"));
-        torrent.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        torrent.setProxyAddress("socks5h://127.0.0.1:9050");
         assertFalse(factory.canPrepareCurlProxyFallback(torrent),
                 "torrent work cannot fall back to curl");
         assertFalse(factory.canPrepareCurlProxyFallback(null));
 
         Download plain = download("http://e.test/a.bin", Download.Type.PROXYCHAINS);
-        plain.getSettings().setUseProxy(true);
-        plain.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        plain.setUseProxy(true);
+        plain.setProxyAddress("socks5h://127.0.0.1:9050");
         String originalProxy = plain.getSettings().getProxyAddress();
         assertTrue(factory.canPrepareCurlProxyFallback(plain),
                 "a socks-proxied plain URL is curl-transferable");

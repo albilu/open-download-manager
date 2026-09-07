@@ -56,11 +56,12 @@ public class BrowserMediaProbe implements AutoCloseable {
                         cookies = Files.readString(cookieFile);
                     }
                     var input = new MediaProbeWorker.Input(source.toString(),
-                            settings.isUseProxy() ? settings.getProxyAddress() : null,
+                            org.manager.tools.NetworkProcessPolicy.selectedProxy(settings),
                             settings.getUserAgent(), settings.getReferer(), settings.getCookieHeader(),
                             cookies, observationMillis);
                     var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                             "-Xmx256m", "-cp", System.getProperty("java.class.path"), MediaProbeWorker.class.getName());
+                    org.manager.tools.NetworkProcessPolicy.prepare(builder);
                     // A probe must not download browsers (or inherit an arbitrary auto-install route).
                     builder.environment().put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
                     builder.redirectError(ProcessBuilder.Redirect.DISCARD);

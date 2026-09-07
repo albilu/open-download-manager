@@ -114,6 +114,7 @@ class ManagerProxychainsCurlFallbackTest {
         factory.registerHandler(Download.Type.CURL, curl);
         ApplicationContext.getGlobalSettings().setMaxConcurrentDownloads(2);
         ApplicationContext.getGlobalSettings().setGlobalProxyEnabled(false);
+        manager.getGlobalSettings().setMaxConcurrentDownloads(2).setGlobalProxyEnabled(false);
         manager.addDownloadListener(new DownloadListener() {
             @Override public void onDownloadStart(Download download) { }
             @Override public void onDownloadProgress(Download download, float progress,
@@ -256,8 +257,8 @@ class ManagerProxychainsCurlFallbackTest {
     @Test
     void torrentProxychainsErrorNeverFallsBackToCurl() throws Exception {
         Download download = Download.fromTorrent(Path.of("/tmp/example.torrent"), Path.of("/tmp"));
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
 
         manager.queueDownload(download).join();
         assertTrue(awaitTrue(() -> proxychains.starts.get() == 1));
@@ -274,8 +275,8 @@ class ManagerProxychainsCurlFallbackTest {
     void torrentProxychainsStartFailureNeverFallsBackToCurl() throws Exception {
         proxychains.failStart = true;
         Download download = Download.fromTorrent(Path.of("/tmp/start-failure.torrent"), Path.of("/tmp"));
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
 
         manager.queueDownload(download).join();
 
@@ -296,16 +297,16 @@ class ManagerProxychainsCurlFallbackTest {
         assertTrue(awaitTrue(() -> aria2.starts.get() == 1));
         assertEquals(Download.Type.ARIA2, download.getType());
 
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
         manager.changeSettings(download).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         assertTrue(awaitTrue(() -> proxychains.starts.get() == 1));
         assertEquals(1, aria2.routeStops.get());
         assertEquals(Download.Type.PROXYCHAINS, download.getType());
 
-        download.getSettings().setUseProxy(false);
-        download.getSettings().setProxyAddress(null);
+        download.setUseProxy(false);
+        download.setProxyAddress(null);
         manager.changeSettings(download).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         assertTrue(awaitTrue(() -> aria2.starts.get() == 2));
@@ -313,11 +314,34 @@ class ManagerProxychainsCurlFallbackTest {
         assertEquals(Download.Type.ARIA2, download.getType());
     }
 
+    @Test
+    void resumeSelectsTheCurrentInheritedEngineBeforeUnpausingAnOldTask() throws Exception {
+        Download download = manager.createDownload(URI.create("https://example.test/paused-route.bin"), Path.of("/tmp"));
+        manager.queueDownload(download).join();
+        assertTrue(awaitTrue(() -> aria2.starts.get() == 1));
+        manager.pauseDownload(download).join();
+
+        manager.getGlobalSettings().setGlobalProxyEnabled(true)
+                .setGlobalProxyAddress("socks5h://127.0.0.1:1088");
+        manager.resumeDownload(download).join();
+        assertTrue(awaitTrue(() -> proxychains.starts.get() == 1));
+        assertEquals(1, aria2.routeStops.get());
+        assertEquals(0, aria2.resumes.get());
+        assertEquals("socks5h://127.0.0.1:1088", download.getProxyAddress());
+
+        manager.pauseDownload(download).join();
+        manager.getGlobalSettings().setGlobalProxyEnabled(false);
+        manager.resumeDownload(download).join();
+        assertTrue(awaitTrue(() -> aria2.starts.get() == 2));
+        assertEquals(1, proxychains.routeStops.get());
+        assertEquals(0, proxychains.resumes.get());
+    }
+
     private Download plainSocksDownload(String name) {
         Download download = new Download(URI.create("https://example.test/" + name + ".bin"));
         download.setName(name);
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
         return download;
     }
 

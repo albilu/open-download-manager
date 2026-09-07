@@ -139,7 +139,7 @@ public class Aria2Client {
      * Add a URI via JSON-RPC (returns GID).
      */
     public String addUriRpc(String url) throws IOException, Aria2RpcException {
-        return call("aria2.addUri", String.class, (Object) new String[] { url });
+        return addUriRpc(new String[] { url }, null);
     }
 
     /**
@@ -304,9 +304,10 @@ public class Aria2Client {
                 getVersion();
                 return true; // Already running and responsive
             } catch (Exception e) {
-                // Process exists but not responsive, clean it up
-                aria2Process = null;
-                daemonOwnership = DaemonOwnership.STOPPED;
+                // Losing RPC must never detach a still-networking owned child.
+                if (reapOwnedProcess()) {
+                    daemonOwnership = DaemonOwnership.STOPPED;
+                }
                 return false;
             }
         }
@@ -372,8 +373,9 @@ public class Aria2Client {
         }
 
         try {
-            ProcessBuilder pb = new ProcessBuilder(buildRpcLaunchCommand(extraArgs));
+            ProcessBuilder pb = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(buildRpcLaunchCommand(extraArgs)));
             pb.redirectErrorStream(true);
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             aria2Process = pb.start();
 
             // Wait for aria2c to become responsive (max 10 seconds). The
@@ -386,15 +388,13 @@ public class Aria2Client {
 
             // If we get here, startup failed within timeout
             if (aria2Process != null) {
-                aria2Process.destroy();
-                aria2Process = null;
+                reapOwnedProcess();
             }
             return false;
         } catch (IOException e) {
             // If we fail to start aria2c, clean up
             if (aria2Process != null) {
-                aria2Process.destroy();
-                aria2Process = null;
+                reapOwnedProcess();
             }
             return false;
         }
@@ -412,6 +412,8 @@ public class Aria2Client {
             "--rpc-listen",
             "--enable-rpc",
             "--disable-rpc",
+            "--daemon",
+            "-D",
             "--conf-path",
             "--no-conf");
 
@@ -439,7 +441,8 @@ public class Aria2Client {
         // Never expose the RPC endpoint beyond localhost: any LAN process
         // could otherwise add/remove downloads and read filesystem paths.
         cmd.add("--rpc-listen-all=false");
-        cmd.add("--daemon=true");
+        // Retain the actual daemon PID: closing RPC does not imply its
+        // discovery sockets and tracker shutdown traffic have stopped.
         if (sendToken && rpcSecret != null) {
             cmd.add("--rpc-secret=" + rpcSecret);
         }
@@ -459,6 +462,15 @@ public class Aria2Client {
         }
         List<String> filteredArgs = filterReservedLaunchArgs(extraArgs);
         cmd.addAll(filteredArgs);
+        String route = org.manager.tools.NetworkProcessPolicy.proxyAddress(httpProxy);
+        if (!route.isEmpty() && !route.startsWith("http://")) {
+            throw new IllegalArgumentException("Native aria2 requires an HTTP proxy; SOCKS uses proxychains and HTTPS uses Curl");
+        }
+        for (String key : List.of("all-proxy", "http-proxy", "https-proxy", "ftp-proxy")) {
+            cmd.add("--" + key + "=" + route);
+        }
+        cmd.add("--no-proxy=");
+        cmd.add("--daemon=false");
         this.lastExtraArgs = new ArrayList<>(filteredArgs); // Store for restart
         return cmd;
     }
@@ -554,7 +566,7 @@ public class Aria2Client {
      *
      * <ul>
      * <li>{@link DaemonOwnership#ODM_STARTED}: send the authenticated
-     * shutdown RPC (with a forceShutdown escalation) and reap the child
+     * shutdown RPC and reap the child, escalating to process termination
      * process.</li>
      * <li>{@link DaemonOwnership#EXTERNAL_AUTHENTICATED}: close ODM's own
      * transports only. An aria2.shutdown RPC is never sent to a daemon ODM
@@ -570,7 +582,7 @@ public class Aria2Client {
             return true;
         }
 
-        if (aria2Process != null /* && aria2Process.isAlive() as its starts as dameon, its exit immediately */) {
+        if (aria2Process != null) {
             // An open WebSocket auto-reconnects (and restarts the daemon!)
             // when the daemon closes the connection on shutdown. Disable
             // the transport and close the socket BEFORE shutting down, or
@@ -578,35 +590,19 @@ public class Aria2Client {
             useWebSocket = false;
             closeWebSocketSocket("stopping ODM-owned daemon");
 
-            // Graceful shutdown first; a failure here is not fatal — the
-            // force escalation below is the retry
-            try {
-                shutdown();
-            } catch (Exception e) {
-                LOGGER.warn("Graceful aria2 shutdown failed: " + e.getMessage());
-            }
-
-            boolean stopped = waitForAria2State(false, 10000, 200);
-            if (!stopped) {
+            if (aria2Process.isAlive()) {
                 try {
-                    forceShutdown();
-                    stopped = waitForAria2State(false, 10000, 200);
+                    shutdown();
                 } catch (Exception e) {
-                    LOGGER.warn("Force aria2 shutdown failed: " + e.getMessage());
+                    LOGGER.warn("Graceful aria2 shutdown failed: " + e.getMessage());
                 }
             }
 
-            if (!stopped && isAria2Running()) {
-                // The daemon survived every shutdown attempt and still
-                // answers RPC. Keep ownership (and the process attachment)
-                // so a later stopAria2c retries the shutdown instead of
-                // leaving a live ODM daemon unmanageable. The retained
-                // Process is only the launcher for a daemonized start, so
-                // destroying it would accomplish nothing anyway.
+            if (!reapOwnedProcess()) {
+                // Retain ownership so shutdown can be retried. Never launch
+                // another route while the old process can still send traffic.
                 return false;
             }
-
-            aria2Process = null;
             daemonOwnership = DaemonOwnership.STOPPED;
         }
 
@@ -622,6 +618,39 @@ public class Aria2Client {
         }
     }
 
+    private boolean reapOwnedProcess() {
+        Process child = aria2Process;
+        if (child == null) {
+            return true;
+        }
+        List<ProcessHandle> descendants = child.descendants().toList();
+        try {
+            if (!child.waitFor(1500, TimeUnit.MILLISECONDS)) {
+                descendants.forEach(ProcessHandle::destroyForcibly);
+                child.destroyForcibly();
+            }
+            // Also reap descendants of an explicitly configured tool wrapper.
+            descendants.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
+            if (!child.waitFor(2000, TimeUnit.MILLISECONDS)) {
+                return false;
+            }
+            for (ProcessHandle descendant : descendants) {
+                if (descendant.isAlive()) {
+                    descendant.onExit().get(2, TimeUnit.SECONDS);
+                }
+            }
+            aria2Process = null;
+            return true;
+        } catch (InterruptedException e) {
+            descendants.forEach(ProcessHandle::destroyForcibly);
+            child.destroyForcibly();
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+            return false;
+        }
+    }
+
     /**
      * Restarts the aria2c process with the same configuration as before. If
      * WebSocket was connected, it will be reconnected after restart.
@@ -629,12 +658,45 @@ public class Aria2Client {
      * @return true if restart was successful, false otherwise
      * @throws IOException if there's an error starting the new process
      */
+    /** Discovery sockets are daemon-owned; changing GID options cannot shut them down. */
+    public boolean restartWithPeerDiscoveryOptions(List<String> discoveryOptions) throws IOException {
+        if (daemonOwnership != DaemonOwnership.ODM_STARTED) {
+            throw new IOException("Cannot restart a daemon owned by another application");
+        }
+        List<String> arguments = new ArrayList<>();
+        if (lastExtraArgs != null) {
+            for (String argument : lastExtraArgs) {
+                String key = argument.split("=", 2)[0];
+                if (!List.of("--enable-dht", "--enable-dht6", "--enable-peer-exchange",
+                        "--bt-enable-lpd", "--listen-port", "--dht-listen-port").contains(key)) {
+                    arguments.add(argument);
+                }
+            }
+        }
+        arguments.addAll(discoveryOptions);
+        lastExtraArgs = arguments;
+        return restartAria2c(true);
+    }
+
     public boolean restartAria2c() throws IOException {
+        return restartAria2c(false);
+    }
+
+    private boolean restartAria2c(boolean retireRouteImmediately) throws IOException {
         if (isShuttingDown) {
             return false; // Don't restart aria2 during shutdown
         }
 
         boolean wasUsingWebSocket = useWebSocket && wsClient != null;
+
+        if (retireRouteImmediately && aria2Process != null) {
+            // A privacy transition must not send a final tracker announce
+            // through the old route while performing graceful shutdown.
+            useWebSocket = false;
+            closeWebSocketSocket("retiring previous network route");
+            aria2Process.descendants().forEach(ProcessHandle::destroyForcibly);
+            aria2Process.destroyForcibly();
+        }
 
         // Stop the current aria2c process
         boolean stopSuccess = stopAria2c();
@@ -709,6 +771,7 @@ public class Aria2Client {
      */
     public String addTorrent(byte[] torrent, List<String> uris, String dir, Map<String, Object> options)
             throws IOException, Aria2RpcException {
+        options = routedRpcOptions(options, true);
         String torrentBase64 = java.util.Base64.getEncoder().encodeToString(torrent);
         Map<String, Object> opts = new LinkedHashMap<>();
         if (options != null) {
@@ -731,6 +794,7 @@ public class Aria2Client {
      */
     public List<String> addMetalinkAll(byte[] metalink, Map<String, Object> options)
             throws IOException, Aria2RpcException {
+        options = routedRpcOptions(options, true);
         String metalinkBase64 = java.util.Base64.getEncoder().encodeToString(metalink);
         List<Object> params = new ArrayList<>();
         params.add(metalinkBase64);
@@ -1651,9 +1715,41 @@ public class Aria2Client {
      * @return the GID of the download
      */
     public String addUriRpc(String[] uris, Map<String, Object> options) throws IOException, Aria2RpcException {
+        options = routedRpcOptions(options, java.util.Arrays.stream(uris)
+                .anyMatch(uri -> uri.regionMatches(true, 0, "magnet:", 0, 7)));
         return (options != null && !options.isEmpty())
                 ? call("aria2.addUri", String.class, uris, options)
                 : call("aria2.addUri", String.class, (Object) uris);
+    }
+
+    private Map<String, Object> routedRpcOptions(Map<String, Object> input, boolean peers) throws IOException {
+        Map<String, Object> options = new LinkedHashMap<>();
+        if (input != null) { options.putAll(input); }
+        String route;
+        try {
+            route = org.manager.tools.NetworkProcessPolicy.proxyAddress(
+                    options.containsKey("all-proxy") ? String.valueOf(options.get("all-proxy")) : httpProxy);
+        } catch (IllegalArgumentException invalid) { throw new IOException(invalid.getMessage()); }
+        if (!route.isEmpty() && (!route.startsWith("http://") || peers)) {
+            throw new IOException("This transfer requires proxychains or Curl to preserve the selected proxy route");
+        }
+        for (String key : List.of("http-proxy", "https-proxy", "ftp-proxy")) {
+            Object value = options.get(key);
+            if (value != null && !value.toString().isEmpty() && !value.toString().equals(route)) {
+                throw new IOException("Conflicting native proxy options");
+            }
+        }
+        if (!route.isEmpty() || options.containsKey("all-proxy")) {
+            for (String key : List.of("all-proxy", "http-proxy", "https-proxy", "ftp-proxy")) {
+                options.put(key, route);
+            }
+            options.put("no-proxy", "");
+        }
+        if (!route.isEmpty()) {
+            options.put("follow-torrent", "false");
+            options.put("follow-metalink", "false");
+        }
+        return options;
     }
 
     /**

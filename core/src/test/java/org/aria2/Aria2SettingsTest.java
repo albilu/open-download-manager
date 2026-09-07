@@ -449,7 +449,7 @@ class Aria2SettingsTest {
 
         Map<String, Object> options = settings.toRpcOptions();
 
-        assertFalse(options.containsKey("all-proxy"));
+        assertEquals("", options.get("all-proxy"), "direct must clear an inherited daemon proxy");
     }
 
     @Test

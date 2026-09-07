@@ -2348,7 +2348,7 @@ public class MainWindow {
     }
 
     /**
-     * Runs the Tor leak checker (IP + DNS + exit-node verification) in the
+     * Verifies the circuit through the Tor Project endpoint in the
      * background once Tor reports ready and surfaces the verdict in the info
      * bar. This is the user-facing wiring of TorLeakChecker: without it the
      * SOCKS port being open says nothing about actual circuit health.
@@ -2373,14 +2373,13 @@ public class MainWindow {
                     }
                     String message;
                     if (error != null) {
-                        message = "Tor leak check failed: " + error.getMessage();
+                        message = "Tor circuit check failed: " + error.getMessage();
                     } else if (result == null) {
-                        message = "Tor leak check returned no result";
+                        message = "Tor circuit check returned no result";
                     } else {
-                        message = (result.isSecure ? "Tor secure — " : "TOR LEAK CHECK FAILED — ")
-                                + result.message;
+                        message = result.message;
                     }
-                    LOGGER.info("Tor leak check: " + message);
+                    LOGGER.info("Tor circuit check: " + message);
                     UiThread.marshal(() -> AccessibilitySupport.status(infoLabel, message));
                 });
     }
@@ -2391,7 +2390,7 @@ public class MainWindow {
             try {
                 checker.shutdown();
             } catch (Exception e) {
-                LOGGER.debug("Failed to stop Tor leak checker", e);
+                LOGGER.debug("Failed to stop Tor circuit checker", e);
             }
         }
     }

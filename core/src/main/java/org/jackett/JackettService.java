@@ -32,6 +32,7 @@ public final class JackettService implements AutoCloseable {
     private volatile Status status;
     private volatile Process process;
     private volatile JackettClient client;
+    private volatile String runningRoute;
     private volatile boolean closed;
     private volatile Thread worker;
     private FileChannel lockChannel;
@@ -75,6 +76,10 @@ public final class JackettService implements AutoCloseable {
     }
 
     public JackettClient client() throws IOException {
+        if (status().state() == State.RUNNING && !java.util.Objects.equals(runningRoute, selectedRoute())) {
+            stop();
+            start();
+        }
         JackettClient current = client;
         if (current == null || status().state() != State.RUNNING) {
             throw new IOException("Start Jackett in Settings → Search Engine");
@@ -87,7 +92,8 @@ public final class JackettService implements AutoCloseable {
         long ticket = generation.get();
         synchronized (lifecycle) {
             checkCurrent(ticket);
-            if (status().state() == State.RUNNING) { return; }
+            String selectedRoute = selectedRoute();
+            if (status().state() == State.RUNNING && java.util.Objects.equals(runningRoute, selectedRoute)) { return; }
             if (!isInstalled()) { throw new IOException("Install Jackett in Settings first"); }
             worker = Thread.currentThread();
             try {
@@ -107,6 +113,7 @@ public final class JackettService implements AutoCloseable {
                     Files.writeString(configurationFile(), "{\"AllowExternal\":false,\"UpdateDisabled\":true}",
                             StandardOpenOption.CREATE_NEW);
                 }
+                configureRoute(selectedRoute);
                 Files.setPosixFilePermissions(configurationFile(), PosixFilePermissions.fromString("rw-------"));
                 checkCurrent(ticket);
                 status = new Status(State.STARTING, "Starting Jackett…");
@@ -115,9 +122,16 @@ public final class JackettService implements AutoCloseable {
                         "--Port", Integer.toString(port), "--NoUpdates", "--NoRestart")
                         .directory(executable().getParent().toFile()).redirectErrorStream(true)
                         .redirectOutput(logFile.toFile());
+                org.manager.tools.NetworkProcessPolicy.prepare(builder);
                 process = builder.start();
                 processes.register("server", process);
-                JackettClient candidate = new JackettClient(port, configurationFile());
+                runningRoute = selectedRoute;
+                JackettClient candidate = new JackettClient(port, configurationFile(), () -> {
+                    if (closed || generation.get() != ticket
+                            || !java.util.Objects.equals(selectedRoute, selectedRoute())) {
+                        throw new IOException("Search Engine route changed; retry with the current connection");
+                    }
+                });
                 long deadline = System.nanoTime() + startupTimeout.toNanos();
                 while (System.nanoTime() < deadline) {
                     checkCurrent(ticket);
@@ -159,7 +173,7 @@ public final class JackettService implements AutoCloseable {
                 stopOwned();
                 acquireLock();
                 status = new Status(State.INSTALLING, "Installing Jackett…");
-                JackettInstaller installer = new JackettInstaller();
+                JackettInstaller installer = new JackettInstaller(selectedRoute());
                 String version;
                 if (archive == null) { version = installer.installLatest(installation); }
                 else { installer.installArchive(archive, installation, "local archive"); version = "local archive"; }
@@ -169,6 +183,73 @@ public final class JackettService implements AutoCloseable {
                 throw failure;
             } finally { worker = null; releaseLock(); }
         }
+    }
+
+    private String selectedRoute() {
+        GlobalSettings current = settings.get();
+        String route = org.manager.tools.NetworkProcessPolicy.proxyAddress(
+                current.isGlobalProxyEnabled() ? current.getGlobalProxyAddress() : null);
+        if (current.isGlobalProxyEnabled() && route.isEmpty()) {
+            throw new IllegalArgumentException("The global proxy is enabled without an address");
+        }
+        return route;
+    }
+
+    /** Called after saving preferences. Invalidate the old server before queuing its replacement. */
+    public void networkSettingsChanged() {
+        if (closed || status().state() != State.RUNNING
+                || java.util.Objects.equals(runningRoute, selectedRoute())) { return; }
+        generation.incrementAndGet();
+        client = null;
+        Process old = process;
+        if (old != null) { old.destroyForcibly(); }
+        status = new Status(State.STARTING, "Applying Search Engine connection…");
+        Thread.ofVirtual().name("Jackett-route-change").start(() -> {
+            try { start(); }
+            catch (IOException | RuntimeException failure) {
+                // start() owns cleanup and records its failure; a closed service stays stopped.
+            }
+        });
+    }
+
+    /** Jackett's built-in proxy controls cover indexers and its HTTP clients. */
+    private void configureRoute(String address) throws IOException {
+        var parsed = JackettClient.JSON.readTree(configurationFile().toFile());
+        if (!(parsed instanceof com.fasterxml.jackson.databind.node.ObjectNode config)) {
+            throw new IOException("Invalid Search Engine configuration");
+        }
+        config.put("AllowExternal", false);
+        config.put("UpdateDisabled", true);
+        config.put("ProxyType", -1);
+        config.put("ProxyUrl", "");
+        config.put("ProxyPort", 0);
+        config.put("ProxyUsername", "");
+        config.put("ProxyPassword", "");
+        if (!address.isEmpty()) {
+            java.net.URI uri = java.net.URI.create(address);
+            int type = switch (uri.getScheme()) {
+                case "http" -> 0;
+                case "socks5h" -> 2;
+                // Jackett's SOCKS4 implementation does local destination DNS; do not downgrade 4a.
+                default -> throw new IOException("Search Engine supports HTTP and SOCKS5/Tor proxies");
+            };
+            config.put("ProxyType", type);
+            config.put("ProxyUrl", uri.getHost());
+            config.put("ProxyPort", uri.getPort());
+            if (uri.getRawUserInfo() != null) {
+                String[] credentials = uri.getRawUserInfo().split(":", 2);
+                if (credentials.length != 2) { throw new IOException("Proxy authentication requires a username and password"); }
+                config.put("ProxyUsername", decodeCredential(credentials[0]));
+                config.put("ProxyPassword", decodeCredential(credentials[1]));
+            }
+            // A separately managed browser solver cannot be assumed to honor ODM's route.
+            config.put("FlareSolverrUrl", "");
+        }
+        JackettClient.JSON.writeValue(configurationFile().toFile(), config);
+    }
+
+    private static String decodeCredential(String value) {
+        return java.net.URLDecoder.decode(value.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public void stop() {

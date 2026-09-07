@@ -31,9 +31,9 @@ class ManagerInheritedProxyTest {
         @Override public CompletableFuture<String> startDownload(Download download) {
             try {
                 String first = client.addUriRpc(new String[] { download.getUri().toString() },
-                        Map.of("pause", "true", "all-proxy", download.getProxyAddress()));
+                        Map.of("pause", "true", "all-proxy", java.util.Objects.toString(download.getProxyAddress(), "")));
                 String second = client.addUriRpc(new String[] { download.getUri().toString() + "?mirror" },
-                        Map.of("pause", "true", "all-proxy", download.getProxyAddress()));
+                        Map.of("pause", "true", "all-proxy", java.util.Objects.toString(download.getProxyAddress(), "")));
                 registerTrackedDownload(download, List.of(first, second));
                 return CompletableFuture.completedFuture(first);
             } catch (Exception e) {
@@ -68,15 +68,21 @@ class ManagerInheritedProxyTest {
                 await().atMost(Duration.ofSeconds(10)).until(() -> inherited.getGid() != null && explicit.getGid() != null);
                 global.setGlobalProxyAddress("http://127.0.0.1:18082");
                 manager.applyGlobalSettingsToActiveDownloads();
-                await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+                await().ignoreExceptions().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+                    assertEquals(2, handler.trackedGidsFor(inherited.getId()).size());
+                    assertEquals(2, handler.trackedGidsFor(explicit.getId()).size());
                     for (String gid : handler.trackedGidsFor(inherited.getId())) {
                         assertEquals("http://127.0.0.1:18082/", client.getOption(gid).get("all-proxy"));
                     }
                     assertEquals("http://127.0.0.1:18082", inherited.getProxyAddress());
                 });
+                Object previousSession = client.getSessionInfo().get("sessionId");
                 global.setGlobalProxyEnabled(false);
                 manager.applyGlobalSettingsToActiveDownloads();
-                await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+                await().ignoreExceptions().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+                    assertEquals(2, handler.trackedGidsFor(inherited.getId()).size());
+                    assertEquals(2, handler.trackedGidsFor(explicit.getId()).size());
+                    assertNotEquals(previousSession, client.getSessionInfo().get("sessionId"));
                     for (String gid : handler.trackedGidsFor(inherited.getId())) {
                         assertEquals("", client.getOption(gid).get("all-proxy"));
                     }

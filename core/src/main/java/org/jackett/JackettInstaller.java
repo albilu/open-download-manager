@@ -3,7 +3,6 @@ package org.jackett;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,12 +25,19 @@ public final class JackettInstaller {
     private static final long MAX_ARCHIVE_BYTES = 256L * 1024 * 1024;
     private static final long MAX_EXTRACTED_BYTES = 1024L * 1024 * 1024;
 
+    private final String proxyAddress;
+
+    public JackettInstaller() { this(null); }
+    public JackettInstaller(String proxyAddress) {
+        this.proxyAddress = org.manager.tools.NetworkProcessPolicy.proxyAddress(proxyAddress);
+    }
+
     public record Release(String version, URI url, String sha256) { }
 
     public Release latestRelease() throws IOException {
         byte[] bytes = BoundedHttpFetcher.fetch(URI.create(
                 "https://api.github.com/repos/Jackett/Jackett/releases/latest"),
-                2 * 1024 * 1024, Duration.ofSeconds(10), Duration.ofSeconds(30), null);
+                2 * 1024 * 1024, Duration.ofSeconds(10), Duration.ofSeconds(30), proxyAddress);
         JsonNode release = JackettClient.JSON.readTree(bytes);
         String name = assetName(System.getProperty("os.name"), System.getProperty("os.arch"),
                 Files.isRegularFile(Path.of("/etc/alpine-release")));
@@ -75,18 +81,8 @@ public final class JackettInstaller {
     }
 
     private void download(URI url, Path file) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) url.toURL().openConnection();
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(30000);
-        connection.setRequestProperty("User-Agent", "Open Download Manager");
-        try {
-            if (connection.getResponseCode() != 200 || connection.getContentLengthLong() > MAX_ARCHIVE_BYTES) {
-                throw new IOException("Could not download the Jackett release");
-            }
-            try (InputStream in = connection.getInputStream(); var out = Files.newOutputStream(file)) {
-                copy(in, out, MAX_ARCHIVE_BYTES);
-            }
-        } finally { connection.disconnect(); }
+        BoundedHttpFetcher.fetchTo(url, file, MAX_ARCHIVE_BYTES,
+                Duration.ofSeconds(10), Duration.ofMinutes(10), proxyAddress);
     }
 
     static void verifyDigest(Path archive, String expected) throws IOException {

@@ -109,7 +109,7 @@ class YtDlpClientTest {
                 command.get(command.indexOf("--paths") + 1));
         assertEquals("subtitle:clip.%(ext)s",
                 command.get(command.indexOf("--output") + 1));
-        assertEquals("socks5://127.0.0.1:1080",
+        assertEquals("socks5h://127.0.0.1:1080",
                 command.get(command.indexOf("--proxy") + 1));
         assertEquals("https://example.com/page",
                 command.get(command.indexOf("--referer") + 1));

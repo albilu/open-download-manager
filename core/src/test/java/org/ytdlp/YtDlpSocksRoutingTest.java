@@ -22,7 +22,8 @@ class YtDlpSocksRoutingTest {
             var command = client.buildDownloadCommand("http://media.invalid/clip.mp4", settings, directory);
             assertEquals("native", command.get(command.indexOf("--external-downloader") + 1));
             assertTrue(command.contains("http,ftp,m3u8,dash:native"));
-            assertEquals(settings.getProxyAddress(), command.get(command.indexOf("--proxy") + 1));
+            assertEquals(org.manager.tools.NetworkProcessPolicy.proxyAddress(settings.getProxyAddress()),
+                    command.get(command.indexOf("--proxy") + 1));
             assertFalse(command.contains("--external-downloader-args"));
             assertTrue(settings.isUseAria2c(), "the saved preference remains unchanged");
         } finally {

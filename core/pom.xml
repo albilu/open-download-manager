@@ -184,7 +184,6 @@
                         <exclude>**/*E2ETest$*</exclude>
                         <exclude>**/ProxychainsClientTest.java</exclude>
                         <exclude>**/TorToolManagerTest.java</exclude>
-                        <exclude>**/TorLeakCheckerTest.java</exclude>
                         <exclude>**/CurlUtilsTest.java</exclude>
                         <exclude>**/ValidateTests.java</exclude>
                     </excludes>

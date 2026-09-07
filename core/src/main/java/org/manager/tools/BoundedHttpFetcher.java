@@ -3,116 +3,142 @@ package org.manager.tools;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.InetSocketAddress;
-import java.net.Proxy;
+import java.io.OutputStream;
 import java.net.URI;
-import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-/** Small, bounded HTTP(S) fetches that honor the configured proxy. */
+/** Bounded HTTP(S) transport with remote SOCKS DNS and TLS-to-proxy support. */
 public final class BoundedHttpFetcher {
-
-    /** Bounded response body plus metadata needed by redirect-aware callers. */
     public record FetchResult(byte[] body, URI finalUri, String contentType) {
-        public FetchResult {
-            body = body.clone();
-        }
-
-        @Override
-        public byte[] body() {
-            return body.clone();
-        }
+        public FetchResult { body = body.clone(); }
+        @Override public byte[] body() { return body.clone(); }
     }
 
-    private BoundedHttpFetcher() {
-    }
+    private record Metadata(URI finalUri, String contentType) { }
+    private BoundedHttpFetcher() { }
 
     public static byte[] fetch(URI uri, long maximumBytes, Duration connectTimeout,
             Duration readTimeout, String proxyAddress) throws IOException {
-        return fetchResult(uri, maximumBytes, connectTimeout, readTimeout,
-                proxyAddress).body();
+        return fetchResult(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress).body();
     }
 
-    public static FetchResult fetchResult(URI uri, long maximumBytes,
-            Duration connectTimeout, Duration readTimeout, String proxyAddress)
-            throws IOException {
-        if (uri == null || maximumBytes < 1) {
-            throw new IllegalArgumentException("URI and a positive byte limit are required");
+    public static FetchResult fetchResult(URI uri, long maximumBytes, Duration connectTimeout,
+            Duration readTimeout, String proxyAddress) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Metadata metadata = transfer(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress, output);
+        return new FetchResult(output.toByteArray(), metadata.finalUri(), metadata.contentType());
+    }
+
+    /** Streams archives to disk without retaining a second in-memory copy. */
+    public static void fetchTo(URI uri, Path destination, long maximumBytes,
+            Duration connectTimeout, Duration readTimeout, String proxyAddress) throws IOException {
+        try (OutputStream output = Files.newOutputStream(destination)) {
+            transfer(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress, output);
+        } catch (IOException | RuntimeException failure) {
+            Files.deleteIfExists(destination);
+            throw failure;
         }
-        String scheme = uri.getScheme() == null ? ""
-                : uri.getScheme().toLowerCase(Locale.ROOT);
+    }
+
+    private static Metadata transfer(URI uri, long maximumBytes, Duration connectTimeout,
+            Duration readTimeout, String proxyAddress, OutputStream output) throws IOException {
+        if (uri == null || maximumBytes < 1 || connectTimeout == null || readTimeout == null
+                || connectTimeout.isNegative() || connectTimeout.isZero()
+                || readTimeout.isNegative() || readTimeout.isZero()) {
+            throw new IllegalArgumentException("URI, positive timeouts and a positive byte limit are required");
+        }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!scheme.equals("http") && !scheme.equals("https")) {
             throw new IOException("Only HTTP(S) resources are supported");
         }
-
-        Proxy proxy = proxy(proxyAddress);
-        URLConnection connection = proxy == Proxy.NO_PROXY
-                ? uri.toURL().openConnection() : uri.toURL().openConnection(proxy);
-        connection.setConnectTimeout(Math.toIntExact(connectTimeout.toMillis()));
-        connection.setReadTimeout(Math.toIntExact(readTimeout.toMillis()));
-        connection.setUseCaches(false);
-
-        HttpURLConnection http = (HttpURLConnection) connection;
-        http.setInstanceFollowRedirects(true);
-        http.setRequestMethod("GET");
-        http.setRequestProperty("User-Agent", "Open Download Manager");
+        String proxy;
         try {
-            int status = http.getResponseCode();
-            if (status < 200 || status >= 300) {
-                throw new IOException("HTTP request failed with status " + status);
-            }
-            long declared = http.getContentLengthLong();
-            if (declared > maximumBytes) {
-                throw new IOException("Remote resource exceeds the configured byte limit");
-            }
-            try (InputStream input = http.getInputStream();
-                    ByteArrayOutputStream output = new ByteArrayOutputStream(
-                            declared > 0 ? (int) Math.min(declared, maximumBytes) : 8192)) {
-                byte[] buffer = new byte[8192];
-                int count;
-                while ((count = input.read(buffer)) >= 0) {
-                    if ((long) output.size() + count > maximumBytes) {
-                        throw new IOException("Remote resource exceeds the configured byte limit");
+            proxy = NetworkProcessPolicy.proxyAddress(proxyAddress);
+        } catch (IllegalArgumentException invalid) {
+            throw new IOException(invalid.getMessage());
+        }
+        String marker = "ODM_HTTP_" + UUID.randomUUID();
+        // A total deadline bounds stalled redirects and body reads as well.
+        long deadlineMs = Math.addExact(connectTimeout.toMillis(), readTimeout.toMillis());
+        List<String> command = List.of(ToolPaths.curl(), "-q", "--silent", "--fail",
+                "--location", "--max-redirs", "10", "--proto", "=http,https",
+                "--proto-redir", scheme.equals("https") ? "=https" : "=http,https",
+                "--proxy", proxy, "--noproxy", "",
+                "--connect-timeout", seconds(connectTimeout.toMillis()),
+                "--max-time", seconds(deadlineMs), "--max-filesize", Long.toString(maximumBytes),
+                "--user-agent", "Open Download Manager",
+                "--write-out", "%{stderr}\n" + marker + "\n%{http_code}\n%{url_effective}\n%{content_type}\n",
+                "--url", uri.toASCIIString());
+        Process process = NetworkProcessPolicy.prepare(new ProcessBuilder(command)).start();
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var body = workers.submit(() -> {
+                try (InputStream input = process.getInputStream()) {
+                    byte[] buffer = new byte[8192];
+                    long received = 0;
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        received += count;
+                        if (received > maximumBytes) {
+                            process.destroyForcibly();
+                            throw new IOException("Remote resource exceeds the configured byte limit");
+                        }
+                        output.write(buffer, 0, count);
                     }
-                    output.write(buffer, 0, count);
                 }
-                URI finalUri;
-                try {
-                    finalUri = http.getURL().toURI();
-                } catch (java.net.URISyntaxException invalidRedirect) {
-                    throw new IOException("HTTP redirect produced an invalid URI", invalidRedirect);
+                return null;
+            });
+            var details = workers.submit(() -> {
+                try (InputStream input = process.getErrorStream()) {
+                    byte[] bytes = input.readNBytes(65537);
+                    if (bytes.length > 65536) {
+                        process.destroyForcibly();
+                        throw new IOException("HTTP response metadata exceeds the byte limit");
+                    }
+                    return new String(bytes, StandardCharsets.UTF_8);
                 }
-                return new FetchResult(output.toByteArray(), finalUri,
-                        http.getContentType());
+            });
+            try {
+                if (!process.waitFor(deadlineMs + 1000, TimeUnit.MILLISECONDS)) {
+                    throw new IOException("HTTP request timed out");
+                }
+                body.get();
+                String[] fields = details.get().split("\\n" + marker + "\\n", 2);
+                String[] metadata = fields.length == 2 ? fields[1].split("\\n", -1) : new String[0];
+                if (process.exitValue() == 63) {
+                    throw new IOException("Remote resource exceeds the configured byte limit");
+                }
+                if (metadata.length < 3) { throw new IOException("HTTP request failed"); }
+                int status = Integer.parseInt(metadata[0]);
+                if (status != 0 && (status < 200 || status >= 300)) {
+                    throw new IOException("HTTP request failed with status " + status);
+                }
+                if (process.exitValue() != 0 || status == 0) {
+                    throw new IOException("HTTP request failed through the selected route (curl "
+                            + process.exitValue() + ")");
+                }
+                return new Metadata(URI.create(metadata[1]), metadata[2].isEmpty() ? null : metadata[2]);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IOException("HTTP request interrupted", interrupted);
+            } catch (ExecutionException failure) {
+                if (failure.getCause() instanceof IOException io) { throw io; }
+                throw new IOException("HTTP request failed", failure.getCause());
+            } finally {
+                process.destroyForcibly();
             }
-        } finally {
-            http.disconnect();
         }
     }
 
-    private static Proxy proxy(String address) throws IOException {
-        if (address == null || address.isBlank()) {
-            return Proxy.NO_PROXY;
-        }
-        try {
-            URI uri = URI.create(address);
-            if (uri.getHost() == null || uri.getPort() < 1 || uri.getPort() > 65535) {
-                throw new IOException("Invalid proxy address");
-            }
-            String scheme = uri.getScheme() == null ? ""
-                    : uri.getScheme().toLowerCase(Locale.ROOT);
-            Proxy.Type type = switch (scheme) {
-                case "socks4", "socks5", "socks5h" -> Proxy.Type.SOCKS;
-                case "http", "https" -> Proxy.Type.HTTP;
-                default -> throw new IOException("Unsupported proxy scheme");
-            };
-            // Unresolved is essential for SOCKS5: the proxy, not the local
-            // resolver, receives the destination hostname.
-            return new Proxy(type, InetSocketAddress.createUnresolved(uri.getHost(), uri.getPort()));
-        } catch (IllegalArgumentException e) {
-            throw new IOException("Invalid proxy address", e);
-        }
+    private static String seconds(long milliseconds) {
+        return String.format(Locale.ROOT, "%.3f", milliseconds / 1000.0);
     }
 }

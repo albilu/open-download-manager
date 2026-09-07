@@ -294,6 +294,8 @@ public class NewMediaDialog {
             previewDownload.setType(Download.Type.YOUTUBE);
             previewDownload.setSettings(previewSettings);
             networkOptions.applyTo(previewDownload);
+            new org.manager.download.DownloadSettingsFactory(downloadManager.getGlobalSettings())
+                    .applyInheritedProxy(previewSettings);
         } catch (Exception failure) {
             AccessibilitySupport.status(statusLabel, "Could not fetch info: " + rootMessage(failure));
             refreshButtons();

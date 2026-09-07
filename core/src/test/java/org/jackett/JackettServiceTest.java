@@ -79,6 +79,50 @@ class JackettServiceTest {
         } finally { service.close(); }
     }
 
+    @Test void routingIsAppliedBeforeLaunchAndChangingItRetiresTheOldServer() throws Exception {
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty(JackettSettings.PORT, Integer.toString(freePort()));
+        settings.setGlobalProxyEnabled(true).setGlobalProxyAddress("http://user:p%2Bass@127.0.0.1:18081");
+        try (var service = service(settings, true)) {
+            service.start();
+            var initial = JackettClient.JSON.readTree(service.configurationFile().toFile());
+            assertEquals(0, initial.path("ProxyType").asInt());
+            assertEquals("127.0.0.1", initial.path("ProxyUrl").asText());
+            assertEquals(18081, initial.path("ProxyPort").asInt());
+            assertEquals("p+ass", initial.path("ProxyPassword").asText());
+            var oldClient = service.client();
+            long oldPid = Long.parseLong(Files.readString(directory.resolve("config/pid")));
+            settings.setGlobalProxyAddress("socks5h://127.0.0.1:19050");
+            assertThrows(IOException.class, oldClient::version, "A cached client must not use the stale server route");
+            service.networkSettingsChanged();
+            org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(8)).untilAsserted(() -> {
+                assertEquals(JackettService.State.RUNNING, service.status().state(), service.status().message());
+                assertFalse(ProcessHandle.of(oldPid).map(ProcessHandle::isAlive).orElse(false));
+            });
+            var changed = JackettClient.JSON.readTree(service.configurationFile().toFile());
+            assertEquals(2, changed.path("ProxyType").asInt());
+            assertEquals(19050, changed.path("ProxyPort").asInt());
+            assertEquals("", changed.path("ProxyPassword").asText());
+            assertEquals("generated", changed.path("APIKey").asText());
+            assertTrue(service.client().isReady(), "loopback control traffic remains local");
+            settings.setGlobalProxyEnabled(false);
+            service.client(); // The core access path also reconciles route changes.
+            assertEquals(-1, JackettClient.JSON.readTree(service.configurationFile().toFile()).path("ProxyType").asInt());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"https", "socks4a"})
+    void unsupportedProxyIsRejectedBeforeTheServerStarts(String scheme) throws Exception {
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty(JackettSettings.PORT, Integer.toString(freePort()));
+        settings.setGlobalProxyEnabled(true).setGlobalProxyAddress(scheme + "://127.0.0.1:18081");
+        try (var service = service(settings, true)) {
+            assertThrows(IOException.class, service::start);
+            assertFalse(Files.exists(directory.resolve("config/pid")));
+        }
+    }
+
     /** Separate real OS process used to exercise ownership and cancellation without network indexers. */
     public static class Daemon {
         public static void main(String[] args) throws Exception {
@@ -87,7 +131,10 @@ class JackettServiceTest {
                 if (args[i].equals("--Port")) { port = Integer.parseInt(args[i + 1]); }
                 if (args[i].equals("--DataFolder")) { config = Path.of(args[i + 1]); }
             }
-            Files.writeString(config.resolve("ServerConfig.json"), "{\"APIKey\":\"generated\"}");
+            var serverConfig = (com.fasterxml.jackson.databind.node.ObjectNode) JackettClient.JSON
+                    .readTree(config.resolve("ServerConfig.json").toFile());
+            serverConfig.put("APIKey", "generated");
+            JackettClient.JSON.writeValue(config.resolve("ServerConfig.json").toFile(), serverConfig);
             Files.writeString(config.resolve("pid"), Long.toString(ProcessHandle.current().pid()));
             var server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
             boolean ready = Boolean.parseBoolean(args[0]);

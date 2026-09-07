@@ -295,50 +295,28 @@ class Aria2DaemonOwnershipTest {
     }
 
     @Test
-    @DisplayName("A failed owned-daemon shutdown keeps ownership while the daemon still answers RPC")
-    @Timeout(90)
-    void failedOwnedShutdownRetainsOwnershipUntilDaemonConfirmedDead() throws Exception {
+    @DisplayName("Owned daemon is reaped even when its shutdown RPC fails")
+    @Timeout(15)
+    void failedOwnedShutdownRpcStillReapsOwnedProcess() throws Exception {
         int port = BASE_PORT + 10;
         String secret = "owned-shutdown-secret";
-        java.util.concurrent.atomic.AtomicInteger forceAttempts = new java.util.concurrent.atomic.AtomicInteger();
         odmClient = new Aria2Client(ApplicationContext.getToolPath("aria2"), rpcUrl(port), secret) {
             @Override
             public String shutdown() throws IOException, Aria2RpcException {
                 throw new IOException("simulated graceful shutdown failure");
             }
-
-            @Override
-            public String forceShutdown() throws IOException, Aria2RpcException {
-                if (forceAttempts.incrementAndGet() == 1) {
-                    throw new IOException("simulated force shutdown failure");
-                }
-                return super.forceShutdown();
-            }
         };
-
-        assertTrue(odmClient.startAria2cWithRpc(List.of("--dir=" + downloadDir)),
-                "self-launch must succeed");
+        assertTrue(odmClient.startAria2cWithRpc(List.of("--dir=" + downloadDir)));
         assertEquals(Aria2Client.DaemonOwnership.ODM_STARTED, odmClient.getDaemonOwnership());
-
-        // First stop attempt: every shutdown RPC fails, the daemon survives
-        assertFalse(odmClient.stopAria2c(),
-                "a surviving daemon must be reported as not stopped");
-        assertEquals(Aria2Client.DaemonOwnership.ODM_STARTED, odmClient.getDaemonOwnership(),
-                "ownership must be retained while the daemon still answers RPC — "
-                        + "resetting it makes the surviving daemon unmanageable");
-
-        Aria2Client survivorProbe = new Aria2Client(
-                ApplicationContext.getToolPath("aria2"), rpcUrl(port), secret);
-        assertDoesNotThrow(survivorProbe::getVersion,
-                "the daemon survived the failed shutdown and must still answer RPC");
-
-        // A later stop must be able to retry the shutdown instead of
-        // treating the daemon as foreign or already gone
-        assertTrue(odmClient.stopAria2c(),
-                "a retry with a working escalation path must reap the daemon");
+        java.lang.reflect.Field processField = Aria2Client.class.getDeclaredField("aria2Process");
+        processField.setAccessible(true);
+        Process owned = (Process) processField.get(odmClient);
+        assertTrue(owned.isAlive(), "ODM must retain the actual daemon, not a detached launcher");
+        assertTrue(odmClient.stopAria2c());
+        assertFalse(owned.isAlive(), "RPC disappearance is insufficient: the process must exit");
         assertEquals(Aria2Client.DaemonOwnership.STOPPED, odmClient.getDaemonOwnership());
-        assertThrows(Exception.class, survivorProbe::getVersion,
-                "nothing may answer on the endpoint after the successful retry");
+        Aria2Client probe = new Aria2Client(ApplicationContext.getToolPath("aria2"), rpcUrl(port), secret);
+        assertThrows(Exception.class, probe::getVersion);
     }
 
     @Test
@@ -352,6 +330,7 @@ class Aria2DaemonOwnershipTest {
                 "--rpc-listen-port=9999",
                 "--rpc-listen-all=true",
                 "--enable-rpc=false",
+                "--daemon=true",
                 "--dir=/tmp/odm-downloads"));
 
         assertTrue(cmd.contains("--rpc-secret=odm-secret"),
@@ -366,6 +345,8 @@ class Aria2DaemonOwnershipTest {
                 "extra args must not loosen the localhost-only binding");
         assertFalse(cmd.contains("--enable-rpc=false"),
                 "extra args must not disable the RPC server ODM requires");
+        assertFalse(cmd.contains("--daemon=true"));
+        assertTrue(cmd.contains("--daemon=false"));
         assertTrue(cmd.contains("--enable-rpc"),
                 "ODM's own enable-rpc control remains present");
         assertTrue(cmd.contains("--dir=/tmp/odm-downloads"),

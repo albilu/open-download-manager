@@ -1,616 +1,111 @@
 package org.tor;
 
-import java.io.BufferedReader;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
-import java.net.Proxy;
 import java.net.Socket;
-import java.net.SocketAddress;
-import java.net.URL;
-import java.net.URLConnection;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.net.URI;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import org.manager.tools.BoundedHttpFetcher;
 
-/**
- * Utility class to check for DNS leakage and verify proper Tor connection.
- * Performs various tests to ensure traffic is properly routed through Tor.
- */
-public class TorLeakChecker {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(TorLeakChecker.class);
-
-    // Test endpoints
-    private static final String TOR_CHECK_URL = "https://check.torproject.org/api/ip";
-    private static final String IP_CHECK_URL = "https://api.ipify.org";
-    private static final String DNS_LEAK_TEST_URL = "https://www.dnsleaktest.com/api/ip";
-    private static final Pattern TOR_CHECK_IP_PATTERN = Pattern.compile("\"IP\":\"([^\"]+)\"");
-    private static final Pattern TOR_CHECK_COUNTRY_PATTERN = Pattern.compile("\"Country\":\"([^\"]+)\"");
-    private static final List<String> DNS_TEST_DOMAINS = Arrays.asList(
-            "google.com",
-            "cloudflare.com",
-            "quad9.net",
-            "opendns.com");
-
-    // Tor configuration
+/** Verifies the selected Tor circuit without making any direct Internet request. */
+public final class TorLeakChecker {
+    private static final URI TOR_CHECK_URL = URI.create("https://check.torproject.org/api/ip");
     private final String socksProxyHost;
     private final int socksProxyPort;
-    private final int connectionTimeoutMs;
-    private final int readTimeoutMs;
+    private final Duration connectTimeout;
+    private final Duration readTimeout;
+    private final URI checkUrl;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "TorCircuitCheck");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicBoolean running = new AtomicBoolean();
 
-    // Test results
-    private final AtomicBoolean isRunning = new AtomicBoolean(false);
-    private volatile ExecutorService executorService;
+    public TorLeakChecker() { this("127.0.0.1", 9050, 5000, 5000); }
 
-    /**
-     * Creates a new TorLeakChecker with default Tor proxy settings.
-     */
-    public TorLeakChecker() {
-        this("127.0.0.1", 9050, 30000, 30000);
+    public TorLeakChecker(String host, int port, int connectMs, int readMs) {
+        this(host, port, connectMs, readMs, TOR_CHECK_URL);
     }
 
-    /**
-     * Creates a new TorLeakChecker with custom proxy settings.
-     *
-     * @param socksProxyHost      SOCKS proxy host
-     * @param socksProxyPort      SOCKS proxy port
-     * @param connectionTimeoutMs Connection timeout in milliseconds
-     * @param readTimeoutMs       Read timeout in milliseconds
-     */
-    public TorLeakChecker(String socksProxyHost, int socksProxyPort,
-            int connectionTimeoutMs, int readTimeoutMs) {
-        this.socksProxyHost = socksProxyHost;
-        this.socksProxyPort = socksProxyPort;
-        this.connectionTimeoutMs = connectionTimeoutMs;
-        this.readTimeoutMs = readTimeoutMs;
-        this.executorService = Executors.newCachedThreadPool(r -> {
-            Thread t = new Thread(r, "TorLeakChecker-Worker");
-            t.setDaemon(true);
-            return t;
-        });
-    }
-
-    /**
-     * Performs a comprehensive leak check.
-     *
-     * @return CompletableFuture with LeakCheckResult
-     */
-    public CompletableFuture<LeakCheckResult> performLeakCheck() {
-        if (isRunning.getAndSet(true)) {
-            return CompletableFuture.completedFuture(
-                    new LeakCheckResult(false, "Leak check already running", null, null, null));
+    TorLeakChecker(String host, int port, int connectMs, int readMs, URI checkUrl) {
+        if (host == null || host.isBlank() || port < 1 || port > 65535 || connectMs < 1 || readMs < 1) {
+            throw new IllegalArgumentException("A Tor endpoint and positive timeouts are required");
         }
+        this.socksProxyHost = host;
+        this.socksProxyPort = port;
+        this.connectTimeout = Duration.ofMillis(connectMs);
+        this.readTimeout = Duration.ofMillis(readMs);
+        this.checkUrl = checkUrl;
+    }
 
+    public synchronized CompletableFuture<LeakCheckResult> performLeakCheck() {
+        if (executor.isShutdown()) {
+            return CompletableFuture.completedFuture(new LeakCheckResult(false, "Tor check stopped", null));
+        }
+        if (!running.compareAndSet(false, true)) {
+            return CompletableFuture.completedFuture(new LeakCheckResult(false, "Tor check already running", null));
+        }
         return CompletableFuture.supplyAsync(() -> {
             try {
-                LOGGER.info("Starting comprehensive Tor leak check...");
-
-                // Check if Tor proxy is accessible
-                if (!isTorProxyAccessible()) {
-                    return new LeakCheckResult(false, "Tor proxy not accessible", null, null, null);
-                }
-
-                // Perform IP leak check
-                IpLeakResult ipResult = checkIpLeak();
-
-                // Perform DNS leak check
-                DnsLeakResult dnsResult = checkDnsLeak();
-
-                // Check if using Tor network
-                TorNetworkResult torResult = checkTorNetwork();
-
-                // Determine overall result
-                boolean isSecure = ipResult.isSecure && dnsResult.isSecure && torResult.isUsingTor;
-                String message = buildResultMessage(ipResult, dnsResult, torResult);
-
-                return new LeakCheckResult(isSecure, message, ipResult, dnsResult, torResult);
-
-            } catch (Exception e) {
-                LOGGER.error("Error during leak check", e);
-                return new LeakCheckResult(false, "Leak check failed: " + e.getMessage(), null, null, null);
+                String host = socksProxyHost.contains(":") && !socksProxyHost.startsWith("[")
+                        ? "[" + socksProxyHost + "]" : socksProxyHost;
+                byte[] response = BoundedHttpFetcher.fetch(checkUrl, 16384, connectTimeout,
+                        readTimeout, "socks5h://" + host + ":" + socksProxyPort);
+                return parseResponse(response);
+            } catch (IOException | RuntimeException failure) {
+                return new LeakCheckResult(false, "Unable to verify the Tor circuit", null);
             } finally {
-                isRunning.set(false);
+                running.set(false);
             }
-        }, getOrCreateExecutorService());
+        }, executor);
     }
 
-    /**
-     * Performs a quick IP leak check only.
-     *
-     * @return CompletableFuture with the external IP address
-     */
-    public CompletableFuture<String> getExternalIp() {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                return fetchUrlContent(IP_CHECK_URL, true).trim();
-            } catch (Exception e) {
-                LOGGER.warn("Failed to get external IP", e);
-                return null;
-            }
-        }, getOrCreateExecutorService());
-    }
-
-    /**
-     * Ensures we have a valid executor service, creating a new one if the
-     * current one is shut down.
-     */
-    private synchronized ExecutorService getOrCreateExecutorService() {
-        if (executorService == null || executorService.isShutdown()) {
-            this.executorService = Executors.newCachedThreadPool(r -> {
-                Thread t = new Thread(r, "TorLeakChecker-Worker");
-                t.setDaemon(true);
-                return t;
-            });
+    static LeakCheckResult parseResponse(byte[] response) throws IOException {
+        JsonNode json = new ObjectMapper().readTree(response);
+        if (json == null || !json.path("IsTor").isBoolean() || !json.path("IP").isTextual()
+                || json.path("IP").asText().isBlank()) {
+            throw new IOException("Invalid Tor check response");
         }
-        return executorService;
+        boolean usingTor = json.path("IsTor").booleanValue();
+        return new LeakCheckResult(usingTor,
+                usingTor ? "Tor circuit verified" : "The selected connection is not using Tor",
+                json.path("IP").textValue());
     }
 
-    /**
-     * Checks if the Tor proxy is accessible.
-     *
-     * @return true if proxy is accessible
-     */
+    /** The address comes from the same proxied Tor Project check. */
+    public CompletableFuture<String> getExternalIp() {
+        return performLeakCheck().thenApply(result -> result.exitNodeIp);
+    }
+
     public boolean isTorProxyAccessible() {
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(socksProxyHost, socksProxyPort), 5000);
+            socket.connect(new InetSocketAddress(socksProxyHost, socksProxyPort),
+                    Math.toIntExact(connectTimeout.toMillis()));
             return true;
-        } catch (Exception e) {
-            LOGGER.debug("Tor proxy not accessible: " + e.getMessage());
+        } catch (IOException failure) {
             return false;
         }
     }
 
-    /**
-     * Shuts down the leak checker and releases resources.
-     */
-    public void shutdown() {
-        synchronized (this) {
-            if (executorService != null && !executorService.isShutdown()) {
-                executorService.shutdown();
-                try {
-                    if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
-                        executorService.shutdownNow();
-                    }
-                } catch (InterruptedException e) {
-                    executorService.shutdownNow();
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-    }
+    public synchronized void shutdown() { executor.shutdownNow(); }
 
-    // Private helper methods
-    private IpLeakResult checkIpLeak() {
-        try {
-            LOGGER.debug("Checking IP leak...");
-
-            // Get IP without proxy
-            String directIp = null;
-            try {
-                directIp = fetchUrlContent(IP_CHECK_URL, false);
-            } catch (Exception e) {
-                LOGGER.debug("Could not get direct IP: " + e.getMessage());
-            }
-
-            // Get IP through Tor
-            String torIp = fetchUrlContent(IP_CHECK_URL, true);
-
-            // Fail closed: a verdict requires both IPs to be known and
-            // different. Treating an unknown direct IP as "secure" would
-            // give false confidence in exactly the situations (blocked
-            // direct egress, captive portal) where leaks hide.
-            boolean isSecure = torIp != null && directIp != null && !torIp.equals(directIp);
-            String message;
-            if (torIp == null) {
-                message = "Tor IP could not be determined";
-            } else if (directIp == null) {
-                message = "Direct IP unknown — cannot verify, treated as unsafe";
-            } else if (isSecure) {
-                message = "IP properly masked through Tor";
-            } else {
-                message = "IP leak detected";
-            }
-
-            return new IpLeakResult(isSecure, message, directIp, torIp);
-
-        } catch (Exception e) {
-            LOGGER.warn("IP leak check failed", e);
-            return new IpLeakResult(false, "IP check failed: " + e.getMessage(), null, null);
-        }
-    }
-
-    DnsLeakResult checkDnsLeak() {
-        try {
-            LOGGER.debug("Checking DNS leak...");
-
-            List<String> localNameservers = readResolvConfNameservers();
-            boolean anyResolvedLocally = false;
-            boolean anyRoutedUnresolved = false;
-
-            for (String domain : DNS_TEST_DOMAINS) {
-                DnsProbeEvidence evidence = probeDnsRouting(domain);
-                anyResolvedLocally |= evidence.resolvedLocally();
-                anyRoutedUnresolved |= evidence.routedUnresolved();
-            }
-
-            return evaluateDnsVerdict(localNameservers, anyResolvedLocally, anyRoutedUnresolved);
-
-        } catch (Exception e) {
-            LOGGER.warn("DNS leak check failed", e);
-            return new DnsLeakResult(DnsVerdict.UNVERIFIED, "DNS check failed: " + e.getMessage(),
-                    Collections.emptyList(), Collections.emptyList());
-        }
-    }
-
-    /**
-     * Truthful verdict from probe evidence only: a leak requires a readable
-     * local resolver to coincide with a locally resolved probe domain;
-     * routing requires the SOCKS probe to have carried the hostname
-     * unresolved; anything else is unproven and must stay unverified.
-     */
-    static DnsLeakResult evaluateDnsVerdict(List<String> localNameservers,
-            boolean localResolutionObserved, boolean routedThroughSocksUnresolved) {
-        if (localResolutionObserved && !localNameservers.isEmpty()) {
-            return new DnsLeakResult(DnsVerdict.DNS_LEAK,
-                    "DNS leak detected: local resolver " + localNameservers
-                            + " resolved the probe domain outside Tor",
-                    localNameservers, Collections.emptyList());
-        }
-        if (routedThroughSocksUnresolved && !localResolutionObserved) {
-            return new DnsLeakResult(DnsVerdict.ROUTED_THROUGH_TOR,
-                    "DNS routed through Tor: probe carried the hostname unresolved through the SOCKS proxy",
-                    localNameservers, Collections.emptyList());
-        }
-        return new DnsLeakResult(DnsVerdict.UNVERIFIED,
-                "DNS routing unverified: cannot prove Tor-side resolution or a local leak",
-                localNameservers, Collections.emptyList());
-    }
-
-    private record DnsProbeEvidence(boolean resolvedLocally, boolean routedUnresolved) {
-    }
-
-    List<String> readResolvConfNameservers() {
-        try {
-            return java.nio.file.Files.readAllLines(java.nio.file.Path.of("/etc/resolv.conf")).stream()
-                    .map(String::trim)
-                    .filter(line -> line.startsWith("nameserver"))
-                    .map(line -> line.split("\\s+"))
-                    .filter(parts -> parts.length > 1)
-                    .map(parts -> parts[1])
-                    .toList();
-        } catch (Exception e) {
-            LOGGER.debug("Could not read /etc/resolv.conf: " + e.getMessage());
-            return Collections.emptyList();
-        }
-    }
-
-    SocketAddress probeDestination(String domain, int port) {
-        return InetSocketAddress.createUnresolved(domain, port);
-    }
-
-    private TorNetworkResult checkTorNetwork() {
-        try {
-            LOGGER.debug("Checking Tor network connectivity...");
-
-            // Check with Tor Project's check service
-            String response = fetchUrlContent(TOR_CHECK_URL, true);
-
-            boolean isUsingTor = false;
-            String exitNode = null;
-            String country = null;
-
-            if (response != null) {
-                // Parse JSON response (simple parsing)
-                isUsingTor = response.contains("\"IsTor\":true") || response.contains("\"IsTor\": true");
-
-                // Extract exit node info if available
-                Matcher ipMatcher = TOR_CHECK_IP_PATTERN.matcher(response);
-                if (ipMatcher.find()) {
-                    exitNode = ipMatcher.group(1);
-                }
-
-                Matcher countryMatcher = TOR_CHECK_COUNTRY_PATTERN.matcher(response);
-                if (countryMatcher.find()) {
-                    country = countryMatcher.group(1);
-                }
-            }
-
-            String message = isUsingTor ? "Successfully connected through Tor network"
-                    : "Not connected through Tor network";
-
-            return new TorNetworkResult(isUsingTor, message, exitNode, country);
-
-        } catch (Exception e) {
-            LOGGER.warn("Tor network check failed", e);
-            return new TorNetworkResult(false, "Tor network check failed: " + e.getMessage(), null, null);
-        }
-    }
-
-    private String fetchUrlContent(String urlString, boolean useTorProxy) throws IOException {
-        URL url = new URL(urlString);
-        URLConnection connection;
-
-        if (useTorProxy) {
-            Proxy proxy = new Proxy(Proxy.Type.SOCKS,
-                    new InetSocketAddress(socksProxyHost, socksProxyPort));
-            connection = url.openConnection(proxy);
-        } else {
-            connection = url.openConnection();
-        }
-
-        connection.setConnectTimeout(connectionTimeoutMs);
-        connection.setReadTimeout(readTimeoutMs);
-        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (compatible; TorLeakChecker)");
-
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(connection.getInputStream()))) {
-            StringBuilder content = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                content.append(line).append("\n");
-            }
-            return content.toString().trim();
-        }
-    }
-
-    private DnsProbeEvidence probeDnsRouting(String domain) {
-        SocketAddress destination = probeDestination(domain, 80);
-        boolean resolvedLocally = destination instanceof InetSocketAddress inetDestination
-                && !inetDestination.isUnresolved();
-        Socket socket = null;
-        try {
-            // The socket must be created WITH the SOCKS proxy: a plain socket
-            // here would resolve and connect DIRECTLY — the exact leak this
-            // checker exists to detect.
-            Proxy proxy = new Proxy(Proxy.Type.SOCKS,
-                    new InetSocketAddress(socksProxyHost, socksProxyPort));
-            socket = new Socket(proxy);
-            connectProbe(socket, destination, 5000);
-            // The connect completed with the hostname still unresolved, so
-            // the SOCKS5 request carried the name (ATYP=DOMAIN) and the
-            // proxy resolved it remotely.
-            return new DnsProbeEvidence(resolvedLocally, !resolvedLocally);
-        } catch (Exception e) {
-            LOGGER.debug("DNS probe failed for " + domain + ": " + e.getMessage());
-            return new DnsProbeEvidence(resolvedLocally, false);
-        } finally {
-            if (socket != null) {
-                try {
-                    socket.close();
-                } catch (Exception closeError) {
-                    LOGGER.debug("Error closing SOCKS probe socket: " + closeError.getMessage());
-                }
-            }
-        }
-    }
-
-    /**
-     * Connects the SOCKS probe socket to {@code destination}. Package-private
-     * seam: tests override it to inspect the destination handed to
-     * {@link Socket#connect(SocketAddress, int)} without network I/O.
-     */
-    void connectProbe(Socket socket, SocketAddress destination, int timeout) throws IOException {
-        socket.connect(destination, timeout);
-    }
-
-    /** Test seam for the SOCKS-routing contract. */
-    void resolveDnsThroughTorForTest(String domain) {
-        probeDnsRouting(domain);
-    }
-
-    private String buildResultMessage(IpLeakResult ipResult, DnsLeakResult dnsResult, TorNetworkResult torResult) {
-        StringBuilder message = new StringBuilder();
-
-        if (ipResult != null) {
-            message.append("IP: ").append(ipResult.message).append(". ");
-        }
-
-        if (dnsResult != null) {
-            message.append("DNS: ").append(dnsResult.message).append(". ");
-        }
-
-        if (torResult != null) {
-            message.append("Tor: ").append(torResult.message);
-        }
-
-        return message.toString();
-    }
-
-    // Result classes
-    /**
-     * Complete leak check result.
-     */
-    public static class LeakCheckResult {
-
+    /** This is a circuit verdict, not a claim about every application's traffic. */
+    public static final class LeakCheckResult {
         public final boolean isSecure;
         public final String message;
-        public final IpLeakResult ipResult;
-        public final DnsLeakResult dnsResult;
-        public final TorNetworkResult torResult;
+        public final String exitNodeIp;
 
-        public LeakCheckResult(boolean isSecure, String message, IpLeakResult ipResult,
-                DnsLeakResult dnsResult, TorNetworkResult torResult) {
+        public LeakCheckResult(boolean isSecure, String message, String exitNodeIp) {
             this.isSecure = isSecure;
             this.message = message;
-            this.ipResult = ipResult;
-            this.dnsResult = dnsResult;
-            this.torResult = torResult;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("LeakCheckResult{secure=%s, message='%s'}", isSecure, message);
-        }
-    }
-
-    /**
-     * IP leak check result.
-     */
-    public static class IpLeakResult {
-
-        private boolean isSecure;
-        private String message;
-        private String directIp;
-        private String torIp;
-
-        public IpLeakResult() {
-        }
-
-        public IpLeakResult(boolean isSecure, String message, String directIp, String torIp) {
-            this.isSecure = isSecure;
-            this.message = message;
-            this.directIp = directIp;
-            this.torIp = torIp;
-        }
-
-        public boolean isSecure() {
-            return isSecure;
-        }
-
-        public void setSecure(boolean secure) {
-            isSecure = secure;
-        }
-
-        public String getMessage() {
-            return message;
-        }
-
-        public void setMessage(String message) {
-            this.message = message;
-        }
-
-        public String getDirectIp() {
-            return directIp;
-        }
-
-        public void setDirectIp(String directIp) {
-            this.directIp = directIp;
-        }
-
-        public String getTorIp() {
-            return torIp;
-        }
-
-        public void setTorIp(String torIp) {
-            this.torIp = torIp;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("IpLeakResult{isSecure=%s, message='%s', directIp='%s', torIp='%s'}",
-                    isSecure, message, directIp, torIp);
-        }
-    }
-
-    /**
-     * DNS leak check verdict. ROUTED_THROUGH_TOR is the only secure
-     * outcome; DNS_LEAK is proven resolver leakage; UNVERIFIED means the
-     * evidence proved neither and safety must not be claimed.
-     */
-    public enum DnsVerdict {
-        DNS_LEAK, ROUTED_THROUGH_TOR, UNVERIFIED
-    }
-
-    /**
-     * DNS leak check result.
-     */
-    public static class DnsLeakResult {
-
-        public final boolean isSecure;
-        public final String message;
-        public final List<String> directDnsServers;
-        public final List<String> torDnsServers;
-        public final DnsVerdict verdict;
-
-        public DnsLeakResult(boolean isSecure, String message,
-                List<String> directDnsServers, List<String> torDnsServers) {
-            this(isSecure ? DnsVerdict.ROUTED_THROUGH_TOR : DnsVerdict.DNS_LEAK, message,
-                    directDnsServers, torDnsServers);
-        }
-
-        public DnsLeakResult(DnsVerdict verdict, String message,
-                List<String> directDnsServers, List<String> torDnsServers) {
-            this.verdict = verdict;
-            this.isSecure = verdict == DnsVerdict.ROUTED_THROUGH_TOR;
-            this.message = message;
-            this.directDnsServers = new ArrayList<>(directDnsServers);
-            this.torDnsServers = new ArrayList<>(torDnsServers);
-        }
-
-        @Override
-        public String toString() {
-            return String.format("DnsLeakResult{verdict=%s, directServers=%d, torServers=%d}",
-                    verdict, directDnsServers.size(), torDnsServers.size());
-        }
-    }
-
-    /**
-     * Tor network connectivity result.
-     */
-    public static class TorNetworkResult {
-
-        private boolean isUsingTor;
-        private String message;
-        private String exitNodeIp;
-        private String exitNodeCountry;
-
-        public TorNetworkResult() {
-        }
-
-        public TorNetworkResult(boolean isUsingTor, String message, String exitNodeIp, String exitNodeCountry) {
-            this.isUsingTor = isUsingTor;
-            this.message = message;
             this.exitNodeIp = exitNodeIp;
-            this.exitNodeCountry = exitNodeCountry;
-        }
-
-        public boolean isUsingTor() {
-            return isUsingTor;
-        }
-
-        public void setUsingTor(boolean usingTor) {
-            isUsingTor = usingTor;
-        }
-
-        public String getMessage() {
-            return message;
-        }
-
-        public void setMessage(String message) {
-            this.message = message;
-        }
-
-        public String getExitNodeIp() {
-            return exitNodeIp;
-        }
-
-        public void setExitNodeIp(String exitNodeIp) {
-            this.exitNodeIp = exitNodeIp;
-        }
-
-        public String getExitNodeCountry() {
-            return exitNodeCountry;
-        }
-
-        public void setExitNodeCountry(String exitNodeCountry) {
-            this.exitNodeCountry = exitNodeCountry;
-        }
-
-        @Override
-        public String toString() {
-            return String.format("TorNetworkResult{isUsingTor=%s, message='%s', exitNodeIp='%s', exitNodeCountry='%s'}",
-                    isUsingTor, message, exitNodeIp, exitNodeCountry);
         }
     }
 }

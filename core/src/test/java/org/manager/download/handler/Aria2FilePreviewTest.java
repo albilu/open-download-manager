@@ -75,16 +75,16 @@ class Aria2FilePreviewTest {
     }
 
     @Test
-    void socksMagnetPreviewFailsBeforeAnyDirectAriaTaskCanStart() {
+    void proxiedMagnetPreviewFailsBeforeAnyDirectAriaTaskCanStart() {
         URI magnet = URI.create("magnet:?xt=urn:btih:"
                 + "0123456789abcdef0123456789abcdef01234567");
 
-        CompletionException failure = assertThrows(CompletionException.class,
-                () -> handler.previewDownloadFiles(magnet,
-                        "socks5h://127.0.0.1:9050").join());
-
-        assertEquals(0, client.addUriCalls.get());
-        assertTrue(failure.getCause().getMessage().contains("SOCKS/Tor"));
+        for (String proxy : List.of("socks5h://127.0.0.1:9050", "http://127.0.0.1:8080")) {
+            CompletionException failure = assertThrows(CompletionException.class,
+                    () -> handler.previewDownloadFiles(magnet, proxy).join());
+            assertEquals(0, client.addUriCalls.get());
+            assertTrue(failure.getCause().getMessage().contains("selected proxy route"));
+        }
     }
 
     @Test
@@ -94,13 +94,12 @@ class Aria2FilePreviewTest {
                 + "0123456789abcdef0123456789abcdef01234567");
 
         assertEquals(List.of(new DownloadFileInfo(1, "file.txt", 5)),
-                handler.previewDownloadFiles(magnet,
-                        "http://127.0.0.1:8080").join());
+                handler.previewDownloadFiles(magnet, null).join());
 
         assertEquals(1, client.addUriCalls.get());
         assertEquals("true", client.options.get("bt-metadata-only"));
         assertEquals("true", client.options.get("bt-save-metadata"));
-        assertEquals("http://127.0.0.1:8080", client.options.get("all-proxy"));
+        assertTrue(!client.options.containsKey("all-proxy"));
         assertEquals(1, client.forceRemoveCalls.get());
         assertEquals(1, client.removeResultCalls.get());
         assertTrue(client.previewDirectory != null

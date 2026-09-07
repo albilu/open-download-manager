@@ -248,7 +248,7 @@ public class ProxychainsClient {
                     List<String> command = buildProxychainsCommand(download, outputFile, configPath, options);
 
                     // Start the process
-                    ProcessBuilder processBuilder = new ProcessBuilder(command);
+                    ProcessBuilder processBuilder = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command));
                     // Don't redirect error stream - read both separately
 
                     // Do not log the command: it can contain signed URLs and
@@ -592,6 +592,13 @@ public class ProxychainsClient {
         command.add("--enable-dht6=false");
         command.add("--enable-peer-exchange=false");
         command.add("--bt-enable-lpd=false");
+        // proxychains replaces outgoing sockets; bind only incoming sockets to loopback.
+        command.add("--interface=127.0.0.1");
+        command.add("--disable-ipv6=true");
+        command.add("--no-proxy=");
+        for (String key : List.of("all-proxy", "http-proxy", "https-proxy", "ftp-proxy")) {
+            command.add("--" + key + "=");
+        }
 
         // Add mirrors if any
         if (!download.getSourceOverrides().containsKey("")

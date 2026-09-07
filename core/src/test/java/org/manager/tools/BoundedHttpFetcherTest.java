@@ -17,6 +17,21 @@ import org.junit.jupiter.api.Test;
 @DisplayName("BoundedHttpFetcher enforces byte limits and argument validation")
 class BoundedHttpFetcherTest {
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"socks5", "socks5h"})
+    void resolvableHostnameAndAuthenticationReachTheProxy(String scheme) throws Exception {
+        try (var proxy = new utils.SocksHttpServer(true, "proxied")) {
+            byte[] body = BoundedHttpFetcher.fetch(URI.create("http://localhost/resource?token=a%2Bb"),
+                    1024, Duration.ofSeconds(2), Duration.ofSeconds(2),
+                    scheme + "://user:p%2Bass@127.0.0.1:" + proxy.port());
+            assertEquals("proxied", new String(body, StandardCharsets.UTF_8));
+            assertEquals(java.util.List.of("localhost"), proxy.hosts,
+                    "A hostname that resolves locally must still be sent as a SOCKS domain");
+            assertEquals(java.util.List.of("user:p+ass"), proxy.credentials);
+            assertTrue(proxy.failures.isEmpty(), proxy.failures.toString());
+        }
+    }
+
     @Test
     @DisplayName("fetches a body that fits within the limit")
     void fetchWithinLimit() throws Exception {

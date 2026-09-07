@@ -19,9 +19,13 @@ public final class SocksHttpServer implements AutoCloseable {
     public final List<String> credentials = new CopyOnWriteArrayList<>();
     public final List<Throwable> failures = new CopyOnWriteArrayList<>();
     private final boolean authenticate;
-    private final String body;
+    private final byte[] body;
 
     public SocksHttpServer(boolean authenticate, String body) throws Exception {
+        this(authenticate, body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public SocksHttpServer(boolean authenticate, byte[] body) throws Exception {
         this.authenticate = authenticate;
         this.body = body;
         server = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
@@ -73,7 +77,7 @@ public final class SocksHttpServer implements AutoCloseable {
             BufferedReader request = new BufferedReader(new InputStreamReader(in, StandardCharsets.US_ASCII));
             String line;
             while ((line = request.readLine()) != null && !line.isEmpty()) { }
-            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            byte[] payload = body;
             out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: "
                     + payload.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
             out.write(payload);

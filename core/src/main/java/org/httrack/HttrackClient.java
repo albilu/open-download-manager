@@ -136,7 +136,7 @@ public class HttrackClient {
                 prepared = prepareCommand(settings);
 
                 // Start process
-                ProcessBuilder processBuilder = new ProcessBuilder(prepared.arguments());
+                ProcessBuilder processBuilder = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(prepared.arguments()));
                 processBuilder.redirectErrorStream(true);
                 if (settings.getOutputDirectory() != null) {
                     processBuilder.directory(settings.getOutputDirectory().toFile());
@@ -242,7 +242,7 @@ public class HttrackClient {
 
                     // Restart the process
                     prepared = prepareCommand(settings);
-                    ProcessBuilder processBuilder = new ProcessBuilder(prepared.arguments());
+                    ProcessBuilder processBuilder = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(prepared.arguments()));
                     processBuilder.redirectErrorStream(true);
                     if (settings.getOutputDirectory() != null) {
                         processBuilder.directory(settings.getOutputDirectory().toFile());
@@ -417,6 +417,11 @@ public class HttrackClient {
         // Client-owned output settings used by the progress parser.
         command.add("-q"); // Quiet mode
         command.add("-%v"); // Verbose status
+        if (settings.isUseProxy()) {
+            // Route controls remain last, after all generic native options.
+            command.add("-P");
+            command.add(settings.proxyWithCredentials());
+        }
         return command;
     }
 
@@ -424,7 +429,10 @@ public class HttrackClient {
         if (!settings.isUseProxy()) {
             return new PreparedCommand(buildCommand(settings), null);
         }
-        String proxy = settings.proxyWithCredentials();
+        String proxy = org.manager.tools.NetworkProcessPolicy.proxyAddress(settings.proxyWithCredentials());
+        if (proxy.startsWith("https://")) {
+            throw new IOException("HTTrack does not support TLS to an HTTPS proxy");
+        }
         if (proxy == null || proxy.isBlank()) {
             throw new IllegalArgumentException("An enabled proxy requires an address");
         }

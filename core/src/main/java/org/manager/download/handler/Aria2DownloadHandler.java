@@ -116,6 +116,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     };
 
     private final Aria2Client aria2Client;
+    private volatile boolean daemonPrivateRouting;
+    private final Map<String, String> startedRoutes = new ConcurrentHashMap<>();
     private final Map<String, String> gidToIdMap; // aria2 GID -> download ID
     /** GIDs intentionally removed during an engine route handoff. */
     private final java.util.Set<String> routeChangeGids;
@@ -249,6 +251,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 overrideOutputPath(download);
 
                 settingsFactory.applyGlobalTransferPreferences(download.getSettings());
+                requireNativeRoute(download);
                 List<String> gids = switch (download.getType()) {
                     case ARIA2 -> {
                         // Protocol captures descriptor semantics independently
@@ -318,10 +321,18 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             gidToIdMap.put(gid, download.getId());
         }
         downloadGids.put(download.getId(), tracked);
+        startedRoutes.put(download.getId(), org.manager.tools.NetworkProcessPolicy.selectedProxy(download.getSettings()));
         downloadSeenGids.put(download.getId(), seen);
         downloadProgress.put(download.getId(), new ConcurrentHashMap<>());
         download.setGid(gids.get(0));
         storeDownloadReference(download);
+    }
+
+    /** A changed proxy must retire existing connections, even when the engine stays aria2. */
+    public boolean needsRouteHandoff(Download download) {
+        String started = startedRoutes.get(download.getId());
+        return started != null && !started.equals(
+                org.manager.tools.NetworkProcessPolicy.proxyAddress(settingsFactory.effectiveProxy(download.getSettings())));
     }
 
     @Override
@@ -414,8 +425,11 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
                 List<String> gids = trackedGidsSnapshot(download);
                 settingsFactory.applyGlobalTransferPreferences(download.getSettings());
-                Map<String, Object> options = Map.of("remote-time", Boolean.toString(
-                        globalSettings.getBooleanProperty("aria2.remoteTime", false)));
+                requireNativeRoute(download);
+                Map<String, Object> options = download.getSettings() instanceof Aria2Settings aria
+                        ? liveRpcOptions(aria, aria.isUseProxy() ? aria.getProxyAddress() : null)
+                        : Map.of("remote-time", Boolean.toString(
+                                globalSettings.getBooleanProperty("aria2.remoteTime", false)));
                 applyToEveryGid(gids, "update remote modification time",
                         gid -> aria2Client.changeOption(gid, options));
                 applyToEveryGid(gids, "unpause", aria2Client::unpause);
@@ -859,18 +873,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         aria2Client.setHonorExternalConfiguration(
                 globalSettings.isHonorExternalAria2Configuration());
 
-        // aria2's --all-proxy accepts HTTP(S), but not SOCKS. SOCKS work is
-        // routed per download through ProxychainsDownloadHandler.
-        if (globalSettings.isGlobalProxyEnabled()
-                && globalSettings.getGlobalProxyAddress() != null
-                && !DownloadHandlerFactory.isSocksProxyAddress(
-                        globalSettings.getGlobalProxyAddress())) {
-            extraArgs.add("--all-proxy=" + globalSettings.getGlobalProxyAddress());
-        }
-
-        boolean strictProxyRouting = globalSettings.isGlobalProxyEnabled()
-                && DownloadHandlerFactory.isSocksProxyAddress(
-                        globalSettings.getGlobalProxyAddress());
+        // All download routes are supplied per GID. A selected proxy must also disable
+        // daemon-wide peer discovery before any RPC work can begin.
+        boolean strictProxyRouting = globalSettings.isGlobalProxyEnabled();
         extraArgs.addAll(Aria2GlobalOptions.daemonLaunchArguments(
                 globalSettings, strictProxyRouting));
 
@@ -906,7 +911,27 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         // Connect WebSocket for notifications
         aria2Client.connectWebSocket();
 
+        daemonPrivateRouting = strictProxyRouting;
         LOGGER.info("aria2 RPC server started successfully");
+    }
+
+    public boolean needsPrivacyRestart() {
+        return aria2Client != null && aria2Client.getDaemonOwnership() == Aria2Client.DaemonOwnership.ODM_STARTED
+                && daemonPrivateRouting != globalSettings.isGlobalProxyEnabled();
+    }
+
+    /** Caller holds the manager's admissions while replacing session-scoped GIDs. */
+    public void restartForNetworkPrivacy() throws IOException {
+        if (!needsPrivacyRestart()) { return; }
+        stopAllProgressPolling();
+        // Invalidate all old callbacks before terminating the daemon, including paused GIDs.
+        for (String id : List.copyOf(downloadGids.keySet())) { untrackEntireDownload(id); }
+        boolean privateRoute = globalSettings.isGlobalProxyEnabled();
+        if (!aria2Client.restartWithPeerDiscoveryOptions(
+                Aria2GlobalOptions.daemonLaunchArguments(globalSettings, privateRoute))) {
+            throw new IOException("Could not restart aria2 with the selected network policy");
+        }
+        daemonPrivateRouting = privateRoute;
     }
 
     /**
@@ -979,32 +1004,6 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             LOGGER.warn("Failed to apply global options to aria2", e);
         }
 
-        // Per-download proxy: global proxy applies unless the download has
-        // its own proxy configured. An empty value clears a previous proxy.
-        String globalProxy = globalSettings.isGlobalProxyEnabled()
-                && globalSettings.getGlobalProxyAddress() != null
-                && !DownloadHandlerFactory.isSocksProxyAddress(
-                        globalSettings.getGlobalProxyAddress())
-                        ? globalSettings.getGlobalProxyAddress()
-                        : "";
-        for (Download download : activeDownloads.values()) {
-            List<String> gids = liveTrackedGidsSnapshot(download);
-            if (gids.isEmpty()) {
-                continue;
-            }
-            if (download.getSettings() instanceof Aria2Settings aria2Settings
-                    && aria2Settings.isUseProxy()
-                    && !aria2Settings.isProxyInherited()
-                    && aria2Settings.getProxyAddress() != null) {
-                continue; // per-download proxy wins
-            }
-            try {
-                applyToEveryGid(gids, "update proxy option",
-                        gid -> aria2Client.changeOption(gid, Map.of("all-proxy", globalProxy)));
-            } catch (Exception e) {
-                LOGGER.warn("Failed to update proxy option for download " + download.getId(), e);
-            }
-        }
     }
 
     @Override
@@ -1617,6 +1616,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * the whole download (error, removed, cancel).
      */
     private void untrackEntireDownload(String downloadId) {
+        startedRoutes.remove(downloadId);
         finishRecheckObservation(downloadId);
         java.util.Set<String> tracked = downloadGids.remove(downloadId);
         if (tracked != null) {
@@ -1983,12 +1983,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      *             or a body exceeding {@link #MAX_REMOTE_DESCRIPTOR_BYTES}
      */
     private byte[] fetchRemoteBytes(URI uri, Download download) throws IOException {
-        String proxy = null;
-        if (download.getSettings() != null && download.getSettings().isUseProxy()) {
-            proxy = download.getSettings().getProxyAddress();
-        } else if (globalSettings.isGlobalProxyEnabled()) {
-            proxy = globalSettings.getGlobalProxyAddress();
-        }
+        settingsFactory.applyInheritedProxy(download.getSettings());
+        String proxy = download.getSettings() != null && download.getSettings().isUseProxy()
+                ? download.getSettings().getProxyAddress() : null;
         byte[] data = org.manager.tools.BoundedHttpFetcher.fetch(uri,
                 MAX_REMOTE_DESCRIPTOR_BYTES, Duration.ofSeconds(30), Duration.ofSeconds(60), proxy);
         if (data.length == 0) {
@@ -2262,9 +2259,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     case TORRENT, METALINK -> DescriptorFileInspector.inspect(
                             readPreviewDescriptor(validated.uri(), effectiveProxy), protocol);
                     case MAGNET -> {
-                        if (DownloadHandlerFactory.isSocksProxyAddress(effectiveProxy)) {
+                        if (effectiveProxy != null && !effectiveProxy.isBlank()) {
                             throw new IOException("Magnet metadata preview cannot use the selected "
-                                    + "SOCKS/Tor route without starting its proxychains transfer");
+                                    + "proxy route without starting its proxychains transfer");
                         }
                         ensureInitialized();
                         yield previewMagnetFiles(validated.uri(), effectiveProxy);
@@ -2428,13 +2425,13 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                 }
 
                 settingsFactory.applyGlobalTransferPreferences(download.getSettings());
+                requireNativeRoute(download);
                 Map<String, Object> options = new HashMap<>();
                 switch (download.getSettings()) {
                     case Aria2Settings aria2Settings -> {
                         String proxy = aria2Settings.isUseProxy()
                                 ? aria2Settings.getProxyAddress()
-                                : globalSettings.isGlobalProxyEnabled()
-                                        ? globalSettings.getGlobalProxyAddress() : null;
+                                : null;
                         options.putAll(liveRpcOptions(aria2Settings, proxy));
                     }
                     case null, default -> {
@@ -2464,6 +2461,15 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * values, so zero/blank controls must be sent explicitly to clear a
      * previous per-GID limit, header, or proxy.
      */
+    private static void requireNativeRoute(Download download) {
+        String route = download.getSettings() != null && download.getSettings().isUseProxy()
+                ? download.getSettings().getProxyAddress() : null;
+        if (DownloadHandlerFactory.requiresProxychains(download, route)
+                || (route != null && route.startsWith("https://"))) {
+            throw new IllegalStateException("This proxy route requires a download engine handoff");
+        }
+    }
+
     static Map<String, Object> liveRpcOptions(Aria2Settings settings,
             String effectiveProxy) {
         if (org.manager.download.handler.DownloadHandlerFactory
@@ -2479,7 +2485,10 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         options.put("referer", blankIfNull(settings.getReferer()));
         options.put("user-agent", blankIfNull(settings.getUserAgent()));
         options.put("header", blankIfNull(settings.getCookieHeader()));
-        options.put("all-proxy", blankIfNull(effectiveProxy));
+        for (String key : List.of("all-proxy", "http-proxy", "https-proxy", "ftp-proxy")) {
+            options.put(key, blankIfNull(effectiveProxy));
+        }
+        options.put("no-proxy", "");
         return options;
     }
 

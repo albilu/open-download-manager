@@ -1479,6 +1479,7 @@ public class SettingsDialog {
         // a failed write still changed manager, scheduler, monitoring and Tor
         // state until restart while the dialog correctly reported failure.
         downloadManager.setGlobalSettings(s);
+        jackett.networkSettingsChanged();
         applySchedulerRuntime(application.schedulingEnabled(), application.hourGrid());
         applyMonitoringPreferences(application);
         return true;

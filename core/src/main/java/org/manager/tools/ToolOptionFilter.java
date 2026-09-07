@@ -48,7 +48,7 @@ public final class ToolOptionFilter {
             "skip-unavailable-fragments", "abort-on-unavailable-fragment",
             "geo-bypass", "no-geo-bypass", "force-ipv4", "force-ipv6",
             "min-sleep-interval", "max-sleep-interval", "sleep-requests",
-            "cookies", "proxy", "user-agent", "referer", "add-header",
+            "cookies", "user-agent", "referer", "add-header",
             "age-limit", "restrict-filenames", "windows-filenames",
             "trim-filenames", "encoding", "no-progress", "quiet", "verbose");
 
@@ -61,8 +61,7 @@ public final class ToolOptionFilter {
             "max-connection-per-server", "split", "min-split-size", "max-tries",
             "retry-wait", "timeout", "connect-timeout", "max-overall-download-limit",
             "max-download-limit", "max-overall-upload-limit", "max-upload-limit",
-            "all-proxy", "all-proxy-user", "all-proxy-passwd", "http-proxy",
-            "https-proxy", "ftp-proxy", "referer", "user-agent", "header",
+            "referer", "user-agent", "header",
             "load-cookies", "check-certificate", "lowest-speed-limit",
             "max-connection", "piece-length", "optimize-concurrent-downloads",
             "file-allocation", "allow-overwrite", "auto-file-renaming",
@@ -80,7 +79,7 @@ public final class ToolOptionFilter {
             "keepalive-time", "max-redirs", "compressed", "insecure",
             "silent", "show-error", "location", "location-trusted",
             "time-cond", "continue-at", "speed-time", "speed-limit",
-            "proto", "proto-redir", "proxy", "proxy-user", "cookie",
+            "proto", "proto-redir", "cookie",
             "upload-rate", "interface", "ipv4", "ipv6");
 
     /**
@@ -90,7 +89,7 @@ public final class ToolOptionFilter {
      */
     private static final Set<String> HTTRACK_KEYS = Set.of(
             "w", "W", "v", "q", "i", "I", "r", "x", "s", "m", "c", "f", "n",
-            "N", "P", "S", "K", "k", "A", "g", "G", "b", "d", "D", "j", "L",
+            "N", "S", "K", "k", "A", "g", "G", "b", "d", "D", "j", "L",
             "a", "u", "%P", "%F", "%L", "%v", "%s", "p", "T", "C", "R", "M",
             "t", "e", "z", "Z", "h", "B", "O", "o", "X", "Y", "E", "%R",
             "%X", "%K", "%c", "%G");
@@ -130,7 +129,8 @@ public final class ToolOptionFilter {
                         + "' (not on the allowlist)");
                 continue;
             }
-            if (value != null && !isSafeValue(value)) {
+            if (value != null && (!isSafeValue(value)
+                    || (tool == Tool.HTTRACK && !isSafeHttrackValue(key, value)))) {
                 LOGGER.warn("Dropped " + tool + " option '" + key
                         + "': value attempts flag smuggling or contains line breaks");
                 continue;
@@ -147,5 +147,14 @@ public final class ToolOptionFilter {
         // A leading -- turns the value into a fresh flag on tools that pass
         // options and values as separate arguments
         return !value.startsWith("-");
+    }
+
+    private static boolean isSafeHttrackValue(String key, String value) {
+        if (value.isEmpty()) { return true; }
+        // HTTrack combines short options: w=Pproxy becomes -wPproxy and
+        // executes a second flag. Only text-consuming controls accept text.
+        if (Set.of("O", "%F", "%L", "%R", "%X", "%K").contains(key)) { return true; }
+        if (key.equals("N") && !Character.isDigit(value.charAt(0))) { return true; }
+        return value.matches("[0-9]+(?:[.,:][0-9]+)*");
     }
 }

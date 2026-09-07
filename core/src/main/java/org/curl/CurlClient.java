@@ -171,7 +171,7 @@ public class CurlClient {
                     List<String> command = buildCurlCommand(download, outputFile);
 
                     // Start the process
-                    ProcessBuilder processBuilder = new ProcessBuilder(command);
+                    ProcessBuilder processBuilder = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command));
                     // Don't redirect error stream - we need to read stderr separately for progress
                     // processBuilder.redirectErrorStream(true);
 
@@ -378,6 +378,7 @@ public class CurlClient {
 
         // Add curl executable
         command.add(curlPath);
+        command.add("-q");
 
         // Get settings (use existing or default)
         CurlSettings settings = switch (download.getSettings()) {
@@ -407,10 +408,10 @@ public class CurlClient {
         }
 
         // Add proxy if specified
-        if (settings.isUseProxy() && settings.getProxyAddress() != null) {
-            command.add("-x");
-            command.add(settings.getProxyAddress());
-        }
+        command.add("-x");
+        command.add(org.manager.tools.NetworkProcessPolicy.selectedProxy(download.getSettings()));
+        command.add("--noproxy");
+        command.add("");
 
         // Add output file
         command.add("-o");

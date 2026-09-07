@@ -273,14 +273,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             }
         };
 
-        // Apply global proxy settings if enabled and not overridden
-        if (!settings.isUseProxy() && globalSettings.isGlobalProxyEnabled()
-                && org.manager.download.DownloadNetworkCapabilities.supportsProxy(
-                        settings, Download.Type.WEBSITE_SCRAPING,
-                        download.getProtocol(), globalSettings.getGlobalProxyAddress())) {
-            settings.setUseProxy(true)
-                    .setProxyAddress(globalSettings.getGlobalProxyAddress());
-        }
+        settingsFactory.applyInheritedProxy(settings);
 
         // An in-memory pause uses HttrackClient.resumeJob. This fallback is
         // for callers that invoke the handler directly with a paused record.

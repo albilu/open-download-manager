@@ -16,6 +16,13 @@ public final class SubliminalSettings {
 
     private List<String> languages = List.of("en");
     private Duration timeout = DEFAULT_TIMEOUT;
+    private String proxyAddress;
+
+    public String getProxyAddress() { return proxyAddress; }
+    public SubliminalSettings setProxyAddress(String address) {
+        proxyAddress = org.manager.tools.NetworkProcessPolicy.proxyAddress(address);
+        return this;
+    }
 
     public List<String> getLanguages() {
         return languages;
@@ -39,7 +46,7 @@ public final class SubliminalSettings {
     public SubliminalSettings copy() {
         return new SubliminalSettings()
                 .setLanguages(languages)
-                .setTimeout(timeout);
+                .setTimeout(timeout).setProxyAddress(proxyAddress);
     }
 
     /** Parses comma-separated IETF language tags, defaulting to English. */

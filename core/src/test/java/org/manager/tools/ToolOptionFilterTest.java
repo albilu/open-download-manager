@@ -66,7 +66,7 @@ class ToolOptionFilterTest {
         assertEquals("8", filtered.get("max-connection-per-server"));
         assertEquals("16", filtered.get("split"));
         assertEquals("1M", filtered.get("min-split-size"));
-        assertEquals("socks5://127.0.0.1:9050", filtered.get("all-proxy"));
+        assertFalse(filtered.containsKey("all-proxy"), "routing belongs to the Network controls");
         assertEquals("sha-1=0123456789012345678901234567890123456789",
                 filtered.get("ssh-host-key-md"));
         assertEquals("false", filtered.get("enable-peer-exchange"));
@@ -123,6 +123,9 @@ class ToolOptionFilterTest {
         input.put("%c", "2.5");
         input.put("%G", "1");
         input.put("odm.max-retries", "4");
+        input.put("P", "other.proxy:8080");
+        input.put("w", "Pother.proxy:8080");
+        input.put("r", "1Pother.proxy:8080");
 
         Map<String, String> filtered = ToolOptionFilter.filter(
                 ToolOptionFilter.Tool.HTTRACK, input);
@@ -131,5 +134,8 @@ class ToolOptionFilterTest {
         assertEquals("3600", filtered.get("E"));
         assertEquals("X-Test: yes", filtered.get("%X"));
         assertFalse(filtered.containsKey("odm.max-retries"));
+        assertFalse(filtered.containsKey("P"));
+        assertFalse(filtered.containsKey("w"));
+        assertFalse(filtered.containsKey("r"));
     }
 }

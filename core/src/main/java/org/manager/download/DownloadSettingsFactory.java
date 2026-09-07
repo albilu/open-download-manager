@@ -88,6 +88,7 @@ public class DownloadSettingsFactory {
 
     /** Refresh preferences with no per-download override before starting or resuming a transfer. */
     public void applyGlobalTransferPreferences(DownloadSettings settings) {
+        applyInheritedProxy(settings);
         if (settings instanceof Aria2Settings || settings instanceof CurlSettings
                 || settings instanceof ProxychainsSettings) {
             settings.setOption("remote-time", Boolean.toString(
@@ -96,6 +97,32 @@ public class DownloadSettingsFactory {
             media.setUseDownloadArchive(
                     getGlobalSettings().getBooleanProperty("ytdlp.skipDownloaded", true));
         }
+    }
+
+    /** Resolves a route without mutating a running operation's settings snapshot. */
+    public String effectiveProxy(DownloadSettings settings) {
+        if (settings == null) { return null; }
+        if (!settings.isProxyInherited()) {
+            org.manager.tools.NetworkProcessPolicy.selectedProxy(settings);
+            return settings.isUseProxy() ? settings.getProxyAddress() : null;
+        }
+        GlobalSettings global = getGlobalSettings();
+        boolean enabled = global.isGlobalProxyEnabled();
+        String route = enabled ? global.getGlobalProxyAddress() : null;
+        String validated = org.manager.tools.NetworkProcessPolicy.proxyAddress(route);
+        if (enabled && validated.isEmpty()) {
+            throw new IllegalArgumentException("The global proxy is enabled without an address");
+        }
+        return enabled ? route : null;
+    }
+
+    /** Refresh at start/resume; explicit per-download choices remain authoritative. */
+    public void applyInheritedProxy(DownloadSettings settings) {
+        if (settings == null || !settings.isProxyInherited()) { return; }
+        String route = effectiveProxy(settings);
+        settings.setUseProxy(route != null && !route.isBlank());
+        settings.setProxyAddress(route);
+        settings.setProxyInherited(true);
     }
 
     /**
@@ -248,18 +275,9 @@ public class DownloadSettingsFactory {
             default -> createAria2Settings(protocol); // Default to Aria2 settings
         };
 
-        // Apply global proxy settings if enabled
-        GlobalSettings currentSettings = getGlobalSettings();
-        if (currentSettings.isGlobalProxyEnabled()) {
-            String globalProxyAddress = currentSettings.getGlobalProxyAddress();
-            if (globalProxyAddress != null
-                    && DownloadNetworkCapabilities.supportsProxy(
-                            settings, type, protocol, globalProxyAddress)) {
-                settings.setUseProxy(true);
-                settings.setProxyAddress(globalProxyAddress);
-                settings.setProxyInherited(true);
-            }
-        }
+        // Even an inherited direct route must follow later global changes.
+        settings.setProxyInherited(type != Download.Type.TOR);
+        applyInheritedProxy(settings);
 
         return settings;
     }

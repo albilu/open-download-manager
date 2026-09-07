@@ -110,6 +110,7 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
         }
         boolean success;
         try {
+            new org.manager.download.DownloadSettingsFactory().applyInheritedProxy(download.getSettings());
             success = download.getType() == Download.Type.YOUTUBE
                     ? downloadWithYtDlp(download, output)
                     : downloadWithSubliminal(download, output);
@@ -143,7 +144,8 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
                 appendLine(output, "Result", "All preferred subtitles already exist");
                 continue;
             }
-            SubliminalSettings operationSettings = settings.copy().setLanguages(missing);
+            SubliminalSettings operationSettings = settings.copy().setLanguages(missing)
+                    .setProxyAddress(org.manager.tools.NetworkProcessPolicy.selectedProxy(download.getSettings()));
             appendLine(output, "Requested languages", String.join(", ", missing));
             SubliminalClient.DownloadResult result = subliminalClient.downloadWithResult(
                     video, operationSettings,

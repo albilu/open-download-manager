@@ -32,6 +32,8 @@ public final class JackettClient {
     private static final int MAX_JSON_BYTES = 32 * 1024 * 1024;
     private final URI base;
     private final Path configFile;
+    @FunctionalInterface interface RouteGuard { void check() throws IOException; }
+    private final RouteGuard routeGuard;
     private final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER);
 
     public record Category(int id, String name) { }
@@ -73,6 +75,11 @@ public final class JackettClient {
     }
 
     public JackettClient(int port, Path configFile) {
+        this(port, configFile, () -> { });
+    }
+
+    JackettClient(int port, Path configFile, RouteGuard guard) {
+        this.routeGuard = guard;
         if (port < 1 || port > 65535) { throw new IllegalArgumentException("Invalid Jackett port"); }
         this.base = URI.create("http://127.0.0.1:" + port + "/");
         this.configFile = configFile;
@@ -245,6 +252,7 @@ public final class JackettClient {
     private record Response(byte[] body, URI redirect) { }
 
     private Response request(String method, URI uri, byte[] body, int limit, int timeout) throws IOException {
+        routeGuard.check();
         requireLocal(uri);
         HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection(Proxy.NO_PROXY);
         connection.setInstanceFollowRedirects(false);

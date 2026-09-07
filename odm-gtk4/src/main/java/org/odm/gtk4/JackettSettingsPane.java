@@ -35,6 +35,10 @@ final class JackettSettingsPane {
     private static final Map<JackettService, Map<String, CheckResult>> SESSION_TESTS = new WeakHashMap<>();
     private final GtkBuilder builder;
     private final JackettService service;
+
+    void networkSettingsChanged() {
+        if (service != null) { service.networkSettingsChanged(); }
+    }
     private final Map<String, CheckResult> sessionTests;
     private GlobalSettings settings;
     private final Box root;

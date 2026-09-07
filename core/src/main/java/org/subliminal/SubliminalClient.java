@@ -80,8 +80,9 @@ public class SubliminalClient {
         ExternalProcessRegistry.Registration registration = null;
         CompletableFuture<String> capturedOutput = null;
         List<String> command = buildDownloadCommand(mediaFile, settings);
-        try {
-            ProcessBuilder builder = new ProcessBuilder(command)
+        try (var route = org.manager.tools.ProxiedCommand.prepare(settings.getProxyAddress())) {
+            command = route.wrap(command);
+            ProcessBuilder builder = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command))
                     .redirectErrorStream(true);
             registration = launch.start(builder);
             Process process = registration.process();

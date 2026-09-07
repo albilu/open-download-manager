@@ -51,11 +51,26 @@ class DownloadHandlerFactorySocksRoutingTest {
         executor.shutdownNow();
     }
 
+    @Test void httpProxiedTorrentUsesProxychainsForPeers() {
+        Download download = new Download(URI.create("magnet:?xt=urn:btih:abcdef"));
+        download.setUseProxy(true).setProxyAddress("http://127.0.0.1:8080");
+        assertSame(proxychains, factory.getHandler(download));
+        verify(curl, never()).canHandle(any());
+    }
+
+    @Test void tlsProxyUsesCurlForAnOrdinaryTransfer() {
+        Download download = new Download(URI.create("https://download.invalid/payload.bin"));
+        download.setUseProxy(true).setProxyAddress("https://127.0.0.1:8443");
+        assertSame(curl, factory.getHandler(download));
+        assertEquals(Download.Type.CURL, download.getType());
+        assertEquals("https://127.0.0.1:8443", download.getProxyAddress());
+    }
+
     @Test
     void routesMagnetThroughProxychainsAndNeverCurl() {
         Download download = new Download(URI.create("magnet:?xt=urn:btih:abcdef"));
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
 
         assertSame(proxychains, factory.getHandler(download));
         assertEquals(Download.Type.PROXYCHAINS, download.getType());
@@ -65,8 +80,8 @@ class DownloadHandlerFactorySocksRoutingTest {
     @Test
     void routesTorrentThroughProxychainsAndNeverCurl() {
         Download download = Download.fromTorrent(Path.of("/tmp/example.torrent"), Path.of("/tmp"));
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5h://127.0.0.1:9050");
 
         assertSame(proxychains, factory.getHandler(download));
         assertEquals(Download.Type.PROXYCHAINS, download.getType());
@@ -80,8 +95,8 @@ class DownloadHandlerFactorySocksRoutingTest {
                 mock(ToolManagerFactory.class));
         withoutProxychains.registerHandler(Download.Type.CURL, curl);
         Download download = new Download(URI.create("https://example.test/file.bin"));
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks4://127.0.0.1:9050");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks4://127.0.0.1:9050");
         download.getSettings().setMaxRetries(7);
         download.getSettings().setReferer("https://referrer.test/");
 
@@ -99,8 +114,8 @@ class DownloadHandlerFactorySocksRoutingTest {
     void proxychainsRejectionFallsBackToCurlForPlainUrl() {
         when(proxychains.canHandle(any())).thenReturn(false);
         Download download = new Download(URI.create("ftp://example.test/file.bin"));
-        download.getSettings().setUseProxy(true);
-        download.getSettings().setProxyAddress("socks5://127.0.0.1:1080");
+        download.setUseProxy(true);
+        download.setProxyAddress("socks5://127.0.0.1:1080");
 
         assertSame(curl, factory.getHandler(download));
         assertEquals(Download.Type.CURL, download.getType());
@@ -110,8 +125,11 @@ class DownloadHandlerFactorySocksRoutingTest {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"https", "ftp", "sftp"})
     void restoredProxychainsRecordFallsBackWhenProxychainsIsMissing(String scheme) {
+        GlobalSettings global = new GlobalSettings();
+        global.setGlobalProxyEnabled(true)
+                .setGlobalProxyAddress("socks5h://proxy-user:proxy-secret@127.0.0.1:9050");
         DownloadHandlerFactory restoredFactory = new DownloadHandlerFactory(
-                new GlobalSettings(), new DownloadSettingsFactory(), executor,
+                global, new DownloadSettingsFactory(global), executor,
                 mock(ToolManagerFactory.class));
         when(curl.canHandle(any())).thenAnswer(call ->
                 ((Download) call.getArgument(0)).getType() == Download.Type.CURL);
@@ -160,8 +178,8 @@ class DownloadHandlerFactorySocksRoutingTest {
                 URI.create("https://example.test/file.torrent"),
                 URI.create("https://example.test/file.meta4"))) {
             Download download = new Download(uri);
-            download.getSettings().setUseProxy(true);
-            download.getSettings().setProxyAddress("socks5h://127.0.0.1:9050");
+            download.setUseProxy(true);
+            download.setProxyAddress("socks5h://127.0.0.1:9050");
 
             assertNull(withoutProxychains.getHandler(download), uri.toString());
             assertEquals(Download.Type.ARIA2, download.getType(), uri.toString());
