@@ -12,7 +12,7 @@ Open Download Manager (ODM) is a native download manager for Linux. It combines 
 - Clipboard URL monitoring and torrent/Metalink folder monitoring
 - Persistent download history and automatic resume
 - Speed limits, mirrors, retries, scheduling, and batch imports
-- Proxy, proxychains, and Tor routing
+- Proxy, proxychains, and Tor routing, plus [proxy rotation](core/src/main/java/org/manager/proxy/README.md)
 - After-completion actions (notify, open file, verify, suspend, shutdown)
 - Native GTK4 interface with search, filtering, detail views, and tray/background mode
 
