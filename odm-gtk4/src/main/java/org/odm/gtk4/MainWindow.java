@@ -2380,11 +2380,13 @@ public class MainWindow {
                     AccessibilitySupport.status(torIpLabel, torExitAddress(result));
                 } else {
                     clearTorVerificationDisplay();
-                    var offlineAction = menuActions.get("offline");
-                    offlineAction.setState(org.gnome.glib.Variant.boolean_(
-                            downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false)));
-                    notifyTorCheckFailure(message);
-                    refresh();
+                    if (result.offlineEnabled()) {
+                        var offlineAction = menuActions.get("offline");
+                        offlineAction.setState(org.gnome.glib.Variant.boolean_(
+                                downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false)));
+                        notifyTorCheckFailure(message);
+                        refresh();
+                    }
                     AccessibilitySupport.status(infoLabel, message);
                 }
                 torCheckButton.setTooltipText(message);
@@ -2401,7 +2403,8 @@ public class MainWindow {
 
     static String torCheckStatus(org.tor.TorCircuitMonitor.Result result) {
         if (!result.secure()) {
-            return "Tor check failed — Offline Mode enabled. " + result.message();
+            return (result.offlineEnabled() ? "Tor check failed — Offline Mode enabled. "
+                    : "Tor check failed — ") + result.message();
         }
         return "Tor verified — " + torExitAddress(result);
     }

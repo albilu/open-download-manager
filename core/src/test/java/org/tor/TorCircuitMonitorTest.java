@@ -15,6 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
@@ -29,7 +31,7 @@ class TorCircuitMonitorTest {
 
     @Test
     void schedulesWhileRunningAndAppliesIntervalChangesWithoutImmediateRequests() throws Exception {
-        try (Fixture f = new Fixture(false)) {
+        try (Fixture f = new Fixture(false, true)) {
             assertEquals(30, f.settings.getTorCheckIntervalMinutes());
             assertNull(f.clock.tick);
             assertNull(f.monitor.checkNow().get());
@@ -54,10 +56,11 @@ class TorCircuitMonitorTest {
 
     @Test
     void failureEnablesOfflinePausesEveryActiveTypeAndSuccessDoesNotResume() throws Exception {
-        try (Fixture f = new Fixture(true)) {
+        try (Fixture f = new Fixture(true, true)) {
             f.response.set(CompletableFuture.completedFuture(FAILED));
-            var result = f.monitor.checkNow().get();
+            var result = f.automaticCheck().get();
             assertFalse(result.secure());
+            assertTrue(result.offlineEnabled());
             assertTrue(f.settings.getBooleanProperty("ui.offline", false));
             for (Download d : f.downloads.subList(0, 4)) {
                 assertEquals(Download.Status.PAUSED, d.getStatus());
@@ -76,15 +79,16 @@ class TorCircuitMonitorTest {
 
     @Test
     void simultaneousManualAndScheduledChecksShareTheSameRequest() throws Exception {
-        try (Fixture f = new Fixture(true)) {
+        try (Fixture f = new Fixture(true, true)) {
             var response = new CompletableFuture<TorLeakChecker.LeakCheckResult>();
             f.response.set(response);
             var first = f.monitor.checkNow();
             assertSame(first, f.monitor.checkNow());
             f.clock.tick.run();
             assertEquals(1, f.started.size());
-            response.complete(SECURE);
-            assertEquals("192.0.2.1", first.get().ip());
+            response.complete(FAILED);
+            assertFalse(first.get().secure());
+            assertFalse(first.get().offlineEnabled(), "a timer must not promote a manual request");
             verify(f.checker).performLeakCheck();
             assertFalse(f.settings.getBooleanProperty("ui.offline", false));
         }
@@ -92,10 +96,10 @@ class TorCircuitMonitorTest {
 
     @Test
     void stoppingTorDiscardsPendingFailureAndRestartAcceptsFreshChecks() throws Exception {
-        try (Fixture f = new Fixture(true)) {
+        try (Fixture f = new Fixture(true, true)) {
             var response = new CompletableFuture<TorLeakChecker.LeakCheckResult>();
             f.response.set(response);
-            var pending = f.monitor.checkNow();
+            var pending = f.automaticCheck();
             assertTrue(f.requestStarted.await(3, TimeUnit.SECONDS));
             f.monitor.suspend();
             assertNull(pending.get());
@@ -116,20 +120,20 @@ class TorCircuitMonitorTest {
     }
 
     @Test
-    void exceptionsFailClosedButUnavailableCountryIsStillASecureVerdict() throws Exception {
-        try (Fixture f = new Fixture(true)) {
+    void automaticExceptionsFailClosedButUnavailableCountryIsStillASecureVerdict() throws Exception {
+        try (Fixture f = new Fixture(true, true)) {
             f.country.set(null);
             assertTrue(f.monitor.checkNow().get().secure());
             assertFalse(f.settings.getBooleanProperty("ui.offline", false));
             f.response.set(CompletableFuture.failedFuture(new IllegalStateException("curl unavailable")));
-            assertFalse(f.monitor.checkNow().get().secure());
+            assertFalse(f.automaticCheck().get().secure());
             assertTrue(f.settings.getBooleanProperty("ui.offline", false));
         }
     }
 
     @Test
     void closingReleasesListenerTimerAndWorkerWithoutApplyingLateFailure() throws Exception {
-        try (Fixture f = new Fixture(true)) {
+        try (Fixture f = new Fixture(true, true)) {
             var response = new CompletableFuture<TorLeakChecker.LeakCheckResult>();
             f.response.set(response);
             var pending = f.monitor.checkNow();
@@ -156,6 +160,95 @@ class TorCircuitMonitorTest {
             }).when(f.service).removeListener(any());
             assertDoesNotThrow(f.monitor::close);
             assertTrue(f.listeners.isEmpty());
+        }
+    }
+
+    @Test
+    void monitorIsDisabledByDefaultEvenWhenTorIsRunning() throws Exception {
+        assertFalse(new GlobalSettings().isTorCircuitMonitorEnabled());
+        try (Fixture f = new Fixture(true)) {
+            assertNull(f.clock.tick);
+            verifyNoInteractions(f.checker);
+            assertTrue(f.monitor.checkNow().get().secure(), "manual checks remain available");
+            assertNull(f.clock.tick);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void manualFailuresNeverEnableOffline(boolean monitorEnabled) throws Exception {
+        try (Fixture f = new Fixture(true, monitorEnabled)) {
+            f.response.set(CompletableFuture.completedFuture(FAILED));
+            var result = f.monitor.checkNow().get();
+            assertFalse(result.secure());
+            assertFalse(result.offlineEnabled());
+            f.response.set(CompletableFuture.failedFuture(new IllegalStateException("check unavailable")));
+            assertFalse(f.monitor.checkNow().get().offlineEnabled());
+            assertFalse(f.settings.getBooleanProperty("ui.offline", false));
+            verify(f.manager, never()).pauseDownload(any(), any());
+            verify(f.manager, never()).saveState();
+        }
+    }
+
+    @Test
+    void automaticFailureEnablesOfflineEvenWithNoDownloads() throws Exception {
+        try (Fixture f = new Fixture(true, true)) {
+            when(f.manager.getAllDownloads()).thenReturn(List.of());
+            f.response.set(CompletableFuture.completedFuture(FAILED));
+            var result = f.automaticCheck().get();
+            assertTrue(result.offlineEnabled());
+            assertTrue(f.settings.getBooleanProperty("ui.offline", false));
+            verify(f.manager, never()).pauseDownload(any(), any());
+            verify(f.manager).saveState();
+        }
+    }
+
+    @Test
+    void manualRequestJoiningAutomaticCheckRetainsMonitorFailurePolicy() throws Exception {
+        try (Fixture f = new Fixture(true, true)) {
+            var response = new CompletableFuture<TorLeakChecker.LeakCheckResult>();
+            f.response.set(response);
+            var automatic = f.automaticCheck();
+            assertSame(automatic, f.monitor.checkNow());
+            response.complete(FAILED);
+            assertTrue(automatic.get().offlineEnabled());
+            assertTrue(f.settings.getBooleanProperty("ui.offline", false));
+        }
+    }
+
+    @Test
+    void disablingMonitorCancelsAutomaticCheckAndAllowsManualVerification() throws Exception {
+        try (Fixture f = new Fixture(true, true)) {
+            var response = new CompletableFuture<TorLeakChecker.LeakCheckResult>();
+            f.response.set(response);
+            var pending = f.automaticCheck();
+            assertTrue(f.requestStarted.await(3, TimeUnit.SECONDS));
+            f.settings.setTorCircuitMonitorEnabled(false);
+            f.monitor.refresh();
+            verify(f.clock.timer).cancel(false);
+            assertNull(pending.get());
+            response.complete(FAILED);
+            f.clock.tick.run();
+            assertEquals(1, f.started.size());
+            f.response.set(CompletableFuture.completedFuture(FAILED));
+            assertFalse(f.monitor.checkNow().get().offlineEnabled());
+            assertFalse(f.settings.getBooleanProperty("ui.offline", false));
+            verify(f.manager, never()).pauseDownload(any(), any());
+        }
+    }
+
+    @Test
+    void disablingMonitorDoesNotCancelPendingManualVerification() throws Exception {
+        try (Fixture f = new Fixture(true, true)) {
+            var response = new CompletableFuture<TorLeakChecker.LeakCheckResult>();
+            f.response.set(response);
+            var pending = f.monitor.checkNow();
+            assertTrue(f.requestStarted.await(3, TimeUnit.SECONDS));
+            f.settings.setTorCircuitMonitorEnabled(false);
+            f.monitor.refresh();
+            assertFalse(pending.isDone());
+            response.complete(SECURE);
+            assertTrue(pending.get().secure());
         }
     }
 
@@ -198,7 +291,12 @@ class TorCircuitMonitorTest {
         final TorCircuitMonitor monitor;
 
         Fixture(boolean running) {
+            this(running, false);
+        }
+
+        Fixture(boolean running, boolean enabled) {
             this.running.set(running);
+            settings.setTorCircuitMonitorEnabled(enabled);
             when(service.isRunning()).thenAnswer(ignored -> this.running.get());
             doAnswer(call -> { listeners.add(call.getArgument(0)); return null; })
                     .when(service).addListener(any());
@@ -227,6 +325,11 @@ class TorCircuitMonitorTest {
             running.set(value);
             listeners.forEach(listener -> listener.onServiceEvent(value
                     ? TorService.TorServiceEvent.STARTED : TorService.TorServiceEvent.STOPPED));
+        }
+
+        CompletableFuture<TorCircuitMonitor.Result> automaticCheck() {
+            clock.tick.run();
+            return started.getLast();
         }
 
         @Override public void close() { monitor.close(); }

@@ -72,6 +72,11 @@ class TorControlBindingTest {
         SettingsDialog dialog = new SettingsDialog(null, manager, null, null, events.service);
         GtkBuilder builder = field(dialog, "builder", GtkBuilder.class);
         Switch control = Widgets.require(builder, "tor_switch", Switch.class);
+        Switch monitor = Widgets.require(builder, "tor_circuit_monitor_switch", Switch.class);
+        assertFalse(monitor.getActive(), "automatic monitoring defaults to disabled");
+        assertTrue(monitor.getSensitive(), "the monitor preference can be set while Tor is stopped");
+        assertEquals(Widgets.require(builder, "tor_check_interval_box", org.gnome.gtk.Box.class),
+                monitor.getNextSibling(), "the switch must precede the interval");
         var interval = Widgets.require(builder, "tor_check_interval_spin", org.gnome.gtk.SpinButton.class);
         assertEquals(30, interval.getValue());
         assertFalse(interval.isSensitive());
@@ -83,6 +88,12 @@ class TorControlBindingTest {
             pump(() -> !events.listeners.isEmpty());
             events.setRunning(true);
             pump(control::getSensitive);
+            assertFalse(interval.isSensitive(), "the monitor is still disabled");
+            monitor.setActive(true);
+            assertTrue(interval.isSensitive());
+            monitor.setActive(false);
+            assertFalse(interval.isSensitive());
+            monitor.setActive(true);
             assertTrue(interval.isSensitive());
             interval.setValue(12);
             events.setRunning(false);
@@ -97,6 +108,7 @@ class TorControlBindingTest {
             settingsAccessor.setAccessible(true);
             GlobalSettings saved = (GlobalSettings) settingsAccessor.invoke(collected);
             assertEquals(12, saved.getTorCheckIntervalMinutes());
+            assertTrue(saved.isTorCircuitMonitorEnabled());
             assertTrue(saved.getBooleanProperty("tor.enabled", false));
             assertEquals("socks5h://127.0.0.1:9050", saved.getGlobalProxyAddress());
             verify(events.service, never()).start();

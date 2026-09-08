@@ -1319,7 +1319,12 @@ class WindowSmokeTest {
         org.mockito.Mockito.when(service.isRunning()).thenReturn(true);
         var checks = new java.util.ArrayList<
                 java.util.concurrent.CompletableFuture<org.tor.TorCircuitMonitor.Result>>();
-        try (var monitors = org.mockito.Mockito.mockConstruction(org.tor.TorCircuitMonitor.class,
+        var lastNotification = new java.util.concurrent.atomic.AtomicReference<String>();
+        var application = new org.gnome.gtk.Application("org.odm.TorMonitorTest",
+                org.gnome.gio.ApplicationFlags.NON_UNIQUE);
+        assertTrue(application.register(null));
+        try (var notifications = org.mockito.Mockito.mockStatic(TorFailureNotification.class);
+                var monitors = org.mockito.Mockito.mockConstruction(org.tor.TorCircuitMonitor.class,
                 (monitor, context) -> {
                     @SuppressWarnings("unchecked")
                     var onStarted = (java.util.function.Consumer<java.util.concurrent.CompletableFuture<
@@ -1334,8 +1339,14 @@ class WindowSmokeTest {
                             org.mockito.ArgumentMatchers.any(org.tor.TorCircuitMonitor.Result.class)))
                             .thenReturn(true);
                 })) {
+            notifications.when(() -> TorFailureNotification.send(
+                    org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString()))
+                    .thenAnswer(call -> {
+                        lastNotification.set(call.getArgument(1));
+                        return java.util.concurrent.CompletableFuture.completedFuture(null);
+                    });
             org.manager.download.DownloadManager stub = emptyManager();
-            MainWindow window = new MainWindow(null, stub, service,
+            MainWindow window = new MainWindow(application, stub, service,
                     new org.manager.schedule.ScheduleManager(stub));
             try {
                 var builderField = MainWindow.class.getDeclaredField("uiBuilder");
@@ -1360,7 +1371,7 @@ class WindowSmokeTest {
                     assertEquals("Verifying Tor connection…", window.statusMessage(),
                             "selection changes must preserve verification progress until the check finishes");
                     var result = new org.tor.TorCircuitMonitor.Result(true,
-                            "Tor circuit verified", "192.0.2." + (click + 1), "NL", 1);
+                            "Tor circuit verified", "192.0.2." + (click + 1), "NL", 1, false);
                     checks.get(click).complete(result);
                     awaitGtk(() -> ("🇳🇱 " + result.ip()).equals(ipLabel.getLabel()),
                             "the new verification result was not displayed beside the Tor icon");
@@ -1373,12 +1384,15 @@ class WindowSmokeTest {
                 }
                 button.emitClicked();
                 var failure = new org.tor.TorCircuitMonitor.Result(false,
-                        "Unable to verify the Tor circuit", null, null, 1);
+                        "Unable to verify the Tor circuit", null, null, 1, false);
                 checks.getLast().complete(failure);
                 awaitGtk(() -> MainWindow.torCheckStatus(failure).equals(button.getTooltipText()),
                         "verification failure was not displayed on the Tor control");
                 assertFalse(ipLabel.getVisible(), "a failed check must clear the previous verified IP");
                 assertEquals("", ipLabel.getLabel());
+                assertFalse(window.statusMessage().contains("Offline Mode"));
+                assertFalse(stub.getGlobalSettings().getBooleanProperty("ui.offline", false));
+                notifications.verifyNoInteractions();
                 assertTrue(nativeWindow.activateActionVariant("win.select-all", null));
                 assertEquals("0 download(s)", window.statusMessage());
                 button.emitClicked();
@@ -1391,9 +1405,25 @@ class WindowSmokeTest {
                         .checkNow();
                 org.mockito.Mockito.verify(service, org.mockito.Mockito.never())
                         .createController(org.mockito.ArgumentMatchers.anyInt());
+
+                var monitorCheck = new java.util.concurrent.CompletableFuture<org.tor.TorCircuitMonitor.Result>();
+                var onStarted = MainWindow.class.getDeclaredMethod(
+                        "onTorCheckStarted", java.util.concurrent.CompletableFuture.class);
+                onStarted.setAccessible(true);
+                onStarted.invoke(window, monitorCheck);
+                var automaticFailure = new org.tor.TorCircuitMonitor.Result(false,
+                        "Unable to verify the Tor circuit", null, null, 1, true);
+                stub.getGlobalSettings().setProperty("ui.offline", "true");
+                monitorCheck.complete(automaticFailure);
+                awaitGtk(() -> MainWindow.torCheckStatus(automaticFailure).equals(lastNotification.get()),
+                        "an automatic failure must notify even when there are no downloads");
+                notifications.verify(() -> TorFailureNotification.send(
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.eq(MainWindow.torCheckStatus(automaticFailure))));
             } finally {
                 window.dispose();
                 drainGtkEvents();
+                application.quit();
             }
         }
     }
@@ -1455,7 +1485,7 @@ class WindowSmokeTest {
                 org.mockito.Mockito.verify(controller).shutdown();
 
                 verification.complete(new org.tor.TorCircuitMonitor.Result(true,
-                        "Tor circuit verified", "192.0.2.1", "NL", 1));
+                        "Tor circuit verified", "192.0.2.1", "NL", 1, false));
                 awaitGtk(() -> "🇳🇱 192.0.2.1".equals(ipLabel.getLabel()),
                         "verification did not refresh the flag and IP beside the Tor icon");
                 assertTrue(ipLabel.getVisible());

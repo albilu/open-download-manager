@@ -227,7 +227,9 @@ public class SettingsDialog {
             Map.entry("browse_tor_button",
                     "Choose the Tor executable managed by ODM after it restarts."),
             Map.entry("tor_check_interval_spin",
-                    "Minutes between Tor connection checks. A failed check enables Offline Mode."),
+                    "Minutes between automatic checks while Tor and the circuit monitor are running."),
+            Map.entry("tor_circuit_monitor_switch",
+                    "Monitor the Tor circuit while Tor is running. A failed automatic check enables Offline Mode and sends a desktop notification."),
             Map.entry("curl_path_entry",
                     "Path to the curl executable used by fallback downloads; changes take effect after restarting ODM."),
             Map.entry("browse_curl_button",
@@ -308,6 +310,7 @@ public class SettingsDialog {
     /** 7x24 toggle buttons of the scheduler grid (row 0 = Monday). */
     private final ToggleButton[][] schedulerToggles = new ToggleButton[7][24];
     private final org.tor.TorService torService;
+    private boolean torAvailable;
     private Label schedulerSelectionLabel;
     private boolean loadingSchedulerGrid;
     private boolean schedulerGridEdited;
@@ -360,6 +363,8 @@ public class SettingsDialog {
                 "History cleanup interval in hours");
         AccessibilitySupport.label(spin("tor_check_interval_spin"),
                 "Tor check interval in minutes");
+        AccessibilitySupport.label(Widgets.require(builder, "tor_circuit_monitor_switch", Switch.class),
+                "Enable Tor circuit monitor");
         AccessibilitySupport.label(spin("max_history_records_spin"),
                 "Maximum download history records, zero for unlimited");
         AccessibilitySupport.label(spin("max_completed_records_spin"),
@@ -457,10 +462,12 @@ public class SettingsDialog {
         configureSettingTooltips();
         load();
         Switch torControl = Widgets.require(builder, "tor_switch", Switch.class);
+        Widgets.require(builder, "tor_circuit_monitor_switch", Switch.class)
+                .onNotify("active", ignored -> refreshTorMonitorControls());
         TorControlBinding.bind(dialog, torService, available -> {
+            torAvailable = available;
             torControl.setSensitive(available);
-            Widgets.require(builder, "tor_check_interval_box", org.gnome.gtk.Box.class)
-                    .setSensitive(available);
+            refreshTorMonitorControls();
             torControl.setTooltipText(available ? SETTING_TOOLTIPS.get("tor_switch")
                     : "Start Tor from Edit → Tor to change this option.");
         });
@@ -733,6 +740,12 @@ public class SettingsDialog {
 
     private void torSwitchSet(boolean active) {
         Widgets.require(builder, "tor_switch", Switch.class).setActive(active);
+    }
+
+    private void refreshTorMonitorControls() {
+        Widgets.require(builder, "tor_check_interval_box", org.gnome.gtk.Box.class)
+                .setSensitive(torAvailable && Widgets.require(builder,
+                        "tor_circuit_monitor_switch", Switch.class).getActive());
     }
 
     private boolean torSwitchGet() {
@@ -1221,6 +1234,8 @@ public class SettingsDialog {
         loadSchedulerGrid(persistedGrid);
         entry("proxychains_path_entry").setText(s.getProxychainsPath() != null ? s.getProxychainsPath() : "");
         entry("tor_path_entry").setText(s.getTorPath() != null ? s.getTorPath() : "");
+        Widgets.require(builder, "tor_circuit_monitor_switch", Switch.class)
+                .setActive(s.isTorCircuitMonitorEnabled());
         spin("tor_check_interval_spin").setValue(s.getTorCheckIntervalMinutes());
         entry("curl_path_entry").setText(s.getCurlPath() != null ? s.getCurlPath() : "");
         entry("subliminal_path_entry").setText(
@@ -1428,6 +1443,8 @@ public class SettingsDialog {
         }
         s.setProxychainsPath(entry("proxychains_path_entry").getText().trim());
         s.setTorPath(entry("tor_path_entry").getText().trim());
+        s.setTorCircuitMonitorEnabled(Widgets.require(builder,
+                "tor_circuit_monitor_switch", Switch.class).getActive());
         s.setTorCheckIntervalMinutes((int) spin("tor_check_interval_spin").getValue());
         s.setCurlPath(entry("curl_path_entry").getText().trim());
         s.setSubliminalPath(entry("subliminal_path_entry").getText().trim());

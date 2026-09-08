@@ -439,13 +439,18 @@
                     <child><object class="GtkBox" id="tor_path_box"><property name="orientation">horizontal</property><property name="spacing">6</property><property name="hexpand">true</property><layout><property name="row">10</property><property name="column">1</property></layout><child><object class="GtkEntry" id="tor_path_entry"><property name="hexpand">true</property></object></child><child><object class="GtkButton" id="browse_tor_button"><property name="label">Browse</property></object></child></object></child>
                     <child><object class="GtkLabel"><property name="label">Tor check:</property><property name="xalign">0</property><layout><property name="row">11</property><property name="column">0</property></layout></object></child>
                     <child>
-                      <object class="GtkBox" id="tor_check_interval_box">
-                        <property name="spacing">6</property><property name="sensitive">false</property>
-                        <property name="tooltip-text">Verify the Tor connection periodically. A failed check enables Offline Mode.</property>
+                      <object class="GtkBox">
+                        <property name="spacing">6</property>
                         <layout><property name="row">11</property><property name="column">1</property></layout>
-                        <child><object class="GtkLabel"><property name="label">Run every</property></object></child>
-                        <child><object class="GtkSpinButton" id="tor_check_interval_spin"><property name="adjustment">tor_check_interval_adjustment</property><property name="numeric">true</property></object></child>
-                        <child><object class="GtkLabel"><property name="label">min</property></object></child>
+                        <child><object class="GtkSwitch" id="tor_circuit_monitor_switch"><property name="active">false</property><property name="valign">center</property></object></child>
+                        <child>
+                          <object class="GtkBox" id="tor_check_interval_box">
+                            <property name="spacing">6</property><property name="sensitive">false</property>
+                            <child><object class="GtkLabel"><property name="label">Run every</property></object></child>
+                            <child><object class="GtkSpinButton" id="tor_check_interval_spin"><property name="adjustment">tor_check_interval_adjustment</property><property name="numeric">true</property></object></child>
+                            <child><object class="GtkLabel"><property name="label">min</property></object></child>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <child><object class="GtkLabel"><property name="label">curl:</property><property name="xalign">0</property><layout><property name="row">12</property><property name="column">0</property></layout></object></child>

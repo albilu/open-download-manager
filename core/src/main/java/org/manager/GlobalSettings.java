@@ -585,7 +585,16 @@ public class GlobalSettings {
         return this;
     }
 
-    /** Periodic circuit verification while the Tor service is running. */
+    public boolean isTorCircuitMonitorEnabled() {
+        return getBooleanProperty("tor.circuitMonitorEnabled", false);
+    }
+
+    public GlobalSettings setTorCircuitMonitorEnabled(boolean enabled) {
+        setProperty("tor.circuitMonitorEnabled", String.valueOf(enabled));
+        return this;
+    }
+
+    /** Periodic circuit verification while the monitor and Tor service are enabled. */
     public int getTorCheckIntervalMinutes() {
         return Math.clamp(getIntProperty("tor.checkIntervalMinutes", 30), 1, 1440);
     }

@@ -68,7 +68,7 @@ class SettingsDialogSaveOutcomeTest {
             "max_completed_records_spin", "completed_retention_spin", "error_retention_spin",
             "max_import_urls_spin", "max_import_source_size_spin", "proxychains_path_entry",
             "browse_proxychains_button", "tor_path_entry", "browse_tor_button",
-            "tor_check_interval_spin",
+            "tor_circuit_monitor_switch", "tor_check_interval_spin",
             "curl_path_entry", "browse_curl_button", "subliminal_path_entry",
             "browse_subliminal_button", "antivirus_type_combo",
             "antivirus_command_entry", "antivirus_timeout_spin");

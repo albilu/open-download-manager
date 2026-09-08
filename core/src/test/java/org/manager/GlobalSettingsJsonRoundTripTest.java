@@ -55,6 +55,26 @@ class GlobalSettingsJsonRoundTripTest {
     }
 
     @Test
+    void torCircuitMonitorPreferencePersistsAndCopiesWithItsInterval() throws Exception {
+        Path target = tempDir.resolve("tor-monitor-settings.json");
+        GlobalSettings settings = new GlobalSettings();
+        assertFalse(settings.isTorCircuitMonitorEnabled());
+        settings.setTorCircuitMonitorEnabled(true).setTorCheckIntervalMinutes(12);
+        assertTrue(settings.copy().isTorCircuitMonitorEnabled());
+        assertTrue(settings.save(target));
+
+        GlobalSettings loaded = new GlobalSettings();
+        loaded.load(target);
+        assertTrue(loaded.isTorCircuitMonitorEnabled());
+        assertEquals(12, loaded.getTorCheckIntervalMinutes());
+        loaded.setTorCircuitMonitorEnabled(false);
+        assertTrue(loaded.save(target));
+        settings.load(target);
+        assertFalse(settings.isTorCircuitMonitorEnabled());
+        assertEquals(12, settings.getTorCheckIntervalMinutes());
+    }
+
+    @Test
     @DisplayName("a fresh save() emits exactly the captured default fixture (modulo the user's home)")
     void freshSaveMatchesDefaultFixture() throws Exception {
         Map<String, String> expected = fixture("settings-default.json");

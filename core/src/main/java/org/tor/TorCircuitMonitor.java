@@ -28,6 +28,7 @@ public final class TorCircuitMonitor implements AutoCloseable {
     private ScheduledFuture<?> timer;
     private Future<?> worker;
     private CompletableFuture<Result> pending;
+    private boolean pendingAutomatic;
     private TorLeakChecker checker;
     private long generation;
     private int interval;
@@ -60,7 +61,7 @@ public final class TorCircuitMonitor implements AutoCloseable {
         refresh();
     }
 
-    /** Re-read the interval after settings are applied, without checking immediately. */
+    /** Re-read monitor settings without starting an immediate verification. */
     public synchronized void refresh() {
         if (closed) {
             return;
@@ -70,16 +71,21 @@ public final class TorCircuitMonitor implements AutoCloseable {
             stopChecks();
             return;
         }
-        int minutes = settings.getTorCheckIntervalMinutes();
-        if (active && interval == minutes) {
+        active = true;
+        if (!settings.isTorCircuitMonitorEnabled()) {
+            cancelTimer();
+            if (pendingAutomatic) {
+                cancelPendingCheck();
+            }
             return;
         }
-        active = true;
-        interval = minutes;
-        if (timer != null) {
-            timer.cancel(false);
+        int minutes = settings.getTorCheckIntervalMinutes();
+        if (timer != null && interval == minutes) {
+            return;
         }
-        timer = executor.scheduleAtFixedRate(this::checkNow, minutes, minutes, TimeUnit.MINUTES);
+        interval = minutes;
+        cancelTimer();
+        timer = executor.scheduleAtFixedRate(() -> check(true), minutes, minutes, TimeUnit.MINUTES);
     }
 
     /** Suspend immediately on a stop request, before the daemon finishes stopping. */
@@ -93,10 +99,14 @@ public final class TorCircuitMonitor implements AutoCloseable {
         refresh();
     }
 
-    /** Manual and scheduled checks share one in-flight request. Null means canceled/inactive. */
-    public synchronized CompletableFuture<Result> checkNow() {
+    /** Manual verification never changes Offline Mode. Null means canceled/inactive. */
+    public CompletableFuture<Result> checkNow() {
+        return check(false);
+    }
+
+    private synchronized CompletableFuture<Result> check(boolean automatic) {
         refresh();
-        if (!active || closed) {
+        if (!active || closed || (automatic && !settings.isTorCircuitMonitorEnabled())) {
             return CompletableFuture.completedFuture(null);
         }
         if (pending != null && !pending.isDone()) {
@@ -105,8 +115,10 @@ public final class TorCircuitMonitor implements AutoCloseable {
         long epoch = generation;
         CompletableFuture<Result> future = new CompletableFuture<>();
         pending = future;
+        // A timer joining a manual request must not change its failure policy.
+        pendingAutomatic = automatic;
         onCheckStarted.accept(future);
-        worker = executor.submit(() -> verify(epoch, future));
+        worker = executor.submit(() -> verify(epoch, automatic, future));
         return future;
     }
 
@@ -115,13 +127,13 @@ public final class TorCircuitMonitor implements AutoCloseable {
                 && service.isRunning() && result.generation() == generation;
     }
 
-    private void verify(long epoch, CompletableFuture<Result> future) {
+    private void verify(long epoch, boolean automatic, CompletableFuture<Result> future) {
         TorLeakChecker localChecker = null;
         try {
             TorLeakChecker.LeakCheckResult verdict;
             try {
                 synchronized (this) {
-                    if (!current(epoch)) {
+                    if (!current(epoch, automatic)) {
                         return;
                     }
                     checker = localChecker = checkerFactory.get();
@@ -140,13 +152,15 @@ public final class TorCircuitMonitor implements AutoCloseable {
             }
 
             CompletableFuture<Void> stopping = CompletableFuture.completedFuture(null);
+            boolean offlineEnabled = false;
             synchronized (this) {
-                if (!current(epoch)) {
+                if (!current(epoch, automatic)) {
                     return;
                 }
-                if (!verdict.isSecure) {
+                if (automatic && !verdict.isSecure) {
                     // Gate new downloads before publishing the failure or waiting for active transfers.
                     stopping = offline.setOffline(true);
+                    offlineEnabled = true;
                 }
             }
             String country = null;
@@ -167,9 +181,9 @@ public final class TorCircuitMonitor implements AutoCloseable {
                 }
             }
             synchronized (this) {
-                if (current(epoch)) {
+                if (current(epoch, automatic)) {
                     future.complete(new Result(verdict.isSecure, verdict.message,
-                            verdict.exitNodeIp, country, epoch));
+                            verdict.exitNodeIp, country, epoch, offlineEnabled));
                 }
             }
         } finally {
@@ -179,6 +193,7 @@ public final class TorCircuitMonitor implements AutoCloseable {
             synchronized (this) {
                 if (pending == future) {
                     pending = null;
+                    pendingAutomatic = false;
                     checker = null;
                     worker = null;
                 }
@@ -187,17 +202,26 @@ public final class TorCircuitMonitor implements AutoCloseable {
         }
     }
 
-    private boolean current(long epoch) {
-        return !closed && active && !suspended && generation == epoch && service.isRunning();
+    private boolean current(long epoch, boolean automatic) {
+        return !closed && active && !suspended && generation == epoch && service.isRunning()
+                && (!automatic || settings.isTorCircuitMonitorEnabled());
     }
 
     private void stopChecks() {
         active = false;
-        generation++;
+        cancelTimer();
+        cancelPendingCheck();
+    }
+
+    private void cancelTimer() {
         if (timer != null) {
             timer.cancel(false);
             timer = null;
         }
+    }
+
+    private void cancelPendingCheck() {
+        generation++;
         if (checker != null) {
             checker.shutdown();
             checker = null;
@@ -206,9 +230,11 @@ public final class TorCircuitMonitor implements AutoCloseable {
             worker.cancel(true);
             worker = null;
         }
-        if (pending != null) {
-            pending.complete(null);
-            pending = null;
+        CompletableFuture<Result> canceled = pending;
+        pending = null;
+        pendingAutomatic = false;
+        if (canceled != null) {
+            canceled.complete(null);
         }
     }
 
@@ -243,5 +269,6 @@ public final class TorCircuitMonitor implements AutoCloseable {
         }
     }
 
-    public record Result(boolean secure, String message, String ip, String countryCode, long generation) { }
+    public record Result(boolean secure, String message, String ip, String countryCode,
+            long generation, boolean offlineEnabled) { }
 }
