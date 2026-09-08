@@ -85,7 +85,7 @@ public class SettingsDialog {
 
             // Network
             Map.entry("max_connections_spin",
-                    "Default maximum connections for new downloads when supported by the selected engine."),
+                    "Default maximum connections for new downloads, capped to each engine's supported limit: aria2 16, HTTrack 8; yt-dlp fragments can exceed 16."),
             Map.entry("retry_limit_spin",
                     "Maximum attempts for new downloads when supported; 0 uses the selected engine's default."),
             Map.entry("retry_after",

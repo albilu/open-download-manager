@@ -74,7 +74,11 @@ final class NetworkOptionsPane {
         }
         this.torService = torService;
         List<Download> records = List.copyOf(downloads);
-        setCapabilities(PropertySettingsBatch.commonCapabilities(records));
+        setCapabilities(new NetworkOptionControls.Capabilities(
+                PropertySettingsBatch.commonCapabilities(records),
+                records.stream().map(Download::getSettings).filter(Objects::nonNull)
+                        .mapToInt(ExternalToolSettings::maxConnectionsLimit)
+                        .min().orElse(Integer.MAX_VALUE)));
         loadDownload(records.getFirst());
         mixedValues = describeMixedValues(records);
         clearChanges();
@@ -190,7 +194,7 @@ final class NetworkOptionsPane {
         }
     }
 
-    /** Re-evaluates enabled controls without replacing values already entered by the user. */
+    /** Re-evaluates controls and their ranges while retaining the requested values. */
     void updateCapabilities(GlobalSettings globalSettings, Download.Type type,
             Download.Protocol protocol) {
         setCapabilities(NetworkOptionControls.capabilitiesFor(
@@ -222,16 +226,15 @@ final class NetworkOptionsPane {
         proxyChanged = false;
     }
 
-    private void setCapabilities(Set<ExternalToolSettings.Capability> capabilities) {
-        Set<ExternalToolSettings.Capability> supported = capabilities != null
-                ? capabilities : Set.of();
+    private void setCapabilities(NetworkOptionControls.Capabilities capabilities) {
+        Set<ExternalToolSettings.Capability> supported = capabilities.supported();
         withoutTracking(() -> {
             int selected = (int) proxyType.getSelected();
             boolean socksSupported = supported.contains(
                     ExternalToolSettings.Capability.SOCKS_PROXY);
             proxyType.setModel(socksSupported ? allProxyTypes : plainProxyTypes);
             proxyType.setSelected(!socksSupported && selected > 2 ? 0 : selected);
-            controls.applyCapabilities(supported);
+            controls.applyCapabilities(capabilities);
         });
     }
 
@@ -239,7 +242,7 @@ final class NetworkOptionsPane {
         DownloadSettingsFactory.NetworkDefaults defaults =
                 DownloadSettingsFactory.NetworkDefaults.from(global);
         withoutTracking(() -> {
-            connections.setValue(defaults.maxConnections());
+            controls.setConnectionsValue(defaults.maxConnections());
             retries.setValue(defaults.maxRetries());
             retryDelay.setValue(defaults.retryDelaySeconds());
             downloadLimit.setValue(defaults.downloadLimitKb());
@@ -263,7 +266,7 @@ final class NetworkOptionsPane {
     private void loadDownload(Download download) {
         withoutTracking(() -> {
             DownloadSettings settings = download.getSettings();
-            connections.setValue(settings.getMaxConnections());
+            controls.setConnectionsValue(settings.getMaxConnections());
             downloadLimit.setValue(settings.getDownloadLimitKB());
             uploadLimit.setValue(settings.getUploadLimitKB());
             retries.setValue(settings.getMaxRetries());

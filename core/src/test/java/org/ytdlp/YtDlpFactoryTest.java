@@ -330,19 +330,20 @@ class YtDlpFactoryTest {
 
     @ParameterizedTest
     @CsvSource({
-            "32, 16, 2M",
-            "8, 4, 512K",
-            "64, 32, 10M"
+            "32, 16, 2M, 16",
+            "8, 4, 512K, 8",
+            "64, 32, 10M, 16"
     })
     @DisplayName("Should create custom Aria2c settings correctly")
-    void testCreateCustomAria2cSettings(int maxConnections, int splitConnections, String minSplitSize) {
+    void testCreateCustomAria2cSettings(int maxConnections, int splitConnections,
+            String minSplitSize, int expectedServerConnections) {
         factory = YtDlpFactory.getInstance(mockGlobalSettings);
 
         YtDlpSettings settings = factory.createAria2cSettings(maxConnections, splitConnections, minSplitSize);
 
         assertNotNull(settings);
         assertTrue(settings.isUseAria2c());
-        assertEquals(maxConnections, settings.getAria2cConnections());
+        assertEquals(expectedServerConnections, settings.getAria2cConnections());
         assertEquals(splitConnections, settings.getAria2cSplitConnections());
         assertEquals(minSplitSize, settings.getAria2cMinSplitSize());
     }

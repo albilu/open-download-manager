@@ -74,6 +74,41 @@ class DownloadNetworkCapabilitiesTest {
         assertEquals("socks5h://127.0.0.1:9050", settings.getProxyAddress());
     }
 
+    @Test
+    void largeGlobalConnectionDefaultIsAdaptedForEachEngineAndRoute() {
+        for (String proxy : java.util.List.of("", "http://proxy.test:8080",
+                "socks5h://127.0.0.1:9050")) {
+            GlobalSettings global = new GlobalSettings()
+                    .setGlobalProxyEnabled(!proxy.isEmpty()).setGlobalProxyAddress(proxy);
+            global.setProperty("network.maxConnections", "64");
+            DownloadSettingsFactory factory = new DownloadSettingsFactory(global);
+
+            Aria2Settings aria2 = (Aria2Settings) factory.createSettings(
+                    Download.Type.ARIA2, Download.Protocol.HTTPS);
+            assertEquals(16, aria2.getMaxConnections());
+            assertEquals("16", aria2.toRpcOptions().get("max-connection-per-server"));
+            assertEquals("16", aria2.toRpcOptions().get("split"));
+            assertEquals(16, factory.createSettings(Download.Type.PROXYCHAINS,
+                    Download.Protocol.HTTPS).getMaxConnections());
+            assertEquals(16, factory.createSettings(Download.Type.TOR,
+                    Download.Protocol.HTTPS).getMaxConnections());
+
+            HttrackSettings website = (HttrackSettings) factory.createSettings(
+                    Download.Type.WEBSITE_SCRAPING, Download.Protocol.HTTPS);
+            assertEquals(8, website.getMaxConnections());
+            assertTrue(website.buildCommandLine().contains("-c8"));
+
+            var media = (org.ytdlp.YtDlpSettings) factory.createSettings(
+                    Download.Type.YOUTUBE, Download.Protocol.HTTPS);
+            assertEquals(64, media.getMaxConnections());
+            assertEquals(16, media.getAria2cConnections());
+            assertEquals(64, media.getAria2cSplitConnections());
+            assertEquals(64, DownloadSettingsFactory.NetworkDefaults.from(global).maxConnections());
+            assertFalse(factory.createSettings(Download.Type.CURL,
+                    Download.Protocol.HTTPS).supports(ExternalToolSettings.Capability.CONNECTIONS));
+        }
+    }
+
     private static Download download(String uri, DownloadSettings settings) {
         Download download = new Download(URI.create(uri));
         download.setSettings(settings);

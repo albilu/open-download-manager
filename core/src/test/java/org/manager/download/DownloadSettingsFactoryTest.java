@@ -180,7 +180,8 @@ class DownloadSettingsFactoryTest {
             ExternalToolSettings settings = factory.createSettings(type);
             String prefix = type + ": ";
             if (settings.supports(ExternalToolSettings.Capability.CONNECTIONS)) {
-                assertEquals(12, settings.getMaxConnections(), prefix + "connections");
+                assertEquals(type == Download.Type.WEBSITE_SCRAPING ? 8 : 12,
+                        settings.getMaxConnections(), prefix + "connections");
             }
             if (settings.supports(ExternalToolSettings.Capability.DOWNLOAD_LIMIT)) {
                 assertEquals(512, settings.getDownloadLimitKB(), prefix + "download limit");

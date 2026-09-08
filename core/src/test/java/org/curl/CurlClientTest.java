@@ -1,5 +1,6 @@
 package org.curl;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -12,13 +13,20 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.junit.jupiter.api.AfterAll;
+import okhttp3.mockwebserver.Dispatcher;
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
+import okio.Buffer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,8 +37,6 @@ import org.junit.jupiter.api.io.TempDir;
 import org.manager.download.Download;
 import org.manager.download.DownloadListener;
 
-import utils.TestUtils;
-
 @DisplayName("CurlClient Integration Tests")
 class CurlClientTest {
 
@@ -38,34 +44,33 @@ class CurlClientTest {
     Path tempDir;
 
     private CurlClient client;
+    private MockWebServer server;
 
     @BeforeAll
     static void checkCurlAvailability() throws IOException {
         // Skip all tests if curl is not available
         assumeTrue(isCurlAvailable(), "curl is not available on this system");
-        TestUtils.setupMockWebServer();
     }
 
     @BeforeEach
     void setUp() throws IOException {
-
+        server = new MockWebServer();
+        server.start();
         // Use actual CurlClient without mocking
         client = new CurlClient();
-
-    }
-
-    @AfterAll
-    static void cleanup() throws IOException {
-        // Cleanup MockWebServer after all tests
-        TestUtils.teardownMockWebServer();
     }
 
     @AfterEach
     void tearDown() throws IOException {
-        if (client != null) {
-            client.shutdown();
+        try {
+            if (client != null) {
+                client.shutdown();
+            }
+        } finally {
+            if (server != null) {
+                server.shutdown();
+            }
         }
-
     }
 
     @Test
@@ -114,18 +119,13 @@ class CurlClientTest {
     @DisplayName("Should download small text file successfully")
     @Timeout(30)
     void shouldDownloadSmallFileSuccessfully() throws Exception {
-        // Use a reliable test URL (httpbin.org provides testing endpoints)
-        String testUrl = TestUtils.getMockUrl(3); // 5MB file
+        String testUrl = mockFileUrl(3);
 
         Download download = createTestDownload(URI.create(testUrl));
         download.setDestination(tempDir);
 
         TestDownloadListener listener = new TestDownloadListener();
-        CompletableFuture<Void> downloadComplete = new CompletableFuture<>();
-
-        listener.onCompleteCallback = (d) -> downloadComplete.complete(null);
-
-        client.startDownload(download, listener);
+        CompletableFuture<Void> downloadComplete = startDownload(download, listener);
 
         // Wait for download to complete
         assertDoesNotThrow(() -> downloadComplete.get(25, TimeUnit.SECONDS));
@@ -142,17 +142,13 @@ class CurlClientTest {
     @Timeout(60)
     void shouldHandleDownloadProgressUpdates() throws Exception {
         // Use a larger file to ensure progress updates
-        String testUrl = TestUtils.getMockUrl(10); // 10KB stream
+        String testUrl = mockFileUrl(10);
 
         Download download = createTestDownload(URI.create(testUrl));
         download.setDestination(tempDir);
 
         TestDownloadListener listener = new TestDownloadListener();
-        CompletableFuture<Void> downloadComplete = new CompletableFuture<>();
-
-        listener.onCompleteCallback = (d) -> downloadComplete.complete(null);
-
-        client.startDownload(download, listener);
+        CompletableFuture<Void> downloadComplete = startDownload(download, listener);
 
         // Wait for download to complete
         assertDoesNotThrow(() -> downloadComplete.get(50, TimeUnit.SECONDS));
@@ -168,7 +164,8 @@ class CurlClientTest {
     @DisplayName("Should handle an HTTP download error")
     @Timeout(30)
     void shouldHandleDownloadError() throws Exception {
-        String invalidUrl = TestUtils.getMockErrorUrl(404);
+        server.enqueue(new MockResponse().setResponseCode(404).setBody("Not found"));
+        String invalidUrl = server.url("/missing.bin").toString();
 
         Download download = createTestDownload(URI.create(invalidUrl));
         download.setDestination(tempDir);
@@ -192,7 +189,7 @@ class CurlClientTest {
     @DisplayName("Should create destination directory if it doesn't exist")
     @Timeout(30)
     void shouldCreateDestinationDirectoryIfItDoesntExist() throws Exception {
-        String testUrl = TestUtils.getMockUrl(3); // 3MB file
+        String testUrl = mockFileUrl(3);
         Path subDir = tempDir.resolve("subdir").resolve("nested");
 
         Download download = createTestDownload(URI.create(testUrl));
@@ -269,44 +266,89 @@ class CurlClientTest {
     @DisplayName("Should handle concurrent downloads")
     @Timeout(60)
     void shouldHandleConcurrentDownloads() throws Exception {
-        String testUrl1 = TestUtils.getMockUrl(3); // 3MB file
-        String testUrl2 = TestUtils.getMockUrl(5); // 5MB file
+        byte[] content1 = testContent(3, (byte) 'a');
+        byte[] content2 = testContent(5, (byte) 'b');
+        Map<String, byte[]> responses = Map.of("/first.bin", content1, "/second.bin", content2);
+        CountDownLatch requestsReceived = new CountDownLatch(2);
+        CountDownLatch releaseResponses = new CountDownLatch(1);
+        server.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) throws InterruptedException {
+                byte[] content = responses.get(request.getPath());
+                if (content == null) {
+                    return new MockResponse().setResponseCode(404);
+                }
+                requestsReceived.countDown();
+                if (!releaseResponses.await(15, TimeUnit.SECONDS)) {
+                    return new MockResponse().setResponseCode(400).setBody("Response release timed out");
+                }
+                return fileResponse(content);
+            }
+        });
 
-        Download download1 = createTestDownload(URI.create(testUrl1));
+        Download download1 = createTestDownload(server.url("/first.bin").uri());
         download1.setDestination(tempDir);
 
-        Download download2 = createTestDownload(URI.create(testUrl2));
+        Download download2 = createTestDownload(server.url("/second.bin").uri());
         download2.setDestination(tempDir);
 
         TestDownloadListener listener1 = new TestDownloadListener();
         TestDownloadListener listener2 = new TestDownloadListener();
 
-        CompletableFuture<Void> download1Complete = new CompletableFuture<>();
-        CompletableFuture<Void> download2Complete = new CompletableFuture<>();
-
-        listener1.onCompleteCallback = (d) -> download1Complete.complete(null);
-        listener2.onCompleteCallback = (d) -> download2Complete.complete(null);
-
-        // Start both downloads
-        client.startDownload(download1, listener1);
-        client.startDownload(download2, listener2);
+        CompletableFuture<Void> download1Complete = startDownload(download1, listener1);
+        CompletableFuture<Void> download2Complete = startDownload(download2, listener2);
+        try {
+            assertTrue(requestsReceived.await(10, TimeUnit.SECONDS),
+                    "Both downloads must reach the server before either response is released");
+            assertFalse(download1Complete.isDone());
+            assertFalse(download2Complete.isDone());
+        } finally {
+            releaseResponses.countDown();
+        }
 
         // Wait for both to complete
-        assertDoesNotThrow(() -> {
-            download1Complete.get(50, TimeUnit.SECONDS);
-            download2Complete.get(50, TimeUnit.SECONDS);
-        });
+        assertDoesNotThrow(() -> CompletableFuture.allOf(download1Complete, download2Complete)
+                .get(50, TimeUnit.SECONDS));
 
         // Verify both files were downloaded
         Path outputFile1 = tempDir.resolve(download1.getName());
         Path outputFile2 = tempDir.resolve(download2.getName());
-        assertTrue(Files.exists(outputFile1));
-        assertTrue(Files.exists(outputFile2));
+        assertArrayEquals(content1, Files.readAllBytes(outputFile1));
+        assertArrayEquals(content2, Files.readAllBytes(outputFile2));
         assertEquals(Download.Status.COMPLETED, download1.getStatus());
         assertEquals(Download.Status.COMPLETED, download2.getStatus());
     }
 
     // Helper methods
+    private String mockFileUrl(int sizeMiB) {
+        server.enqueue(fileResponse(testContent(sizeMiB, (byte) 'x')));
+        return server.url("/test-file.bin").toString();
+    }
+
+    private static byte[] testContent(int sizeMiB, byte value) {
+        byte[] content = new byte[sizeMiB * 1024 * 1024];
+        Arrays.fill(content, value);
+        return content;
+    }
+
+    private static MockResponse fileResponse(byte[] content) {
+        return new MockResponse()
+                .setHeader("Content-Type", "application/octet-stream")
+                .setBody(new Buffer().write(content));
+    }
+
+    private CompletableFuture<Void> startDownload(Download download, TestDownloadListener listener) {
+        CompletableFuture<Void> completed = new CompletableFuture<>();
+        listener.onCompleteCallback = d -> completed.complete(null);
+        listener.onErrorCallback = (d, error) -> completed.completeExceptionally(new IOException(error));
+        client.startDownload(download, listener).whenComplete((id, failure) -> {
+            if (failure != null) {
+                completed.completeExceptionally(failure);
+            }
+        });
+        return completed;
+    }
+
     private Download createTestDownload(URI uri) {
         Download download = new Download();
         download.setUri(uri);

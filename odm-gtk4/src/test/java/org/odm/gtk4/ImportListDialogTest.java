@@ -104,7 +104,7 @@ class ImportListDialogTest {
         var capabilities = NetworkOptionControls.commonCapabilities(
                 new org.manager.GlobalSettings(), List.of(
                         "https://example.test/file.iso",
-                        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
+                        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")).supported();
 
         assertTrue(capabilities.contains(ExternalToolSettings.Capability.DOWNLOAD_LIMIT));
         assertTrue(capabilities.contains(ExternalToolSettings.Capability.MAX_RETRIES));
@@ -112,5 +112,23 @@ class ImportListDialogTest {
         assertFalse(capabilities.contains(ExternalToolSettings.Capability.CONNECTIONS));
         assertFalse(capabilities.contains(ExternalToolSettings.Capability.UPLOAD_LIMIT));
         assertFalse(capabilities.contains(ExternalToolSettings.Capability.REFERER));
+    }
+
+    @Test
+    void importConnectionRangeDependsOnEverySelectedEngine() {
+        var global = new org.manager.GlobalSettings();
+        global.setProperty("network.maxConnections", "64");
+        String media = "https://www.youtube.com/watch?v=12345678901";
+
+        var mediaOnly = NetworkOptionControls.commonCapabilities(global, List.of(media));
+        assertTrue(mediaOnly.supported().contains(ExternalToolSettings.Capability.CONNECTIONS));
+        assertEquals(Integer.MAX_VALUE, mediaOnly.maxConnections());
+
+        var mixed = NetworkOptionControls.commonCapabilities(global,
+                List.of(media, "https://example.test/file.iso"));
+        assertTrue(mixed.supported().contains(ExternalToolSettings.Capability.CONNECTIONS));
+        assertEquals(16, mixed.maxConnections());
+        assertTrue(NetworkOptionControls.commonCapabilities(global, List.of())
+                .supported().isEmpty());
     }
 }

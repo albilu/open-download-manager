@@ -36,6 +36,14 @@ public interface ExternalToolSettings {
     /** Maximum simultaneous connections for this download. */
     int getMaxConnections();
 
+    /**
+     * Largest supported connection count. Integer.MAX_VALUE means the engine
+     * imposes no upper bound within ODM's integer setting (yt-dlp fragments).
+     */
+    default int maxConnectionsLimit() {
+        return Integer.MAX_VALUE;
+    }
+
     ExternalToolSettings setMaxConnections(int maxConnections);
 
     /** Download limit in KiB/s; 0 means unlimited. */

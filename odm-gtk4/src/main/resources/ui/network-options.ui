@@ -4,7 +4,7 @@
 
   <object class="GtkAdjustment" id="network_connections_adjustment">
     <property name="lower">1</property>
-    <property name="upper">16</property>
+    <property name="upper">64</property>
     <property name="value">4</property>
     <property name="step-increment">1</property>
   </object>

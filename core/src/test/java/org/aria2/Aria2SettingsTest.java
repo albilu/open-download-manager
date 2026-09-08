@@ -83,7 +83,9 @@ class Aria2SettingsTest {
     @ValueSource(ints = {1, 5, 10, 16, 50})
     void shouldSetMaxConnectionPerServer(int connections) {
         settings.setMaxConnectionPerServer(connections);
-        assertEquals(connections, settings.getMaxConnectionPerServer());
+        int expected = Math.min(connections, 16);
+        assertEquals(expected, settings.getMaxConnectionPerServer());
+        assertEquals(String.valueOf(expected), settings.toRpcOptions().get("max-connection-per-server"));
     }
 
     @ParameterizedTest
@@ -399,7 +401,7 @@ class Aria2SettingsTest {
         Aria2Settings copy = (Aria2Settings) settings.copy();
 
         // Modify original
-        settings.setMaxConnectionPerServer(20);
+        settings.setMaxConnectionPerServer(16);
         settings.setMinSplitSize(100);
         settings.setOption("original-option", "original-value");
 
@@ -409,7 +411,7 @@ class Aria2SettingsTest {
         copy.setOption("copy-option", "copy-value");
 
         // Verify independence
-        assertEquals(20, settings.getMaxConnectionPerServer());
+        assertEquals(16, settings.getMaxConnectionPerServer());
         assertEquals(15, copy.getMaxConnectionPerServer());
         assertEquals(100, settings.getMinSplitSize());
         assertEquals(80, copy.getMinSplitSize());
@@ -433,7 +435,7 @@ class Aria2SettingsTest {
 
         Map<String, String> map = settings.toMap();
 
-        assertEquals("0", map.get("max-connection-per-server"));
+        assertEquals("1", map.get("max-connection-per-server"));
         assertEquals("0M", map.get("min-split-size"));
         assertEquals("0", map.get("retry-wait"));
         assertEquals("0", map.get("max-tries"));

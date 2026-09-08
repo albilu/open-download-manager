@@ -27,6 +27,14 @@ import org.manager.url.DownloadUrlPolicy;
  */
 final class NetworkOptionControls {
 
+    record Capabilities(Set<ExternalToolSettings.Capability> supported, int maxConnections) {
+        static final Capabilities NONE = new Capabilities(Set.of(), Integer.MAX_VALUE);
+
+        Capabilities {
+            supported = Set.copyOf(supported);
+        }
+    }
+
     private static final String UNSUPPORTED =
             "Not supported by the selected download engine or protocol.";
 
@@ -50,6 +58,8 @@ final class NetworkOptionControls {
     private boolean socksProxySupported;
     private boolean torAvailable;
     private boolean adjustingProxyType;
+    private boolean adjustingConnections;
+    private int requestedConnections;
 
     NetworkOptionControls(SpinButton connections, SpinButton downloadLimit,
             SpinButton uploadLimit, SpinButton retries, SpinButton retryDelay,
@@ -57,6 +67,12 @@ final class NetworkOptionControls {
             Entry proxyHost, SpinButton proxyPort, Entry proxyUsername,
             Entry proxyPassword, Switch tor) {
         this.connections = connections;
+        requestedConnections = (int) connections.getValue();
+        connections.onValueChanged(() -> {
+            if (!adjustingConnections) {
+                requestedConnections = (int) connections.getValue();
+            }
+        });
         this.downloadLimit = downloadLimit;
         this.uploadLimit = uploadLimit;
         this.retries = retries;
@@ -83,11 +99,23 @@ final class NetworkOptionControls {
         });
     }
 
-    void applyCapabilities(Set<ExternalToolSettings.Capability> capabilities) {
-        Set<ExternalToolSettings.Capability> supported = capabilities != null
-                ? capabilities : Set.of();
+    void applyCapabilities(Capabilities capabilities) {
+        Set<ExternalToolSettings.Capability> supported = capabilities.supported();
+        adjustingConnections = true;
+        try {
+            connections.setRange(1, Math.min(64, capabilities.maxConnections()));
+            connections.setValue(requestedConnections);
+        } finally {
+            adjustingConnections = false;
+        }
         setSupported(connections, supported.contains(
                 ExternalToolSettings.Capability.CONNECTIONS));
+        if (connections.getSensitive()) {
+            connections.setTooltipText(capabilities.maxConnections() == Integer.MAX_VALUE
+                    ? "Maximum simultaneous media fragments (1–64)."
+                    : "Maximum simultaneous connections supported by this engine: "
+                            + capabilities.maxConnections() + ".");
+        }
         setSupported(downloadLimit, supported.contains(
                 ExternalToolSettings.Capability.DOWNLOAD_LIMIT));
         setSupported(uploadLimit, supported.contains(
@@ -111,6 +139,17 @@ final class NetworkOptionControls {
         proxyType.setTooltipText(proxyTooltip());
         refreshTorSensitivity();
         refreshProxySensitivity();
+    }
+
+    /** Keep the requested value when switching to an engine with a lower limit. */
+    void setConnectionsValue(int value) {
+        requestedConnections = Math.max(1, value);
+        adjustingConnections = true;
+        try {
+            connections.setValue(requestedConnections);
+        } finally {
+            adjustingConnections = false;
+        }
     }
 
     void bindTorService(Widget owner, org.tor.TorService service) {
@@ -189,12 +228,13 @@ final class NetworkOptionControls {
         }
     }
 
-    static EnumSet<ExternalToolSettings.Capability> capabilitiesFor(
+    static Capabilities capabilitiesFor(
             GlobalSettings globalSettings, Download.Type type, Download.Protocol protocol) {
         GlobalSettings global = globalSettings != null ? globalSettings : new GlobalSettings();
         DownloadSettings settings = new DownloadSettingsFactory(global)
                 .createSettings(type, protocol);
-        return DownloadNetworkCapabilities.forSettings(settings, type, protocol);
+        return new Capabilities(DownloadNetworkCapabilities.forSettings(settings, type, protocol),
+                settings.maxConnectionsLimit());
     }
 
     /**
@@ -202,7 +242,7 @@ final class NetworkOptionControls {
      * import therefore never offers a value that some selected record would
      * silently ignore.
      */
-    static EnumSet<ExternalToolSettings.Capability> commonCapabilities(
+    static Capabilities commonCapabilities(
             GlobalSettings globalSettings, List<String> sources) {
         EnumSet<ExternalToolSettings.Capability> common =
                 EnumSet.allOf(ExternalToolSettings.Capability.class);
@@ -210,8 +250,8 @@ final class NetworkOptionControls {
         DownloadSettingsFactory factory = new DownloadSettingsFactory(global);
         record Route(Download.Type type, Download.Protocol protocol) {
         }
-        Map<Route, EnumSet<ExternalToolSettings.Capability>> routeCapabilities =
-                new HashMap<>();
+        Map<Route, Capabilities> routeCapabilities = new HashMap<>();
+        int connectionLimit = Integer.MAX_VALUE;
         boolean found = false;
         if (sources != null) {
             for (String source : sources) {
@@ -220,12 +260,14 @@ final class NetworkOptionControls {
                     Download.Type type = org.manager.download.MediaUrlDetector.isMediaUrl(uri)
                             ? Download.Type.YOUTUBE : Download.Type.ARIA2;
                     Route route = new Route(type, Download.Protocol.fromUri(uri));
-                    common.retainAll(routeCapabilities.computeIfAbsent(route, key -> {
+                    Capabilities capabilities = routeCapabilities.computeIfAbsent(route, key -> {
                         DownloadSettings settings = factory.createSettings(
                                 key.type(), key.protocol());
-                        return DownloadNetworkCapabilities.forSettings(settings,
-                                key.type(), key.protocol());
-                    }));
+                        return new Capabilities(DownloadNetworkCapabilities.forSettings(settings,
+                                key.type(), key.protocol()), settings.maxConnectionsLimit());
+                    });
+                    common.retainAll(capabilities.supported());
+                    connectionLimit = Math.min(connectionLimit, capabilities.maxConnections());
                     found = true;
                     if (common.isEmpty()) {
                         break;
@@ -235,7 +277,6 @@ final class NetworkOptionControls {
                 }
             }
         }
-        return found ? common
-                : EnumSet.noneOf(ExternalToolSettings.Capability.class);
+        return found ? new Capabilities(common, connectionLimit) : Capabilities.NONE;
     }
 }

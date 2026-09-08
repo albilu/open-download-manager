@@ -64,7 +64,15 @@ public class HttrackSettings extends DownloadSettings {
     private boolean includeDocuments = true;
     private boolean includeArchives = false;//
     private int maxRate = 0; // 0 means no limit, in KB/s
-    private int connections = 8;
+    // HTTrack caps sockets at 8 while its default security limits are enabled.
+    public static final int MAX_CONNECTIONS = 8;
+
+    @Override
+    public int maxConnectionsLimit() {
+        return MAX_CONNECTIONS;
+    }
+
+    private int connections = MAX_CONNECTIONS;
     /** Null means HTTrack's native identity and robots policy. */
     private String userAgent = null;
     private boolean useProxy = false;
@@ -374,15 +382,15 @@ public class HttrackSettings extends DownloadSettings {
     /**
      * Sets the number of concurrent connections.
      *
-     * @param connections The number of concurrent connections (1-32)
+     * @param connections Positive count, capped to HTTrack's active socket limit
      * @return This settings object for chaining
-     * @throws IllegalArgumentException if connections is outside 1-32
+     * @throws IllegalArgumentException if connections is not positive
      */
     public HttrackSettings setConnections(int connections) {
-        if (connections < 1 || connections > 32) {
-            throw new IllegalArgumentException("Connections must be between 1 and 32: " + connections);
+        if (connections < 1) {
+            throw new IllegalArgumentException("Connections must be positive: " + connections);
         }
-        this.connections = connections;
+        this.connections = Math.min(connections, maxConnectionsLimit());
         return this;
     }
 

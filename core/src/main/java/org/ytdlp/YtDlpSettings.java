@@ -926,7 +926,10 @@ public class YtDlpSettings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public YtDlpSettings setAria2cConnections(int aria2cConnections) {
-        this.aria2cConnections = aria2cConnections;
+        // Native fragment concurrency has no fixed ceiling, but aria2's
+        // per-server -x option still only accepts 1 through 16.
+        this.aria2cConnections = Math.clamp(aria2cConnections, 1,
+                org.aria2.Aria2Settings.MAX_CONNECTIONS);
         return this;
     }
 

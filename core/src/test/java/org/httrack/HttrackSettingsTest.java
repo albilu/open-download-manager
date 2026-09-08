@@ -199,7 +199,7 @@ class HttrackSettingsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = { 1, 2, 4, 8, 16 })
+    @ValueSource(ints = { 1, 2, 4, 8 })
     @DisplayName("Connections setting should accept valid values")
     void testConnectionsSettingValid(int connections) {
         // When
@@ -210,12 +210,22 @@ class HttrackSettingsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = { 0, -1, 33 })
+    @ValueSource(ints = { 0, -1 })
     @DisplayName("Connections setting should reject invalid values")
     void testConnectionsSettingInvalid(int connections) {
         // When & Then
         assertThrows(IllegalArgumentException.class, () -> settings.setConnections(connections),
                 "Setting invalid connections should throw IllegalArgumentException");
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = { 9, 16, 32, 64, Integer.MAX_VALUE })
+    void connectionRequestsRespectActiveHttrackSocketLimit(int connections) {
+        settings.setConnections(connections);
+
+        assertEquals(8, settings.getConnections());
+        assertTrue(settings.buildCommandLine().contains("-c8"));
+        assertFalse(settings.buildCommandLine().contains("--disable-security-limits"));
     }
 
     @Test

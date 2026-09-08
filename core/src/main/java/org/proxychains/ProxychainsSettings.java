@@ -13,6 +13,11 @@ import org.proxychains.ProxychainsToolManager;
 public class ProxychainsSettings extends DownloadSettings {
 
     @Override
+    public int maxConnectionsLimit() {
+        return org.aria2.Aria2Settings.MAX_CONNECTIONS;
+    }
+
+    @Override
     public boolean supports(org.manager.download.ExternalToolSettings.Capability capability) {
         return true;
     }

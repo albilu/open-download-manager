@@ -542,7 +542,7 @@ class SettingsDialogSaveOutcomeTest {
                     newStubManager(settings), null);
             org.manager.download.DownloadSettingsFactory.NetworkDefaults expected =
                     new org.manager.download.DownloadSettingsFactory.NetworkDefaults(
-                            11, 7, 640, 96, 4,
+                            64, 7, 640, 96, 4,
                             "https://referrer.test/", "ODM test", "session=abc");
 
             dialog.setNetworkDefaults(expected);

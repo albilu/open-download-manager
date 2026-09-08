@@ -653,6 +653,63 @@ class WindowSmokeTest {
     }
 
     @Test
+    void connectionRangesFollowEngineWithoutLosingTheRequestedValue() {
+        var global = new org.manager.GlobalSettings();
+        global.setProperty("network.maxConnections", "64");
+        NetworkOptionsPane pane = new NetworkOptionsPane(global,
+                org.manager.download.Download.Type.ARIA2,
+                org.manager.download.Download.Protocol.HTTPS);
+        SpinButton connections = firstDescendant(pane.widget(), SpinButton.class);
+        assertEquals(16, connections.getAdjustment().getUpper());
+        assertEquals(16, pane.values().connections());
+
+        pane.updateCapabilities(global, org.manager.download.Download.Type.YOUTUBE,
+                org.manager.download.Download.Protocol.HTTPS);
+        assertEquals(64, connections.getAdjustment().getUpper());
+        assertEquals(64, pane.values().connections());
+        assertFalse(pane.hasChanges(), "changing engine must not mark values as manually edited");
+
+        connections.setValue(128);
+        assertEquals(64, pane.values().connections());
+        connections.setValue(32);
+        pane.updateCapabilities(global, org.manager.download.Download.Type.WEBSITE_SCRAPING,
+                org.manager.download.Download.Protocol.HTTPS);
+        assertEquals(8, connections.getAdjustment().getUpper());
+        assertEquals(8, pane.values().connections());
+        pane.updateCapabilities(global, org.manager.download.Download.Type.YOUTUBE,
+                org.manager.download.Download.Protocol.HTTPS);
+        assertEquals(32, pane.values().connections());
+
+        pane.updateCapabilities(global, org.manager.download.Download.Type.CURL,
+                org.manager.download.Download.Protocol.HTTPS);
+        assertFalse(connections.getSensitive());
+    }
+
+    @Test
+    void propertyConnectionRangeFitsEverySelectedEngine() {
+        var media = new org.manager.download.Download(java.net.URI.create(
+                "https://www.youtube.com/watch?v=12345678901"));
+        media.setType(org.manager.download.Download.Type.YOUTUBE);
+        media.setSettings(new org.ytdlp.YtDlpSettings().setConnections(64));
+        var file = new org.manager.download.Download(java.net.URI.create(
+                "https://example.test/file.iso"));
+        file.setSettings(new org.aria2.Aria2Settings());
+
+        NetworkOptionsPane mediaPane = new NetworkOptionsPane(java.util.List.of(media));
+        assertEquals(64, mediaPane.values().connections());
+        assertEquals(64,
+                firstDescendant(mediaPane.widget(), SpinButton.class).getAdjustment().getUpper());
+
+        NetworkOptionsPane mixedPane = new NetworkOptionsPane(java.util.List.of(media, file));
+        assertEquals(16,
+                firstDescendant(mixedPane.widget(), SpinButton.class).getAdjustment().getUpper());
+        assertEquals(16, mixedPane.values().connections());
+        assertFalse(mixedPane.hasChanges());
+        assertEquals(64, media.getSettings().getMaxConnections(),
+                "opening mixed properties must not modify the selected records");
+    }
+
+    @Test
     @DisplayName("new-download.ui parses with 1:1 original ids")
     void newDownload() {
         GtkBuilder builder = UiLoader.load("/ui/new-download.ui");

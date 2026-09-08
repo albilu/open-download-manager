@@ -24,6 +24,13 @@ public class Aria2Settings extends DownloadSettings {
         return true;
     }
 
+    public static final int MAX_CONNECTIONS = 16;
+
+    @Override
+    public int maxConnectionsLimit() {
+        return MAX_CONNECTIONS;
+    }
+
     private int maxConnectionPerServer = 5;
     private boolean continueDownload = true;
     private int minSplitSize = 20; // in MB
@@ -88,7 +95,7 @@ public class Aria2Settings extends DownloadSettings {
      * @return This settings object for chaining
      */
     public Aria2Settings setMaxConnectionPerServer(int maxConnectionPerServer) {
-        this.maxConnectionPerServer = maxConnectionPerServer;
+        this.maxConnectionPerServer = Math.clamp(maxConnectionPerServer, 1, MAX_CONNECTIONS);
         return this;
     }
 
@@ -104,7 +111,7 @@ public class Aria2Settings extends DownloadSettings {
 
     @Override
     public Aria2Settings setConnections(int connections) {
-        int normalized = Math.max(1, connections);
+        int normalized = Math.clamp(connections, 1, maxConnectionsLimit());
         super.setConnections(normalized);
         setMaxConnectionPerServer(normalized);
         setOption("split", String.valueOf(normalized));

@@ -268,7 +268,7 @@ public class ImportSequenceDialog {
                     }
                     if (error != null) {
                         LOGGER.warn("Could not generate URL sequence preview", error);
-                        networkControls.applyCapabilities(java.util.Set.of());
+                        networkControls.applyCapabilities(NetworkOptionControls.Capabilities.NONE);
                         return;
                     }
                     currentPreviewUrls = List.copyOf(urls);
@@ -372,8 +372,7 @@ public class ImportSequenceDialog {
         org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
         org.manager.download.DownloadSettingsFactory.NetworkDefaults network =
                 org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(settings);
-        Widgets.require(builder, "max_connections_spin", SpinButton.class)
-                .setValue(network.maxConnections());
+        networkControls.setConnectionsValue(network.maxConnections());
         Widgets.require(builder, "max_download_speed_spin", SpinButton.class)
                 .setValue(network.downloadLimitKb());
         Widgets.require(builder, "max_upload_speed_spin", SpinButton.class)

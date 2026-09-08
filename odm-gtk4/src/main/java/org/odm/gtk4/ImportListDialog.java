@@ -428,8 +428,7 @@ public class ImportListDialog {
         org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
         org.manager.download.DownloadSettingsFactory.NetworkDefaults network =
                 org.manager.download.DownloadSettingsFactory.NetworkDefaults.from(settings);
-        Widgets.require(builder, "max_connections_spin", SpinButton.class)
-                .setValue(network.maxConnections());
+        networkControls.setConnectionsValue(network.maxConnections());
         Widgets.require(builder, "max_download_speed_spin", SpinButton.class)
                 .setValue(network.downloadLimitKb());
         Widgets.require(builder, "max_upload_speed_spin", SpinButton.class)

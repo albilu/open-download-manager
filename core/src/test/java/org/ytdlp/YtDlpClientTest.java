@@ -356,17 +356,36 @@ class YtDlpClientTest {
         assertCommandValue(command, "--file-access-retries", "6");
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(ints = { 6, 32, 64, 256, Integer.MAX_VALUE })
     @DisplayName("Shared connections field maps to --concurrent-fragments")
-    void testConnectionsMapToConcurrentFragments() {
+    void testConnectionsMapToConcurrentFragments(int connections) {
         YtDlpSettings settings = new YtDlpSettings();
-        settings.setConnections(6);
+        settings.setMaxConnections(connections);
 
         List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
 
         int index = command.indexOf("--concurrent-fragments");
         assertTrue(index >= 0, "--concurrent-fragments must be present");
-        assertEquals("6", command.get(index + 1));
+        assertEquals(String.valueOf(connections), command.get(index + 1));
+    }
+
+    @Test
+    void largeFragmentCountKeepsExternalAria2PerServerConnectionsValid() {
+        YtDlpSettings settings = new YtDlpSettings().setUseAria2c(true);
+        settings.setMaxConnections(64);
+
+        List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+        assertCommandValue(command, "--concurrent-fragments", "64");
+        String args = command.get(command.indexOf("--external-downloader-args") + 1);
+        assertTrue(args.contains("-x 16 "), args);
+        assertTrue(args.contains("-s 64 "), args);
+
+        settings.setUseProxy(true).setProxyAddress("socks5h://127.0.0.1:9050");
+        List<String> proxied = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
+        assertCommandValue(proxied, "--concurrent-fragments", "64");
+        assertCommandValue(proxied, "--proxy", "socks5h://127.0.0.1:9050");
+        assertCommandValue(proxied, "--external-downloader", "native");
     }
 
     @Test

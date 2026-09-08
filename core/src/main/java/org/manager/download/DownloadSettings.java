@@ -88,7 +88,7 @@ public abstract class DownloadSettings implements ExternalToolSettings {
 
     @Override
     public DownloadSettings setMaxConnections(int maxConnections) {
-        setConnections(Math.max(1, maxConnections));
+        setConnections(Math.clamp(maxConnections, 1, maxConnectionsLimit()));
         return this;
     }
 
@@ -185,7 +185,7 @@ public abstract class DownloadSettings implements ExternalToolSettings {
      * @return This settings object for chaining
      */
     public DownloadSettings setConnections(int connections) {
-        this.connections = connections;
+        this.connections = Math.clamp(connections, 1, maxConnectionsLimit());
         return this;
     }
 
