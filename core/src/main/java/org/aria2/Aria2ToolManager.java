@@ -106,6 +106,28 @@ public class Aria2ToolManager extends AbstractToolManager {
             return features;
         }
 
+        // SFTP is optional at build time; the version report lists compiled features.
+        features.put("sftp", false);
+        Process versionProcess = null;
+        try {
+            versionProcess = Runtime.getRuntime().exec(getVersionCommand(toolPath));
+            if (versionProcess.waitFor(10, TimeUnit.SECONDS) && versionProcess.exitValue() == 0) {
+                features.put("sftp", readProcessOutput(versionProcess).lines()
+                        .filter(line -> line.startsWith("Enabled Features:"))
+                        .flatMap(line -> Arrays.stream(line.substring(line.indexOf(':') + 1).split(",")))
+                        .anyMatch(feature -> "sftp".equalsIgnoreCase(feature.trim())));
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return features;
+        } catch (java.io.IOException e) {
+            LOGGER.warn("Failed to detect aria2 SFTP support", e);
+        } finally {
+            if (versionProcess != null && versionProcess.isAlive()) {
+                versionProcess.destroyForcibly();
+            }
+        }
+
         try {
             // Get help output to check available options
             Process process = Runtime.getRuntime().exec(command(toolPath, "--help"));

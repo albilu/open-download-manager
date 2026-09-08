@@ -1220,7 +1220,7 @@ class WindowSmokeTest {
         assertEquals(5, window.mainMenuTopLevelCount());
         assertTrue(window.mainMenuSubmenuContainsAction(
                 "_Download", "win.download-subtitles"));
-        for (String key : List.of("notify", "antivirus", "subtitles",
+        for (String key : List.of("notify", "desktop-notify", "antivirus", "subtitles",
                 "suspend", "shutdown", "custom")) {
             assertNull(window.menuActionParameterType("completion-" + key));
             assertTrue(window.menuActionEnabled("completion-" + key));

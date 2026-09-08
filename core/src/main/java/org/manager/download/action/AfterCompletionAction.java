@@ -22,14 +22,15 @@ public interface AfterCompletionAction {
      */
     enum ActionType {
         PLAY_SOUND(0, false, false),
-        CHECKSUM_VALIDATION(1, true, false),
-        ANTIVIRUS_CHECK(2, true, false),
-        DOWNLOAD_SUBTITLES(3, true, false),
-        EXECUTE_COMMAND(4, true, false),
-        MOVE_FILE(5, true, false),//unimplemented
-        EXTRACT_ARCHIVE(6, true, false),//unimplemented
-        SLEEP_COMPUTER(7, false, true),
-        SHUTDOWN_COMPUTER(8, false, true);
+        DESKTOP_NOTIFICATION(1, false, false),
+        CHECKSUM_VALIDATION(2, true, false),
+        ANTIVIRUS_CHECK(3, true, false),
+        DOWNLOAD_SUBTITLES(4, true, false),
+        EXECUTE_COMMAND(5, true, false),
+        MOVE_FILE(6, true, false),//unimplemented
+        EXTRACT_ARCHIVE(7, true, false),//unimplemented
+        SLEEP_COMPUTER(8, false, true),
+        SHUTDOWN_COMPUTER(9, false, true);
 
         private final int priority;
         private final boolean contributesToFinalizingProgress;

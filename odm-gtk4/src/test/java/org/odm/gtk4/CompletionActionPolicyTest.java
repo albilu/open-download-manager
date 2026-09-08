@@ -13,6 +13,7 @@ import org.manager.GlobalSettings;
 import org.manager.download.action.AfterCompletionAction;
 import org.manager.download.action.AntivirusCheckAction;
 import org.manager.download.action.ExecuteCommandAction;
+import org.manager.download.action.DesktopNotificationAction;
 import org.manager.download.action.PlayNotificationAction;
 import org.manager.download.action.ShutdownComputerAction;
 import org.manager.download.action.SubtitleDownloadAction;
@@ -43,6 +44,8 @@ class CompletionActionPolicyTest {
 
         assertInstanceOf(PlayNotificationAction.class,
                 CompletionActionPolicy.forChoice("notify", settings));
+        assertInstanceOf(DesktopNotificationAction.class,
+                CompletionActionPolicy.forChoice("desktop-notify", settings));
         assertInstanceOf(CompletionActionPolicy.SuspendAction.class,
                 CompletionActionPolicy.forChoice("suspend", settings));
         assertInstanceOf(ShutdownComputerAction.class,
@@ -61,10 +64,11 @@ class CompletionActionPolicyTest {
         settings.setProperty("antivirus.scanner", "clamav");
 
         var actions = CompletionActionPolicy.forChoices(
-                java.util.List.of("shutdown", "custom", "notify", "antivirus"), settings);
+                java.util.List.of("shutdown", "custom", "desktop-notify", "notify", "antivirus"), settings);
 
         assertIterableEquals(java.util.List.of(
                 AfterCompletionAction.ActionType.PLAY_SOUND,
+                AfterCompletionAction.ActionType.DESKTOP_NOTIFICATION,
                 AfterCompletionAction.ActionType.ANTIVIRUS_CHECK,
                 AfterCompletionAction.ActionType.EXECUTE_COMMAND,
                 AfterCompletionAction.ActionType.SHUTDOWN_COMPUTER),

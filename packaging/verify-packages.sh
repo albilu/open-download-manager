@@ -54,7 +54,7 @@ for format in deb rpm arch; do
     test -x "$root/usr/bin/open-download-manager"
     test -s "$root/usr/share/doc/open-download-manager/copyright"
     test -s "$root/usr/share/licenses/open-download-manager/LICENSE"
-    test -s "$root/usr/share/applications/open-download-manager.desktop"
+    test -s "$root/usr/share/applications/org.odm.desktop"
     (cd "$root" && find opt usr -type f -print0 | sort -z | xargs -0 sha256sum) > "$CHECK_ROOT/$format.sha256"
 done
 diff -u "$CHECK_ROOT/deb.sha256" "$CHECK_ROOT/rpm.sha256"

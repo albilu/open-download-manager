@@ -8,6 +8,7 @@ import org.manager.download.Download;
 import org.manager.download.action.AfterCompletionAction;
 import org.manager.download.action.AntivirusCheckAction;
 import org.manager.download.action.ExecuteCommandAction;
+import org.manager.download.action.DesktopNotificationAction;
 import org.manager.download.action.PlayNotificationAction;
 import org.manager.download.action.ShutdownComputerAction;
 import org.manager.download.action.SubtitleDownloadAction;
@@ -18,7 +19,8 @@ import org.ytdlp.YtDlpClient;
 
 /**
  * Maps persisted completion-action checkbox keys to concrete actions. Plain
- * policy, no GTK; the interactive custom-command prompt stays in the window.
+ * policy; desktop delivery is deferred to the GTK thread by the supplied sender.
+ * The interactive custom-command prompt stays in the window.
  */
 final class CompletionActionPolicy {
 
@@ -37,6 +39,7 @@ final class CompletionActionPolicy {
         return switch (choice == null ? "none" : choice) {
             case "notify" -> new PlayNotificationAction(
                     PlayNotificationAction.NotificationSound.SUCCESS);
+            case "desktop-notify" -> new DesktopNotificationAction(DesktopNotifications::downloadCompleted);
             case "antivirus" -> buildAntivirusAction(settings);
             case "subtitles" -> buildSubtitleAction(settings);
             case "suspend" -> new SuspendAction();

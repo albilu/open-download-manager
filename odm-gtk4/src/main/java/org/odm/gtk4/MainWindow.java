@@ -51,7 +51,7 @@ public class MainWindow {
             "#", "Status", "Name", "Completed", "Size", "Progress", "Elapsed",
             "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Result");
     private static final List<String> COMPLETION_ACTION_KEYS = List.of(
-            "notify", "antivirus", "subtitles", "suspend", "shutdown", "custom");
+            "notify", "desktop-notify", "antivirus", "subtitles", "suspend", "shutdown", "custom");
     /** Long enough for GTK to paint and animate an immediately acknowledged NEWNYM. */
     private static final long NEW_IDENTITY_MIN_ACTIVITY_MILLIS = 1_000;
     private static final Download.Status[] ALWAYS_VISIBLE_STATUSES = {
@@ -1563,6 +1563,7 @@ public class MainWindow {
         edit.append("Silent Mode", "win.clipboard-silent");
         org.gnome.gio.Menu completion = new org.gnome.gio.Menu();
         completion.append("Notify (sound)", "win.completion-notify");
+        completion.append("Desktop notification", "win.completion-desktop-notify");
         completion.append("Antivirus Scan", "win.completion-antivirus");
         completion.append("Download Subtitles", "win.completion-subtitles");
         completion.append("Suspend", "win.completion-suspend");
@@ -2424,7 +2425,7 @@ public class MainWindow {
         LOGGER.warn(message);
         var application = window.getApplication();
         if (application != null) {
-            TorFailureNotification.send(application.getDbusConnection(), message)
+            TorFailureNotification.send(application, message)
                     .exceptionally(failure -> {
                         LOGGER.warn("Could not deliver Tor failure desktop notification", failure);
                         return null;

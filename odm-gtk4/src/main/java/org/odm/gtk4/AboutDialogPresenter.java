@@ -35,7 +35,7 @@ public final class AboutDialogPresenter {
         try (var in = AboutDialogPresenter.class.getResourceAsStream(LOGO_RESOURCE)) {
             if (in != null) {
                 PixbufLoader loader = PixbufLoader.withType("svg");
-                loader.setSize(105, 128);
+                loader.setSize(128, 128);
                 loader.write(in.readAllBytes());
                 loader.close();
                 if (loader.getPixbuf() != null) {

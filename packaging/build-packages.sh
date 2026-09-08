@@ -77,7 +77,7 @@ fi
 EOF
 chmod 755 "$STAGE/usr/bin/open-download-manager"
 
-cp packaging/resources/open-download-manager.desktop "$STAGE/usr/share/applications/"
+cp packaging/resources/open-download-manager.desktop "$STAGE/usr/share/applications/org.odm.desktop"
 cp odm-gtk4/src/main/resources/images/logo-128.svg \
     "$STAGE/usr/share/icons/hicolor/scalable/apps/open-download-manager.svg"
 cp packaging/resources/icons/open-download-manager.png \

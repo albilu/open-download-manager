@@ -10,3 +10,4 @@ Terminal=false
 Categories=Network;FileTransfer;
 Keywords=download;manager;aria2;yt-dlp;httrack;torrent;magnet;
 StartupWMClass=org.odm
+X-GNOME-UsesNotifications=true
