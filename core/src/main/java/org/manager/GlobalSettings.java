@@ -585,6 +585,16 @@ public class GlobalSettings {
         return this;
     }
 
+    /** Periodic circuit verification while the Tor service is running. */
+    public int getTorCheckIntervalMinutes() {
+        return Math.clamp(getIntProperty("tor.checkIntervalMinutes", 30), 1, 1440);
+    }
+
+    public GlobalSettings setTorCheckIntervalMinutes(int minutes) {
+        setProperty("tor.checkIntervalMinutes", String.valueOf(Math.clamp(minutes, 1, 1440)));
+        return this;
+    }
+
     /**
      * Checks if aria2 is available.
      *

@@ -44,6 +44,7 @@ import org.manager.url.DownloadUrlPolicy;
 public class MainWindow {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MainWindow.class);
+    private static org.gnome.gtk.CssProvider statusBarCssProvider;
     /** Internal fetch batch; every record remains reachable through scrolling. */
     static final int HISTORY_PAGE_SIZE = 500;
     private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
@@ -127,6 +128,7 @@ public class MainWindow {
     private final Label folderValue;
     private final Image engineIcon;
     private final Image torIcon;
+    private final Label torIpLabel;
     private final Label engineValue;
     private final Label etaValue;
     private final Label downloadedValue;
@@ -136,7 +138,7 @@ public class MainWindow {
     private final Button moveTopButton;
     private final Button moveDownButton;
     private final Button moveBottomButton;
-    private final org.gnome.gtk.Switch torSwitch;
+    private final Button torCheckButton;
     private final org.gnome.gtk.SearchEntry searchEntry;
     private final PopoverMenuBar menuBar;
     private final org.gnome.gtk.Widget leftPanelWidget;
@@ -174,6 +176,7 @@ public class MainWindow {
     private org.gnome.gtk.MessageDialog exitConfirmation;
     /** Guards the final teardown delegate against duplicate exit gestures. */
     private boolean finalExitStarted;
+    private boolean backgroundWorkShutdown;
     /** App-owned StatusNotifier lifecycle; null in isolated window tests. */
     private java.util.function.Consumer<Boolean> trayPreferenceHandler;
     private Download selectedDownload;
@@ -203,10 +206,10 @@ public class MainWindow {
             new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicBoolean torDesiredRunning =
             new java.util.concurrent.atomic.AtomicBoolean();
-    /** Prevents service-driven switch updates from being treated as user requests. */
-    private boolean syncingTorSwitch;
-    private final java.util.concurrent.atomic.AtomicReference<org.tor.TorLeakChecker> torLeakChecker =
-            new java.util.concurrent.atomic.AtomicReference<>();
+    private final org.tor.TorCircuitMonitor torCircuitMonitor;
+    private final org.tor.TorService.TorServiceListener windowTorListener;
+    /** Check currently reporting progress in the status label; GTK-thread confined. */
+    private CompletableFuture<org.tor.TorCircuitMonitor.Result> torStatusCheck;
     /** Current Tor start/stop message, protected from routine list refreshes. */
     private String torTransitionStatus;
     /** Download ids with at least one running completion action; GTK-thread confined. */
@@ -266,7 +269,8 @@ public class MainWindow {
         this.folderValue = Widgets.require(builder, "folder_value", Label.class);
         this.engineIcon = Widgets.require(builder, "engine_icon", Image.class);
         this.torIcon = Widgets.require(builder, "tor_icon", Image.class);
-        this.torIcon.setFromGicon(DownloadEnginePresentation.toolbarTorIcon());
+        this.torIcon.setFromGicon(DownloadEnginePresentation.statusTorIcon());
+        this.torIpLabel = Widgets.require(builder, "tor_ip_label", Label.class);
         this.engineValue = Widgets.require(builder, "engine_value", Label.class);
         this.etaValue = Widgets.require(builder, "eta_value", Label.class);
         this.downloadedValue = Widgets.require(builder, "downloaded_value", Label.class);
@@ -428,17 +432,23 @@ public class MainWindow {
         });
         this.searchEntry = Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         searchEntry.onSearchChanged(this::onSearchChanged);
-        // tor_switch: wired below
-        this.torSwitch = Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        this.torCheckButton = Widgets.require(builder, "tor_check_button", Button.class);
+        installStatusBarCss();
         torDesiredRunning.set(torService.isRunning() || torService.isStarting());
-        syncTorToolbarPresentation();
-        torSwitch.onStateSet(this::onTorToggled);
-        TorControlBinding.bindEvents(window, torService,
-                this::syncTorToolbarPresentation, this::onTorServiceEvent);
+        this.torCircuitMonitor = new org.tor.TorCircuitMonitor(torService,
+                downloadManager.getGlobalSettings(), offlineModeController, this::onTorCheckStarted);
+        torCheckButton.onClicked(() -> torCircuitMonitor.checkNow());
+        this.windowTorListener = event -> UiThread.marshal(() -> {
+            if (!finalExitStarted) {
+                onTorServiceEvent(event);
+            }
+        });
+        torService.addListener(windowTorListener);
         this.menuBar = Widgets.require(builder, "menu_bar", PopoverMenuBar.class);
         this.leftPanelWidget = Widgets.require(builder, "left_panel", org.gnome.gtk.Widget.class);
         this.infoPanelWidget = Widgets.require(builder, "info_panel_box", org.gnome.gtk.Widget.class);
         menuBar.setMenuModel(buildMainMenu());
+        syncTorPresentation();
         if (app != null) {
             app.setAccelsForAction("win.select-all", new String[]{"<Primary>a"});
         }
@@ -447,7 +457,7 @@ public class MainWindow {
         AccessibilitySupport.label(downloadsTreeview, "Downloads");
         installDownloadTooltips(builder);
         AccessibilitySupport.label(searchEntry, "Search downloads");
-        AccessibilitySupport.label(torSwitch, "Tor service");
+        AccessibilitySupport.label(torCheckButton, "Verify Tor connection");
         AccessibilitySupport.label(menuBar, "Application menu");
         AccessibilitySupport.label(folderOpenButton, "Open displayed save folder");
         Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
@@ -694,10 +704,16 @@ public class MainWindow {
      * I/O). Idempotent; part of every real teardown path.
      */
     private void shutdownBackgroundWork() {
+        if (backgroundWorkShutdown) {
+            return;
+        }
+        backgroundWorkShutdown = true;
+        finalExitStarted = true;
         torServiceController.cancelPending();
         torDesiredRunning.set(false);
         torToggleEpoch.incrementAndGet();
-        shutdownTorLeakChecker();
+        torCircuitMonitor.close();
+        torService.removeListener(windowTorListener);
         runningCompletionDownloads.clear();
         stopCompletionPulseTimer();
         if (contextMenu != null) {
@@ -804,6 +820,7 @@ public class MainWindow {
                         .getBooleanProperty("ui.systemTray", false));
             }
             syncScheduleActionState();
+            torCircuitMonitor.refresh();
             // Rebuild settings-backed actions (subtitles, antivirus, custom)
             // so changes apply without requiring a restart or re-selection.
             installCompletionActions();
@@ -1561,7 +1578,10 @@ public class MainWindow {
         schedule.append("Weekdays", "win.schedule::weekday");
         schedule.append("Never (paused)", "win.schedule::never");
         edit.appendSubmenu("Schedule", schedule);
-        edit.append("New Tor Identity", "win.tor-new-identity");
+        org.gnome.gio.Menu tor = new org.gnome.gio.Menu();
+        tor.append("Enable/Disable Tor", "win.tor-enabled");
+        tor.append("New Tor Identity", "win.tor-new-identity");
+        edit.appendSubmenu("Tor", tor);
         edit.append("Select All", "win.select-all");
         edit.append("Preferences", "win.preferences");
         menu.appendSubmenu("_Edit", edit);
@@ -1651,6 +1671,7 @@ public class MainWindow {
                 downloadManager.getGlobalSettings().getProperty("scheduler.preset", "always"),
                 this::applySchedulePreset);
         addAction("preferences", this::onSettingsClicked);
+        addStatefulAction("tor-enabled", torDesiredRunning.get(), this::onTorToggled);
         addAction("tor-new-identity", this::onTorNewIdentity);
 
         // View
@@ -2200,16 +2221,16 @@ public class MainWindow {
                 + actions.stream().map(action -> action.getType().name()).toList());
     }
 
-    private boolean onTorToggled(boolean active) {
-        if (syncingTorSwitch) {
-            return false;
-        }
+    private void onTorToggled(boolean active) {
+        clearTorVerificationDisplay();
         long epoch = torToggleEpoch.incrementAndGet();
         torDesiredRunning.set(active);
-        if (!active) {
-            shutdownTorLeakChecker();
+        if (active) {
+            torCircuitMonitor.resume();
+        } else {
+            torCircuitMonitor.suspend();
         }
-        syncTorToolbarPresentation();
+        syncTorPresentation();
         setTorTransitionStatus(active
                 ? torBootstrapStatus(torService.getBootstrapProgress())
                 : "Stopping Tor service…");
@@ -2222,9 +2243,9 @@ public class MainWindow {
                 UiThread.marshal(() -> {
                     if (epoch == torToggleEpoch.get()) {
                         torDesiredRunning.set(true);
-                        syncTorToolbarPresentation();
+                        syncTorPresentation();
                         finishTorTransition("Tor service started");
-                        verifyTorCircuit(epoch);
+                        torCircuitMonitor.checkNow();
                     }
                 });
             } else if (active) {
@@ -2232,7 +2253,7 @@ public class MainWindow {
                 torDesiredRunning.set(false);
                 UiThread.marshal(() -> {
                     if (epoch == torToggleEpoch.get()) {
-                        syncTorToolbarPresentation();
+                        syncTorPresentation();
                         finishTorTransition("Tor service failed to start");
                     }
                 });
@@ -2241,7 +2262,7 @@ public class MainWindow {
                 torDesiredRunning.set(torService.isRunning());
                 UiThread.marshal(() -> {
                     if (epoch == torToggleEpoch.get()) {
-                        syncTorToolbarPresentation();
+                        syncTorPresentation();
                         finishTorTransition("Tor service could not be stopped");
                     }
                 });
@@ -2249,16 +2270,15 @@ public class MainWindow {
                 LOGGER.info("Tor service stopped; Tor downloads are paused");
                 UiThread.marshal(() -> {
                     if (epoch == torToggleEpoch.get()) {
-                        syncTorToolbarPresentation();
+                        syncTorPresentation();
                         finishTorTransition("Tor service stopped");
                     }
                 });
             }
         });
-        return false;
     }
 
-    /** Applies service events to the shared status label and toolbar controls. */
+    /** Applies service events even while the window is hidden in the tray. */
     private void onTorServiceEvent(org.tor.TorService.TorServiceEvent event) {
         if (event == org.tor.TorService.TorServiceEvent.STARTED && torService.isRunning()) {
             torDesiredRunning.set(true);
@@ -2266,7 +2286,7 @@ public class MainWindow {
                 && !torService.isRunning() && !torService.isStarting()) {
             torDesiredRunning.set(false);
         }
-        syncTorToolbarPresentation();
+        syncTorPresentation();
 
         String message = switch (event) {
             case BOOTSTRAP_PROGRESS, BOOTSTRAP_COMPLETE ->
@@ -2297,46 +2317,36 @@ public class MainWindow {
         AccessibilitySupport.status(infoLabel, message);
     }
 
-    private void syncTorToolbarPresentation() {
-        boolean requested = torDesiredRunning.get();
+    private static synchronized void installStatusBarCss() {
+        var display = org.gnome.gdk.Display.getDefault();
+        if (statusBarCssProvider != null || display == null) {
+            return;
+        }
+        var provider = new org.gnome.gtk.CssProvider();
+        provider.loadFromString("""
+                button.odm-status-button {
+                    min-width: 0;
+                    min-height: 0;
+                    padding: 0;
+                }
+                """);
+        org.gnome.gtk.Gtk.styleContextAddProviderForDisplay(display, provider,
+                org.gnome.gtk.Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+        statusBarCssProvider = provider;
+    }
+
+    private void syncTorPresentation() {
+        var toggle = menuActions.get("tor-enabled");
+        if (toggle != null) {
+            toggle.setState(org.gnome.glib.Variant.boolean_(torDesiredRunning.get()));
+        }
         boolean running = torService.isRunning();
-        boolean starting = torService.isStarting();
-        String switchTooltip = torSwitchActionTooltip(requested);
-        String iconTooltip = torServiceStateTooltip(requested, running, starting,
-                torService.getBootstrapProgress());
-        // The switch reflects the requested state while asynchronous start or
-        // stop work settles; service events reconcile it with the actual state.
-        if (torSwitch.getActive() != requested) {
-            syncingTorSwitch = true;
-            try {
-                torSwitch.setActive(requested);
-            } finally {
-                syncingTorSwitch = false;
-            }
+        if (!running) {
+            clearTorVerificationDisplay();
         }
-        torSwitch.setTooltipText(switchTooltip);
-        torIcon.setTooltipText(iconTooltip);
-    }
-
-    /** The switch tooltip describes what toggling it will do. */
-    static String torSwitchActionTooltip(boolean requested) {
-        return requested ? "Disable Tor service" : "Enable Tor service";
-    }
-
-    /** The onion icon tooltip reports the service's current lifecycle state. */
-    static String torServiceStateTooltip(boolean requested, boolean running,
-            boolean starting, int bootstrapProgress) {
-        if (!requested && (running || starting)) {
-            return "Tor service: Stopping…";
-        }
-        if (running) {
-            return "Tor service: Running";
-        }
-        if (requested || starting) {
-            return "Tor service: Bootstrapping — "
-                    + normalizedTorProgress(bootstrapProgress) + "%";
-        }
-        return "Tor service: Stopped";
+        torCheckButton.setVisible(running);
+        torCheckButton.setSensitive(running && torDesiredRunning.get() && !torIdentityRequestInFlight.get());
+        setMenuActionEnabled("tor-new-identity", running && !torIdentityRequestInFlight.get());
     }
 
     static String torBootstrapStatus(int bootstrapProgress) {
@@ -2347,51 +2357,75 @@ public class MainWindow {
         return Math.max(0, Math.min(100, progress));
     }
 
-    /**
-     * Verifies the circuit through the Tor Project endpoint in the
-     * background once Tor reports ready and surfaces the verdict in the info
-     * bar. This is the user-facing wiring of TorLeakChecker: without it the
-     * SOCKS port being open says nothing about actual circuit health.
-     */
-    private void verifyTorCircuit(long epoch) {
-        org.tor.TorLeakChecker checker = new org.tor.TorLeakChecker(
-                "127.0.0.1", torService.getSocksPort(), 5000, 5000);
-        org.tor.TorLeakChecker previous = torLeakChecker.getAndSet(checker);
-        if (previous != null) {
-            previous.shutdown();
-        }
-        trackActivity(checker.performLeakCheck())
-                .whenComplete((result, error) -> {
-                    try {
-                        checker.shutdown();
-                    } catch (Exception ignore) {
-                        // shutdown is best-effort
-                    }
-                    torLeakChecker.compareAndSet(checker, null);
-                    if (epoch != torToggleEpoch.get() || !torDesiredRunning.get()) {
-                        return;
-                    }
-                    String message;
-                    if (error != null) {
-                        message = "Tor circuit check failed: " + error.getMessage();
-                    } else if (result == null) {
-                        message = "Tor circuit check returned no result";
-                    } else {
-                        message = result.message;
-                    }
-                    LOGGER.info("Tor circuit check: " + message);
-                    UiThread.marshal(() -> AccessibilitySupport.status(infoLabel, message));
-                });
+    private void onTorCheckStarted(java.util.concurrent.CompletableFuture<org.tor.TorCircuitMonitor.Result> check) {
+        UiThread.marshal(() -> {
+            if (finalExitStarted || !torService.isRunning() || !torDesiredRunning.get()
+                    || (check.isDone() && check.getNow(null) == null)) {
+                return;
+            }
+            torStatusCheck = check;
+            AccessibilitySupport.status(infoLabel, "Verifying Tor connection…");
+            trackActivity(check).whenComplete((result, failure) -> UiThread.marshal(() -> {
+                if (finalExitStarted || torStatusCheck != check) {
+                    return;
+                }
+                torStatusCheck = null;
+                updateDownloadListStatus();
+                if (!torCircuitMonitor.isCurrent(result)) {
+                    return;
+                }
+                String message = torCheckStatus(result);
+                if (result.secure()) {
+                    torIpLabel.setVisible(true);
+                    AccessibilitySupport.status(torIpLabel, torExitAddress(result));
+                } else {
+                    clearTorVerificationDisplay();
+                    var offlineAction = menuActions.get("offline");
+                    offlineAction.setState(org.gnome.glib.Variant.boolean_(
+                            downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false)));
+                    notifyTorCheckFailure(message);
+                    refresh();
+                    AccessibilitySupport.status(infoLabel, message);
+                }
+                torCheckButton.setTooltipText(message);
+            }));
+        });
     }
 
-    private void shutdownTorLeakChecker() {
-        org.tor.TorLeakChecker checker = torLeakChecker.getAndSet(null);
-        if (checker != null) {
-            try {
-                checker.shutdown();
-            } catch (Exception e) {
-                LOGGER.debug("Failed to stop Tor circuit checker", e);
-            }
+    private void clearTorVerificationDisplay() {
+        torStatusCheck = null;
+        torIpLabel.setLabel("");
+        torIpLabel.setVisible(false);
+        torCheckButton.setTooltipText("Verify Tor connection");
+    }
+
+    static String torCheckStatus(org.tor.TorCircuitMonitor.Result result) {
+        if (!result.secure()) {
+            return "Tor check failed — Offline Mode enabled. " + result.message();
+        }
+        return "Tor verified — " + torExitAddress(result);
+    }
+
+    private static String torExitAddress(org.tor.TorCircuitMonitor.Result result) {
+        String country = result.countryCode();
+        String flag = "";
+        if (country != null && country.matches("[A-Za-z]{2}")) {
+            country = country.toUpperCase(java.util.Locale.ROOT);
+            flag = new String(Character.toChars(0x1F1E6 + country.charAt(0) - 'A'))
+                    + new String(Character.toChars(0x1F1E6 + country.charAt(1) - 'A')) + " ";
+        }
+        return flag + result.ip();
+    }
+
+    private void notifyTorCheckFailure(String message) {
+        LOGGER.warn(message);
+        var application = window.getApplication();
+        if (application != null) {
+            TorFailureNotification.send(application.getDbusConnection(), message)
+                    .exceptionally(failure -> {
+                        LOGGER.warn("Could not deliver Tor failure desktop notification", failure);
+                        return null;
+                    });
         }
     }
 
@@ -2420,7 +2454,9 @@ public class MainWindow {
         }
         long activityStarted = System.nanoTime();
         long serviceEpoch = torToggleEpoch.get();
-        setMenuActionEnabled("tor-new-identity", false);
+        clearTorVerificationDisplay();
+        torCircuitMonitor.suspend();
+        syncTorPresentation();
         setTorTransitionStatus("Requesting new Tor identity…");
         CompletableFuture<Boolean> identityChange = controller.connect()
                 .thenCompose(connected -> connected
@@ -2430,27 +2466,34 @@ public class MainWindow {
                         ? completeAfterMinimumActivity(changed, activityStarted)
                         : CompletableFuture.completedFuture(false));
         trackActivity(identityChange).whenCompleteAsync((changed, error) -> {
+            String message;
+            if (error != null) {
+                message = "New Tor identity failed: " + error.getMessage();
+            } else if (Boolean.TRUE.equals(changed)) {
+                message = "New Tor identity requested; new connections use clean circuits";
+            } else {
+                message = "New Tor identity unavailable (Tor control request failed)";
+            }
+            LOGGER.info(message);
             try {
-                String message;
-                if (error != null) {
-                    message = "New Tor identity failed: " + error.getMessage();
-                } else if (Boolean.TRUE.equals(changed)) {
-                    message = "New Tor identity requested; new connections use clean circuits";
-                } else {
-                    message = "New Tor identity unavailable (Tor control request failed)";
-                }
-                LOGGER.info(message);
-                UiThread.marshal(() -> {
-                    if (serviceEpoch == torToggleEpoch.get()
-                            && torService.isRunning()) {
-                        finishTorTransition(message);
-                    }
-                });
-            } finally {
                 controller.shutdown();
+            } finally {
                 torIdentityRequestInFlight.set(false);
-                UiThread.marshal(() -> setMenuActionEnabled(
-                        "tor-new-identity", torService.isRunning()));
+                UiThread.marshal(() -> {
+                    if (finalExitStarted) {
+                        return;
+                    }
+                    if (serviceEpoch == torToggleEpoch.get() && torDesiredRunning.get()) {
+                        torCircuitMonitor.resume();
+                        if (torService.isRunning()) {
+                            finishTorTransition(message);
+                            if (error == null && Boolean.TRUE.equals(changed)) {
+                                torCircuitMonitor.checkNow();
+                            }
+                        }
+                    }
+                    syncTorPresentation();
+                });
             }
         });
     }
@@ -2564,7 +2607,7 @@ public class MainWindow {
     private void updateDownloadListStatus() {
         infoLabel.setLabel(torTransitionStatus != null
                 ? torTransitionStatus
-                : downloadListStatusText(
+                : torStatusCheck != null ? "Verifying Tor connection…" : downloadListStatusText(
                         selectedDownloads.size(), loadedHistoryCount, knownDownloadCount));
     }
 
@@ -2587,20 +2630,16 @@ public class MainWindow {
         return downloadsTreeview.getHasTooltip();
     }
 
-    org.gnome.gio.Icon torToolbarIcon() {
+    org.gnome.gio.Icon torStatusIcon() {
         return torIcon.getGicon();
     }
 
-    String torSwitchTooltip() {
-        return torSwitch.getTooltipText();
+    boolean torStatusIconVisible() {
+        return torCheckButton.getVisible();
     }
 
-    String torIconTooltip() {
-        return torIcon.getTooltipText();
-    }
-
-    boolean torSwitchActive() {
-        return torSwitch.getActive();
+    boolean torEnabledActionState() {
+        return menuActions.get("tor-enabled").getState().getBoolean();
     }
 
     String statusMessage() {

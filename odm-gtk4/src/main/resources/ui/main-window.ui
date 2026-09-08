@@ -183,14 +183,6 @@
                     <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
                     <child><object class="GtkButton" id="settings_button"><property name="icon-name">preferences-system-symbolic</property><property name="tooltip-text">Settings</property></object></child>
                     <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
-                    <child>
-                      <object class="GtkBox" id="tor_box">
-                        <property name="spacing">4</property>
-                        <child><object class="GtkImage" id="tor_icon"><property name="pixel-size">24</property><property name="tooltip-text">Tor service</property></object></child>
-                        <child><object class="GtkSwitch" id="tor_switch"><property name="valign">center</property><property name="tooltip-text">Enable Tor network</property></object></child>
-                      </object>
-                    </child>
-                    <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
                     <child><object class="GtkBox" id="toolbar_spacer"><property name="hexpand">true</property></object></child>
                     <child>
                       <object class="GtkBox" id="search_tool_item">
@@ -563,6 +555,29 @@
                         <property name="spacing">8</property>
                         <property name="halign">end</property>
                         <child><object class="GtkSpinner" id="activity_spinner"/></child>
+                        <child>
+                          <object class="GtkButton" id="tor_check_button">
+                            <property name="visible">false</property>
+                            <property name="has-frame">false</property>
+                            <property name="valign">center</property>
+                            <property name="tooltip-text">Verify Tor connection</property>
+                            <style><class name="odm-status-button"/></style>
+                            <child>
+                              <object class="GtkBox" id="tor_status_box">
+                                <property name="orientation">horizontal</property>
+                                <property name="spacing">4</property>
+                                <child>
+                                  <object class="GtkLabel" id="tor_ip_label">
+                                    <property name="visible">false</property>
+                                    <property name="accessible-role">status</property>
+                                    <property name="single-line-mode">true</property>
+                                  </object>
+                                </child>
+                                <child><object class="GtkImage" id="tor_icon"><property name="pixel-size">16</property></object></child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
                         <child><object class="GtkSeparator" id="dht_inner_separator"/></child>
                         <child>
                           <object class="GtkBox" id="dht_progress_box">
@@ -588,7 +603,7 @@
                           <object class="GtkTreeView" id="global_progress_tree">
                             <property name="model">global_progress_store</property>
                             <property name="headers-visible">false</property>
-                            <property name="width-request">180</property>
+                            <property name="width-request">110</property>
                             <property name="height-request">22</property>
                             <child><object class="GtkTreeViewColumn" id="global_progress_column"><child><object class="GtkCellRendererProgress" id="global_progress_renderer"/><attributes><attribute name="value">0</attribute><attribute name="text">1</attribute></attributes></child></object></child>
                           </object>

@@ -459,6 +459,33 @@ public class TorController {
         }
     }
 
+    /** Uses the daemon's local GeoIP database; no external geolocation request or DNS lookup. */
+    public CompletableFuture<String> getCountryCode(String ip) {
+        if (ip == null || !isConnected.get() || isShuttingDown.get()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        try {
+            java.net.InetAddress.ofLiteral(ip);
+        } catch (IllegalArgumentException invalid) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            String key = "ip-to-country/" + ip;
+            String response = sendCommand("GETINFO " + key);
+            if (response != null) {
+                for (String line : response.split("\\R")) {
+                    if (line.startsWith("250-" + key + "=") || line.startsWith("250 " + key + "=")) {
+                        String country = line.substring(5 + key.length()).trim();
+                        if (country.matches("[A-Za-z]{2}")) {
+                            return country.toUpperCase(java.util.Locale.ROOT);
+                        }
+                    }
+                }
+            }
+            return null;
+        }, executorService);
+    }
+
     // Private helper methods
     private boolean authenticate(BufferedReader reader, PrintWriter writer) throws IOException {
         if (controlPassword != null && !controlPassword.isEmpty()) {

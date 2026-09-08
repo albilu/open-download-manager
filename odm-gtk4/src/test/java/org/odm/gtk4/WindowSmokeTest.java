@@ -196,11 +196,12 @@ class WindowSmokeTest {
         }
         assertEquals("Start / Resume",
                 Widgets.require(builder, "resume_button", Button.class).getTooltipText());
-        Widgets.require(builder, "tor_switch", org.gnome.gtk.Switch.class);
+        assertNull(builder.getObject("tor_switch"));
+        assertFalse(Widgets.require(builder, "tor_check_button", Button.class).getVisible());
         Image torIcon = Widgets.require(builder, "tor_icon", Image.class);
         assertNull(torIcon.getIconName(),
-                "the toolbar must not retain the former generic VPN icon");
-        assertEquals(24, torIcon.getPixelSize());
+                "the status bar must use the bundled Tor icon");
+        assertEquals(16, torIcon.getPixelSize());
         Widgets.require(builder, "search_entry", org.gnome.gtk.SearchEntry.class);
         Box toolbarSpacer = Widgets.require(builder, "toolbar_spacer", Box.class);
         Box searchToolItem = Widgets.require(builder, "search_tool_item", Box.class);
@@ -390,16 +391,20 @@ class WindowSmokeTest {
         Box rightStatus = Widgets.require(builder, "statusbar_right_box", Box.class);
         assertChildrenOrdered(rightStatus,
                 Widgets.require(builder, "activity_spinner", Spinner.class),
+                Widgets.require(builder, "tor_check_button", Button.class),
                 Widgets.require(builder, "dht_progress_box", Box.class),
                 Widgets.require(builder, "upload_speed_box", Box.class),
                 Widgets.require(builder, "download_speed_box", Box.class),
                 Widgets.require(builder, "global_progress_tree", TreeView.class));
+        assertChildrenOrdered(Widgets.require(builder, "tor_status_box", Box.class),
+                Widgets.require(builder, "tor_ip_label", Label.class),
+                Widgets.require(builder, "tor_icon", Image.class));
+        assertFalse(Widgets.require(builder, "tor_ip_label", Label.class).getVisible());
         TreeView globalProgress = Widgets.require(builder, "global_progress_tree", TreeView.class);
         Widgets.require(builder, "global_progress_renderer", CellRendererProgress.class);
         Out<Integer> progressWidth = new Out<>();
         globalProgress.getSizeRequest(progressWidth, new Out<>());
-        assertTrue(progressWidth.get() >= 180,
-                "global progress should remain readable in the status bar");
+        assertEquals(110, progressWidth.get());
     }
 
     @Test
@@ -1141,13 +1146,15 @@ class WindowSmokeTest {
         // must resolve. (Null app: the window is a standalone toplevel here.)
         assertEquals(org.gnome.gtk.SelectionMode.MULTIPLE, window.downloadSelectionMode());
         assertTrue(window.downloadNameTooltipEnabled());
-        org.gnome.gdk.Texture torToolbarIcon = assertInstanceOf(
-                org.gnome.gdk.Texture.class, window.torToolbarIcon());
-        assertEquals(DownloadEnginePresentation.TOOLBAR_ICON_SIZE, torToolbarIcon.getWidth());
-        assertEquals(DownloadEnginePresentation.TOOLBAR_ICON_SIZE, torToolbarIcon.getHeight());
-        assertEquals("Enable Tor service", window.torSwitchTooltip());
-        assertEquals("Tor service: Stopped", window.torIconTooltip());
-        assertFalse(window.torSwitchActive());
+        org.gnome.gdk.Texture torStatusIcon = assertInstanceOf(
+                org.gnome.gdk.Texture.class, window.torStatusIcon());
+        assertEquals(DownloadEnginePresentation.TOR_STATUS_ICON_SIZE, torStatusIcon.getWidth());
+        assertEquals(DownloadEnginePresentation.TOR_STATUS_ICON_SIZE, torStatusIcon.getHeight());
+        assertFalse(window.torStatusIconVisible());
+        assertFalse(window.torEnabledActionState());
+        assertFalse(window.menuActionEnabled("tor-new-identity"));
+        assertTrue(window.mainMenuSubmenuContainsAction("_Edit", "win.tor-enabled"));
+        assertTrue(window.mainMenuSubmenuContainsAction("_Edit", "win.tor-new-identity"));
         assertEquals(PropagationPhase.CAPTURE, window.downloadContextClickPhase(),
                 "right-click handling must run before TreeView child gestures consume it");
         assertEquals(List.of("#", "Status", "Name", "Completed", "Size", "Progress",
@@ -1171,26 +1178,23 @@ class WindowSmokeTest {
     }
 
     @Test
-    @DisplayName("Tor progress updates status while toolbar tooltips retain distinct roles")
-    void torBootstrapProgressUpdatesToolbarPresentation() throws Exception {
-        assertEquals("Tor service: Stopping…",
-                MainWindow.torServiceStateTooltip(false, true, false, 100));
+    @DisplayName("Tor menu and status icon follow service state, including while hidden")
+    void torBootstrapProgressUpdatesMenuAndStatusBar() throws Exception {
         AtomicBoolean running = new AtomicBoolean();
         AtomicBoolean starting = new AtomicBoolean(true);
         AtomicInteger progress = new AtomicInteger();
-        AtomicReference<org.tor.TorService.TorServiceListener> listener =
-                new AtomicReference<>();
+        var listeners = new java.util.concurrent.CopyOnWriteArrayList<org.tor.TorService.TorServiceListener>();
         org.tor.TorService service = org.mockito.Mockito.mock(org.tor.TorService.class);
         org.mockito.Mockito.when(service.isRunning()).thenAnswer(ignored -> running.get());
         org.mockito.Mockito.when(service.isStarting()).thenAnswer(ignored -> starting.get());
         org.mockito.Mockito.when(service.getBootstrapProgress())
                 .thenAnswer(ignored -> progress.get());
         org.mockito.Mockito.doAnswer(invocation -> {
-            listener.set(invocation.getArgument(0));
+            listeners.add(invocation.getArgument(0));
             return null;
         }).when(service).addListener(org.mockito.ArgumentMatchers.any());
         org.mockito.Mockito.doAnswer(invocation -> {
-            listener.compareAndSet(invocation.getArgument(0), null);
+            listeners.remove(invocation.getArgument(0));
             return null;
         }).when(service).removeListener(org.mockito.ArgumentMatchers.any());
 
@@ -1199,50 +1203,146 @@ class WindowSmokeTest {
                 new org.manager.schedule.ScheduleManager(stub));
         window.present();
         try {
-            awaitGtk(() -> listener.get() != null,
+            awaitGtk(() -> listeners.size() == 2,
                     "the main window did not subscribe to Tor lifecycle events");
-            assertTrue(window.torSwitchActive());
-            assertEquals("Disable Tor service", window.torSwitchTooltip());
-            assertEquals("Tor service: Bootstrapping — 0%", window.torIconTooltip());
+            assertTrue(window.torEnabledActionState());
+            assertFalse(window.torStatusIconVisible());
+            assertFalse(window.menuActionEnabled("tor-new-identity"));
 
             progress.set(37);
-            listener.get().onServiceEvent(
-                    org.tor.TorService.TorServiceEvent.BOOTSTRAP_PROGRESS);
+            listeners.forEach(listener -> listener.onServiceEvent(org.tor.TorService.TorServiceEvent.BOOTSTRAP_PROGRESS));
             awaitGtk(() -> "Tor bootstrap: 37%".equals(window.statusMessage()),
                     "Tor bootstrap progress was not displayed in the status label");
-            assertEquals("Disable Tor service", window.torSwitchTooltip());
-            assertEquals("Tor service: Bootstrapping — 37%", window.torIconTooltip());
+            assertFalse(window.torStatusIconVisible());
+            assertFalse(window.menuActionEnabled("tor-new-identity"));
 
             progress.set(100);
             starting.set(false);
             running.set(true);
-            listener.get().onServiceEvent(
-                    org.tor.TorService.TorServiceEvent.BOOTSTRAP_COMPLETE);
+            listeners.forEach(listener -> listener.onServiceEvent(org.tor.TorService.TorServiceEvent.BOOTSTRAP_COMPLETE));
             awaitGtk(() -> "Tor bootstrap: 100%".equals(window.statusMessage()),
                     "Tor bootstrap completion was not displayed");
-            assertEquals("Disable Tor service", window.torSwitchTooltip());
-            assertEquals("Tor service: Running", window.torIconTooltip());
+            assertTrue(window.torStatusIconVisible());
+            assertTrue(window.menuActionEnabled("tor-new-identity"));
 
-            listener.get().onServiceEvent(org.tor.TorService.TorServiceEvent.STARTED);
+            listeners.forEach(listener -> listener.onServiceEvent(org.tor.TorService.TorServiceEvent.STARTED));
             awaitGtk(() -> "Tor service started".equals(window.statusMessage()),
                     "Tor running state was not displayed");
+            var nativeWindowField = MainWindow.class.getDeclaredField("window");
+            nativeWindowField.setAccessible(true);
+            var builderField = MainWindow.class.getDeclaredField("uiBuilder");
+            builderField.setAccessible(true);
+            Label ipLabel = Widgets.require((GtkBuilder) builderField.get(window), "tor_ip_label", Label.class);
+            ipLabel.setLabel("🇳🇱 192.0.2.1");
+            ipLabel.setVisible(true);
+            ((org.gnome.gtk.Window) nativeWindowField.get(window)).setVisible(false);
+            drainGtkEvents();
+            assertEquals(2, listeners.size(), "tray hiding must retain Tor monitoring");
             running.set(false);
-            listener.get().onServiceEvent(org.tor.TorService.TorServiceEvent.STOPPED);
+            listeners.forEach(listener -> listener.onServiceEvent(org.tor.TorService.TorServiceEvent.STOPPED));
             awaitGtk(() -> "Tor service stopped".equals(window.statusMessage()),
                     "Tor stopped state was not displayed");
-            assertFalse(window.torSwitchActive());
-            assertEquals("Enable Tor service", window.torSwitchTooltip());
-            assertEquals("Tor service: Stopped", window.torIconTooltip());
+            assertFalse(window.torEnabledActionState());
+            assertFalse(window.torStatusIconVisible());
+            assertFalse(ipLabel.getVisible());
+            assertEquals("", ipLabel.getLabel());
+            assertFalse(window.menuActionEnabled("tor-new-identity"));
         } finally {
             window.dispose();
             drainGtkEvents();
         }
-        awaitGtk(() -> listener.get() == null,
+        awaitGtk(() -> listeners.isEmpty(),
                 "the main window did not release its Tor lifecycle listener");
     }
 
     @Test
-    @DisplayName("New Tor Identity uses the managed service's authenticated controller")
+    @DisplayName("Tor verification updates the icon's IP label and leaves the main status available")
+    void torStatusIconOnlyVerifiesConnection() throws Exception {
+        org.tor.TorService service = org.mockito.Mockito.mock(org.tor.TorService.class);
+        org.mockito.Mockito.when(service.isRunning()).thenReturn(true);
+        var checks = new java.util.ArrayList<
+                java.util.concurrent.CompletableFuture<org.tor.TorCircuitMonitor.Result>>();
+        try (var monitors = org.mockito.Mockito.mockConstruction(org.tor.TorCircuitMonitor.class,
+                (monitor, context) -> {
+                    @SuppressWarnings("unchecked")
+                    var onStarted = (java.util.function.Consumer<java.util.concurrent.CompletableFuture<
+                            org.tor.TorCircuitMonitor.Result>>) context.arguments().get(3);
+                    org.mockito.Mockito.when(monitor.checkNow()).thenAnswer(invocation -> {
+                        var check = new java.util.concurrent.CompletableFuture<org.tor.TorCircuitMonitor.Result>();
+                        checks.add(check);
+                        onStarted.accept(check);
+                        return check;
+                    });
+                    org.mockito.Mockito.when(monitor.isCurrent(
+                            org.mockito.ArgumentMatchers.any(org.tor.TorCircuitMonitor.Result.class)))
+                            .thenReturn(true);
+                })) {
+            org.manager.download.DownloadManager stub = emptyManager();
+            MainWindow window = new MainWindow(null, stub, service,
+                    new org.manager.schedule.ScheduleManager(stub));
+            try {
+                var builderField = MainWindow.class.getDeclaredField("uiBuilder");
+                builderField.setAccessible(true);
+                GtkBuilder builder = (GtkBuilder) builderField.get(window);
+                Button button = Widgets.require(builder, "tor_check_button", Button.class);
+                Label ipLabel = Widgets.require(builder, "tor_ip_label", Label.class);
+                ApplicationWindow nativeWindow = Widgets.require(builder, "main_window", ApplicationWindow.class);
+                assertTrue(button.getVisible());
+                assertTrue(button.getSensitive());
+                assertFalse(ipLabel.getVisible());
+                awaitGtk(() -> "0 download(s)".equals(window.statusMessage()),
+                        "the initial download status was not displayed");
+                for (int click = 0; click < 2; click++) {
+                    button.emitClicked();
+                    assertEquals(click + 1, checks.size());
+                    awaitGtk(() -> "Verifying Tor connection…".equals(window.statusMessage()),
+                            "clicking the status icon did not start verification");
+                    assertTrue(window.activitySpinning());
+                    assertFalse("Verifying Tor connection…".equals(button.getTooltipText()));
+                    assertTrue(nativeWindow.activateActionVariant("win.select-all", null));
+                    assertEquals("Verifying Tor connection…", window.statusMessage(),
+                            "selection changes must preserve verification progress until the check finishes");
+                    var result = new org.tor.TorCircuitMonitor.Result(true,
+                            "Tor circuit verified", "192.0.2." + (click + 1), "NL", 1);
+                    checks.get(click).complete(result);
+                    awaitGtk(() -> ("🇳🇱 " + result.ip()).equals(ipLabel.getLabel()),
+                            "the new verification result was not displayed beside the Tor icon");
+                    assertTrue(ipLabel.getVisible());
+                    assertFalse(window.activitySpinning());
+                    assertEquals("0 download(s)", window.statusMessage());
+                    assertTrue(nativeWindow.activateActionVariant("win.select-all", null));
+                    assertEquals("0 download(s)", window.statusMessage(),
+                            "verification must not hold the main status label during selection changes");
+                }
+                button.emitClicked();
+                var failure = new org.tor.TorCircuitMonitor.Result(false,
+                        "Unable to verify the Tor circuit", null, null, 1);
+                checks.getLast().complete(failure);
+                awaitGtk(() -> MainWindow.torCheckStatus(failure).equals(button.getTooltipText()),
+                        "verification failure was not displayed on the Tor control");
+                assertFalse(ipLabel.getVisible(), "a failed check must clear the previous verified IP");
+                assertEquals("", ipLabel.getLabel());
+                assertTrue(nativeWindow.activateActionVariant("win.select-all", null));
+                assertEquals("0 download(s)", window.statusMessage());
+                button.emitClicked();
+                awaitGtk(() -> "Verifying Tor connection…".equals(window.statusMessage()),
+                        "verification progress was not displayed");
+                checks.getLast().complete(null);
+                awaitGtk(() -> "0 download(s)".equals(window.statusMessage()),
+                        "a canceled check must release the status label");
+                org.mockito.Mockito.verify(monitors.constructed().getFirst(), org.mockito.Mockito.times(4))
+                        .checkNow();
+                org.mockito.Mockito.verify(service, org.mockito.Mockito.never())
+                        .createController(org.mockito.ArgumentMatchers.anyInt());
+            } finally {
+                window.dispose();
+                drainGtkEvents();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("New Tor Identity verifies the connection after an authenticated successful request")
     void newTorIdentityUsesManagedServiceController() throws Exception {
         org.tor.TorService service = org.mockito.Mockito.mock(org.tor.TorService.class);
         org.tor.TorController controller = org.mockito.Mockito.mock(org.tor.TorController.class);
@@ -1250,30 +1350,72 @@ class WindowSmokeTest {
         org.mockito.Mockito.when(service.createController(5000)).thenReturn(controller);
         org.mockito.Mockito.when(controller.connect())
                 .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(true));
-        org.mockito.Mockito.when(controller.changeIp())
-                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(true));
+        var identityChange = new java.util.concurrent.CompletableFuture<Boolean>();
+        org.mockito.Mockito.when(controller.changeIp()).thenReturn(identityChange);
+        var verification = new java.util.concurrent.CompletableFuture<org.tor.TorCircuitMonitor.Result>();
+        try (var monitors = org.mockito.Mockito.mockConstruction(org.tor.TorCircuitMonitor.class,
+                (monitor, context) -> {
+                    @SuppressWarnings("unchecked")
+                    var onStarted = (java.util.function.Consumer<java.util.concurrent.CompletableFuture<
+                            org.tor.TorCircuitMonitor.Result>>) context.arguments().get(3);
+                    org.mockito.Mockito.when(monitor.checkNow()).thenAnswer(invocation -> {
+                        onStarted.accept(verification);
+                        return verification;
+                    });
+                    org.mockito.Mockito.when(monitor.isCurrent(
+                            org.mockito.ArgumentMatchers.any(org.tor.TorCircuitMonitor.Result.class)))
+                            .thenReturn(true);
+                })) {
+            org.manager.download.DownloadManager stub = emptyManager();
+            MainWindow window = new MainWindow(null, stub, service,
+                    new org.manager.schedule.ScheduleManager(stub));
+            try {
+                var builderField = MainWindow.class.getDeclaredField("uiBuilder");
+                builderField.setAccessible(true);
+                GtkBuilder builder = (GtkBuilder) builderField.get(window);
+                ApplicationWindow nativeWindow = Widgets.require(builder, "main_window", ApplicationWindow.class);
+                Label ipLabel = Widgets.require(builder, "tor_ip_label", Label.class);
+                var monitor = monitors.constructed().getFirst();
+                assertTrue(nativeWindow.activateActionVariant("win.tor-new-identity", null));
+                awaitGtk(window::activitySpinning,
+                        "the identity request did not display activity");
+                assertEquals("Requesting new Tor identity…", window.statusMessage());
+                assertFalse(window.menuActionEnabled("tor-new-identity"));
+                org.mockito.Mockito.verify(monitor, org.mockito.Mockito.never()).checkNow();
 
-        org.manager.download.DownloadManager stub = emptyManager();
-        MainWindow window = new MainWindow(null, stub, service,
-                new org.manager.schedule.ScheduleManager(stub));
-        try {
-            window.requestNewTorIdentity();
-            awaitGtk(window::activitySpinning,
-                    "the identity request did not display activity");
-            assertEquals("Requesting new Tor identity…", window.statusMessage());
-            assertFalse(window.menuActionEnabled("tor-new-identity"));
-            awaitGtk(() -> "New Tor identity requested; new connections use clean circuits"
-                    .equals(window.statusMessage()),
-                    "the authenticated identity request did not reach the status label");
-            assertFalse(window.activitySpinning());
-            assertTrue(window.menuActionEnabled("tor-new-identity"));
-            org.mockito.Mockito.verify(service).createController(5000);
-            org.mockito.Mockito.verify(controller).connect();
-            org.mockito.Mockito.verify(controller).changeIp();
-            org.mockito.Mockito.verify(controller, org.mockito.Mockito.timeout(5000)).shutdown();
-        } finally {
-            window.dispose();
-            drainGtkEvents();
+                identityChange.complete(true);
+                awaitGtk(() -> "Verifying Tor connection…".equals(window.statusMessage()),
+                        "a successful identity request did not start verification");
+                assertTrue(window.activitySpinning());
+                assertTrue(window.menuActionEnabled("tor-new-identity"));
+                var order = org.mockito.Mockito.inOrder(monitor);
+                order.verify(monitor).suspend();
+                order.verify(monitor).resume();
+                order.verify(monitor).checkNow();
+                org.mockito.Mockito.verify(service).createController(5000);
+                org.mockito.Mockito.verify(controller).connect();
+                org.mockito.Mockito.verify(controller).changeIp();
+                org.mockito.Mockito.verify(controller).shutdown();
+
+                verification.complete(new org.tor.TorCircuitMonitor.Result(true,
+                        "Tor circuit verified", "192.0.2.1", "NL", 1));
+                awaitGtk(() -> "🇳🇱 192.0.2.1".equals(ipLabel.getLabel()),
+                        "verification did not refresh the flag and IP beside the Tor icon");
+                assertTrue(ipLabel.getVisible());
+                assertEquals("0 download(s)", window.statusMessage());
+                assertFalse(window.activitySpinning());
+
+                org.mockito.Mockito.when(controller.changeIp())
+                        .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(false));
+                assertTrue(nativeWindow.activateActionVariant("win.tor-new-identity", null));
+                awaitGtk(() -> "New Tor identity unavailable (Tor control request failed)"
+                        .equals(window.statusMessage()), "the failed identity request was not displayed");
+                org.mockito.Mockito.verify(monitor, org.mockito.Mockito.times(1)).checkNow();
+                assertFalse(window.activitySpinning());
+            } finally {
+                window.dispose();
+                drainGtkEvents();
+            }
         }
     }
 

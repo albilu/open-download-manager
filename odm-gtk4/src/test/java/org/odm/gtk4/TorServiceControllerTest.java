@@ -80,7 +80,7 @@ class TorServiceControllerTest {
         when(service.isRunning()).thenReturn(false);
         var error = assertThrows(java.util.concurrent.CompletionException.class,
                 () -> DialogOptions.ensureTorAvailable(true, service).join());
-        assertTrue(error.getCause().getMessage().contains("toolbar"));
+        assertTrue(error.getCause().getMessage().contains("Edit → Tor"));
         verify(service, never()).start();
         assertDoesNotThrow(() -> DialogOptions.ensureTorAvailable(false, service).join());
     }

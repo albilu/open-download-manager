@@ -5,7 +5,7 @@ import org.manager.GlobalSettings;
 import org.manager.download.DownloadManager;
 import org.tor.TorService;
 
-/** Serializes toolbar service transitions independently of Network routing preferences. */
+/** Serializes Tor service transitions independently of Network routing preferences. */
 final class TorServiceController {
     static final String SERVICE_ENABLED = "tor.serviceEnabled";
     private final DownloadManager manager;

@@ -119,6 +119,45 @@ class TorControllerProtocolTest {
     }
 
     @Test
+    void countryLookupUsesLocalControlGeoIpForIpv4AndIpv6() throws Exception {
+        try (FakeControlServer server = new FakeControlServer()) {
+            server.reply("250 OK");
+            server.reply("250-ip-to-country/192.0.2.1=fr", "250 OK");
+            server.reply("250 ip-to-country/2001:db8::1=DE");
+            TorController controller = new TorController("127.0.0.1", server.port(), "test", 1000);
+            try {
+                assertTrue(controller.connect().get(5, TimeUnit.SECONDS));
+                assertEquals("FR", controller.getCountryCode("192.0.2.1").get(5, TimeUnit.SECONDS));
+                assertEquals("DE", controller.getCountryCode("2001:db8::1").get(5, TimeUnit.SECONDS));
+                assertTrue(server.received.contains("GETINFO ip-to-country/192.0.2.1"));
+                assertTrue(server.received.contains("GETINFO ip-to-country/2001:db8::1"));
+            } finally {
+                controller.shutdown();
+            }
+        }
+    }
+
+    @Test
+    void countryLookupRejectsHostnamesAndControlCommandsAndToleratesMissingDatabase() throws Exception {
+        try (FakeControlServer server = new FakeControlServer()) {
+            server.reply("250 OK");
+            server.reply("250 ip-to-country/192.0.2.1=??");
+            server.reply("552 Unrecognized key");
+            TorController controller = new TorController("127.0.0.1", server.port(), "test", 1000);
+            try {
+                assertTrue(controller.connect().get(5, TimeUnit.SECONDS));
+                assertNull(controller.getCountryCode("example.com").get());
+                assertNull(controller.getCountryCode("192.0.2.1\r\nSIGNAL SHUTDOWN").get());
+                assertEquals(1, server.received.size(), "invalid input must not leave the process");
+                assertNull(controller.getCountryCode("192.0.2.1").get(5, TimeUnit.SECONDS));
+                assertNull(controller.getCountryCode("192.0.2.2").get(5, TimeUnit.SECONDS));
+            } finally {
+                controller.shutdown();
+            }
+        }
+    }
+
+    @Test
     @DisplayName("password authentication completes the control handshake")
     void passwordAuthentication() throws Exception {
         try (FakeControlServer server = new FakeControlServer()) {

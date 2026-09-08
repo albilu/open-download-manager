@@ -13,11 +13,11 @@ import org.manager.download.Download;
 final class DownloadEnginePresentation {
 
     static final int ICON_SIZE = 20;
-    static final int TOOLBAR_ICON_SIZE = 24;
+    static final int TOR_STATUS_ICON_SIZE = 16;
     private static final String ICON_RESOURCE_DIRECTORY = "/images/engines/";
     private static final Map<Download.Type, Icon> ICONS =
             new EnumMap<>(Download.Type.class);
-    private static Icon toolbarTorIcon;
+    private static Icon statusTorIcon;
 
     private DownloadEnginePresentation() {
     }
@@ -63,12 +63,12 @@ final class DownloadEnginePresentation {
         return ICONS.computeIfAbsent(type, DownloadEnginePresentation::loadIcon);
     }
 
-    /** Bundled onion artwork at its native toolbar size. */
-    static synchronized Icon toolbarTorIcon() {
-        if (toolbarTorIcon == null) {
-            toolbarTorIcon = loadBundledIcon("/images/onion-icon-24.svg", TOOLBAR_ICON_SIZE);
+    /** Bundled onion artwork scaled to the other status icons. */
+    static synchronized Icon statusTorIcon() {
+        if (statusTorIcon == null) {
+            statusTorIcon = loadBundledIcon("/images/onion-icon-24.svg", TOR_STATUS_ICON_SIZE);
         }
-        return toolbarTorIcon;
+        return statusTorIcon;
     }
 
     private static Icon loadIcon(Download.Type type) {

@@ -123,7 +123,7 @@ final class NetworkOptionControls {
     private void refreshTorSensitivity() {
         tor.setSensitive(socksProxySupported && torAvailable);
         tor.setTooltipText(!socksProxySupported ? UNSUPPORTED
-                : !torAvailable ? "Start Tor using the toolbar to change this option."
+                : !torAvailable ? "Start Tor from Edit → Tor to change this option."
                 : originalTooltips.get(tor));
     }
 

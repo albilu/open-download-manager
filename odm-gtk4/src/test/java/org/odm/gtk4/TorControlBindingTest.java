@@ -72,6 +72,9 @@ class TorControlBindingTest {
         SettingsDialog dialog = new SettingsDialog(null, manager, null, null, events.service);
         GtkBuilder builder = field(dialog, "builder", GtkBuilder.class);
         Switch control = Widgets.require(builder, "tor_switch", Switch.class);
+        var interval = Widgets.require(builder, "tor_check_interval_spin", org.gnome.gtk.SpinButton.class);
+        assertEquals(30, interval.getValue());
+        assertFalse(interval.isSensitive());
         Window window = field(dialog, "dialog", Window.class);
         assertFalse(control.getSensitive());
         assertTrue(control.getActive());
@@ -80,8 +83,12 @@ class TorControlBindingTest {
             pump(() -> !events.listeners.isEmpty());
             events.setRunning(true);
             pump(control::getSensitive);
+            assertTrue(interval.isSensitive());
+            interval.setValue(12);
             events.setRunning(false);
             pump(() -> !control.getSensitive());
+            assertFalse(interval.isSensitive());
+            assertEquals(12, interval.getValue());
             assertTrue(control.getActive());
             var collect = SettingsDialog.class.getDeclaredMethod("collectSettings");
             collect.setAccessible(true);
@@ -89,6 +96,7 @@ class TorControlBindingTest {
             var settingsAccessor = collected.getClass().getDeclaredMethod("settings");
             settingsAccessor.setAccessible(true);
             GlobalSettings saved = (GlobalSettings) settingsAccessor.invoke(collected);
+            assertEquals(12, saved.getTorCheckIntervalMinutes());
             assertTrue(saved.getBooleanProperty("tor.enabled", false));
             assertEquals("socks5h://127.0.0.1:9050", saved.getGlobalProxyAddress());
             verify(events.service, never()).start();

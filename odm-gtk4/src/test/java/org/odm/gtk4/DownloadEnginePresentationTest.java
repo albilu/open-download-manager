@@ -21,10 +21,10 @@ class DownloadEnginePresentationTest {
         assertTrue(DownloadEnginePresentation.iconResource(Download.Type.ARIA2).isEmpty());
         assertEquals("/images/onion-icon-24.svg",
                 DownloadEnginePresentation.iconResource(Download.Type.TOR).orElseThrow());
-        org.gnome.gdk.Texture toolbarIcon = assertInstanceOf(
-                org.gnome.gdk.Texture.class, DownloadEnginePresentation.toolbarTorIcon());
-        assertEquals(24, toolbarIcon.getWidth());
-        assertEquals(24, toolbarIcon.getHeight());
+        org.gnome.gdk.Texture statusIcon = assertInstanceOf(
+                org.gnome.gdk.Texture.class, DownloadEnginePresentation.statusTorIcon());
+        assertEquals(16, statusIcon.getWidth());
+        assertEquals(16, statusIcon.getHeight());
     }
 
     private static void assertEngine(Download.Type type, String name, String icon) {

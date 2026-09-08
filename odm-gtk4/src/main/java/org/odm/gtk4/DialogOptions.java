@@ -256,7 +256,7 @@ final class DialogOptions {
             return CompletableFuture.completedFuture(null);
         }
         return CompletableFuture.failedFuture(new IllegalStateException(
-                "Tor is selected. Start the Tor service using the toolbar first."));
+                "Tor is selected. Start the Tor service from Edit → Tor first."));
     }
 
     /**
