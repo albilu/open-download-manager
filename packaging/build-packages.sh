@@ -42,8 +42,7 @@ mkdir -p "$APP" "$RUNTIME" "$STAGE/usr/bin" \
     "$STAGE/usr/share/applications" \
     "$STAGE/usr/share/doc/open-download-manager" \
     "$STAGE/usr/share/licenses/open-download-manager" \
-    "$STAGE/usr/share/icons/hicolor/scalable/apps" \
-    "$STAGE/usr/share/icons/hicolor/1024x1024/apps"
+    "$STAGE/usr/share/icons/hicolor"
 
 cp "$JAR" "$APP/odm.jar"
 cp LICENSE "$STAGE/usr/share/licenses/open-download-manager/LICENSE"
@@ -78,10 +77,7 @@ EOF
 chmod 755 "$STAGE/usr/bin/open-download-manager"
 
 cp packaging/resources/open-download-manager.desktop "$STAGE/usr/share/applications/org.odm.desktop"
-cp odm-gtk4/src/main/resources/images/logo-128.svg \
-    "$STAGE/usr/share/icons/hicolor/scalable/apps/open-download-manager.svg"
-cp packaging/resources/icons/open-download-manager.png \
-    "$STAGE/usr/share/icons/hicolor/1024x1024/apps/open-download-manager.png"
+cp -a odm-gtk4/src/main/resources/icons/hicolor/. "$STAGE/usr/share/icons/hicolor/"
 
 log "Stage complete:"
 du -sh "$STAGE" "$RUNTIME"

@@ -31,7 +31,13 @@ public final class UiLoader {
             throw new IllegalStateException("Failed to read UI resource: " + classpathResource, e);
         }
         try {
-            return GtkBuilder.fromString(xml, -1);
+            GtkBuilder builder = GtkBuilder.fromString(xml, -1);
+            for (var object : builder.getObjects()) {
+                if (object instanceof org.gnome.gtk.Window window) {
+                    ApplicationIcons.configure(window);
+                }
+            }
+            return builder;
         } catch (Exception e) {
             throw new IllegalStateException("Failed to parse UI resource: " + classpathResource, e);
         }

@@ -55,6 +55,13 @@ for format in deb rpm arch; do
     test -s "$root/usr/share/doc/open-download-manager/copyright"
     test -s "$root/usr/share/licenses/open-download-manager/LICENSE"
     test -s "$root/usr/share/applications/org.odm.desktop"
+    grep -qx 'Icon=open-download-manager' "$root/usr/share/applications/org.odm.desktop"
+    grep -qx 'StartupWMClass=org.odm' "$root/usr/share/applications/org.odm.desktop"
+    test -s "$root/usr/share/icons/hicolor/scalable/apps/open-download-manager.svg"
+    for size in 16 24 32 48 64 128 256 512; do
+        icon="icons/hicolor/${size}x${size}/apps/open-download-manager.png"
+        cmp "$PACKAGE_ROOT/../odm-gtk4/src/main/resources/$icon" "$root/usr/share/$icon"
+    done
     (cd "$root" && find opt usr -type f -print0 | sort -z | xargs -0 sha256sum) > "$CHECK_ROOT/$format.sha256"
 done
 diff -u "$CHECK_ROOT/deb.sha256" "$CHECK_ROOT/rpm.sha256"

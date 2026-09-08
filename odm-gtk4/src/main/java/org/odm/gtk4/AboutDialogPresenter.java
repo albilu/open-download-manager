@@ -12,7 +12,7 @@ import org.gnome.gtk.Window;
  */
 public final class AboutDialogPresenter {
 
-    static final String LOGO_RESOURCE = "/images/logo-128.svg";
+    static final String LOGO_RESOURCE = ApplicationIcons.SVG_RESOURCE;
 
     private AboutDialogPresenter() {
     }

@@ -36,8 +36,10 @@ public final class OdmApplication {
         LOGGER.info("Open Download Manager starting ({} / Java {})",
                 System.getProperty("os.name") + "/" + System.getProperty("os.arch"),
                 System.getProperty("java.version"));
+        org.gnome.glib.GLib.setPrgname(ApplicationIcons.APPLICATION_ID);
         org.gnome.glib.GLib.setApplicationName("oDM");
-        Application app = new Application("org.odm", ApplicationFlags.DEFAULT_FLAGS);
+        Application app = new Application(ApplicationIcons.APPLICATION_ID, ApplicationFlags.DEFAULT_FLAGS);
+        app.onStartup(() -> org.gnome.gtk.Window.setDefaultIconName(ApplicationIcons.ICON_NAME));
         // A second launch of the same app id forwards "activate" to this
         // primary instance; the startup gate single-flights the asynchronous
         // initialization so repeated activation cannot stack duplicate

@@ -169,11 +169,11 @@ class DesktopNotificationsTest {
                                 assertEquals("open-download-manager", parameters.getChildValue(2).dupString(null));
                                 Variant logo = hints.lookupValue("image-data", new VariantType("(iiibiiay)"));
                                 assertNotNull(logo);
-                                assertEquals(105, logo.getChildValue(0).getInt32());
+                                assertEquals(128, logo.getChildValue(0).getInt32());
                                 assertEquals(128, logo.getChildValue(1).getInt32());
-                                assertEquals(420, logo.getChildValue(2).getInt32());
+                                assertEquals(512, logo.getChildValue(2).getInt32());
                                 assertTrue(logo.getChildValue(3).getBoolean());
-                                assertEquals(53760, logo.getChildValue(6).nChildren());
+                                assertEquals(65536, logo.getChildValue(6).nChildren());
                             }
                             assertEquals(torFailure && !installed ? 0 : -1,
                                     parameters.getChildValue(7).getInt32());

@@ -248,8 +248,8 @@ final class JackettSettingsPane {
         updateRow(row.id());
         CompletableFuture<CheckResult> previous = checks.get(row.id());
         // Serialize configuration changes behind any in-flight test for this indexer.
-        CompletableFuture<?> ready = previous == null ? CompletableFuture.completedFuture(null)
-                : previous.handle((value, error) -> null);
+        CompletableFuture<CheckResult> ready = previous == null ? CompletableFuture.completedFuture(null)
+                : previous.handle((value, error) -> error == null ? value : null);
         CompletableFuture<CheckResult> check = ready.thenApplyAsync(ignored -> {
             if (closed || checkEpoch.get() != epoch) { throw new java.util.concurrent.CancellationException(); }
             boolean saved = alreadyConfigured;
@@ -280,17 +280,28 @@ final class JackettSettingsPane {
             if (closed || checkEpoch.get() != epoch || checks.get(row.id()) != check) { return; }
             checks.remove(row.id()); configuring.remove(row.id());
             CheckResult outcome = error == null ? result : new CheckResult(alreadyConfigured, "Failed", message(error));
-            tests.put(row.id(), outcome);
             if (action == IndexerAction.PROBE) { sessionTests.put(row.id(), outcome); }
-            else { sessionTests.remove(row.id()); }
+            else {
+                // A selection change may have waited for an in-flight probe.
+                // Its callback no longer owns this row, but its completed test
+                // result still belongs to the session.
+                CheckResult completedProbe = ready.getNow(null);
+                if (completedProbe != null) { sessionTests.put(row.id(), completedProbe); }
+                CheckResult lastTest = sessionTests.get(row.id());
+                if (outcome.status().equals("Not tested") && lastTest != null) {
+                    outcome = new CheckResult(outcome.configured(), lastTest.status(), lastTest.detail());
+                }
+            }
+            tests.put(row.id(), outcome);
             if (outcome.configured()) {
                 configured.add(row.id());
                 if (action == IndexerAction.CONFIGURE) { selected.add(row.id()); }
             } else {
                 configured.remove(row.id()); selected.remove(row.id());
             }
+            CheckResult finalOutcome = outcome;
             indexers = indexers.stream().map(indexer -> indexer.id().equals(row.id())
-                    ? new JackettClient.Indexer(indexer.id(), indexer.name(), outcome.configured(), outcome.detail(), indexer.categories())
+                    ? new JackettClient.Indexer(indexer.id(), indexer.name(), finalOutcome.configured(), finalOutcome.detail(), indexer.categories())
                     : indexer).toList();
             updateRow(row.id()); updateCheckSummary();
         }));

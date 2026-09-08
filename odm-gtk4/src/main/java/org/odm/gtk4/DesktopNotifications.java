@@ -24,7 +24,7 @@ import org.manager.download.Download;
 
 /** GTK notifications, with a freedesktop fallback for uninstalled local launches. */
 final class DesktopNotifications {
-    static final String ICON_NAME = "open-download-manager";
+    static final String ICON_NAME = ApplicationIcons.ICON_NAME;
 
     private DesktopNotifications() { }
 
@@ -111,7 +111,7 @@ final class DesktopNotifications {
     }
 
     private static Variant logoData() throws IOException {
-        try (var input = DesktopNotifications.class.getResourceAsStream("/images/logo-128.png")) {
+        try (var input = DesktopNotifications.class.getResourceAsStream(ApplicationIcons.pngResource(128))) {
             if (input == null) {
                 throw new IOException("ODM notification logo is missing");
             }

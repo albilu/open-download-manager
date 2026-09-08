@@ -293,7 +293,7 @@ class SearchTorrentsDialogTest {
             toggleIndexer(pane, store, "good");
             pump(() -> rowChecked(store, "good"));
             verify(client).configure(eq("good"), eq(defaults)); verify(client).test("good");
-            assertEquals("Not tested", rowStatus(store, "good"));
+            assertEquals("Passed", rowStatus(store, "good"));
             toggleIndexer(pane, store, "existing");
             toggleIndexer(pane, store, "bad");
             pump(() -> rowStatus(store, "bad").equals("Setup failed"));
@@ -302,6 +302,46 @@ class SearchTorrentsDialogTest {
             assertEquals(Set.of("good", "existing"), Set.of(saved.getProperty(JackettSettings.INDEXERS, "").split(",")));
             verify(client, never()).configure(eq("existing"), any());
         } finally { pane.close(); parent.destroy(); }
+    }
+
+    @Test void selectingAndRemovingIndexersPreservesBothTestOutcomesAcrossReopening() throws Exception {
+        JackettClient client = mock(JackettClient.class);
+        when(client.publicIndexers()).thenReturn(List.of(
+                new JackettClient.Indexer("good", "Good", false, "", List.of()),
+                new JackettClient.Indexer("bad", "Bad", false, "", List.of())));
+        when(client.configuration(anyString())).thenReturn(new ObjectMapper().createArrayNode());
+        doThrow(new IOException("still unavailable")).when(client).test("bad");
+        JackettService session = service(client);
+        GlobalSettings settings = new GlobalSettings();
+        settings.setProperty(JackettSettings.INDEXERS, "");
+        Window parent = new Window();
+        JackettSettingsPane pane = new JackettSettingsPane(parent, settings, session);
+        try {
+            ListStore store = field(pane, "store", ListStore.class);
+            testIndexers(pane);
+            pump(button(pane, "test")::getSensitive);
+            for (String id : List.of("good", "bad")) {
+                String expected = id.equals("good") ? "Passed" : "Failed";
+                toggleIndexer(pane, store, id);
+                pump(() -> rowChecked(store, id));
+                assertEquals(expected, rowStatus(store, id));
+                toggleIndexer(pane, store, id);
+                pump(() -> !rowChecked(store, id));
+                assertEquals(expected, rowStatus(store, id));
+                verify(client).configure(eq(id), any());
+                verify(client).unconfigure(id);
+                verify(client).test(id);
+            }
+        } finally { pane.close(); }
+        JackettSettingsPane reopened = new JackettSettingsPane(parent, settings, session);
+        try {
+            pump(button(reopened, "test")::getSensitive);
+            ListStore store = field(reopened, "store", ListStore.class);
+            assertEquals("Passed", rowStatus(store, "good"));
+            assertEquals("Failed", rowStatus(store, "bad"));
+            assertEquals("still unavailable", ListStoreCells.getString(store, indexerIter(store, "bad"), 3));
+            verify(client).test("good"); verify(client).test("bad");
+        } finally { reopened.close(); parent.destroy(); }
     }
 
     @Test void completedIndexerResultsSurviveReopeningAndRefreshAndCanBeRetested() throws Exception {
@@ -425,7 +465,7 @@ class SearchTorrentsDialogTest {
             assertTrue(rowChecked(store, "linux"), "the check remains until Jackett confirms removal");
             verify(client, never()).unconfigure(anyString());
             releaseProbe.countDown();
-            pump(() -> !rowChecked(store, "linux") && rowStatus(store, "linux").equals("Not tested"));
+            pump(() -> !rowChecked(store, "linux") && rowStatus(store, "linux").equals("Passed"));
             verify(client).unconfigure("linux");
             GlobalSettings saved = values.copy(); pane.collect(saved);
             assertEquals("", saved.getProperty(JackettSettings.INDEXERS, "missing"));
