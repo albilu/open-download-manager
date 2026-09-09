@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisplayName("Download repository performance")
 class DownloadRepositoryPerfTest {
 
-    private static final int HISTORY = 5_000;
+    private static final int HISTORY = PerfReporter.scale(5_000);
     private static final int PAGE_SIZE = 50;
 
     private PaginatedDownloadRepository repositoryWithHistory() throws Exception {

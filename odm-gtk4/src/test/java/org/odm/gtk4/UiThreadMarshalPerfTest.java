@@ -57,7 +57,7 @@ class UiThreadMarshalPerfTest {
     @Timeout(120)
     @DisplayName("Sequential marshal round-trip latency")
     void sequentialRoundTrips() {
-        int tasks = 200;
+        int tasks = UiPerf.scale(200);
         long totalLatency = 0;
         for (int i = 0; i < tasks; i++) {
             AtomicInteger done = new AtomicInteger();
@@ -75,7 +75,7 @@ class UiThreadMarshalPerfTest {
     @Timeout(120)
     @DisplayName("Burst of 500 marshalled events drains cleanly")
     void burstDrain() {
-        int tasks = 500;
+        int tasks = UiPerf.scale(500);
         AtomicInteger done = new AtomicInteger();
         long enqueueStart = System.nanoTime();
         for (int i = 0; i < tasks; i++) {

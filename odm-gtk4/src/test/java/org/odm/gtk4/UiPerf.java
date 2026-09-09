@@ -14,6 +14,12 @@ final class UiPerf {
     private UiPerf() {
     }
 
+    static int scale(int input) {
+        int scale = Integer.getInteger("odm.perf.scale", 1);
+        if (scale < 1) { throw new IllegalArgumentException("odm.perf.scale must be positive"); }
+        return Math.multiplyExact(input, scale);
+    }
+
     private static final Download.Status[] CYCLE = {
         Download.Status.DOWNLOADING, Download.Status.QUEUED, Download.Status.PAUSED,
         Download.Status.COMPLETED, Download.Status.SEEDING, Download.Status.ERROR,
@@ -61,10 +67,14 @@ final class UiPerf {
         double seconds = nanos / 1_000_000_000.0;
         double opsPerSec = seconds > 0 ? units / seconds : Double.POSITIVE_INFINITY;
         double avgMicros = units > 0 ? (nanos / 1000.0) / units : 0;
-        System.out.println(String.format(
+        String line = String.format(
                 "PERF %s.%s | n=%d | total=%.1fms | avg=%.2fus/op | throughput=%.0f ops/s%s",
                 suite, kase, units, nanos / 1_000_000.0, avgMicros, opsPerSec,
-                extra == null || extra.isEmpty() ? "" : " | " + extra));
+                extra == null || extra.isEmpty() ? "" : " | " + extra);
+        var heap = java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+        System.out.println(line + " | pid=" + ProcessHandle.current().pid()
+                + " | scale=" + scale(1) + " | elapsedNanos=" + nanos
+                + " | heapUsedBytes=" + heap.getUsed());
         return opsPerSec;
     }
 }

@@ -25,7 +25,7 @@ class UiFormattingPerfTest {
     @DisplayName("Human sizes and transfer rates")
     void sizesAndRates() {
         long[] values = {0, 512, 2048, 1_048_576, 157_286_400, 3_221_225_472L};
-        int repeats = 20_000;
+        int repeats = UiPerf.scale(20_000);
         long start = System.nanoTime();
         for (int i = 0; i < repeats; i++) {
             DownloadFormats.size(values[i % values.length]);
@@ -42,7 +42,7 @@ class UiFormattingPerfTest {
     @DisplayName("Progress percentage strings and fills")
     void progressStrings() {
         double[] values = {0, 42.675, 99.995, 100, Double.NaN};
-        int repeats = 20_000;
+        int repeats = UiPerf.scale(20_000);
         long start = System.nanoTime();
         for (int i = 0; i < repeats; i++) {
             ProgressPresentation.percentage(values[i % values.length]);
@@ -57,7 +57,7 @@ class UiFormattingPerfTest {
     @Test
     @DisplayName("Full per-row detail strings over 2000 downloads")
     void rowDetails() {
-        List<Download> downloads = UiPerf.history(2_000);
+        List<Download> downloads = UiPerf.history(UiPerf.scale(2_000));
         downloads.forEach(d -> d.setActiveElapsedMillis(95_000));
         int repeats = 50;
         long start = System.nanoTime();

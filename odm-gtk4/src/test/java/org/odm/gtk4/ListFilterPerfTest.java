@@ -24,7 +24,7 @@ class ListFilterPerfTest {
     @Test
     @DisplayName("Filter 5000 rows with no restrictions")
     void filterAll() {
-        List<Download> downloads = UiPerf.history(5_000);
+        List<Download> downloads = UiPerf.history(UiPerf.scale(5_000));
         for (int i = 0; i < 200; i++) {
             DownloadListPresenter.matchesFilters(downloads.get(i), "", "All", "All Status");
         }
@@ -37,15 +37,15 @@ class ListFilterPerfTest {
         }
         long elapsed = System.nanoTime() - start;
 
-        assertTrue(matched == 5_000);
-        UiPerf.report("ListFilter", "match-all-5k", downloads.size(), elapsed, "matched=" + matched);
+        assertTrue(matched == downloads.size());
+        UiPerf.report("ListFilter", "match-all", downloads.size(), elapsed, "matched=" + matched);
         assertTrue(elapsed < 10_000_000_000L, "filter took " + elapsed / 1_000_000 + "ms");
     }
 
     @Test
     @DisplayName("Filter 5000 rows by search text, category and status")
     void filterSearchCategoryStatus() {
-        List<Download> downloads = UiPerf.history(5_000);
+        List<Download> downloads = UiPerf.history(UiPerf.scale(5_000));
         int repeats = 20;
         int matched = 0;
         long start = System.nanoTime();
@@ -67,7 +67,7 @@ class ListFilterPerfTest {
     @Test
     @DisplayName("Sidebar status and category counts over 5000 rows")
     void sidebarCounts() {
-        List<Download> downloads = UiPerf.history(5_000);
+        List<Download> downloads = UiPerf.history(UiPerf.scale(5_000));
         int repeats = 200;
         long start = System.nanoTime();
         int[] counts = null;
@@ -87,7 +87,7 @@ class ListFilterPerfTest {
     @Test
     @DisplayName("Queue ordering and structure checks over 5000 rows")
     void queueOrderAndStructure() {
-        List<Download> downloads = UiPerf.history(5_000);
+        List<Download> downloads = UiPerf.history(UiPerf.scale(5_000));
         int repeats = 100;
         long orderStart = System.nanoTime();
         List<Download> ordered = null;

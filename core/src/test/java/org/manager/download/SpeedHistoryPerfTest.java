@@ -23,7 +23,7 @@ class SpeedHistoryPerfTest {
     @DisplayName("Record 20000 samples through compaction")
     void recordThroughCompaction() {
         DownloadSpeedHistory history = new DownloadSpeedHistory();
-        int samples = 20_000;
+        int samples = PerfReporter.scale(20_000);
         long start = System.nanoTime();
         for (int i = 0; i < samples; i++) {
             history.record(i * 1000L, i * 2500L, 2500);
@@ -33,7 +33,7 @@ class SpeedHistoryPerfTest {
         DownloadSpeedHistory.Snapshot snapshot = history.snapshot();
         assertTrue(snapshot.samples().size() <= DownloadSpeedHistory.MAX_SAMPLES);
         assertEquals(2500, snapshot.averageBytesPerSecond(), 0.001);
-        PerfReporter.report("SpeedHistory", "record-20k", samples, elapsed,
+        PerfReporter.report("SpeedHistory", "record", samples, elapsed,
                 "stored=" + snapshot.samples().size() + " max=" + DownloadSpeedHistory.MAX_SAMPLES);
         assertTrue(elapsed < 10_000_000_000L, "record took " + elapsed / 1_000_000 + "ms");
     }
@@ -42,7 +42,7 @@ class SpeedHistoryPerfTest {
     @DisplayName("Snapshot and state round-trip throughput")
     void snapshotAndState() {
         DownloadSpeedHistory history = new DownloadSpeedHistory();
-        for (int i = 0; i < 2000; i++) {
+        for (int i = 0; i < PerfReporter.scale(2000); i++) {
             history.record(i * 1000L, i * 5000L, 4000);
         }
         int repeats = 5_000;
@@ -51,7 +51,8 @@ class SpeedHistoryPerfTest {
             history.snapshot();
         }
         long snapElapsed = System.nanoTime() - snapStart;
-        PerfReporter.report("SpeedHistory", "snapshot", repeats, snapElapsed, "");
+        PerfReporter.report("SpeedHistory", "snapshot", repeats, snapElapsed,
+                "stored=" + history.snapshot().samples().size());
 
         long stateStart = System.nanoTime();
         for (int i = 0; i < 500; i++) {
@@ -59,7 +60,8 @@ class SpeedHistoryPerfTest {
             new DownloadSpeedHistory().restore(state);
         }
         long stateElapsed = System.nanoTime() - stateStart;
-        PerfReporter.report("SpeedHistory", "state-roundtrip", 500, stateElapsed, "");
+        PerfReporter.report("SpeedHistory", "state-roundtrip", 500, stateElapsed,
+                "stored=" + history.snapshot().samples().size());
 
         assertTrue(snapElapsed < 10_000_000_000L, "snapshots took " + snapElapsed / 1_000_000 + "ms");
         assertTrue(stateElapsed < 10_000_000_000L, "state round-trips took " + stateElapsed / 1_000_000 + "ms");

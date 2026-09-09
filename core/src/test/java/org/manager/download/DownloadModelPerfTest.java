@@ -24,7 +24,7 @@ class DownloadModelPerfTest {
     @Test
     @DisplayName("Create and classify 10000 downloads")
     void createAndClassify() {
-        int count = 10_000;
+        int count = PerfReporter.scale(10_000);
         // Warm up URI parsing and the classification switch.
         for (int i = 0; i < 500; i++) {
             new Download(URI.create("https://example.com/warm-" + i + ".zip"));
@@ -41,7 +41,7 @@ class DownloadModelPerfTest {
         long elapsed = System.nanoTime() - start;
 
         assertEquals(count, classified);
-        PerfReporter.report("DownloadModel", "create-classify-10k", count, elapsed, "");
+        PerfReporter.report("DownloadModel", "create-classify", count, elapsed, "");
         assertTrue(elapsed < 30_000_000_000L, "creation took " + elapsed / 1_000_000 + "ms");
     }
 }

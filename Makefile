@@ -1,6 +1,6 @@
 # Simple Makefile for Open Download Manager Docker Development
 
-.PHONY: help build dev test test-integration compile run debug package clean
+.PHONY: help build dev test test-integration test-perf compile run debug package clean
 
 .DEFAULT_GOAL := help
 
@@ -10,8 +10,9 @@ help: ## Show this help message
 	@echo "Available targets:"
 	@echo "  build     Build Docker image"
 	@echo "  dev       Start development container"
-	@echo "  test      Run tests"
+	@echo "  test      Run tests excluding integration/E2E and performance suites"
 	@echo "  test-integration  Run tests including integration/E2E suites"
+	@echo "  test-perf Run performance benchmarks only"
 	@echo "  compile   Build application"
 	@echo "  run       Run application in Docker with Xvfb"
 	@echo "  debug     Run application in debug mode (port 5005)"
@@ -21,7 +22,8 @@ help: ## Show this help message
 	@echo "Examples:"
 	@echo "  make build    # Build the Docker image"
 	@echo "  make dev      # Start development environment"
-	@echo "  make test     # Run all tests"
+	@echo "  make test     # Run the default test suite"
+	@echo "  make test-perf # Run performance benchmarks"
 	@echo "  make run      # Run application with GUI support"
 	@echo "  make debug    # Run application in debug mode"
 	@echo "  make package  # Create .deb, .rpm packages"
@@ -32,11 +34,14 @@ build: ## Build Docker image
 dev: ## Start development container
 	./docker-build.sh dev
 
-test: ## Run tests
+test: ## Run the default suite without integration/E2E or performance tests
 	./docker-build.sh test
 
 test-integration: ## Run tests including integration/E2E suites (-Pintegration)
 	./docker-build.sh test-integration
+
+test-perf: ## Run performance benchmarks only (-Pperf)
+	./docker-build.sh test-perf
 
 compile: ## Build application
 	./docker-build.sh compile

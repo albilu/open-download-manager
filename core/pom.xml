@@ -258,9 +258,10 @@
     </build>
 
     <profiles>
-        <!-- Runs EVERYTHING, including suites that launch real aria2c, yt-dlp,
+        <!-- Includes suites that launch real aria2c, yt-dlp,
              httrack, curl, tor, and proxychains processes and reach the
-             network. The default run is hermetic; CI and developers use
+             network. Performance benchmarks use the separate -Pperf profile.
+             The default run is hermetic; CI and developers use
              this profile inside the odm-dev Docker environment:
                  mvn test -Pintegration -->
         <profile>

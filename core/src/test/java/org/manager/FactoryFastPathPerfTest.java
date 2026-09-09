@@ -52,7 +52,7 @@ class FactoryFastPathPerfTest {
             factory.getGlobalSettings();
             factory.getToolManagerFactory();
         }
-        int iterations = 20_000;
+        int iterations = PerfReporter.scale(20_000);
         long best = Long.MAX_VALUE;
         for (int sample = 0; sample < 5; sample++) {
             long start = System.nanoTime();
@@ -72,7 +72,7 @@ class FactoryFastPathPerfTest {
     @DisplayName("Startup coordinator completion tracking")
     void coordinatorTracking() {
         StartupCoordinator coordinator = factory.getStartupCoordinator();
-        int iterations = 50_000;
+        int iterations = PerfReporter.scale(50_000);
         long start = System.nanoTime();
         for (int i = 0; i < iterations; i++) {
             coordinator.isStartupComplete();

@@ -54,13 +54,13 @@ class ListRefreshPerfTest {
     @DisplayName("Refresh 500 rows: fill, progress tick, and reorder rebuild")
     void refreshPaths() {
         DownloadListPresenter presenter = presenter();
-        List<Download> downloads = UiPerf.history(500);
+        List<Download> downloads = UiPerf.history(UiPerf.scale(500));
 
         long fillStart = System.nanoTime();
         DownloadListPresenter.RefreshSummary fill = presenter.refresh(downloads);
         long fillElapsed = System.nanoTime() - fillStart;
-        assertEquals(500, fill.totalCount());
-        UiPerf.report("ListRefresh", "fill-500", downloads.size(), fillElapsed, "");
+        assertEquals(downloads.size(), fill.totalCount());
+        UiPerf.report("ListRefresh", "fill", downloads.size(), fillElapsed, "");
 
         // Progress tick: same objects, same order — must stay in place so the
         // tree selection survives the 1 Hz update rate.
@@ -68,7 +68,7 @@ class ListRefreshPerfTest {
         DownloadListPresenter.RefreshSummary tick = presenter.refresh(downloads);
         long tickElapsed = System.nanoTime() - tickStart;
         assertFalse(tick.modelRebuilt(), "progress tick must update rows in place");
-        UiPerf.report("ListRefresh", "tick-500", downloads.size(), tickElapsed, "in-place");
+        UiPerf.report("ListRefresh", "tick", downloads.size(), tickElapsed, "in-place");
 
         // Structural change: reversed order forces a full store rebuild.
         List<Download> reordered = new ArrayList<>(downloads);
@@ -77,19 +77,42 @@ class ListRefreshPerfTest {
         DownloadListPresenter.RefreshSummary rebuild = presenter.refresh(reordered);
         long rebuildElapsed = System.nanoTime() - rebuildStart;
         assertTrue(rebuild.modelRebuilt(), "reorder must rebuild the store");
-        UiPerf.report("ListRefresh", "rebuild-500", reordered.size(), rebuildElapsed, "reordered");
+        UiPerf.report("ListRefresh", "rebuild", reordered.size(), rebuildElapsed, "reordered");
 
         // Second tick on the new order is in place again.
         long tick2Start = System.nanoTime();
         DownloadListPresenter.RefreshSummary tick2 = presenter.refresh(reordered);
         long tick2Elapsed = System.nanoTime() - tick2Start;
         assertFalse(tick2.modelRebuilt());
-        UiPerf.report("ListRefresh", "tick-after-rebuild-500", reordered.size(), tick2Elapsed,
+        UiPerf.report("ListRefresh", "tick-after-rebuild", reordered.size(), tick2Elapsed,
                 "in-place");
 
         assertTrue(fillElapsed < 60_000_000_000L, "fill took " + fillElapsed / 1_000_000 + "ms");
         assertTrue(tickElapsed < 60_000_000_000L, "tick took " + tickElapsed / 1_000_000 + "ms");
         assertTrue(rebuildElapsed < 60_000_000_000L,
                 "rebuild took " + rebuildElapsed / 1_000_000 + "ms");
+
+        // Opt-in paced workload for CPU/allocation profiling; never changes the normal trip wire.
+        int ticks = Integer.getInteger("odm.perf.sustainSeconds", 0);
+        for (int tickIndex = 0; tickIndex < ticks; tickIndex++) {
+            long start = System.nanoTime();
+            for (Download download : reordered) {
+                if (download.getStatus() == Download.Status.DOWNLOADING) {
+                    download.setDownloaded(download.getDownloaded() + 1024);
+                }
+            }
+            var summary = presenter.refresh(reordered);
+            long elapsed = System.nanoTime() - start;
+            assertFalse(summary.modelRebuilt());
+            UiPerf.report("ListRefresh", "sustained-tick", reordered.size(), elapsed,
+                    "tick=" + tickIndex);
+            var context = org.gnome.glib.MainContext.default_();
+            while (context.pending()) { context.iteration(false); }
+            long remaining = 1_000_000_000L - (System.nanoTime() - start);
+            if (remaining > 0) {
+                try { java.util.concurrent.TimeUnit.NANOSECONDS.sleep(remaining); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
+            }
+        }
     }
 }

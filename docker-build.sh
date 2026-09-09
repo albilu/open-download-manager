@@ -90,7 +90,7 @@ dev() {
         $IMAGE_NAME
 }
 
-# Run tests
+# Run the default suite without integration/E2E or performance tests
 test() {
     prepare_m2
     log "Running tests..."
@@ -103,8 +103,8 @@ test() {
         bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 & sleep 2 && mvn test"
 }
 
-# Run the full suite including integration/E2E (-Pintegration clears the
-# hermetic surefire excludes)
+# Include integration/E2E (-Pintegration clears the filename excludes).
+# Performance benchmarks remain excluded unless -Pperf is selected.
 test_integration() {
     prepare_m2
     log "Running integration tests..."
@@ -115,6 +115,17 @@ test_integration() {
         -e ENABLE_NETWORK_TESTS=true \
         $IMAGE_NAME \
         bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 & sleep 2 && mvn test -Pintegration"
+}
+
+# Run only performance benchmarks, without coverage instrumentation.
+test_perf() {
+    prepare_m2
+    log "Running performance benchmarks..."
+    docker run --init --rm \
+        -v "$(pwd):/app" \
+        -v "$HOME/.m2:/home/developer/.m2" \
+        $IMAGE_NAME \
+        bash -c "Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset > /dev/null 2>&1 & sleep 2 && mvn test -Pperf"
 }
 
 # Build application
@@ -160,8 +171,9 @@ help() {
     echo "Commands:"
     echo "  build     Build Docker image"
     echo "  dev       Start development container"
-    echo "  test      Run tests"
+    echo "  test      Run tests excluding integration/E2E and performance suites"
     echo "  test-integration  Run tests including integration/E2E suites (-Pintegration)"
+    echo "  test-perf Run performance benchmarks only (-Pperf)"
     echo "  compile   Build application"
     echo "  run       Run application with GUI support"
     echo "  debug     Run application in debug mode (port 5005)"
@@ -176,6 +188,7 @@ case "${1:-help}" in
     dev)     build && dev ;;
     test)    build && test ;;
     test-integration) build && test_integration ;;
+    test-perf) build && test_perf ;;
     compile) build && compile ;;
     run)     build && run ;;
     debug)   build && debug ;;

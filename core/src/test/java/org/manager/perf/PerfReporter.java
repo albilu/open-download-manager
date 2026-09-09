@@ -14,6 +14,13 @@ public final class PerfReporter {
     private PerfReporter() {
     }
 
+    /** Scale input sizes without changing production limits or benchmark repetition counts. */
+    public static int scale(int input) {
+        int scale = Integer.getInteger("odm.perf.scale", 1);
+        if (scale < 1) { throw new IllegalArgumentException("odm.perf.scale must be positive"); }
+        return Math.multiplyExact(input, scale);
+    }
+
     /**
      * Prints a single benchmark result line to stdout.
      *
@@ -31,7 +38,10 @@ public final class PerfReporter {
         String line = String.format("PERF %s.%s | n=%d | total=%.1fms | avg=%.2fus/op | throughput=%.0f ops/s%s",
                 suite, kase, units, nanos / 1_000_000.0, avgMicros, opsPerSec,
                 extra == null || extra.isEmpty() ? "" : " | " + extra);
-        System.out.println(line);
+        var heap = java.lang.management.ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+        System.out.println(line + " | pid=" + ProcessHandle.current().pid()
+                + " | scale=" + scale(1) + " | elapsedNanos=" + nanos
+                + " | heapUsedBytes=" + heap.getUsed());
         return opsPerSec;
     }
 }

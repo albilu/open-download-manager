@@ -22,7 +22,7 @@ class UrlPolicyPerfTest {
 
     private static String thousandUrlText() {
         StringBuilder sb = new StringBuilder(64_000);
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < PerfReporter.scale(1000); i++) {
             sb.append("file").append(i).append(" https://example").append(i).append(".com/file")
                     .append(i).append(".zip ");
         }
@@ -41,8 +41,8 @@ class UrlPolicyPerfTest {
         List<DownloadUrlPolicy.ValidatedSource> found = DownloadUrlPolicy.extract(text);
         long elapsed = System.nanoTime() - start;
 
-        assertEquals(1000, found.size());
-        PerfReporter.report("UrlPolicy", "extract-1000-urls", found.size(), elapsed,
+        assertEquals(PerfReporter.scale(1000), found.size());
+        PerfReporter.report("UrlPolicy", "extract-urls", found.size(), elapsed,
                 "textChars=" + text.length());
         // Generous trip wire: a healthy run is tens of ms; 5s catches only collapse.
         assertTrue(elapsed < 5_000_000_000L, "extract took " + elapsed / 1_000_000 + "ms");
@@ -55,7 +55,7 @@ class UrlPolicyPerfTest {
         for (int i = 0; i < 1000; i++) {
             DownloadUrlPolicy.parse(input);
         }
-        int iterations = 20_000;
+        int iterations = PerfReporter.scale(20_000);
         long start = System.nanoTime();
         for (int i = 0; i < iterations; i++) {
             DownloadUrlPolicy.parse(input);
@@ -71,7 +71,7 @@ class UrlPolicyPerfTest {
     @DisplayName("Scan text with 1000 invalid tokens plus one valid URL")
     void invalidHeavyScan() {
         StringBuilder sb = new StringBuilder(32_000);
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < PerfReporter.scale(1000); i++) {
             sb.append("not-a-url-").append(i).append(' ');
         }
         sb.append("https://example.com/valid.zip");
@@ -82,7 +82,8 @@ class UrlPolicyPerfTest {
         long elapsed = System.nanoTime() - start;
 
         assertEquals(1, found.size());
-        PerfReporter.report("UrlPolicy", "scan-invalid-heavy", 1001, elapsed, "hits=1");
+        PerfReporter.report("UrlPolicy", "scan-invalid-heavy", PerfReporter.scale(1000) + 1, elapsed,
+                "hits=1 textChars=" + text.length());
         assertTrue(elapsed < 5_000_000_000L, "invalid scan took " + elapsed / 1_000_000 + "ms");
     }
 }
