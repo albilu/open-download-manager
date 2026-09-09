@@ -144,7 +144,7 @@ compile() {
 # Create packages
 package() {
     prepare_m2
-    local version="${1:-0.1.0}"
+    local version="${1:-0.2.1}"
     if [[ ! "$version" =~ ^[0-9]+([.][0-9]+){1,3}$ ]]; then
         echo "Invalid package version: expected numeric dotted version" >&2
         return 2
