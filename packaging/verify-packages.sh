@@ -58,6 +58,8 @@ for format in deb rpm arch; do
     grep -qx 'Icon=open-download-manager' "$root/usr/share/applications/org.odm.desktop"
     grep -qx 'StartupWMClass=org.odm' "$root/usr/share/applications/org.odm.desktop"
     test -s "$root/usr/share/icons/hicolor/scalable/apps/open-download-manager.svg"
+    cmp "$PACKAGE_ROOT/../odm-gtk4/src/main/resources/icons/hicolor/16x16/apps/open-download-manager.svg" \
+        "$root/usr/share/icons/hicolor/16x16/apps/open-download-manager.svg"
     for size in 16 24 32 48 64 128 256 512; do
         icon="icons/hicolor/${size}x${size}/apps/open-download-manager.png"
         cmp "$PACKAGE_ROOT/../odm-gtk4/src/main/resources/$icon" "$root/usr/share/$icon"
