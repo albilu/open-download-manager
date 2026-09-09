@@ -174,12 +174,22 @@ public final class OdmApplication {
             try {
                 // Copy native callback data before waiting for asynchronous startup.
                 var urls = files == null ? java.util.List.<String>of()
-                        : java.util.Arrays.stream(files).map(org.gnome.gio.File::getUri).toList();
+                        : java.util.Arrays.stream(files).map(OdmApplication::desktopDownloadUrl).toList();
                 startup.openUrls(urls);
             } catch (Throwable t) {
                 LOGGER.error("Failed to receive download links", t);
             }
         });
+    }
+
+    private static String desktopDownloadUrl(org.gnome.gio.File file) {
+        String uri = file.getUri();
+        // GVfs represents opaque magnet:? links as magnet:///? in GFile.
+        // Undo only that desktop conversion; the shared URL policy still
+        // validates the complete link. Keep the query's original encoding.
+        String gvfsPrefix = "magnet:///?";
+        return uri.regionMatches(true, 0, gvfsPrefix, 0, gvfsPrefix.length())
+                ? "magnet:?" + uri.substring(gvfsPrefix.length()) : uri;
     }
 
     /** GApplication expects argv[0]; Java's main arguments omit it. */
