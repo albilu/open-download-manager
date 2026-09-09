@@ -3,6 +3,7 @@ package org.odm.gtk4;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -126,6 +127,16 @@ final class StartupGate {
      * thread): present, wait-and-observe, or single-flight a new startup.
      */
     void activate() {
+        activate(null);
+    }
+
+    /** Opens every supplied link once the shared window is ready (GTK thread). */
+    void openUrls(java.util.List<String> urls) {
+        var requests = java.util.List.copyOf(urls);
+        activate(window -> window.openDownloadUrls(requests));
+    }
+
+    private void activate(Consumer<MainWindow> onReady) {
         CompletableFuture<MainWindow> current = startup.get();
         if (current == null) {
             if (shutdownRequested.get()) {
@@ -135,15 +146,18 @@ final class StartupGate {
             CompletableFuture<MainWindow> mine = new CompletableFuture<>();
             if (startup.compareAndSet(null, mine)) {
                 startPipeline(mine);
+                if (onReady != null) {
+                    observe(mine, onReady);
+                }
                 return; // this activation owns the startup pipeline
             }
             current = startup.get(); // another activation won the race
         }
-        observe(current);
+        observe(current, onReady);
     }
 
     /** Reuses a startup future: presents the same window once it completes. */
-    private void observe(CompletableFuture<MainWindow> future) {
+    private void observe(CompletableFuture<MainWindow> future, Consumer<MainWindow> onReady) {
         future.whenComplete((window, error) -> {
             if (error != null) {
                 return; // failure handling is owned by the activation that started the pipeline
@@ -154,6 +168,9 @@ final class StartupGate {
                 }
                 LOGGER.info("onActivate: presenting existing window");
                 window.present();
+                if (onReady != null) {
+                    onReady.accept(window);
+                }
             });
         });
     }

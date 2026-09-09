@@ -38,9 +38,8 @@ public final class OdmApplication {
                 System.getProperty("java.version"));
         org.gnome.glib.GLib.setPrgname(ApplicationIcons.APPLICATION_ID);
         org.gnome.glib.GLib.setApplicationName("oDM");
-        Application app = new Application(ApplicationIcons.APPLICATION_ID, ApplicationFlags.DEFAULT_FLAGS);
-        app.onStartup(() -> org.gnome.gtk.Window.setDefaultIconName(ApplicationIcons.ICON_NAME));
-        // A second launch of the same app id forwards "activate" to this
+        Application app = createApplication();
+        // A second launch of the same app id forwards "activate" or "open" to this
         // primary instance; the startup gate single-flights the asynchronous
         // initialization so repeated activation cannot stack duplicate
         // core/scheduler/tray/window pipelines.
@@ -115,13 +114,7 @@ public final class OdmApplication {
                 });
         startupHolder[0] = startup;
 
-        app.onActivate(() -> {
-            try {
-                startup.activate(); // "activate" is delivered on the GTK thread
-            } catch (Throwable t) {
-                LOGGER.error("onActivate failed", t);
-            }
-        });
+        connectActivationHandlers(app, startup);
 
         // File > Exit and window close run their exit sequence through the
         // final-close delegate (see installGracefulShutdown) BEFORE the main
@@ -144,7 +137,7 @@ public final class OdmApplication {
 
         int status;
         try {
-            status = app.run(args);
+            status = app.run(nativeArguments(args));
         } finally {
             // Some native/main-loop exit paths can return without delivering
             // the shutdown signal. This idempotent fallback guarantees that
@@ -161,6 +154,40 @@ public final class OdmApplication {
         if (status != 0) {
             System.exit(status);
         }
+    }
+
+    static Application createApplication() {
+        Application app = new Application(ApplicationIcons.APPLICATION_ID, ApplicationFlags.HANDLES_OPEN);
+        app.onStartup(() -> org.gnome.gtk.Window.setDefaultIconName(ApplicationIcons.ICON_NAME));
+        return app;
+    }
+
+    static void connectActivationHandlers(Application app, StartupGate startup) {
+        app.onActivate(() -> {
+            try {
+                startup.activate(); // GTK delivers activation on its main thread
+            } catch (Throwable t) {
+                LOGGER.error("onActivate failed", t);
+            }
+        });
+        app.onOpen((files, hint) -> {
+            try {
+                // Copy native callback data before waiting for asynchronous startup.
+                var urls = files == null ? java.util.List.<String>of()
+                        : java.util.Arrays.stream(files).map(org.gnome.gio.File::getUri).toList();
+                startup.openUrls(urls);
+            } catch (Throwable t) {
+                LOGGER.error("Failed to receive download links", t);
+            }
+        });
+    }
+
+    /** GApplication expects argv[0]; Java's main arguments omit it. */
+    static String[] nativeArguments(String[] args) {
+        String[] argv = new String[args.length + 1];
+        argv[0] = "open-download-manager";
+        System.arraycopy(args, 0, argv, 1, args.length);
+        return argv;
     }
 
     /**

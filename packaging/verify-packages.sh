@@ -55,6 +55,8 @@ for format in deb rpm arch; do
     test -s "$root/usr/share/doc/open-download-manager/copyright"
     test -s "$root/usr/share/licenses/open-download-manager/LICENSE"
     test -s "$root/usr/share/applications/org.odm.desktop"
+    grep -qx 'Exec=open-download-manager %U' "$root/usr/share/applications/org.odm.desktop"
+    grep -qx 'MimeType=x-scheme-handler/magnet;' "$root/usr/share/applications/org.odm.desktop"
     grep -qx 'Icon=open-download-manager' "$root/usr/share/applications/org.odm.desktop"
     grep -qx 'StartupWMClass=org.odm' "$root/usr/share/applications/org.odm.desktop"
     test -s "$root/usr/share/icons/hicolor/scalable/apps/open-download-manager.svg"

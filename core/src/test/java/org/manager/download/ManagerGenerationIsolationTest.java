@@ -194,7 +194,8 @@ class ManagerGenerationIsolationTest {
         handler.fireComplete(download);
         assertTrue(awaitTrue(() -> manager.getRunningDownloadCount() == 0),
                 "the genuine completion must still terminate the operation once");
-        assertEquals(1, completeEvents.stream().filter(id -> id.equals(download.getId())).count(),
+        assertTrue(
+                awaitTrue(() -> completeEvents.stream().filter(id -> id.equals(download.getId())).count() == 1),
                 "completion must be delivered exactly once");
     }
 

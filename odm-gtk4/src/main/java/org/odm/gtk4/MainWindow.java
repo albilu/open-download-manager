@@ -562,18 +562,7 @@ public class MainWindow {
                         return;
                     }
                     UiThread.marshal(() -> {
-                        java.net.URI source = urls.getFirst();
-                        if (org.manager.download.MediaUrlDetector.isMediaUrl(source)) {
-                            NewMediaDialog dialog = new NewMediaDialog(window, downloadManager,
-                                    () -> UiThread.marshal(MainWindow.this::refresh), torService);
-                            dialog.prefillUrl(source.toString());
-                            dialog.present();
-                        } else {
-                            NewDownloadDialog dialog = new NewDownloadDialog(window, downloadManager,
-                                    () -> UiThread.marshal(MainWindow.this::refresh), torService);
-                            dialog.prefillUrl(source.toString());
-                            dialog.present();
-                        }
+                        presentDownloadConfirmation(urls.getFirst());
                         if (urls.size() > 1) {
                             LOGGER.info(urls.size() + " URLs detected; offering the first");
                         }
@@ -824,6 +813,60 @@ public class MainWindow {
     private void onAddClicked() {
         new NewDownloadDialog(window, downloadManager,
                 () -> UiThread.marshal(this::refresh), torService).present();
+    }
+
+    /** Desktop links share clipboard silent mode and the common URL admission policy. */
+    void openDownloadUrls(List<String> urls) {
+        boolean silent = downloadManager.getGlobalSettings().getBooleanProperty("ui.clipboardSilent", false);
+        for (String url : urls) {
+            var source = DownloadUrlPolicy.parse(url);
+            if (source.isEmpty()) {
+                AccessibilitySupport.status(infoLabel, "Cannot open an invalid or unsupported download link.");
+                continue;
+            }
+            try {
+                if (silent) {
+                    submitDesktopDownload(source.orElseThrow().uri());
+                } else {
+                    presentDownloadConfirmation(source.orElseThrow().uri());
+                }
+            } catch (Exception error) {
+                LOGGER.warn("Failed to handle download link", error);
+                AccessibilitySupport.status(infoLabel, "Could not add download: " + UiErrors.message(error));
+            }
+        }
+    }
+
+    private void submitDesktopDownload(java.net.URI source) {
+        Path destination = downloadManager.getGlobalSettings().getDefaultDownloadDirectory();
+        CompletableFuture.supplyAsync(() -> downloadManager.createDownload(source, destination), backgroundExecutor)
+                // Match silent clipboard admission, including the global automatic-start policy.
+                .thenCompose(downloadManager::queueDownloadFromBackgroundSource)
+                .whenComplete((ignored, error) -> {
+                    if (error != null) { LOGGER.warn("Failed to submit download link", error); }
+                    UiThread.marshal(() -> {
+                        if (finalExitStarted) { return; }
+                        if (error != null) {
+                            AccessibilitySupport.status(infoLabel, "Could not add download: " + UiErrors.message(error));
+                        } else {
+                            refresh();
+                        }
+                    });
+                });
+    }
+
+    private void presentDownloadConfirmation(java.net.URI source) {
+        if (org.manager.download.MediaUrlDetector.isMediaUrl(source)) {
+            NewMediaDialog dialog = new NewMediaDialog(window, downloadManager,
+                    () -> UiThread.marshal(this::refresh), torService);
+            dialog.prefillUrl(source.toString());
+            dialog.present();
+        } else {
+            NewDownloadDialog dialog = new NewDownloadDialog(window, downloadManager,
+                    () -> UiThread.marshal(this::refresh), torService);
+            dialog.prefillUrl(source.toString());
+            dialog.present();
+        }
     }
 
     private void onNewMediaClicked() {

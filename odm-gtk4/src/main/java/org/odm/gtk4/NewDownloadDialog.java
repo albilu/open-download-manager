@@ -209,8 +209,8 @@ public class NewDownloadDialog {
     }
 
     /**
-     * Prefills the URL field and runs the live analysis, then presents the
-     * dialog. Used by the clipboard confirmation flow.
+     * Prefills the URL field and runs the live analysis before presentation.
+     * Used by clipboard confirmation and desktop link activation.
      *
      * @param url the detected URL to offer for download
      */

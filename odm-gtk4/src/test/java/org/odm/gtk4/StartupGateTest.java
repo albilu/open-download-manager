@@ -186,6 +186,7 @@ class StartupGateTest {
     /** A real MainWindow counting present() calls (core collaborators stubbed). */
     private static final class CountingMainWindow extends MainWindow {
         final AtomicInteger presents = new AtomicInteger();
+        final List<String> openedUrls = new CopyOnWriteArrayList<>();
 
         CountingMainWindow(DownloadManager manager, TorService torService, ScheduleManager scheduleManager) {
             super(null, manager, torService, scheduleManager);
@@ -195,6 +196,11 @@ class StartupGateTest {
         public void present() {
             presents.incrementAndGet();
             super.present();
+        }
+
+        @Override
+        void openDownloadUrls(List<String> urls) {
+            openedUrls.addAll(urls);
         }
     }
 
@@ -272,7 +278,7 @@ class StartupGateTest {
     @Timeout(60)
     @DisplayName("shutdown during startup prevents window publication and cleans the core")
     void shutdownDuringStartupDiscardsWindow() throws Exception {
-        onLoop(gate::activate);
+        onLoop(() -> gate.openUrls(List.of("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")));
         onLoop(gate::beginShutdown);
 
         pipelines.get(0).complete(newRefs()); // background stage finishes after shutdown began
@@ -280,6 +286,20 @@ class StartupGateTest {
         awaitTrue(() -> cleanupCalls.get() == 1,
                 "the started core must be cleaned up instead of published");
         assertEquals(0, windows.size(), "no window may be published after shutdown begins");
+    }
+
+    @Test
+    @Timeout(60)
+    void failedStartupDoesNotReplayOldLinksOnRetry() throws Exception {
+        onLoop(() -> gate.openUrls(List.of("old-link")));
+        pipelines.getFirst().completeExceptionally(new IllegalStateException("startup failed"));
+        awaitTrue(() -> failureNotices.get() == 1, "failed startup must be reported");
+        onLoop(() -> gate.openUrls(List.of("new-link")));
+        awaitTrue(() -> pipelines.size() == 2, "retry must start a new pipeline");
+        pipelines.get(1).complete(newRefs());
+        awaitTrue(() -> windows.size() == 1 && !windows.getFirst().openedUrls.isEmpty(),
+                "retry must deliver its links");
+        assertEquals(List.of("new-link"), windows.getFirst().openedUrls);
     }
 
     @Test
