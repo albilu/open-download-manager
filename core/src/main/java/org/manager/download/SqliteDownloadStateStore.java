@@ -219,16 +219,60 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         }
     }
 
+    /** SQLITE_BUSY primary result code (mask with 0xFF to fold extended codes). */
+    private static final int SQLITE_BUSY_PRIMARY = 5;
+    /**
+     * How long concurrent openers may collide while first creating the
+     * database. PRAGMA journal_mode (and DDL) fails fast with SQLITE_BUSY
+     * instead of honoring the busy timeout, so initialization retries
+     * briefly when another connection is creating the schema.
+     */
+    private static final long INIT_BUSY_RETRY_TIMEOUT_MS = 10_000;
+    private static final long INIT_BUSY_RETRY_DELAY_MS = 50;
+
     private void initialize() {
         if (initialized) {
             return;
         }
+        long deadline = System.currentTimeMillis() + INIT_BUSY_RETRY_TIMEOUT_MS;
+        SQLException busyFailure = null;
+        while (true) {
+            try {
+                initializeOnce();
+                return;
+            } catch (SQLException e) {
+                if (!isBusyLocked(e) || System.currentTimeMillis() >= deadline) {
+                    close();
+                    throw new IllegalStateException(
+                            "Failed to open download state database " + databasePath, e);
+                }
+                busyFailure = e;
+                close();
+                try {
+                    Thread.sleep(INIT_BUSY_RETRY_DELAY_MS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(
+                            "Failed to open download state database " + databasePath, busyFailure);
+                }
+            } catch (IOException e) {
+                close();
+                throw new IllegalStateException("Failed to open download state database " + databasePath, e);
+            }
+        }
+    }
+
+    private void initializeOnce() throws SQLException, IOException {
         try {
             if (databasePath.getParent() != null) {
                 Files.createDirectories(databasePath.getParent());
             }
             connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
             try (Statement statement = connection.createStatement()) {
+                // Snapshot writer, UI polling and external readers share
+                // this file: without a busy timeout any lock overlap fails
+                // fast with SQLITE_BUSY instead of waiting out the holder.
+                statement.execute("PRAGMA busy_timeout=10000");
                 statement.execute("PRAGMA journal_mode=WAL");
                 statement.execute("PRAGMA synchronous=NORMAL");
                 statement.execute(CREATE_TABLE);
@@ -249,8 +293,17 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             initialized = true;
         } catch (SQLException | IOException e) {
             close();
-            throw new IllegalStateException("Failed to open download state database " + databasePath, e);
+            throw e;
         }
+    }
+
+    private static boolean isBusyLocked(SQLException e) {
+        for (Throwable cause = e; cause instanceof SQLException; cause = cause.getCause()) {
+            if ((((SQLException) cause).getErrorCode() & 0xFF) == SQLITE_BUSY_PRIMARY) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Adds columns introduced after the first SQLite release in place. */
