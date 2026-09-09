@@ -124,8 +124,10 @@ final class DownloadSubmission {
                 } catch (Exception failure) {
                     // The queue owns the staged copy now. Keep the accepted
                     // transfer and tell the user the original was retained.
+                    org.slf4j.LoggerFactory.getLogger(DownloadSubmission.class)
+                            .warn("Could not move the original descriptor to Trash", failure);
                     return "Download added. Could not move the original descriptor to Trash: "
-                            + failure.getMessage();
+                            + UiErrors.message(failure);
                 }
             }
             return null;

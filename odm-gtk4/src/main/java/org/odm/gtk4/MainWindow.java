@@ -194,6 +194,8 @@ public class MainWindow {
     private final java.util.Map<String, org.gnome.gio.SimpleAction> menuActions =
             new java.util.HashMap<>();
     private volatile boolean trayAvailable;
+    private java.util.function.Consumer<java.util.Map<String, TrayMenu.ActionState>> trayStateListener;
+    private boolean hasPausedDownloads;
     private final ListStore trackersStore;
     private final ListStore peersStore;
     private final TreeStore filesStore;
@@ -661,6 +663,7 @@ public class MainWindow {
             return false;
         }
         finalExitStarted = true;
+        publishTrayState();
         dismissExitConfirmation();
         saveWindowState(uiBuilder);
         removeWindowListeners();
@@ -686,6 +689,38 @@ public class MainWindow {
     /** Controls whether closing to the notification area can keep the app reachable. */
     public void setTrayAvailable(boolean available) {
         this.trayAvailable = available;
+        if (!available) { trayStateListener = null; }
+    }
+
+    /** Snapshots and activations use the same actions as the main window menus. */
+    void setTrayStateListener(java.util.function.Consumer<java.util.Map<String, TrayMenu.ActionState>> listener) {
+        trayStateListener = listener;
+        publishTrayState();
+    }
+
+    java.util.Map<String, TrayMenu.ActionState> trayActionStates() {
+        java.util.Map<String, TrayMenu.ActionState> states = new java.util.LinkedHashMap<>();
+        for (TrayMenu.Entry entry : TrayMenu.ENTRIES) {
+            if (entry.action() == null) { continue; }
+            var action = menuActions.get(entry.action());
+            states.put(entry.action(), new TrayMenu.ActionState(
+                    !finalExitStarted && action != null && action.getEnabled(),
+                    action != null && entry.checkable() && action.getState().getBoolean()));
+        }
+        return java.util.Map.copyOf(states);
+    }
+
+    private void publishTrayState() {
+        if (trayStateListener != null) { trayStateListener.accept(trayActionStates()); }
+    }
+
+    void activateTrayAction(String name) {
+        if (finalExitStarted || !trayActionStates().containsKey(name)) { return; }
+        var action = menuActions.get(name);
+        if (action != null && action.getEnabled()) {
+            if ("new-download".equals(name)) { present(); }
+            action.activate(null);
+        }
     }
 
     /** Lets the application create or retire its tray export after Settings is saved. */
@@ -709,6 +744,8 @@ public class MainWindow {
         }
         backgroundWorkShutdown = true;
         finalExitStarted = true;
+        publishTrayState();
+        trayStateListener = null;
         torServiceController.cancelPending();
         torDesiredRunning.set(false);
         torToggleEpoch.incrementAndGet();
@@ -820,6 +857,7 @@ public class MainWindow {
                         .getBooleanProperty("ui.systemTray", false));
             }
             syncScheduleActionState();
+            syncModeActions();
             torCircuitMonitor.refresh();
             // Rebuild settings-backed actions (subtitles, antivirus, custom)
             // so changes apply without requiring a restart or re-selection.
@@ -857,7 +895,7 @@ public class MainWindow {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
                                 "Could not start or resume all selected downloads: "
-                                        + failureMessage(error),
+                                        + UiErrors.message(error),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                     }
                     refresh();
@@ -991,7 +1029,7 @@ public class MainWindow {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
                                 "Could not " + operationName + " all selected downloads: "
-                                        + failureMessage(error),
+                                        + UiErrors.message(error),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                     }
                     refresh();
@@ -1045,7 +1083,7 @@ public class MainWindow {
                         if (error != null) {
                             AccessibilitySupport.status(infoLabel,
                                     "Could not delete all selected download files: "
-                                            + failureMessage(error),
+                                            + UiErrors.message(error),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         }
                         refresh();
@@ -1306,7 +1344,7 @@ public class MainWindow {
                                             "Moved “" + targetDownload.getName() + "”");
                                 } else {
                                     AccessibilitySupport.status(infoLabel,
-                                            "Could not move download: " + failureMessage(error),
+                                            "Could not move download: " + UiErrors.message(error),
                                             org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                                 }
                                 refresh();
@@ -1440,7 +1478,7 @@ public class MainWindow {
                 .whenComplete((ignored, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
-                                "Could not run all subtitle downloads: " + failureMessage(error),
+                                "Could not run all subtitle downloads: " + UiErrors.message(error),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                     } else {
                         long succeeded = actions.stream()
@@ -1509,7 +1547,7 @@ public class MainWindow {
                                 if (error != null) {
                                     AccessibilitySupport.status(infoLabel,
                                             "Could not update website mirror: "
-                                                    + failureMessage(error),
+                                                    + UiErrors.message(error),
                                             org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                                 }
                                 refresh();
@@ -1633,6 +1671,7 @@ public class MainWindow {
         menuActionsRegistered = true;
 
         // File
+        addAction("open", this::present);
         addAction("new-download", this::onAddClicked);
         addAction("new-media", this::onNewMediaClicked);
         addAction("search-torrents", this::onSearchTorrents);
@@ -1694,10 +1733,10 @@ public class MainWindow {
         addAction("open-httrack-error-log", () -> openHttrackDiagnostic(
                 org.manager.download.HttrackMirrorSupport.DiagnosticLog.ERRORS));
         addAction("force-download", this::startSelectedDownloads);
-        addAction("pause-all", () -> trackActivity(downloadManager.pauseAllDownloads())
-                .thenRun(() -> UiThread.marshal(this::refresh)));
-        addAction("resume-all", () -> trackActivity(downloadManager.resumeAllDownloads())
-                .thenRun(() -> UiThread.marshal(this::refresh)));
+        addAction("pause-all", () -> runGlobalDownloadAction(downloadManager.pauseAllDownloads(), "pause downloads"));
+        addAction("resume-all", () -> runGlobalDownloadAction(downloadManager.resumeAllDownloads(), "resume downloads"));
+        setMenuActionEnabled("pause-all", false);
+        setMenuActionEnabled("resume-all", false);
         addAction("delete", this::onDeleteClicked);
         addAction("delete-with-files", () -> {
             onDownloadSelectionChanged();
@@ -1715,7 +1754,41 @@ public class MainWindow {
         addAction("donation", () -> org.gnome.gtk.Gtk.showUri(window,
                 "https://github.com/albilu/odm", 0));
         addAction("about", () -> AboutDialogPresenter.present(window));
+        syncModeActions();
         updateSelectionActionSensitivity();
+    }
+
+    private void runGlobalDownloadAction(CompletableFuture<Void> operation, String description) {
+        trackActivity(operation).whenComplete((ignored, failure) -> UiThread.marshal(() -> {
+            refresh();
+            if (failure != null) {
+                LOGGER.warn("Could not {}", description, failure);
+                AccessibilitySupport.status(infoLabel, "Could not " + description + ": " + UiErrors.message(failure));
+            }
+        }));
+    }
+
+    private void syncModeActions() {
+        boolean clipboard = downloadManager.isClipboardMonitoringEnabled();
+        setBooleanActionState("clipboard-monitoring", clipboard);
+        setBooleanActionState("clipboard-silent", downloadManager.getGlobalSettings()
+                .getBooleanProperty("ui.clipboardSilent", false));
+        boolean offline = downloadManager.getGlobalSettings().getBooleanProperty("ui.offline", false);
+        setBooleanActionState("offline", offline);
+        setMenuActionEnabled("clipboard-silent", clipboard);
+        setMenuActionEnabled("resume-all", hasPausedDownloads && !offline);
+    }
+
+    private void setBooleanActionState(String name, boolean enabled) {
+        var action = menuActions.get(name);
+        if (action != null && action.getState().getBoolean() != enabled) {
+            action.setState(org.gnome.glib.Variant.boolean_(enabled));
+        }
+    }
+
+    private void observeTrayAction(org.gnome.gio.SimpleAction action) {
+        action.onNotify("enabled", ignored -> publishTrayState());
+        action.onNotify("state", ignored -> publishTrayState());
     }
 
     private void addAction(String name, Runnable handler) {
@@ -1723,6 +1796,7 @@ public class MainWindow {
         action.onActivate(parameter -> handler.run());
         window.addAction(action);
         menuActions.put(name, action);
+        observeTrayAction(action);
     }
 
     private void addStatefulAction(String name, boolean initial,
@@ -1733,9 +1807,11 @@ public class MainWindow {
             boolean newState = !action.getState().getBoolean();
             action.setState(org.gnome.glib.Variant.boolean_(newState));
             onToggle.accept(newState);
+            syncModeActions();
         });
         window.addAction(action);
         menuActions.put(name, action);
+        observeTrayAction(action);
     }
 
     private void addRadioAction(String name, String initial,
@@ -2047,7 +2123,7 @@ public class MainWindow {
                                     if (error != null) {
                                         AccessibilitySupport.status(infoLabel,
                                                 "Could not read links from this HTML file: "
-                                                        + failureMessage(error),
+                                                        + UiErrors.message(error),
                                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                                         return;
                                     }
@@ -2115,7 +2191,7 @@ public class MainWindow {
                             sourceEntry.setSensitive(true);
                             AccessibilitySupport.status(status,
                                     "Could not import this remote HTML page: "
-                                            + failureMessage(error),
+                                            + UiErrors.message(error),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             return;
                         }
@@ -2405,7 +2481,7 @@ public class MainWindow {
     static String torCheckStatus(org.tor.TorCircuitMonitor.Result result) {
         if (!result.secure()) {
             return (result.offlineEnabled() ? "Tor check failed — Offline Mode enabled. "
-                    : "Tor check failed — ") + result.message();
+                    : "Tor check failed — ") + UiErrors.message(result.message());
         }
         return "Tor verified — " + torExitAddress(result);
     }
@@ -2472,7 +2548,8 @@ public class MainWindow {
         trackActivity(identityChange).whenCompleteAsync((changed, error) -> {
             String message;
             if (error != null) {
-                message = "New Tor identity failed: " + error.getMessage();
+                LOGGER.warn("New Tor identity request failed", error);
+                message = "New Tor identity failed: " + UiErrors.message(error);
             } else if (Boolean.TRUE.equals(changed)) {
                 message = "New Tor identity requested; new connections use clean circuits";
             } else {
@@ -2549,14 +2626,6 @@ public class MainWindow {
     private void onScraperClicked() {
         new NewWebsiteDialog(window, downloadManager,
                 () -> UiThread.marshal(this::refresh), torService).present();
-    }
-
-    private static String failureMessage(Throwable failure) {
-        Throwable cause = failure;
-        while (cause.getCause() != null && cause.getCause() != cause) {
-            cause = cause.getCause();
-        }
-        return cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
     }
 
     private void onStatusSelectionChanged() {
@@ -2848,7 +2917,8 @@ public class MainWindow {
                 + counts.getOrDefault(Download.Status.DOWNLOADING, 0)
                 + counts.getOrDefault(Download.Status.SEEDING, 0);
         setMenuActionEnabled("pause-all", activeCount > 0);
-        setMenuActionEnabled("resume-all", counts.getOrDefault(Download.Status.PAUSED, 0) > 0);
+        hasPausedDownloads = counts.getOrDefault(Download.Status.PAUSED, 0) > 0;
+        syncModeActions();
         setMenuActionEnabled("remove-finished",
                 counts.getOrDefault(Download.Status.COMPLETED, 0) > 0);
         // Status changes are normally in-place row updates, so selection
@@ -2967,7 +3037,7 @@ public class MainWindow {
         infoProgressGraph.update(selectedDownload);
         String error = selectedDownload == null ? null : selectedDownload.getErrorMessage();
         boolean hasError = error != null && !error.isBlank();
-        errorValue.setLabel(hasError ? error.replaceAll("\\s+", " ").strip() : "—");
+        errorValue.setLabel(hasError ? UiErrors.message(error) : "—");
         errorDetailsButton.setSensitive(hasError);
         if (selectedDownload == null) {
             addedOnValue.setLabel("—");

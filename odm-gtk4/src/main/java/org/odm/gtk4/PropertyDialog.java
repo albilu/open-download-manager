@@ -111,7 +111,7 @@ public class PropertyDialog {
                     if (error != null) {
                         LOGGER.warn("Failed to apply settings to selected downloads", error);
                         AccessibilitySupport.status(statusLabel,
-                                "Could not apply settings: " + rootMessage(error)
+                                "Could not apply settings: " + UiErrors.message(error)
                                         + ". Previous values were restored.",
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         return;
@@ -124,14 +124,5 @@ public class PropertyDialog {
                         AccessibilitySupport.status(statusLabel, "Settings applied");
                     }
                 }));
-    }
-
-    private static String rootMessage(Throwable failure) {
-        Throwable cause = failure;
-        while (cause.getCause() != null && cause.getCause() != cause) {
-            cause = cause.getCause();
-        }
-        return cause.getMessage() != null
-                ? cause.getMessage() : cause.getClass().getSimpleName();
     }
 }

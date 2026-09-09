@@ -179,8 +179,8 @@ final class SourcesPresenter {
     }
 
     private static String message(Throwable error) {
-        while (error.getCause() != null) { error = error.getCause(); }
-        return error.getMessage() == null ? "Could not update mirrors" : error.getMessage();
+        org.slf4j.LoggerFactory.getLogger(SourcesPresenter.class).warn("Could not update mirrors", error);
+        return UiErrors.message(error);
     }
 
     void shutdown() {

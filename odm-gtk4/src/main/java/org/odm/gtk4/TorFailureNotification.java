@@ -10,6 +10,6 @@ final class TorFailureNotification {
 
     static CompletableFuture<Void> send(Application application, String message) {
         return DesktopNotifications.send(application, "tor-verification-failed",
-                "Tor verification failed", message, NotificationPriority.URGENT);
+                "Tor verification failed", UiErrors.message(message), NotificationPriority.URGENT);
     }
 }

@@ -1261,7 +1261,7 @@ public class SettingsDialog {
             application = collectSettings();
         } catch (IllegalArgumentException invalidSetting) {
             saveInProgress.set(false);
-            AccessibilitySupport.status(statusLabel, invalidSetting.getMessage(),
+            AccessibilitySupport.status(statusLabel, UiErrors.message(invalidSetting),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             return;
         }

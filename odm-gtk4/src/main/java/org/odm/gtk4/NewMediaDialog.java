@@ -297,7 +297,8 @@ public class NewMediaDialog {
             new org.manager.download.DownloadSettingsFactory(downloadManager.getGlobalSettings())
                     .applyInheritedProxy(previewSettings);
         } catch (Exception failure) {
-            AccessibilitySupport.status(statusLabel, "Could not fetch info: " + rootMessage(failure));
+            LOGGER.warn("Could not prepare media information request", failure);
+            AccessibilitySupport.status(statusLabel, "Could not fetch info: " + UiErrors.message(failure));
             refreshButtons();
             return;
         }
@@ -319,7 +320,8 @@ public class NewMediaDialog {
                 resolvedMedia = info;
                 onInfoFetched(url, info.info());
             } else {
-                AccessibilitySupport.status(statusLabel, "Could not fetch info: " + rootMessage(failure),
+                LOGGER.warn("Could not fetch media information", failure);
+                AccessibilitySupport.status(statusLabel, "Could not fetch info: " + UiErrors.message(failure),
                         org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             }
         }));
@@ -389,7 +391,7 @@ public class NewMediaDialog {
                             submissionInFlight = downloadManager.getDownload(submitted.getId()) != null;
                             refreshButtons();
                             AccessibilitySupport.status(statusLabel,
-                                    "Could not add to queue: " + rootMessage(error)
+                                    "Could not add to queue: " + UiErrors.message(error)
                                             + (submissionInFlight ? ". This download remains in Downloads; manage it there."
                                                     : ". Press Download to retry."),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
@@ -400,7 +402,7 @@ public class NewMediaDialog {
             LOGGER.warn("Media download rejected: " + e.getMessage(), e);
             submissionInFlight = false;
             refreshButtons();
-            AccessibilitySupport.status(statusLabel, "Cannot start: " + e.getMessage(),
+            AccessibilitySupport.status(statusLabel, "Cannot start: " + UiErrors.message(e),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
@@ -725,15 +727,6 @@ public class NewMediaDialog {
         long s = seconds % 60;
         return h > 0 ? String.format("%dh %02dm %02ds", h, m, s)
                 : String.format("%dm %02ds", m, s);
-    }
-
-    private static String rootMessage(Throwable throwable) {
-        Throwable cause = throwable;
-        while (cause.getCause() != null && cause.getCause() != cause) {
-            cause = cause.getCause();
-        }
-        String message = cause.getMessage();
-        return message != null ? message.split("\n")[0] : cause.getClass().getSimpleName();
     }
 
     private String currentDefaultDirectory() {

@@ -240,8 +240,7 @@ public class ImportListDialog {
         LOGGER.warn("URL list import was rejected", error);
         org.gnome.gtk.AlertDialog alert = new org.gnome.gtk.AlertDialog();
         alert.setMessage("Could not import URL list");
-        alert.setDetail(error.getMessage() != null
-                ? error.getMessage() : "The selected file is unreadable or too large.");
+        alert.setDetail(UiErrors.message(error));
         DialogSupport.configureIndependent(alert);
         alert.show(parent);
     }
@@ -354,7 +353,7 @@ public class ImportListDialog {
                         Widgets.require(builder, "validate_button", Button.class)
                                 .setSensitive(true);
                         AccessibilitySupport.status(diskSpaceLabel,
-                                "Could not import this list: " + rootCause(error).getMessage(),
+                                "Could not import this list: " + UiErrors.message(error),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         return;
                     }

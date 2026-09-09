@@ -188,7 +188,7 @@ public final class NewWebsiteDialog {
                             submissionInFlight = downloadManager.getDownload(submitted.getId()) != null;
                             startButton.setSensitive(!submissionInFlight);
                             AccessibilitySupport.status(statusLabel,
-                                    "Could not add to queue: " + rootMessage(error)
+                                    "Could not add to queue: " + UiErrors.message(error)
                                             + (submissionInFlight ? ". This download remains in Downloads; manage it there."
                                                     : ". Press Start Scrape to retry."),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
@@ -199,7 +199,7 @@ public final class NewWebsiteDialog {
             submissionInFlight = false;
             startButton.setSensitive(true);
             AccessibilitySupport.status(statusLabel,
-                    "Invalid request: " + rootMessage(e),
+                    "Invalid request: " + UiErrors.message(e),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
@@ -256,15 +256,5 @@ public final class NewWebsiteDialog {
             model.append(label);
         }
         return model;
-    }
-
-    private static String rootMessage(Throwable failure) {
-        Throwable cause = failure;
-        while (cause.getCause() != null && cause.getCause() != cause) {
-            cause = cause.getCause();
-        }
-        String message = cause.getMessage();
-        return message != null ? message.split("\\R", 2)[0]
-                : cause.getClass().getSimpleName();
     }
 }

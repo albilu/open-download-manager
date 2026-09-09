@@ -15,7 +15,7 @@ final class ActionOutputDialog {
     static void present(Window parent, String action, String status,
             String result, String output) {
         present(parent, "Action Output — " + display(action, "Completion action"),
-                action, "Status: " + display(status, "—") + "\nResult: " + display(result, "—"),
+                action, "Status: " + display(status, "—") + "\nResult: " + UiErrors.message(display(result, "—")),
                 output, status);
     }
 
@@ -43,7 +43,7 @@ final class ActionOutputDialog {
                 ? ("Running".equals(status)
                         ? "This action is still running. Detailed output will be available when it finishes."
                         : "This action did not produce detailed output.")
-                : output;
+                : UiErrors.details(output);
         log.getBuffer().setText(displayedOutput, -1);
         AccessibilitySupport.label(log, "Detailed output for " + actionLabel);
 

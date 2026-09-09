@@ -143,7 +143,7 @@ final class JackettSettingsPane {
             status.setLabel("Search engine unavailable"); updateControls(); return;
         }
         JackettService.Status current = service.status();
-        status.setLabel(current.message());
+        status.setLabel(UiErrors.message(current.message()));
         boolean becameRunning = current.state() == JackettService.State.RUNNING && previousState != current.state();
         if (current.state() != JackettService.State.RUNNING && previousState == JackettService.State.RUNNING) {
             cancelChecks();
@@ -350,7 +350,6 @@ final class JackettSettingsPane {
     }
 
     static String message(Throwable error) {
-        while (error.getCause() != null && error.getCause() != error) { error = error.getCause(); }
-        return JackettClient.safeMessage(error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+        return JackettClient.safeMessage(UiErrors.message(error));
     }
 }

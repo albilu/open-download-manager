@@ -104,7 +104,7 @@ public final class OdmApplication {
                     // failed; the exit strategy below still applies so the
                     // app cannot hang silently
                     if (progress != null) {
-                        progress.setMessage("Startup failed: " + error.getMessage());
+                        progress.setMessage("Startup failed: " + UiErrors.message(error));
                     }
                     // Give the user a moment to read the message, then exit;
                     // until then a later activation may retry (see
@@ -403,7 +403,8 @@ public final class OdmApplication {
         }
         mainWindow.setTrayAvailable(false);
         CompletableFuture.supplyAsync(
-                () -> new StatusNotifierTray(() -> UiThread.marshal(mainWindow::present)),
+                () -> new StatusNotifierTray(action -> UiThread.marshal(
+                        () -> mainWindow.activateTrayAction(action))),
                 org.manager.util.ExecutorServiceManager.getInstance().getIoExecutor())
                 .whenComplete((tray, error) -> UiThread.marshal(() -> {
                     boolean stale = requestedEpoch != epoch.get()
@@ -425,6 +426,7 @@ public final class OdmApplication {
                         replaced.unregister();
                     }
                     mainWindow.setTrayAvailable(true);
+                    mainWindow.setTrayStateListener(tray::updateActions);
                     LOGGER.info("System tray enabled by settings");
                 }));
     }

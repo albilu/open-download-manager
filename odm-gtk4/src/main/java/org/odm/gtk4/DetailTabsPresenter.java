@@ -277,7 +277,7 @@ final class DetailTabsPresenter {
                     result.id(),
                     result.description(),
                     completionStatus(result),
-                    result.message().isBlank() ? "—" : result.message(),
+                    result.message().isBlank() ? "—" : UiErrors.message(result.message()),
                     DownloadFormats.DATE_FORMAT.format(result.startedAt()),
                     result.finishedAt() == null
                             ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt()),
@@ -290,7 +290,7 @@ final class DetailTabsPresenter {
                     result.id(),
                     result.description(),
                     operationStatus(result),
-                    result.message().isBlank() ? "—" : result.message(),
+                    result.message().isBlank() ? "—" : UiErrors.message(result.message()),
                     DownloadFormats.DATE_FORMAT.format(result.startedAt()),
                     result.finishedAt() == null
                             ? "—" : DownloadFormats.DATE_FORMAT.format(result.finishedAt()),

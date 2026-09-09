@@ -9,20 +9,14 @@ import org.gnome.gio.DBusCallFlags;
 import org.gnome.gio.DBusConnection;
 import org.gnome.gio.DBusConnectionFlags;
 import org.gnome.gio.DBusInterfaceVTable;
-import org.gnome.gio.DBusMethodInfo;
-import org.gnome.gio.DBusPropertyInfo;
-import org.gnome.gio.DBusPropertyInfoFlags;
-import org.gnome.gio.DBusSignalInfo;
-import org.gnome.gio.DBusAnnotationInfo;
-import org.gnome.gio.DBusArgInfo;
-import org.gnome.gio.DBusInterfaceInfo;
+import org.gnome.gio.DBusNodeInfo;
 import org.gnome.glib.Variant;
 
 /**
  * StatusNotifier tray export. Registers org.kde.StatusNotifierItem on the
  * session bus AND announces it to org.kde.StatusNotifierWatcher — without
  * the watcher registration, panels never discover the item and no icon
- * appears. Currently: icon + Activate (show the main window).
+ * appears. The desktop renders our exported DBusMenu next to the icon.
  */
 public class StatusNotifierTray {
 
@@ -34,20 +28,23 @@ public class StatusNotifierTray {
 
     private final DBusConnection connection;
     private final Arena callbackArena;
+    private TrayMenu menu;
     private int registrationId = -1;
     private boolean registeredWithWatcher = false;
     private boolean unregisterStarted;
 
     public interface TrayHandlers {
 
-        void onActivate();
+        /** Invoked on the GLib context; handlers marshal action work to GTK. */
+        void onAction(String action);
     }
 
     public StatusNotifierTray(TrayHandlers handlers) {
         DBusConnection conn = null;
         Arena arena = Arena.ofShared();
         try {
-            String address = System.getenv("DBUS_SESSION_BUS_ADDRESS");
+            var busAddress = org.gnome.glib.GLib.getenv("DBUS_SESSION_BUS_ADDRESS");
+            String address = busAddress == null ? null : busAddress.toString();
             if (address == null || address.isBlank()) {
                 throw new IllegalStateException("No session bus address; tray unavailable");
             }
@@ -55,40 +52,24 @@ public class StatusNotifierTray {
                     EnumSet.of(DBusConnectionFlags.AUTHENTICATION_CLIENT,
                             DBusConnectionFlags.MESSAGE_BUS_CONNECTION), null, null);
 
-            DBusPropertyInfo[] properties = {
-                new DBusPropertyInfo(0, "Title", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
-                new DBusPropertyInfo(0, "Id", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
-                new DBusPropertyInfo(0, "Category", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
-                new DBusPropertyInfo(0, "Status", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
-                new DBusPropertyInfo(0, "IconName", "s",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
-                new DBusPropertyInfo(0, "ItemIsMenu", "b",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena),
-                new DBusPropertyInfo(0, "WindowId", "u",
-                        EnumSet.of(DBusPropertyInfoFlags.READABLE), new DBusAnnotationInfo[0], arena)
-            };
-            DBusArgInfo[] activateArgs = {
-                new DBusArgInfo(0, "x", "i", new DBusAnnotationInfo[0], arena),
-                new DBusArgInfo(0, "y", "i", new DBusAnnotationInfo[0], arena)
-            };
-            DBusMethodInfo[] methods = {
-                new DBusMethodInfo(0, "Activate", activateArgs, new DBusArgInfo[0],
-                        new DBusAnnotationInfo[0], arena),
-                new DBusMethodInfo(0, "SecondaryActivate", activateArgs, new DBusArgInfo[0],
-                        new DBusAnnotationInfo[0], arena)
-            };
-            DBusSignalInfo[] signals = new DBusSignalInfo[0];
-
-            DBusInterfaceInfo info = new DBusInterfaceInfo(0, "org.kde.StatusNotifierItem",
-                    methods, signals, properties, new DBusAnnotationInfo[0], arena);
+            DBusNodeInfo node = DBusNodeInfo.forXml("""
+                    <node><interface name="org.kde.StatusNotifierItem">
+                      <property name="Title" type="s" access="read"/>
+                      <property name="Id" type="s" access="read"/>
+                      <property name="Category" type="s" access="read"/>
+                      <property name="Status" type="s" access="read"/>
+                      <property name="IconName" type="s" access="read"/>
+                      <property name="ItemIsMenu" type="b" access="read"/>
+                      <property name="WindowId" type="u" access="read"/>
+                      <property name="Menu" type="o" access="read"/>
+                      <method name="Activate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+                      <method name="SecondaryActivate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+                    </interface></node>
+                    """);
             DBusInterfaceVTable vtable = new DBusInterfaceVTable(
                     (connection, sender, objectPath, interfaceName, methodName, parameters, invocation) -> {
                         if ("Activate".equals(methodName) || "SecondaryActivate".equals(methodName)) {
-                            handlers.onActivate();
+                            handlers.onAction("open");
                             invocation.returnValue(Variant.tuple(new Variant[0]));
                         } else {
                             invocation.returnDbusError("org.freedesktop.DBus.Error.UnknownMethod",
@@ -99,8 +80,9 @@ public class StatusNotifierTray {
                             trayProperty(propertyName),
                     null, arena);
 
-            registrationId = conn.registerObject(OBJECT_PATH, info, vtable,
+            registrationId = conn.registerObject(OBJECT_PATH, node.lookupInterface("org.kde.StatusNotifierItem"), vtable,
                     MemorySegment.NULL, null);
+            menu = new TrayMenu(conn, arena, handlers::onAction);
             registerWithWatcher(conn);
             LOGGER.info("StatusNotifierTray registered (id " + registrationId + ")");
         } catch (Exception e) {
@@ -119,6 +101,7 @@ public class StatusNotifierTray {
             case "IconName" -> Variant.string("open-download-manager");
             case "ItemIsMenu" -> Variant.boolean_(false);
             case "WindowId" -> Variant.uint32(0);
+            case "Menu" -> Variant.objectPath(TrayMenu.PATH);
             default -> null;
         };
     }
@@ -132,7 +115,7 @@ public class StatusNotifierTray {
             conn.callSync(WATCHER_BUS_NAME, WATCHER_PATH, WATCHER_BUS_NAME,
                     "RegisterStatusNotifierItem",
                     Variant.tuple(new Variant[]{Variant.string(OBJECT_PATH)}),
-                    null, EnumSet.noneOf(DBusCallFlags.class), -1, null);
+                    null, EnumSet.noneOf(DBusCallFlags.class), 5000, null);
             registeredWithWatcher = true;
         } catch (Exception e) {
             LOGGER.warn(
@@ -143,7 +126,11 @@ public class StatusNotifierTray {
     /** True only when both the exported item and the desktop watcher are live. */
     public boolean isAvailable() {
         return connection != null && !connection.isClosed()
-                && registrationId > 0 && registeredWithWatcher;
+                && registrationId > 0 && menu != null && registeredWithWatcher;
+    }
+
+    void updateActions(java.util.Map<String, TrayMenu.ActionState> states) {
+        if (menu != null && !unregisterStarted) { menu.update(states); }
     }
 
     public synchronized void unregister() {
@@ -151,6 +138,7 @@ public class StatusNotifierTray {
             return;
         }
         unregisterStarted = true;
+        if (menu != null) { menu.unregister(); }
         if (connection != null && registrationId >= 0) {
             try {
                 connection.unregisterObject(registrationId);

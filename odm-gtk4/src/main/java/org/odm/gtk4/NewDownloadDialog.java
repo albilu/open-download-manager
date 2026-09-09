@@ -427,7 +427,7 @@ public class NewDownloadDialog {
             }
             previewLoading = false;
             if (error != null) {
-                filesStatusLabel.setLabel("Could not load file metadata: " + rootMessage(error)
+                filesStatusLabel.setLabel("Could not load file metadata: " + UiErrors.message(error)
                         + ". Starting the download will include all files.");
                 LOGGER.warn("File metadata preview failed for " + source, error);
                 refreshStartSensitivity();
@@ -588,7 +588,7 @@ public class NewDownloadDialog {
                     submissionInFlight = downloadManager.getDownload(download.getId()) != null;
                     refreshStartSensitivity();
                     AccessibilitySupport.status(diskSpaceLabel,
-                            "Could not add to queue: " + rootMessage(error)
+                            "Could not add to queue: " + UiErrors.message(error)
                                     + (submissionInFlight ? ". This download remains in Downloads; manage it there."
                                             : ". Press Start to retry."),
                             org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
@@ -602,7 +602,7 @@ public class NewDownloadDialog {
             if (!sftpHostKeyEntry.hasCssClass("error")) {
                 urlEntry.getStyleContext().addClass("error");
             }
-            AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + rootMessage(e),
+            AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + UiErrors.message(e),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
@@ -613,14 +613,6 @@ public class NewDownloadDialog {
             onDownloadQueued.run();
         }
         dialog.close();
-    }
-
-    private static String rootMessage(Throwable failure) {
-        Throwable cause = failure;
-        while (cause.getCause() != null && cause.getCause() != cause) {
-            cause = cause.getCause();
-        }
-        return cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
     }
 
     private void applyRequestedFilename(Download download) {
