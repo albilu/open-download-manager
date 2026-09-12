@@ -49,4 +49,20 @@ class NewMediaDialogTest {
         assertTrue(NewMediaDialog.playlistExpressionContains("-5::-2", 2, 10));
         assertFalse(NewMediaDialog.playlistExpressionContains("-5::-2", 5, 10));
     }
+
+    @Test
+    @DisplayName("format descriptions use shared human-readable sizes")
+    void formatDescriptionsUseSharedSizes() {
+        org.ytdlp.YtDlpClient.VideoFormat format = new org.ytdlp.YtDlpClient.VideoFormat();
+        format.setFormatId("22");
+        format.setExt("mp4");
+        format.setResolution("1280x720");
+        format.setFps(30);
+        format.setFilesize(3L * 1024 * 1024 * 1024);
+        assertTrue(NewMediaDialog.describeFormat(format).contains("3.00 GB"),
+                "Expected shared GB formatting, got: " + NewMediaDialog.describeFormat(format));
+        format.setFilesize(2L * 1024 * 1024 * 1024 * 1024);
+        assertTrue(NewMediaDialog.describeFormat(format).contains("2.00 TB"),
+                "Expected shared TB formatting, got: " + NewMediaDialog.describeFormat(format));
+    }
 }

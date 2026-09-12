@@ -701,12 +701,12 @@ public class NewMediaDialog {
         java.util.concurrent.CompletableFuture.runAsync(mediaInfoResolver::close);
     }
 
-    private static String describeFormat(YtDlpClient.VideoFormat format) {
+    static String describeFormat(YtDlpClient.VideoFormat format) {
         String resolution = format.getResolution() != null && !format.getResolution().isBlank()
                 ? format.getResolution()
                 : (format.getVcodec() != null && !format.getVcodec().equals("none") ? "video" : "audio");
         String size = format.getFilesize() > 0
-                ? " — " + format.getFilesize() / (1024 * 1024) + " MB"
+                ? " — " + DownloadFormats.size(format.getFilesize())
                 : "";
         return format.getFormatId() + " · " + format.getExt() + " · " + resolution
                 + (format.getFps() > 0 ? " " + format.getFps() + "fps" : "") + size;
@@ -738,8 +738,7 @@ public class NewMediaDialog {
     private void updateDiskSpace(Path directory) {
         try {
             long free = directory.toFile().getUsableSpace();
-            diskSpaceLabel.setLabel(String.format(java.util.Locale.ROOT,
-                    "%.2f GB free", free / (1024.0 * 1024 * 1024)));
+            diskSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
         } catch (Exception e) {
             diskSpaceLabel.setLabel("");
         }
