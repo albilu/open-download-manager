@@ -184,7 +184,8 @@ class SettingsDialogSaveOutcomeTest {
         SettingsDialog dialog = buildDialog();
 
         assertEquals(168, dialog.schedulerCellCount());
-        assertTrue(dialog.availableSpaceText().contains("GB free"));
+        assertTrue(dialog.availableSpaceText().matches(".*\\d (B|KB|MB|GB|TB) free"),
+                "space label must show a human size, got: " + dialog.availableSpaceText());
         dialog.setSchedulerCellActive(0, 3, false);
         dialog.setSchedulerCellActive(0, 3, true);
 
