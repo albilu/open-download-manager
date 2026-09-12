@@ -262,6 +262,16 @@ public class GlobalSettings {
         return this;
     }
 
+    /** Save a colliding download as name_1, name_2, … instead of sharing the file. */
+    public boolean isUniquifyOutputName() {
+        return getBooleanProperty("download.uniquifyOutputName", true);
+    }
+
+    public GlobalSettings setUniquifyOutputName(boolean uniquify) {
+        setProperty("download.uniquifyOutputName", Boolean.toString(uniquify));
+        return this;
+    }
+
     /**
      * Whether completed and canceled records remain in ODM's history database
      * across restarts. Error and resumable records are always retained.

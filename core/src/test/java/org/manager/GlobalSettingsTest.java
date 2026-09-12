@@ -498,4 +498,14 @@ class GlobalSettingsTest {
         assertEquals(GlobalSettings.DEFAULT_ARIA2_RPC_PORT,
                 globalSettings.getAria2RpcPort());
     }
+
+    @Test
+    @DisplayName("Uniquify output name defaults on and round-trips")
+    void uniquifyOutputNameDefaultsOnAndRoundTrips() {
+        assertTrue(globalSettings.isUniquifyOutputName());
+        globalSettings.setUniquifyOutputName(false);
+        assertFalse(globalSettings.isUniquifyOutputName());
+        globalSettings.setUniquifyOutputName(true);
+        assertTrue(globalSettings.isUniquifyOutputName());
+    }
 }
