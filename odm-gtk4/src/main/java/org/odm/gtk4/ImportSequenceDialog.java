@@ -402,7 +402,7 @@ public class ImportSequenceDialog {
     private void updateDiskSpace(String dir) {
         try {
             long free = new java.io.File(dir).getUsableSpace();
-            diskSpaceLabel.setLabel(String.format("%.2f GB free", free / (1024.0 * 1024 * 1024)));
+            diskSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
         } catch (Exception e) {
             diskSpaceLabel.setLabel("");
         }
