@@ -93,4 +93,32 @@ class RoutedMediaToolsTest {
     @Test void unsupportedTlsProxyFailsBeforeStartingMediaTools() {
         assertThrows(java.io.IOException.class, () -> RoutedMediaTools.prepare("https://127.0.0.1:443"));
     }
+
+    @Test void ffmpegWrapperMergesLocalFileInputs() throws Exception {
+        byte[] fixture;
+        try (var in = RoutedMediaToolsTest.class.getResourceAsStream("/media/ytdlp-test-video.mp4")) {
+            assertNotNull(in, "test media fixture must be on the classpath");
+            fixture = in.readAllBytes();
+        }
+        Path input = directory.resolve("input.mp4");
+        Files.write(input, fixture);
+        try (var tools = RoutedMediaTools.prepare("socks5h://127.0.0.1:1")) {
+            var command = new java.util.ArrayList<>(List.of("yt-dlp"));
+            tools.applyTo(command);
+            Path ffmpeg = Path.of(command.get(command.indexOf("--ffmpeg-location") + 1)).resolve("ffmpeg");
+            Path output = directory.resolve("merged.mp4");
+            Path log = directory.resolve("ffmpeg-merge.log");
+            var builder = new ProcessBuilder(ffmpeg.toString(), "-y", "-v", "error",
+                    "-i", "file:" + input.toAbsolutePath(), "-c", "copy", "-f", "mp4",
+                    output.toAbsolutePath().toString())
+                    .redirectErrorStream(true).redirectOutput(log.toFile());
+            Process process = builder.start();
+            try {
+                assertTrue(process.waitFor(30, TimeUnit.SECONDS), "ffmpeg merge timed out");
+                String logged = Files.exists(log) ? Files.readString(log) : "";
+                assertEquals(0, process.exitValue(), logged);
+                assertTrue(Files.exists(output), logged);
+            } finally { process.destroyForcibly(); }
+        }
+    }
 }

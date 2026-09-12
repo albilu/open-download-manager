@@ -29,16 +29,23 @@ final class DownloadSubmission {
     static List<String> validUrls(List<String> candidates, int maximumUrls) {
         return candidates.stream().limit(maximumUrls)
                 .map(DownloadUrlPolicy::parse).flatMap(java.util.Optional::stream)
-                .map(source -> source.uri().toString()).toList();
+                .map(source -> source.uri().toString()).distinct().toList();
     }
 
     /** Shared admission for list, sequence and HTML imports; count accepted queue submissions. */
     static int queueUrls(DownloadOperations operations, List<String> urls, Path destination,
             Consumer<Download> configure, int maximumUrls) {
         List<CompletableFuture<Boolean>> admissions = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
         for (String url : urls.stream().limit(maximumUrls).toList()) {
             try {
                 DownloadUrlPolicy.ValidatedSource source = DownloadUrlPolicy.require(url);
+                // One batch may list the same URL twice; a second concurrent
+                // admission would share the engine's output and fragment
+                // files with the first (yt-dlp part-Frag renames).
+                if (!seen.add(source.uri().toString())) {
+                    continue;
+                }
                 Download download = operations.createDownload(source.uri(), destination);
                 configure.accept(download);
                 admissions.add(operations.queueDownload(download).handle((ignored, error) -> {

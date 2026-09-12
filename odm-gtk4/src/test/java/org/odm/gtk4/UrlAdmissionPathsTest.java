@@ -123,4 +123,27 @@ class UrlAdmissionPathsTest {
         org.mockito.Mockito.verify(operations, org.mockito.Mockito.times(2))
                 .createDownload(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void duplicateUrlsInOneBatchAdmitOnce() {
+        var operations = org.mockito.Mockito.mock(org.manager.download.DownloadOperations.class);
+        org.mockito.Mockito.when(operations.createDownload(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any())).thenAnswer(call -> new Download(call.getArgument(0)));
+        org.mockito.Mockito.when(operations.queueDownload(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+
+        assertEquals(2, DownloadSubmission.queueUrls(operations,
+                List.of("https://example.com/a.zip", "https://example.com/a.zip",
+                        "https://example.com/b.zip"),
+                directory, download -> { }, 10));
+        org.mockito.Mockito.verify(operations, org.mockito.Mockito.times(2))
+                .createDownload(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void validUrlsDeduplicatesExactRepeats() {
+        assertEquals(List.of("https://example.com/a.zip"),
+                DownloadSubmission.validUrls(
+                        List.of("https://example.com/a.zip", "https://example.com/a.zip"), 10));
+    }
 }

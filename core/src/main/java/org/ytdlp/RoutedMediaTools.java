@@ -33,14 +33,17 @@ final class RoutedMediaTools implements AutoCloseable {
                         .map(RoutedMediaTools::quote).collect(java.util.stream.Collectors.joining(" "));
                 // yt-dlp may reintroduce HTTP_PROXY for FFmpeg. Route only once, in proxychains.
                 // UDP/RTP discovery and transports cannot cross this TCP proxy.
+                // -http_proxy is only valid for HTTP(S) inputs: ffmpeg rejects
+                // it for file:/pipe: merge inputs with "Option http_proxy not
+                // found", so only re-add it ahead of http(s) inputs.
                 String script = "#!/bin/bash\n"
                         + "unset http_proxy https_proxy ftp_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY FTP_PROXY ALL_PROXY NO_PROXY\n"
                         + "args=()\nwhile (( $# )); do\n  case \"$1\" in\n"
                         + "    -http_proxy|-protocol_whitelist|-protocol_blacklist) shift; (( $# )) && shift ;;\n"
-                        + "    -i) args+=(-protocol_whitelist file,pipe,http,https,tcp,tls,crypto,data -http_proxy '' -i); shift ;;\n"
+                        + "    -i) input=\"${2-}\"; if [[ \"$input\" == http://* || \"$input\" == https://* ]]; then args+=(-protocol_whitelist file,pipe,http,https,tcp,tls,crypto,data -http_proxy '' -i); else args+=(-protocol_whitelist file,pipe,http,https,tcp,tls,crypto,data -i); fi; shift ;;\n"
                         + "    *) args+=(\"$1\"); shift ;;\n  esac\ndone\n";
                 if (tool.equals("ffprobe")) {
-                    script += "args=(-protocol_whitelist file,pipe,http,https,tcp,tls,crypto,data -http_proxy '' \"${args[@]}\")\n";
+                    script += "args=(-protocol_whitelist file,pipe,http,https,tcp,tls,crypto,data \"${args[@]}\")\n";
                 }
                 script += "exec " + command + " \"${args[@]}\"\n";
                 Files.writeString(wrapper, script);
