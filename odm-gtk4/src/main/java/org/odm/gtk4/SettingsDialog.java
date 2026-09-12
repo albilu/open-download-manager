@@ -198,6 +198,8 @@ public class SettingsDialog {
             // Advanced
             Map.entry("override_output_path_check",
                     "Delete the existing output file or folder before starting a new download. Existing downloads keep the engine's resume policy."),
+            Map.entry("uniquify_output_name_check",
+                    "When two downloads would use the same file name, save one of them as name_1, name_2, and so on instead of sharing the file."),
             Map.entry("enable_scheduling_check",
                     "Apply the weekly grid globally: inactive hours pause active downloads and prevent queued downloads from starting."),
             Map.entry("retain_completed_canceled_history_check",
@@ -617,6 +619,14 @@ public class SettingsDialog {
 
     void setOverrideOutputPath(boolean override) {
         check("override_output_path_check").setActive(override);
+    }
+
+    boolean uniquifyOutputName() {
+        return check("uniquify_output_name_check").getActive();
+    }
+
+    void setUniquifyOutputName(boolean uniquify) {
+        check("uniquify_output_name_check").setActive(uniquify);
     }
 
     boolean retainCompletedAndCanceledHistory() {
@@ -1203,6 +1213,7 @@ public class SettingsDialog {
 
     private void loadAdvanced(GlobalSettings s) {
         check("override_output_path_check").setActive(s.isOverrideOutputPath());
+        check("uniquify_output_name_check").setActive(s.isUniquifyOutputName());
         check("retain_completed_canceled_history_check").setActive(
                 s.isRetainCompletedAndCanceledHistory());
         check("automatic_cleanup_check").setActive(s.isAutomaticCleanupEnabled());
@@ -1424,6 +1435,7 @@ public class SettingsDialog {
                 (int) spin("httrack_delay_between_files_spin").getValue()));
         // Advanced
         s.setOverrideOutputPath(check("override_output_path_check").getActive());
+        s.setUniquifyOutputName(check("uniquify_output_name_check").getActive());
         s.setAutomaticCleanupEnabled(check("automatic_cleanup_check").getActive());
         s.setCleanupIntervalHours((long) spin("cleanup_interval_spin").getValue());
         s.setMaxDownloadsInMemory((int) spin("max_history_records_spin").getValue());

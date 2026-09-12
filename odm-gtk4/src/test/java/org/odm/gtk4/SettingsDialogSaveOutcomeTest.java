@@ -62,7 +62,7 @@ class SettingsDialogSaveOutcomeTest {
             "httrack_max_duration_spin", "httrack_max_links_spin",
             "httrack_connections_per_second_spin", "httrack_delay_between_files_spin",
             // Advanced
-            "override_output_path_check",
+            "override_output_path_check", "uniquify_output_name_check",
             "enable_scheduling_check", "retain_completed_canceled_history_check",
             "automatic_cleanup_check", "cleanup_interval_spin", "max_history_records_spin",
             "max_completed_records_spin", "completed_retention_spin", "error_retention_spin",
@@ -157,6 +157,30 @@ class SettingsDialogSaveOutcomeTest {
             SettingsDialog reopened = new SettingsDialog(null,
                     newStubManager(new AtomicReference<>(loaded)), null);
             assertTrue(reopened.overrideOutputPath());
+        });
+    }
+
+    @Test
+    @Timeout(60)
+    void uniquifyDefaultsOnAndPersistsAfterApply() throws Exception {
+        Path configHome = tempDir.resolve("uniquify-config");
+        Files.createDirectories(configHome);
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null);
+            assertTrue(dialog.uniquifyOutputName());
+            dialog.setUniquifyOutputName(false);
+            assertTrue(initial.isUniquifyOutputName());
+            dialog.applySettings();
+            assertFalse(settings.get().isUniquifyOutputName());
+            GlobalSettings loaded = new GlobalSettings();
+            loaded.load();
+            assertFalse(loaded.isUniquifyOutputName());
+            SettingsDialog reopened = new SettingsDialog(null,
+                    newStubManager(new AtomicReference<>(loaded)), null);
+            assertFalse(reopened.uniquifyOutputName());
         });
     }
 
