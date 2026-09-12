@@ -6,6 +6,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 import org.manager.download.Download;
+import org.manager.util.SizeUnits;
 
 /**
  * Shared read-only formatting of download values: human sizes, ETA,
@@ -20,18 +21,22 @@ final class DownloadFormats {
     private DownloadFormats() {
     }
 
-    /** Human-readable byte size (B / KB / MB / GB). */
+    /** Human-readable byte size (B / KB / MB / GB / TB). */
     static String size(long bytes) {
+        java.util.List<String> units = SizeUnits.current();
         if (bytes < 1024) {
-            return bytes + " B";
+            return bytes + " " + units.get(0);
         }
         if (bytes < 1024 * 1024) {
-            return (bytes / 1024) + " KB";
+            return (bytes / 1024) + " " + units.get(1);
         }
-        if (bytes < 1024 * 1024 * 1024) {
-            return String.format("%.1f MB", bytes / 1048576.0);
+        if (bytes < 1024L * 1024 * 1024) {
+            return String.format("%.1f %s", bytes / 1048576.0, units.get(2));
         }
-        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+        if (bytes < SizeUnits.TEBIBYTE) {
+            return String.format("%.2f %s", bytes / (1024.0 * 1024 * 1024), units.get(3));
+        }
+        return String.format("%.2f %s", bytes / (double) SizeUnits.TEBIBYTE, units.get(4));
     }
 
     /** HTTrack may know transferred bytes without knowing the final mirror size. */
@@ -44,10 +49,10 @@ final class DownloadFormats {
         long downloaded = Math.max(0, download.getDownloaded());
         long total = Math.max(0, download.getSize());
         long largest = Math.max(downloaded, total);
-        String[] units = {"B", "KB", "MB", "GB"};
+        java.util.List<String> units = SizeUnits.current();
         long divisor = 1;
         int unit = 0;
-        while (unit < units.length - 1 && largest / divisor >= 1024) {
+        while (unit < units.size() - 1 && largest / divisor >= 1024) {
             divisor *= 1024;
             unit++;
         }
@@ -57,7 +62,7 @@ final class DownloadFormats {
         boolean unknownTotal = unknownWebsiteSize(download) || (total == 0 && downloaded > 0);
         return format.format((double) downloaded / divisor) + " / "
                 + (unknownTotal ? "—" : format.format((double) total / divisor))
-                + " " + units[unit];
+                + " " + units.get(unit);
     }
 
     static String remainingSize(Download download) {

@@ -99,4 +99,24 @@ class DownloadFormatsTest {
         assertEquals("0 B", DownloadFormats.totalSize(empty));
     }
 
+    @Test
+    void sizesRenderTerabytes() {
+        assertEquals("1.00 TB", DownloadFormats.size(1099511627776L));
+        assertEquals("1.50 TB", DownloadFormats.size(1649267441664L));
+        assertEquals("2.00 TB", DownloadFormats.size(2L * 1024 * 1024 * 1024 * 1024));
+    }
+
+    @Test
+    void downloadedAndTotalShareTerabyteUnit() {
+        Download download = new Download(URI.create("https://example.test/big"));
+        download.setDownloaded(1L * 1024 * 1024 * 1024 * 1024);
+        download.setSize(2L * 1024 * 1024 * 1024 * 1024);
+        assertEquals("1 / 2 TB", DownloadFormats.downloadedSize(download));
+    }
+
+    @Test
+    void ratesRenderTerabytesPerSecond() {
+        assertEquals("2.00 TB/s", DownloadFormats.rate(2L * 1024 * 1024 * 1024 * 1024));
+    }
+
 }
