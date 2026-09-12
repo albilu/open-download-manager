@@ -3,6 +3,7 @@ package org.httrack;
 import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import org.manager.util.SizeUnits;
 
 /**
  * Represents an httrack mirroring job with status and progress information.
@@ -359,15 +360,18 @@ public class HttrackJob {
      * @param bytes The number of bytes
      * @return A formatted string (e.g., "1.5 MB")
      */
-    private String formatBytes(long bytes) {
+    static String formatBytes(long bytes) {
+        java.util.List<String> units = SizeUnits.current();
         if (bytes < 1024) {
-            return bytes + " B";
+            return bytes + " " + units.get(0);
         } else if (bytes < 1024 * 1024) {
-            return String.format("%.1f KB", bytes / 1024.0);
-        } else if (bytes < 1024 * 1024 * 1024) {
-            return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+            return String.format("%.1f %s", bytes / 1024.0, units.get(1));
+        } else if (bytes < 1024L * 1024 * 1024) {
+            return String.format("%.1f %s", bytes / (1024.0 * 1024.0), units.get(2));
+        } else if (bytes < SizeUnits.TEBIBYTE) {
+            return String.format("%.1f %s", bytes / (1024.0 * 1024.0 * 1024.0), units.get(3));
         } else {
-            return String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+            return String.format("%.2f %s", bytes / (double) SizeUnits.TEBIBYTE, units.get(4));
         }
     }
 

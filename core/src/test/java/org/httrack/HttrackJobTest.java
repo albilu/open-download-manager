@@ -472,6 +472,14 @@ class HttrackJobTest {
     }
 
     @Test
+    @DisplayName("formatBytes renders megabytes, gigabytes and terabytes")
+    void formatBytesRendersLargeUnits() {
+        assertEquals("1.5 MB", HttrackJob.formatBytes(1572864));
+        assertEquals("1.5 GB", HttrackJob.formatBytes(1610612736));
+        assertEquals("1.50 TB", HttrackJob.formatBytes(1649267441664L));
+    }
+
+    @Test
     @DisplayName("Concurrent access to job should be thread-safe")
     void testThreadSafety() throws InterruptedException {
         // Given
