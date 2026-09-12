@@ -560,6 +560,18 @@ public class DownloadManagerImpl implements DownloadManager {
                 downloadRepository.updateDownloadStatus(download, Download.Status.STARTING);
             }
 
+            // Uniquify once before the first engine start. Retries, resumes,
+            // recovered records and mirror updates reuse the stamped name:
+            // the guard is already consumed for them. Mirror updates arrive
+            // here via updateWebsiteMirror -> startDownload.
+            download.prepareUniquifiedOutput(() -> {
+                GlobalSettings settings = getGlobalSettings();
+                if (settings != null && settings.isUniquifyOutputName()) {
+                    OutputNameUniquifier.applyTo(download, getAllDownloads(),
+                            settings.isOverrideOutputPath());
+                }
+            });
+
             // Get the appropriate handler for this download type
             DownloadHandler handler = getHandlerFactory().getHandler(download);
 
