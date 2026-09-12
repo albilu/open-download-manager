@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import org.manager.util.PathSafety;
 
 /**
  * Collision-free output naming. Pure logic: name math in
@@ -42,7 +43,7 @@ public final class OutputNameUniquifier {
         if (base == null || base.isEmpty()) {
             throw new IllegalArgumentException("Base file name is required");
         }
-        org.manager.util.PathSafety.requireSafeFileName(base);
+        PathSafety.requireSafeFileName(base);
         if (!taken.test(base)) {
             return base;
         }
@@ -50,8 +51,10 @@ public final class OutputNameUniquifier {
         String stem = dot > 0 ? base.substring(0, dot) : base;
         String extension = dot > 0 ? base.substring(dot) : "";
         for (int attempt = 1;; attempt++) {
+            if (attempt > 999_999) throw new IllegalStateException("Too many colliding output names for " + base);
+            // Underscore (not DescriptorStaging's dash): File Control uniquify convention.
             String candidate = stem + "_" + attempt + extension;
-            org.manager.util.PathSafety.requireSafeFileName(candidate);
+            PathSafety.requireSafeFileName(candidate);
             if (!taken.test(candidate)) {
                 return candidate;
             }
@@ -61,9 +64,13 @@ public final class OutputNameUniquifier {
     /**
      * Stamps a collision-free {@code requestedFileName} (and matching display
      * name) onto a fresh record. Returns true when a suffix was applied.
-     * The whole check-and-stamp runs under one static lock; callers must not
-     * hold two records' monitors while calling (the manager hook is the only
-     * production caller, tests use distinct records).
+     * The whole check-and-stamp runs under one static lock. Must never be
+     * called while holding a record monitor; the manager hook runs it outside
+     * Download's lock, keeping the global order claim lock -> record lock.
+     * The claim lock serializes in-process claimants only; a file created
+     * externally between check and engine open is still possible (accepted
+     * residual risk, documented in spec §3); aria2's native rename remains
+     * its backstop.
      */
     public static boolean applyTo(Download download, Collection<Download> others,
             boolean overrideClearsDisk) {
@@ -73,15 +80,16 @@ public final class OutputNameUniquifier {
                 return false;
             }
             Path destination = download.getDestination().toAbsolutePath().normalize();
-            String base = download.getRequestedFileName() != null
+            String raw = download.getRequestedFileName() != null
                     ? download.getRequestedFileName() : download.getName();
-            if (base == null || base.isBlank()) {
+            String base = raw == null ? null : raw.strip();
+            if (base == null || base.isEmpty()) {
                 return false;
             }
             Set<String> liveClaimed = new HashSet<>();
             if (others != null) {
                 for (Download other : others) {
-                    if (other == null || other.getId().equals(download.getId())) {
+                    if (other == null || Objects.equals(other.getId(), download.getId())) {
                         continue;
                     }
                     if (!LIVE_STATUSES.contains(other.getStatus())) {
@@ -99,8 +107,7 @@ public final class OutputNameUniquifier {
                     }
                     for (Path reported : other.getOutputPaths()) {
                         Path normalized = reported.toAbsolutePath().normalize();
-                        if (normalized.startsWith(destination)
-                                && normalized.getParent().equals(destination)
+                        if (normalized.getParent().equals(destination)
                                 && normalized.getFileName() != null) {
                             liveClaimed.add(normalized.getFileName().toString());
                         }

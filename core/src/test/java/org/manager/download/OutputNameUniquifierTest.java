@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class OutputNameUniquifierTest {
 
@@ -98,5 +100,60 @@ class OutputNameUniquifierTest {
         download.setDestination(destination);
         download.recordOutputPath(partial);
         assertFalse(OutputNameUniquifier.applyTo(download, List.of(), false));
+    }
+
+    @Test
+    void leadingWhitespaceBaseIsNormalized(@TempDir Path destination) throws Exception {
+        Download download = new Download(URI.create("https://host-a.test/spaced.zip"));
+        download.setDestination(destination);
+        download.setName("  spaced.zip");
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of(), false));
+        assertEquals("  spaced.zip", download.getName());
+        assertNull(download.getRequestedFileName());
+    }
+
+    @Test
+    void counterOverflowThrows() {
+        assertThrows(IllegalStateException.class,
+                () -> OutputNameUniquifier.uniquifiedName("a.zip", taken -> true));
+    }
+
+    @Test
+    void ignoresDifferentDestination(@TempDir Path destination, @TempDir Path otherDestination)
+            throws Exception {
+        Download sibling = new Download(URI.create("https://host-a.test/v.mp4"));
+        sibling.setDestination(otherDestination);
+        Download download = new Download(URI.create("https://host-b.test/v.mp4"));
+        download.setDestination(destination);
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of(sibling), false));
+        assertNull(download.getRequestedFileName());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Download.Status.class, names = {"COMPLETED", "CANCELED", "ERROR"})
+    void ignoresTerminalStatuses(Download.Status terminal, @TempDir Path destination)
+            throws Exception {
+        Download sibling = new Download(URI.create("https://host-a.test/v.mp4"));
+        sibling.setDestination(destination);
+        sibling.setStatus(terminal);
+        Download download = new Download(URI.create("https://host-b.test/v.mp4"));
+        download.setDestination(destination);
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of(sibling), false));
+        assertNull(download.getRequestedFileName());
+    }
+
+    @Test
+    void nullDestinationAndBlankBaseReturnFalse(@TempDir Path destination) throws Exception {
+        Download noDestination = new Download(URI.create("https://host-a.test/v.mp4"));
+        assertFalse(OutputNameUniquifier.applyTo(noDestination, List.of(), false));
+
+        Download blankBase = new Download();
+        blankBase.setDestination(destination);
+        assertFalse(OutputNameUniquifier.applyTo(blankBase, List.of(), false));
+
+        Download fresh = new Download(URI.create("https://host-b.test/w.mp4"));
+        fresh.setDestination(destination);
+        assertFalse(OutputNameUniquifier.applyTo(fresh, null, false));
+        assertNull(fresh.getRequestedFileName());
     }
 }
