@@ -143,6 +143,21 @@ class OutputNameUniquifierTest {
     }
 
     @Test
+    void siblingClaimWithLeadingWhitespaceIsNormalized(@TempDir Path destination) throws Exception {
+        Download sibling = new Download(URI.create("https://x.test/a.zip"));
+        sibling.setDestination(destination);
+        sibling.setName("  a.zip");
+        sibling.setStatus(Download.Status.DOWNLOADING);
+
+        Download self = new Download(URI.create("https://x.test/a.zip"));
+        self.setDestination(destination);
+        self.setName("a.zip");
+
+        assertTrue(OutputNameUniquifier.applyTo(self, List.of(sibling), false));
+        assertEquals("a_1.zip", self.getName());
+    }
+
+    @Test
     void nullDestinationAndBlankBaseReturnFalse(@TempDir Path destination) throws Exception {
         Download noDestination = new Download(URI.create("https://host-a.test/v.mp4"));
         assertFalse(OutputNameUniquifier.applyTo(noDestination, List.of(), false));

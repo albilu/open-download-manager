@@ -562,7 +562,7 @@ public class DownloadManagerImpl implements DownloadManager {
 
             // Uniquify once before the first engine start. Retries, resumes,
             // recovered records and mirror updates reuse the stamped name:
-            // the guard is already consumed for them. Mirror updates arrive
+            // restored records are never armed (the JSON ctor leaves the flag false). Mirror updates arrive
             // here via updateWebsiteMirror -> startDownload.
             download.prepareUniquifiedOutput(() -> {
                 GlobalSettings settings = getGlobalSettings();

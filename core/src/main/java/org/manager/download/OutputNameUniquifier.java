@@ -103,11 +103,11 @@ public final class OutputNameUniquifier {
                     String otherBase = other.getRequestedFileName() != null
                             ? other.getRequestedFileName() : other.getName();
                     if (otherBase != null && !otherBase.isBlank()) {
-                        liveClaimed.add(otherBase);
+                        liveClaimed.add(otherBase.strip());
                     }
                     for (Path reported : other.getOutputPaths()) {
                         Path normalized = reported.toAbsolutePath().normalize();
-                        if (normalized.getParent().equals(destination)
+                        if (normalized.getParent() != null && normalized.getParent().equals(destination)
                                 && normalized.getFileName() != null) {
                             liveClaimed.add(normalized.getFileName().toString());
                         }
