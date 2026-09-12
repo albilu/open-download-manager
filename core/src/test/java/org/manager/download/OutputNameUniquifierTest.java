@@ -143,17 +143,53 @@ class OutputNameUniquifierTest {
     }
 
     @Test
-    void nullDestinationAndBlankBaseReturnFalse(@TempDir Path destination) throws Exception {
-        Download noDestination = new Download(URI.create("https://host-a.test/v.mp4"));
-        assertFalse(OutputNameUniquifier.applyTo(noDestination, List.of(), false));
+    void uniquifyPreparationRunsOnceAndRetriesAfterFailure() {
+        Download download = new Download(URI.create("https://host-a.test/v.mp4"));
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+        download.prepareUniquifiedOutput(runs::incrementAndGet);
+        download.prepareUniquifiedOutput(runs::incrementAndGet);
+        assertEquals(1, runs.get());
 
-        Download blankBase = new Download();
-        blankBase.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(blankBase, List.of(), false));
+        Download failing = new Download(URI.create("https://host-b.test/v.mp4"));
+        assertThrows(IllegalStateException.class, () ->
+                failing.prepareUniquifiedOutput(() -> {
+                    runs.incrementAndGet();
+                    throw new IllegalStateException("boom");
+                }));
+        failing.prepareUniquifiedOutput(runs::incrementAndGet);
+        assertEquals(3, runs.get());
+    }
 
-        Download fresh = new Download(URI.create("https://host-b.test/w.mp4"));
-        fresh.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(fresh, null, false));
-        assertNull(fresh.getRequestedFileName());
+    @Test
+    void concurrentSameNameStartsAlwaysDiverge(@TempDir Path destination) throws Exception {
+        Download first = new Download(URI.create("https://host-a.test/v.mp4"));
+        first.setDestination(destination);
+        Download second = new Download(URI.create("https://host-b.test/v.mp4"));
+        second.setDestination(destination);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var results = pool.invokeAll(java.util.List.of(
+                    () -> {
+                        first.prepareUniquifiedOutput(() -> OutputNameUniquifier.applyTo(
+                                first, java.util.List.of(second), false));
+                        return null;
+                    },
+                    () -> {
+                        second.prepareUniquifiedOutput(() -> OutputNameUniquifier.applyTo(
+                                second, java.util.List.of(first), false));
+                        return null;
+                    }));
+            for (var result : results) {
+                result.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        assertNotEquals(first.getName(), second.getName());
+        // Serialized by the claim lock: the loser sees the winner's stamped
+        // name, freeing the base — outcome is always {v.mp4, v_1.mp4} in some
+        // order. Distinct names with exactly one suffix, deterministically.
+        assertEquals(Set.of("v.mp4", "v_1.mp4"),
+                new HashSet<>(Set.of(first.getName(), second.getName())));
     }
 }

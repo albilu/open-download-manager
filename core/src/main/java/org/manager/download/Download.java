@@ -155,6 +155,8 @@ public class Download {
     private volatile boolean overrideOutputPath = false;
     /** Runtime-only: restored records always leave existing output to the engine. */
     private boolean initialOutputPreparationPending;
+    /** Runtime-only: uniquify stamping runs once, before the first engine start. */
+    private boolean uniquifiedOutputPreparationPending;
     private volatile URI uri;
     private volatile Protocol protocol;
     private volatile List<URI> mirrors;
@@ -205,6 +207,7 @@ public class Download {
     public Download() {
         this(UUID.randomUUID().toString(), Instant.now());
         initialOutputPreparationPending = true;
+        uniquifiedOutputPreparationPending = true;
     }
 
     /**
@@ -535,6 +538,33 @@ public class Download {
                 preparation.run();
             }
             initialOutputPreparationPending = false;
+        }
+    }
+
+    /**
+     * Stamps a collision-free output name once, before the first engine
+     * start. Retries, resumes, restarts and mirror updates keep the stamped
+     * name. A failed preparation stays pending so a later start retries it.
+     * The flag is claimed inside the record lock but the preparation runs
+     * OUTSIDE it: holding a record monitor into engine/file work would
+     * invert the global claim lock order (claim lock -> record, never the
+     * reverse) and deadlock two concurrent same-name starts.
+     */
+    public void prepareUniquifiedOutput(Runnable preparation) {
+        boolean shouldRun;
+        synchronized (lock) {
+            shouldRun = uniquifiedOutputPreparationPending;
+            uniquifiedOutputPreparationPending = false;
+        }
+        if (shouldRun) {
+            try {
+                preparation.run();
+            } catch (RuntimeException | Error e) {
+                synchronized (lock) {
+                    uniquifiedOutputPreparationPending = true;
+                }
+                throw e;
+            }
         }
     }
 
