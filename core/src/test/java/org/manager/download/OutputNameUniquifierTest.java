@@ -143,6 +143,21 @@ class OutputNameUniquifierTest {
     }
 
     @Test
+    void nullDestinationAndBlankBaseReturnFalse(@TempDir Path destination) throws Exception {
+        Download noDestination = new Download(URI.create("https://host-a.test/v.mp4"));
+        assertFalse(OutputNameUniquifier.applyTo(noDestination, List.of(), false));
+
+        Download blankBase = new Download();
+        blankBase.setDestination(destination);
+        assertFalse(OutputNameUniquifier.applyTo(blankBase, List.of(), false));
+
+        Download fresh = new Download(URI.create("https://host-b.test/w.mp4"));
+        fresh.setDestination(destination);
+        assertFalse(OutputNameUniquifier.applyTo(fresh, null, false));
+        assertNull(fresh.getRequestedFileName());
+    }
+
+    @Test
     void uniquifyPreparationRunsOnceAndRetriesAfterFailure() {
         Download download = new Download(URI.create("https://host-a.test/v.mp4"));
         java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
