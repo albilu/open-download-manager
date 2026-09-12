@@ -1010,8 +1010,7 @@ public class SettingsDialog {
                 "default_download_folder_chooser", directory.toString());
         try {
             long free = directory.toFile().getUsableSpace();
-            availableSpaceLabel.setLabel(String.format("%.2f GB free",
-                    free / (1024.0 * 1024 * 1024)));
+            availableSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
         } catch (RuntimeException invalidDirectory) {
             availableSpaceLabel.setLabel("");
         }
