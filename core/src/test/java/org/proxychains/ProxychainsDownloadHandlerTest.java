@@ -4,14 +4,14 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.awaitility.Awaitility;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Assumptions;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -33,24 +33,18 @@ import org.manager.download.handler.ProxychainsDownloadHandler;
 import org.mockito.Mock;
 import static org.mockito.Mockito.when;
 import org.mockito.MockitoAnnotations;
-import org.tor.TorService;
+import utils.SocksHttpServer;
 
 /**
- * Unit tests for ProxychainsDownloadHandler class. Tests download management,
- * listener handling, options management, and lifecycle operations.
+ * Handler tests using real proxychains/aria2 processes through a private SOCKS5
+ * fixture. Responses stay gated while lifecycle and active-count assertions run.
  */
 @DisplayName("ProxychainsDownloadHandler Unit Tests")
 class ProxychainsDownloadHandlerTest {
 
-    private static final String TEST_URL = "https://example.com/test-file.zip";
+    private static final String TEST_URL = "http://downloads.odm.invalid/test-file.zip";
+    private static final String PAYLOAD = "proxychains handler download test";
     private static final String TEST_DOWNLOAD_ID = "test-download-123";
-    private static final TorService torService = new TorService("tor");
-
-    @Mock
-    private GlobalSettings mockGlobalSettings;
-
-    @Mock
-    private DownloadSettingsFactory mockSettingsFactory;
 
     @Mock
     private Download mockDownload;
@@ -65,32 +59,26 @@ class ProxychainsDownloadHandlerTest {
     Path tempDir;
 
     private ProxychainsDownloadHandler handler;
-    private ProxychainsClient client;
+    private SocksHttpServer proxy;
+    private final CountDownLatch responseReady = new CountDownLatch(1);
     private ExecutorService executorService;
     private AutoCloseable mocks;
 
     @BeforeAll
-    static void startTorService() {
-        // Tor bootstrap needs the live Tor network and is flaky in CI
-        // sandboxes: abort the class when it is unavailable instead of
-        // failing every test on an environment limitation.
-        Assumptions.assumeTrue(torService.start().join(),
-                "Tor network bootstrap unavailable; aborting proxychains handler tests");
-    }
-
-    @AfterAll
-    static void stopTorService() {
-        assertTrue(torService.stop());
+    static void initializeApplicationContext() {
+        ApplicationContext.initialize();
     }
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
         executorService = Executors.newCachedThreadPool();
-
-        // Setup mock global settings
-        when(mockGlobalSettings.getProxychainsPath()).thenReturn("proxychains4");
-        when(mockGlobalSettings.getDefaultDownloadDirectory()).thenReturn(tempDir);
+        proxy = new SocksHttpServer(false, PAYLOAD, responseReady);
+        GlobalSettings globalSettings = new GlobalSettings()
+                .setDefaultDownloadDirectory(tempDir)
+                .setGlobalProxyEnabled(true)
+                .setGlobalProxyAddress("socks5h://127.0.0.1:" + proxy.port());
+        globalSettings.setHonorExternalAria2Configuration(false);
 
         // Setup mock download
         when(mockDownload.getId()).thenReturn(TEST_DOWNLOAD_ID);
@@ -100,8 +88,9 @@ class ProxychainsDownloadHandlerTest {
         when(mockDownload.getStatus()).thenReturn(Download.Status.QUEUED);
         when(mockDownload.getType()).thenReturn(Download.Type.PROXYCHAINS);
 
-        ApplicationContext.initialize();
-        handler = new ProxychainsDownloadHandler(mockGlobalSettings, mockSettingsFactory, executorService, ApplicationContext.getToolManagerFactory());
+        handler = new ProxychainsDownloadHandler(globalSettings,
+                new DownloadSettingsFactory(globalSettings), executorService,
+                ApplicationContext.getToolManagerFactory());
     }
 
     @AfterEach
@@ -109,8 +98,12 @@ class ProxychainsDownloadHandlerTest {
         if (handler != null) {
             handler.shutdown().join();
         }
+        if (proxy != null) {
+            proxy.close();
+        }
         if (executorService != null) {
             executorService.shutdownNow();
+            assertTrue(executorService.awaitTermination(5, TimeUnit.SECONDS), "Handler executor should stop");
         }
         if (mocks != null) {
             mocks.close();
@@ -185,7 +178,7 @@ class ProxychainsDownloadHandlerTest {
     void shouldCreateDownloadsWithUriAndDestination() {
         assertDoesNotThrow(() -> handler.initialize().join());
 
-        URI testUri = URI.create("http://example.com/test-file.zip");
+        URI testUri = URI.create(TEST_URL);
         Download download = handler.download(testUri, tempDir);
 
         assertNotNull(download);
@@ -193,21 +186,21 @@ class ProxychainsDownloadHandlerTest {
         assertEquals(tempDir, download.getDestination());
         assertEquals(Download.Type.PROXYCHAINS, download.getType());
 
-        Awaitility.await()
-                .atMost(5, TimeUnit.SECONDS)
-                .until(() -> handler.getActiveDownloadCount() == 1);
+        awaitTransfer(download);
+        assertEquals(1, handler.getActiveDownloadCount());
         assertTrue(handler.isActive(download.getId()));
-        // assertEquals(1, handler.getActiveDownloadCount());
     }
 
     @Test
     @DisplayName("Should create downloads with options")
     void shouldCreateDownloadsWithOptions() {
+        handler.initialize().join();
         URI testUri = URI.create(TEST_URL);
         Map<String, String> options = new HashMap<>();
         options.put("retry", "3");
 
         Download download = handler.download(testUri, tempDir, options);
+        awaitTransfer(download);
 
         assertNotNull(download);
         assertEquals(testUri, download.getUri());
@@ -230,11 +223,13 @@ class ProxychainsDownloadHandlerTest {
         URI testUri = URI.create(TEST_URL);
         Download download = handler.download(testUri, tempDir);
 
-        Awaitility.await()
-                .atMost(10, TimeUnit.SECONDS)
-                .until(() -> handler.getActiveDownloadCount() == 1);
+        awaitTransfer(download);
+        assertEquals(1, handler.getActiveDownloadCount());
         assertTrue(handler.isActive(download.getId()));
-        // assertEquals(1, handler.getActiveDownloadCount());
+        handler.cancelDownload(download, false).join();
+        assertEquals(Download.Status.CANCELED, download.getStatus());
+        assertFalse(handler.isActive(download.getId()));
+        assertEquals(0, handler.getActiveDownloadCount());
     }
 
     @Test
@@ -304,27 +299,26 @@ class ProxychainsDownloadHandlerTest {
     @Test
     @DisplayName("Should resume download")
     void shouldResumeDownload() {
-        // Stub the whole sequence up front (PAUSED, then DOWNLOADING) before any
-        // executor work starts. resumeDownload() submits a nested task via the
-        // executor that keeps invoking mock methods after join() returns, so any
-        // mid-test re-stubbing (when/doReturn) races with that thread and
-        // corrupts Mockito's per-mock last-invocation state.
-        when(mockDownload.getStatus()).thenReturn(Download.Status.PAUSED, Download.Status.DOWNLOADING);
-
-        assertDoesNotThrow(() -> {
-            handler.initialize().join();
-            handler.resumeDownload(mockDownload).join();
-        });
+        handler.initialize().join();
+        Download download = handler.download(URI.create(TEST_URL), tempDir);
+        awaitTransfer(download);
+        handler.pauseDownload(download).join();
+        assertEquals(Download.Status.PAUSED, download.getStatus());
+        int requestsBeforeResume = proxy.requestTargets.size();
+        handler.resumeDownload(download).join();
+        awaitTransfer(download);
+        Awaitility.await().atMost(10, TimeUnit.SECONDS)
+                .until(() -> proxy.requestTargets.size() > requestsBeforeResume);
 
         // Test with null download
         assertDoesNotThrow(() -> {
             handler.resumeDownload(null).join();
         });
 
-        // Test with non-paused download (getStatus now returns DOWNLOADING)
-        assertDoesNotThrow(() -> {
-            handler.resumeDownload(mockDownload).join();
-        });
+        // A second resume while downloading must leave the active transfer intact.
+        handler.resumeDownload(download).join();
+        assertEquals(Download.Status.DOWNLOADING, download.getStatus());
+        assertEquals(1, handler.getActiveDownloadCount());
     }
 
     @Test
@@ -344,59 +338,72 @@ class ProxychainsDownloadHandlerTest {
     @Test
     @DisplayName("Should check proxychains availability")
     void shouldCheckProxychainsAvailability() {
-        // This is a static method, so we can test it directly
-        // The actual result depends on system configuration
-        assertDoesNotThrow(() -> {
-            ProxychainsDownloadHandler.isProxychainsAvailable();
-        });
+        assertTrue(ProxychainsDownloadHandler.isProxychainsAvailable());
     }
 
     @Test
     @DisplayName("Should handle download lifecycle with state management")
-    void shouldHandleDownloadLifecycleWithStateManagement() throws InterruptedException {
+    void shouldHandleDownloadLifecycleWithStateManagement() {
         assertDoesNotThrow(() -> handler.initialize().join());
 
         // Create a download
         URI testUri = URI.create(TEST_URL);
         Download download = handler.download(testUri, tempDir);
 
-        // Verify initial state
-        Awaitility.await()
-                .atMost(5, TimeUnit.SECONDS)
-                .until(() -> handler.getActiveDownloadCount() == 1);
-        // assertEquals(1, handler.getActiveDownloadCount());
+        awaitTransfer(download);
+        assertEquals(1, handler.getActiveDownloadCount());
         assertTrue(handler.isActive(download.getId()));
 
-        // Test pause
-        handler.pauseDownload(download);
+        handler.pauseDownload(download).join();
+        assertEquals(Download.Status.PAUSED, download.getStatus());
+        assertFalse(handler.isActive(download.getId()));
+        assertEquals(0, handler.getActiveDownloadCount());
 
-        // Test resume (we'll test with the actual download object, not mock)
-        handler.resumeDownload(download);
+        int requestsBeforeResume = proxy.requestTargets.size();
+        handler.resumeDownload(download).join();
+        awaitTransfer(download);
+        Awaitility.await().atMost(10, TimeUnit.SECONDS)
+                .until(() -> proxy.requestTargets.size() > requestsBeforeResume);
+        assertEquals(1, handler.getActiveDownloadCount());
 
-        // Test cancel
-        handler.cancelDownload(download, true);
+        handler.cancelDownload(download, true).join();
+        assertEquals(Download.Status.CANCELED, download.getStatus());
+        assertFalse(handler.isActive(download.getId()));
+        assertEquals(0, handler.getActiveDownloadCount());
+        assertFalse(Files.exists(tempDir.resolve(download.getName())));
     }
 
     @Test
     @DisplayName("Should handle multiple concurrent downloads")
-    void shouldHandleMultipleConcurrentDownloads() {
+    void shouldHandleMultipleConcurrentDownloads() throws Exception {
         assertDoesNotThrow(() -> handler.initialize().join());
 
-        URI testUri1 = URI.create("https://example.com/file1.zip");
-        URI testUri2 = URI.create("https://example.com/file2.zip");
-        URI testUri3 = URI.create("https://example.com/file3.zip");
+        URI testUri1 = URI.create("http://first.odm.invalid/file1.zip");
+        URI testUri2 = URI.create("http://second.odm.invalid/file2.zip");
+        URI testUri3 = URI.create("http://third.odm.invalid/file3.zip");
 
         Download download1 = handler.download(testUri1, tempDir);
         Download download2 = handler.download(testUri2, tempDir);
         Download download3 = handler.download(testUri3, tempDir);
 
-        Awaitility.await()
-                .atMost(10, TimeUnit.SECONDS)
-                .until(() -> handler.getActiveDownloadCount() == 3);
+        awaitTransfer(download1);
+        awaitTransfer(download2);
+        awaitTransfer(download3);
+        assertEquals(3, handler.getActiveDownloadCount());
 
         assertTrue(handler.isActive(download1.getId()));
         assertTrue(handler.isActive(download2.getId()));
         assertTrue(handler.isActive(download3.getId()));
+
+        responseReady.countDown();
+        for (Download download : List.of(download1, download2, download3)) {
+            Awaitility.await().atMost(15, TimeUnit.SECONDS)
+                    .until(() -> download.getStatus() == Download.Status.COMPLETED);
+            assertEquals(PAYLOAD, Files.readString(tempDir.resolve(download.getName())));
+        }
+        Awaitility.await().atMost(5, TimeUnit.SECONDS)
+                .until(() -> handler.getActiveDownloadCount() == 0);
+        assertTrue(proxy.failures.isEmpty(), proxy.failures.toString());
     }
 
     @Test
@@ -435,14 +442,27 @@ class ProxychainsDownloadHandlerTest {
         assertDoesNotThrow(() -> {
             handler.initialize().join();
 
-            URI testUri = URI.create(TEST_URL);
-            Download download = handler.download(testUri, tempDir);
+            Download download = new Download(URI.create(TEST_URL));
+            download.setType(Download.Type.PROXYCHAINS);
+            download.setDestination(tempDir);
+            handler.startDownload(download).join();
 
             handler.pauseDownload(download).join();
             handler.resumeDownload(download).join();
             handler.cancelDownload(download, false).join();
 
             handler.shutdown().join();
+        });
+    }
+
+    private void awaitTransfer(Download download) {
+        Awaitility.await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertTrue(proxy.hosts.contains(download.getUri().getHost()),
+                    "The transfer must reach its private SOCKS fixture");
+            assertTrue(proxy.requestTargets.contains(download.getUri().getRawPath()),
+                    "The fixture must receive this download's HTTP request before releasing responses");
+            assertEquals(Download.Status.DOWNLOADING, download.getStatus());
+            assertTrue(handler.isActive(download.getId()));
         });
     }
 

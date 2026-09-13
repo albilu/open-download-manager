@@ -18,6 +18,7 @@ public final class SocksHttpServer implements AutoCloseable {
     private final ServerSocket server;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     public final List<String> hosts = new CopyOnWriteArrayList<>();
+    public final List<String> requestTargets = new CopyOnWriteArrayList<>();
     public final List<String> credentials = new CopyOnWriteArrayList<>();
     public final List<Throwable> failures = new CopyOnWriteArrayList<>();
     private final boolean authenticate;
@@ -99,13 +100,18 @@ public final class SocksHttpServer implements AutoCloseable {
             out.write(new byte[] {5, 0, 0, 1, 127, 0, 0, 1, 0, 80});
             out.flush();
             BufferedReader request = new BufferedReader(new InputStreamReader(in, StandardCharsets.US_ASCII));
-            StringBuilder headers = new StringBuilder();
+            String requestLine = request.readLine();
+            if (requestLine == null) {
+                return; // A paused/canceled transfer can close before sending HTTP.
+            }
+            StringBuilder headers = new StringBuilder(requestLine).append("\r\n");
             String line;
             while ((line = request.readLine()) != null && !line.isEmpty()) {
                 if (!line.regionMatches(true, 0, "Connection:", 0, "Connection:".length())) {
                     headers.append(line).append("\r\n");
                 }
             }
+            requestTargets.add(requestLine.split(" ", 3)[1]);
             if (responseReady != null) {
                 responseReady.await();
             }

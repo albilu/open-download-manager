@@ -5,20 +5,17 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -26,74 +23,74 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.manager.ApplicationContext;
-import org.manager.GlobalSettings;
 
 /**
- * Integration tests for TorController. These tests require both Tor executable
- * and a running Tor service with control port enabled.
+ * Real Tor control-protocol integration with cookie authentication. Networking
+ * is disabled: control-port readiness does not require a bootstrapped circuit.
+ * TorServiceIntegrationTest separately exercises network bootstrap readiness.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@Execution(ExecutionMode.SAME_THREAD)
 class TorControllerIntegrationTest {
 
-    private static String TOR_EXECUTABLE_PATH;
-    private static final int TEST_CONTROL_PORT = 19151;
-    private static final int TEST_SOCKS_PORT = 19150;
-    private static final String TEST_DATA_DIR = System.getProperty("java.io.tmpdir") + "/tor-controller-test-"
-            + System.currentTimeMillis();
-
-    private static TorService torService;
+    private static final Pattern CONTROL_ADDRESS = Pattern.compile("(?m)^PORT=127\\.0\\.0\\.1:(\\d+)\\r?$");
+    private static Process torProcess;
     private static TorController torController;
     private static Path testDataDir;
+    private static int controlPort;
+
+    @TempDir
+    static Path tempDir;
 
     @BeforeAll
-    static void checkTorAvailability() throws IOException, InterruptedException {
-
-        // Set the path to the Tor executable
+    static void startLocalControlInterface() throws Exception {
         ApplicationContext.initialize();
-        TOR_EXECUTABLE_PATH = ApplicationContext.getToolPath("tor");
-        // Assumptions.assumeTrue(Files.exists(Paths.get(TOR_EXECUTABLE_PATH)),
-        // "Tor executable not found at: " + TOR_EXECUTABLE_PATH);
-        testDataDir = Paths.get(TEST_DATA_DIR);
-        Files.createDirectories(testDataDir);
+        testDataDir = Files.createDirectory(tempDir.resolve("data"));
+        Path controlAddress = tempDir.resolve("control-port");
+        Path torLog = tempDir.resolve("tor.log");
+        Path emptyConfig = Files.writeString(tempDir.resolve("torrc"), "");
+        torProcess = new ProcessBuilder(ApplicationContext.getToolPath("tor"),
+                "--defaults-torrc", emptyConfig.toString(), "-f", emptyConfig.toString(),
+                "--DataDirectory", testDataDir.toString(),
+                "--SocksPort", "0", "--ControlPort", "127.0.0.1:auto",
+                "--ControlPortWriteToFile", controlAddress.toString(),
+                "--CookieAuthentication", "1", "--DisableNetwork", "1",
+                "--Log", "notice stdout")
+                .redirectErrorStream(true).redirectOutput(torLog.toFile()).start();
 
-        // Start Tor service with control port enabled
-        Map<String, String> config = createTestConfig();
-        torService = new TorService(TOR_EXECUTABLE_PATH, config, null);
-
-        assertTrue(torService.start().join(), "Tor service must start for controller tests");
-
-        // Wait a bit for control port to be ready
-        // Thread.sleep(2000);
-        torController = torService.createController(5000);
+        // Tor chooses and publishes its bound port, avoiding fixed-port conflicts
+        // and the race between reserving an ephemeral port and launching Tor.
+        Path cookie = testDataDir.resolve("control_auth_cookie");
+        Awaitility.await().atMost(15, TimeUnit.SECONDS).until(() -> {
+            if (!torProcess.isAlive()) {
+                throw new IllegalStateException("Tor exited before control readiness:\n" + Files.readString(torLog));
+            }
+            return readControlPort(controlAddress) > 0
+                    && Files.exists(cookie) && Files.size(cookie) == 32;
+        });
+        controlPort = readControlPort(controlAddress);
+        torController = new TorController("127.0.0.1", controlPort, null, 5000, testDataDir);
     }
 
     @AfterAll
-    static void tearDown() throws IOException {
-        if (torController != null) {
-            torController.shutdown();
-        }
-
-        if (torService != null) {
-            torService.shutdown();
-        }
-
-        // Clean up test directory
-        if (testDataDir != null && Files.exists(testDataDir)) {
-            try {
-                Files.walk(testDataDir)
-                        .sorted((a, b) -> b.compareTo(a))
-                        .forEach(path -> {
-                            try {
-                                Files.deleteIfExists(path);
-                            } catch (IOException e) {
-                                // Ignore cleanup errors
-                            }
-                        });
-            } catch (IOException e) {
-                // Ignore cleanup errors
+    static void tearDown() throws InterruptedException {
+        try {
+            if (torController != null) {
+                torController.shutdown();
+            }
+        } finally {
+            if (torProcess != null) {
+                torProcess.destroy();
+                if (!torProcess.waitFor(5, TimeUnit.SECONDS)) {
+                    torProcess.destroyForcibly();
+                    assertTrue(torProcess.waitFor(5, TimeUnit.SECONDS), "The test's Tor process should stop");
+                }
             }
         }
     }
@@ -106,6 +103,7 @@ class TorControllerIntegrationTest {
 
         assertTrue(connectResult.get(30, TimeUnit.SECONDS), "Controller should connect successfully");
         assertTrue(torController.isConnected(), "Controller should be in connected state");
+        assertEquals("1", torController.getConfiguration("DisableNetwork").get(10, TimeUnit.SECONDS));
     }
 
     @Test
@@ -117,33 +115,18 @@ class TorControllerIntegrationTest {
 
         torController.disconnect();
 
-        // Give it a moment to disconnect
-        Thread.sleep(1000);
         assertFalse(torController.isConnected(), "Controller should not be connected after disconnect");
     }
 
     @Test
     @Order(3)
-    @DisplayName("Should change IP address successfully")
+    @DisplayName("Should acknowledge a NEWNYM request through the real control interface")
     void testIpChange() throws Exception {
         torController.connect().get(30, TimeUnit.SECONDS);
-
-        // Get initial IP (this might fail in test environment, that's OK)
-        String initialIp = null;
-        try {
-            initialIp = torController.getCurrentIp().get(15, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            // IP retrieval might fail in test environment, continue with test
-        }
-
         CompletableFuture<Boolean> changeResult = torController.changeIp();
-        assertTrue(changeResult.get(60, TimeUnit.SECONDS), "IP change should succeed");
-
-        // Verify circuits were rebuilt by checking that new circuits exist
-        List<TorController.CircuitInfo> circuits = torController.getCircuitInfo().get(10, TimeUnit.SECONDS);
-        assertNotNull(circuits, "Circuit info should be available");
-        // In a real Tor network, we'd have circuits, but in test environment this might
-        // be empty
+        assertTrue(changeResult.get(10, TimeUnit.SECONDS), "Tor should accept SIGNAL NEWNYM");
+        // Acknowledgement does not promise a new exit IP or an established circuit.
+        assertEquals("1", torController.getConfiguration("DisableNetwork").get(10, TimeUnit.SECONDS));
     }
 
     @Test
@@ -155,15 +138,8 @@ class TorControllerIntegrationTest {
         CompletableFuture<List<TorController.CircuitInfo>> circuitsFuture = torController.getCircuitInfo();
         List<TorController.CircuitInfo> circuits = circuitsFuture.get(10, TimeUnit.SECONDS);
 
-        assertNotNull(circuits, "Circuit list should not be null");
-        // Circuit list might be empty in test environment, which is acceptable
-
-        // If we have circuits, verify their structure
-        for (TorController.CircuitInfo circuit : circuits) {
-            assertNotNull(circuit.id, "Circuit ID should not be null");
-            assertNotNull(circuit.status, "Circuit status should not be null");
-            assertNotNull(circuit.path, "Circuit path should not be null");
-        }
+        assertEquals(List.of(), circuits, "An offline Tor instance should have no circuits");
+        assertTrue(torController.isConnected());
     }
 
     @Test
@@ -201,19 +177,19 @@ class TorControllerIntegrationTest {
 
     @Test
     @Order(8)
-    @DisplayName("Should handle connection timeout gracefully")
-    void testConnectionTimeout() {
-        // Create controller with very short timeout
-        TorController timeoutController = new TorController("127.0.0.1", 99999, null, 1000);
-
-        try {
-            CompletableFuture<Boolean> connectResult = timeoutController.connect();
-            assertDoesNotThrow(() -> {
-                Boolean result = connectResult.get(5, TimeUnit.SECONDS);
-                assertFalse(result, "Connection to non-existent port should fail");
-            }, "Connection timeout should be handled gracefully");
-        } finally {
-            timeoutController.shutdown();
+    @DisplayName("Should handle an unavailable control endpoint")
+    void testConnectionTimeout() throws Exception {
+        // Own the endpoint so another process cannot acquire it during this test.
+        try (Socket reserved = new Socket()) {
+            reserved.bind(new InetSocketAddress("127.0.0.1", 0));
+            TorController timeoutController = new TorController(
+                    "127.0.0.1", reserved.getLocalPort(), null, 250, testDataDir);
+            try {
+                assertFalse(timeoutController.connect().get(5, TimeUnit.SECONDS));
+                assertFalse(timeoutController.isConnected());
+            } finally {
+                timeoutController.shutdown();
+            }
         }
     }
 
@@ -243,44 +219,28 @@ class TorControllerIntegrationTest {
 
     @Test
     @Order(9)
-    @DisplayName("Should handle auto IP change on slow connection")
-    void testAutoIpChangeOnSlowConnection() throws Exception {
-        torController.connect().get(30, TimeUnit.SECONDS);
-
-        AtomicBoolean callbackInvoked = new AtomicBoolean(false);
-        AtomicReference<String> callbackReason = new AtomicReference<>();
-
-        // Start auto IP change with very short threshold to trigger quickly
-        CompletableFuture<Boolean> autoChangeFuture = torController.autoChangeIpOnSlowConnection(1);
-
-        // Let it run for a short time
-        Thread.sleep(3000);
-
-        // The callback might or might not be invoked depending on network conditions
-        // We just verify it doesn't crash
-        assertNotNull(autoChangeFuture, "Auto change future should not be null");
+    @DisplayName("Should reject an incorrect authentication cookie")
+    void testIncorrectCookie() throws Exception {
+        Path wrongCookieDirectory = Files.createDirectory(tempDir.resolve("wrong-cookie"));
+        Files.write(wrongCookieDirectory.resolve("control_auth_cookie"), new byte[32]);
+        TorController unauthenticated = new TorController(
+                "127.0.0.1", controlPort, null, 5000, wrongCookieDirectory);
+        try {
+            assertFalse(unauthenticated.connect().get(10, TimeUnit.SECONDS));
+            assertFalse(unauthenticated.isConnected());
+        } finally {
+            unauthenticated.shutdown();
+        }
     }
 
     @Test
     @Order(10)
-    @DisplayName("Should handle circuit closing")
+    @DisplayName("Should reject closing a nonexistent circuit")
     void testCircuitClosing() throws Exception {
         torController.connect().get(30, TimeUnit.SECONDS);
-
-        // Get current circuits
-        List<TorController.CircuitInfo> circuits = torController.getCircuitInfo().get(10, TimeUnit.SECONDS);
-
-        if (!circuits.isEmpty()) {
-            // Try to close the first circuit
-            TorController.CircuitInfo circuit = circuits.get(0);
-            CompletableFuture<Boolean> closeResult = torController.closeCircuit(circuit.id);
-
-            Boolean result = assertDoesNotThrow(() -> closeResult.get(10, TimeUnit.SECONDS),
-                    "Circuit closing should not throw exception");
-
-            // Result might be true or false depending on circuit state, both are valid
-            assertNotNull(result, "Close circuit result should not be null");
-        }
+        assertFalse(torController.closeCircuit("123456").get(10, TimeUnit.SECONDS));
+        assertEquals("1", torController.getConfiguration("DisableNetwork").get(10, TimeUnit.SECONDS),
+                "A rejected command must leave subsequent control replies readable");
     }
 
     @Test
@@ -288,22 +248,16 @@ class TorControllerIntegrationTest {
     @DisplayName("Should handle concurrent operations safely")
     void testConcurrentOperations() throws Exception {
         torController.connect().get(30, TimeUnit.SECONDS);
+        assertTrue(torController.setConfiguration("SafeLogging", "1").get(10, TimeUnit.SECONDS));
 
         // Start multiple concurrent operations
         CompletableFuture<List<TorController.CircuitInfo>> circuitsFuture = torController.getCircuitInfo();
         CompletableFuture<String> configFuture = torController.getConfiguration("SafeLogging");
         CompletableFuture<Boolean> ipChangeFuture = torController.changeIp();
 
-        // All should complete without exceptions
-        assertDoesNotThrow(() -> {
-            List<TorController.CircuitInfo> circuits = circuitsFuture.get(15, TimeUnit.SECONDS);
-            String config = configFuture.get(15, TimeUnit.SECONDS);
-            Boolean ipChanged = ipChangeFuture.get(60, TimeUnit.SECONDS);
-
-            assertNotNull(circuits, "Circuits should not be null");
-            // Config may be null for non-existent options, which is acceptable
-            assertNotNull(ipChanged, "IP change result should not be null");
-        }, "Concurrent operations should complete successfully");
+        assertEquals(List.of(), circuitsFuture.get(15, TimeUnit.SECONDS));
+        assertEquals("1", configFuture.get(15, TimeUnit.SECONDS));
+        assertTrue(ipChangeFuture.get(15, TimeUnit.SECONDS));
     }
 
     @Test
@@ -315,10 +269,8 @@ class TorControllerIntegrationTest {
         // Try to get configuration for non-existent option
         CompletableFuture<String> invalidConfigFuture = torController.getConfiguration("NonExistentConfigOption");
 
-        assertDoesNotThrow(() -> {
-            String result = invalidConfigFuture.get(10, TimeUnit.SECONDS);
-            // Result might be null for non-existent options, which is acceptable
-        }, "Invalid configuration request should be handled gracefully");
+        assertNull(invalidConfigFuture.get(10, TimeUnit.SECONDS));
+        assertEquals("1", torController.getConfiguration("DisableNetwork").get(10, TimeUnit.SECONDS));
     }
 
     @Test
@@ -338,35 +290,14 @@ class TorControllerIntegrationTest {
 
         // Subsequent operations should handle the shutdown state gracefully
         CompletableFuture<Boolean> connectAfterShutdown = torController.connect();
-        assertDoesNotThrow(() -> {
-            Boolean result = connectAfterShutdown.get(5, TimeUnit.SECONDS);
-            // Result might be false due to shutdown, which is expected
-            assertNotNull(result, "Connect after shutdown should return a result");
-        }, "Operations after shutdown should be handled gracefully");
+        assertFalse(connectAfterShutdown.get(5, TimeUnit.SECONDS));
     }
 
-    // Helper methods
-    private static Map<String, String> createTestConfig() {
-        Map<String, String> config = new HashMap<>();
-        config.put("SocksPort", String.valueOf(TEST_SOCKS_PORT));
-        config.put("ControlPort", String.valueOf(TEST_CONTROL_PORT));
-        config.put("DataDirectory", TEST_DATA_DIR);
-        config.put("Log", "notice stdout");
-        config.put("SafeLogging", "1");
-        config.put("StrictNodes", "0");
-        config.put("CookieAuthentication", "1");
-        config.put("DisableNetwork", "0");
-        // Enable control interface
-        config.put("ControlSocket", "");
-        return config;
-    }
-
-    private boolean isPortAccessible(String host, int port) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), 5000);
-            return true;
-        } catch (IOException e) {
-            return false;
+    private static int readControlPort(Path addressFile) throws IOException {
+        if (!Files.exists(addressFile)) {
+            return 0;
         }
+        Matcher address = CONTROL_ADDRESS.matcher(Files.readString(addressFile));
+        return address.find() ? Integer.parseInt(address.group(1)) : 0;
     }
 }
