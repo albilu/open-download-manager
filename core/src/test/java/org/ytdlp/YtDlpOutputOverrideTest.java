@@ -27,10 +27,11 @@ class YtDlpOutputOverrideTest {
     @TempDir Path directory;
 
     @ParameterizedTest
-    @CsvSource({"false, false", "false, true", "true, false", "true, true"})
-    void newRecordReplacesGeneratedOutputOnlyWhenOverrideIsEnabled(boolean override, boolean aria2)
+    @CsvSource({"false, false, false", "false, true, false", "true, false, false", "true, true, false",
+        "false, false, true", "false, true, true", "true, false, true", "true, true, true"})
+    void newRecordReplacesGeneratedOutputOnlyWhenOverrideWins(boolean override, boolean aria2, boolean uniquify)
             throws Exception {
-        var globals = new GlobalSettings().setOverrideOutputPath(override);
+        var globals = new GlobalSettings().setOverrideOutputPath(override).setUniquifyOutputName(uniquify);
         globals.setProperty("ytdlp.skipDownloaded", "false");
         YtDlpToolManager tool = mock(YtDlpToolManager.class);
         when(tool.getToolPath()).thenReturn("yt-dlp");
@@ -76,7 +77,7 @@ class YtDlpOutputOverrideTest {
                 handler.startDownload(download).get(15, TimeUnit.SECONDS);
                 complete.get(30, TimeUnit.SECONDS);
 
-                if (override) {
+                if (override && !uniquify) {
                     assertArrayEquals(originalMedia, Files.readAllBytes(output),
                             "the generated output must be freshly downloaded");
                     assertFalse(Files.isSameFile(output, oldInode),
@@ -84,6 +85,10 @@ class YtDlpOutputOverrideTest {
                 } else {
                     assertEquals("old output", Files.readString(output),
                             "the engine's existing-file policy must remain in effect");
+                }
+                if (uniquify) {
+                    assertNotEquals(output, download.getPrimaryOutputPath());
+                    assertArrayEquals(originalMedia, Files.readAllBytes(download.getPrimaryOutputPath()));
                 }
                 assertEquals("old output", Files.readString(oldInode), "unrelated hard links must remain");
                 assertEquals("unrelated file", Files.readString(unrelated), "a display name is not an output");

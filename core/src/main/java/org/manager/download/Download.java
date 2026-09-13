@@ -541,6 +541,13 @@ public class Download {
         }
     }
 
+    @JsonIgnore
+    public boolean isUniquifiedOutputPreparationPending() {
+        synchronized (lock) {
+            return uniquifiedOutputPreparationPending;
+        }
+    }
+
     /**
      * Stamps a collision-free output name once, before the first engine
      * start. Retries, resumes, restarts and mirror updates keep the stamped

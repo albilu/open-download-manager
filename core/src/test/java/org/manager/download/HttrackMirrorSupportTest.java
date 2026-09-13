@@ -41,7 +41,7 @@ class HttrackMirrorSupportTest {
 
         HttrackMirrorSupport.prepareUpdate(download, true);
         assertTrue(update.isPurgeOldFiles());
-        assertTrue(update.buildCommandLine().contains("-X1"));
+        assertTrue(update.buildCommandLine().contains("-X"));
     }
 
     @Test

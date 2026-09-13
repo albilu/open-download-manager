@@ -4,6 +4,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
@@ -45,6 +47,61 @@ final class YtDlpLocalMediaServer implements AutoCloseable {
         return new YtDlpLocalMediaServer(loadFixture(), bytesPerSecond);
     }
 
+    static YtDlpLocalMediaServer startPlaylist() throws IOException {
+        YtDlpLocalMediaServer result = start();
+        byte[] media = loadFixture();
+        result.server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                if (request.getPath().equals("/playlist.html")) {
+                    return new MockResponse().setHeader("Content-Type", "text/html").setBody("""
+                            <html><head><title>Local playlist</title></head><body>
+                            <video src="/first.mp4" controls></video>
+                            <video src="/second.mp4" controls></video>
+                            </body></html>
+                            """);
+                }
+                return new MockResponse().setHeader("Content-Type", "video/mp4")
+                        .setBody(new Buffer().write(media));
+            }
+        });
+        return result;
+    }
+
+    static YtDlpLocalMediaServer startHls(Path directory) throws Exception {
+        Files.createDirectories(directory);
+        Path input = Files.write(directory.resolve("input.mp4"), loadFixture());
+        Path log = directory.resolve("ffmpeg.log");
+        Process process = new ProcessBuilder("ffmpeg", "-nostdin", "-v", "error", "-i", input.toString(),
+                "-c", "copy", "-f", "hls", "-hls_time", "1", "-hls_playlist_type", "vod",
+                directory.resolve("master.m3u8").toString()).redirectErrorStream(true)
+                .redirectOutput(log.toFile()).start();
+        if (!process.waitFor(15, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new IOException("HLS fixture generation timed out");
+        }
+        if (process.exitValue() != 0) {
+            throw new IOException("HLS fixture generation failed: " + Files.readString(log));
+        }
+        YtDlpLocalMediaServer result = start();
+        result.server.setDispatcher(new Dispatcher() {
+            @Override public MockResponse dispatch(RecordedRequest request) {
+                try {
+                    String name = request.getRequestUrl().pathSegments().getLast();
+                    Path file = directory.resolve(name);
+                    if (!Files.isRegularFile(file)) {
+                        return new MockResponse().setResponseCode(404);
+                    }
+                    return new MockResponse().setHeader("Content-Type", name.endsWith(".m3u8")
+                            ? "application/vnd.apple.mpegurl" : "video/mp2t")
+                            .setBody(new Buffer().write(Files.readAllBytes(file)));
+                } catch (IOException e) {
+                    return new MockResponse().setResponseCode(500);
+                }
+            }
+        });
+        return result;
+    }
+
     private static byte[] loadFixture() {
         try (InputStream in = YtDlpLocalMediaServer.class.getResourceAsStream(FIXTURE_RESOURCE);
                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
@@ -60,6 +117,14 @@ final class YtDlpLocalMediaServer implements AutoCloseable {
 
     String mediaUrl() {
         return server.url(MEDIA_PATH).toString();
+    }
+
+    String hlsUrl() {
+        return server.url("/master.m3u8").toString();
+    }
+
+    String playlistUrl() {
+        return server.url("/playlist.html").toString();
     }
 
     int requestCount() {

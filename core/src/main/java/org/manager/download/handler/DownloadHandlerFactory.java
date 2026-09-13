@@ -2,6 +2,7 @@ package org.manager.download.handler;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -11,6 +12,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.manager.GlobalSettings;
@@ -36,6 +38,7 @@ public class DownloadHandlerFactory {
     private final DownloadSettingsFactory settingsFactory;
     private final ExecutorService executor;
     private final ToolManagerFactory toolManagerFactory;
+    private final Supplier<? extends Collection<Download>> downloads;
     private final StartupCoordinator startupCoordinator;
     private final AtomicBoolean handlersInitialized = new AtomicBoolean(false);
 
@@ -51,10 +54,18 @@ public class DownloadHandlerFactory {
             DownloadSettingsFactory settingsFactory,
             ExecutorService executor,
             ToolManagerFactory toolManagerFactory) {
+        this(globalSettings, settingsFactory, executor, toolManagerFactory, List::of);
+    }
+
+    public DownloadHandlerFactory(GlobalSettings globalSettings,
+            DownloadSettingsFactory settingsFactory, ExecutorService executor,
+            ToolManagerFactory toolManagerFactory,
+            Supplier<? extends Collection<Download>> downloads) {
         this.globalSettings = globalSettings;
         this.settingsFactory = settingsFactory;
         this.executor = executor;
         this.toolManagerFactory = toolManagerFactory;
+        this.downloads = downloads;
         // Generation-scoped coordinator (per ApplicationFactory) so a reset
         // generation's handler initialization cannot be blocked by stale
         // flags from an earlier one
@@ -140,7 +151,7 @@ public class DownloadHandlerFactory {
             if (startupCoordinator.beginComponentInitialization(StartupCoordinator.YTDLP_HANDLER)) {
                 try {
                     YtDlpDownloadHandler ytDlpHandler = new YtDlpDownloadHandler(
-                            globalSettings, settingsFactory, executor, toolManagerFactory);
+                            globalSettings, settingsFactory, executor, toolManagerFactory, downloads);
 
                     registerHandler(Download.Type.YOUTUBE, ytDlpHandler);
                     ytDlpHandler.initialize().join();

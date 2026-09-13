@@ -51,6 +51,10 @@ class YtDlpPauseLifecycleTest {
         Path fakeTool = tempDir.resolve("fake-yt-dlp");
         Files.writeString(fakeTool, "#!/bin/bash\n"
                 + "case \" $* \" in *\" --version \"*) echo \"2024.01.01\"; exit 0;; esac\n"
+                + "case \" $* \" in *\" --simulate \"*)\n"
+                + "  touch \"$0.probing\"\n"
+                + "  while [[ -e \"$0.block-probe\" ]]; do sleep 0.1; done\n"
+                + "  printf '|odmname|\"video.mp4\"\\n'; exit 0;; esac\n"
                 + "printf '%s\\n' \"$@\" > \"$0.args\"\n"
                 + "echo \"[download] Destination: video.mp4\"\n"
                 + "sleep 300\n");
@@ -95,6 +99,29 @@ class YtDlpPauseLifecycleTest {
         }
         assertEquals(YtDlpDownloadTask.Status.DOWNLOADING, task.getStatus(),
                 "test prerequisite: the run must be DOWNLOADING (destination reported)");
+    }
+
+    @Test
+    @Timeout(60)
+    void pauseDuringNameResolutionStopsProbeAndResumeCanStartTransfer() throws Exception {
+        when(settings.isUniquifyOutputName()).thenReturn(true);
+        Path gate = Files.createFile(tempDir.resolve("fake-yt-dlp.block-probe"));
+        Download download = newDownload("resolving");
+        handler.startDownload(download).get(15, TimeUnit.SECONDS);
+        org.awaitility.Awaitility.await().atMost(15, TimeUnit.SECONDS)
+                .until(() -> Files.exists(tempDir.resolve("fake-yt-dlp.probing")));
+
+        handler.pauseDownload(download).get(15, TimeUnit.SECONDS);
+        YtDlpDownloadTask task = factory.getDownloadTask(download.getId());
+        assertEquals(YtDlpDownloadTask.Status.PAUSED, task.getStatus());
+        assertTrue(task.awaitRunCompletion(java.time.Duration.ofSeconds(5)));
+        assertFalse(Files.exists(tempDir.resolve("fake-yt-dlp.args")), "no media process may start after pause");
+        assertTrue(download.isUniquifiedOutputPreparationPending());
+
+        Files.delete(gate);
+        handler.resumeDownload(download).get(15, TimeUnit.SECONDS);
+        awaitRunning(task);
+        assertFalse(download.isUniquifiedOutputPreparationPending());
     }
 
     @Test

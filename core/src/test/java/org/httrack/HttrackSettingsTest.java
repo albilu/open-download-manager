@@ -646,10 +646,10 @@ class HttrackSettingsTest {
 
         settings.setRunMode(HttrackSettings.RunMode.UPDATE).setPurgeOldFiles(false);
         assertTrue(settings.buildCommandLine().containsAll(List.of("--update", "-X0")));
-        assertFalse(settings.buildCommandLine().contains("-X1"));
+        assertFalse(settings.buildCommandLine().contains("-X"));
 
         settings.setPurgeOldFiles(true);
-        assertTrue(settings.buildCommandLine().containsAll(List.of("--update", "-X1")));
+        assertTrue(settings.buildCommandLine().containsAll(List.of("--update", "-X")));
     }
 
     @Test

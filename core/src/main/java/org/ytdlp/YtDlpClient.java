@@ -888,8 +888,17 @@ public class YtDlpClient {
     /** Runs a short-lived metadata command with strict ownership, size and time bounds. */
     private String runMetadataCommand(List<String> command, String processId,
             ExternalProcessRegistry.LaunchReservation launch) throws Exception {
+        return runMetadataCommand(command, processId, launch, null, false);
+    }
+
+    private String runMetadataCommand(List<String> command, String processId,
+            ExternalProcessRegistry.LaunchReservation launch, Path directory,
+            boolean retainReservation) throws Exception {
         ProcessBuilder pb = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command));
         pb.redirectErrorStream(true);
+        if (directory != null) {
+            pb.directory(directory.toFile());
+        }
         ExternalProcessRegistry.Registration registration = null;
         try {
             registration = launch.start(pb);
@@ -933,7 +942,11 @@ public class YtDlpClient {
             }
             return output.toString();
         } finally {
-            if (registration != null) {
+            if (retainReservation) {
+                if (registration != null && registration.process().isAlive()) {
+                    registration.terminate(1);
+                }
+            } else if (registration != null) {
                 registration.unregister();
             } else {
                 launch.unregister();
@@ -977,6 +990,13 @@ public class YtDlpClient {
     /** Replaces resolved media outputs before the first transfer without changing saved resume settings. */
     public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
             ProgressCallback callback, String processId, boolean overrideOutputs) {
+        return download(url, settings, outputPath, callback, processId, overrideOutputs, null);
+    }
+
+    /** Resolves and reserves native output names before the first media transfer. */
+    public CompletableFuture<String> download(String url, YtDlpSettings settings, Path outputPath,
+            ProgressCallback callback, String processId, boolean overrideOutputs,
+            java.util.function.Consumer<List<String>> outputNamePreparation) {
         ExternalProcessRegistry.LaunchReservation launch = activeProcesses.reserve(processId);
         return CompletableFuture.supplyAsync(() -> {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
@@ -998,6 +1018,29 @@ public class YtDlpClient {
                 // Create output directory if it doesn't exist
                 if (outputPath != null) {
                     Files.createDirectories(outputPath);
+                }
+
+                if (outputNamePreparation != null) {
+                    List<String> probe = new ArrayList<>(command);
+                    probe.addAll(probe.size() - 1, List.of("--simulate", "--print",
+                            "video:|odmname|%(filename)j"));
+                    String metadata = runMetadataCommand(probe, processId, launch, outputPath, true);
+                    List<String> names = new ArrayList<>();
+                    for (String line : metadata.lines().toList()) {
+                        if (line.startsWith("|odmname|")) {
+                            String name = OBJECT_MAPPER.readValue(line.substring("|odmname|".length()), String.class);
+                            org.manager.util.PathSafety.requireSafeFileName(name);
+                            names.add(name);
+                        }
+                    }
+                    if (launch.isCancelled()) {
+                        throw new CancellationException();
+                    }
+                    outputNamePreparation.accept(List.copyOf(names));
+                    prepared.settings().setOutputTemplate(settings.getOutputTemplate());
+                    prepared.settings().setOutputNameCounter(settings.getOutputNameCounter());
+                    command.set(command.indexOf("-o") + 1, outputTemplate(prepared.settings()));
+                    command.add(command.size() - 1, "--no-overwrites");
                 }
 
                 ProcessBuilder pb = org.manager.tools.NetworkProcessPolicy.prepare(new ProcessBuilder(command));
@@ -1230,11 +1273,8 @@ public class YtDlpClient {
         List<String> command = command();
 
         // Output template
-        String outputTemplate = settings.getOutputTemplate() != null
-                ? settings.getOutputTemplate().replace("%", "%%")
-                : "%(title)s-%(id)s.%(ext)s";
         command.add("-o");
-        command.add(outputTemplate);
+        command.add(outputTemplate(settings));
 
         // Keep downloaded bytes exact and prefer the known total over an
         // estimate. --print implies quiet mode, so progress must be explicit.
@@ -1407,6 +1447,15 @@ public class YtDlpClient {
         }
         command.add(url);
         return command;
+    }
+
+    private static String outputTemplate(YtDlpSettings settings) {
+        if (settings.getOutputTemplate() != null) {
+            return settings.getOutputTemplate().replace("%", "%%");
+        }
+        return "%(title)s-%(id)s"
+                + (settings.getOutputNameCounter() == 0 ? "" : "_" + settings.getOutputNameCounter())
+                + ".%(ext)s";
     }
 
     private static void addContainerProfileOptions(List<String> command,

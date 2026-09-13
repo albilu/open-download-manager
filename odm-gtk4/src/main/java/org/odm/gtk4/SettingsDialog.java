@@ -199,7 +199,7 @@ public class SettingsDialog {
             Map.entry("override_output_path_check",
                     "Delete the existing output file or folder before starting a new download. Existing downloads keep the engine's resume policy."),
             Map.entry("uniquify_output_name_check",
-                    "When two downloads would use the same file name, save one of them as name_1, name_2, and so on instead of sharing the file."),
+                    "Keep existing files and give colliding downloads names such as name_1, name_2, and so on. Takes precedence over Override output path."),
             Map.entry("enable_scheduling_check",
                     "Apply the weekly grid globally: inactive hours pause active downloads and prevent queued downloads from starting."),
             Map.entry("retain_completed_canceled_history_check",

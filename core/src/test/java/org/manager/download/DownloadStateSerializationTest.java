@@ -171,6 +171,20 @@ class DownloadStateSerializationTest {
     }
 
     @Test
+    void mediaOutputReservationSurvivesCopyAndSessionRestore() throws Exception {
+        Download original = new Download(URI.create("https://www.youtube.com/watch?v=abc123"));
+        var settings = (org.ytdlp.YtDlpSettings) original.getSettings();
+        settings.setOutputNameCounter(2);
+        settings.setReservedOutputNames(List.of("clip_2.mp4", "next_2.webm"));
+        var copied = (org.ytdlp.YtDlpSettings) settings.copy();
+        var restored = (org.ytdlp.YtDlpSettings) roundTrip(original).getSettings();
+        for (var saved : List.of(copied, restored)) {
+            assertEquals(2, saved.getOutputNameCounter());
+            assertEquals(settings.getReservedOutputNames(), saved.getReservedOutputNames());
+        }
+    }
+
+    @Test
     void explicitProtocolRoundTripsAndLegacyStateDerivesIt() throws Exception {
         Download explicit = new Download(URI.create("https://example.com/opaque-descriptor"));
         explicit.setProtocol(Download.Protocol.METALINK);

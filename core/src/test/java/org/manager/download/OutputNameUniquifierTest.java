@@ -56,12 +56,12 @@ class OutputNameUniquifierTest {
     void applyToStampsOnlyOnCollision(@TempDir Path destination) throws Exception {
         Download first = new Download(URI.create("https://host-a.test/v.mp4"));
         first.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(first, List.of(), false));
+        assertFalse(OutputNameUniquifier.applyTo(first, List.of()));
         assertNull(first.getRequestedFileName());
 
         Download second = new Download(URI.create("https://host-b.test/v.mp4"));
         second.setDestination(destination);
-        assertTrue(OutputNameUniquifier.applyTo(second, List.of(first), false));
+        assertTrue(OutputNameUniquifier.applyTo(second, List.of(first)));
         assertEquals("v_1.mp4", second.getRequestedFileName());
         assertEquals("v_1.mp4", second.getName());
     }
@@ -71,12 +71,12 @@ class OutputNameUniquifierTest {
         Files.writeString(destination.resolve("v.mp4"), "foreign file");
         Download download = new Download(URI.create("https://host-a.test/v.mp4"));
         download.setDestination(destination);
-        assertTrue(OutputNameUniquifier.applyTo(download, List.of(), false));
+        assertTrue(OutputNameUniquifier.applyTo(download, List.of()));
         assertEquals("v_1.mp4", download.getRequestedFileName());
     }
 
     @Test
-    void overrideClearsDiskButNeverAnotherLiveDownload(@TempDir Path destination) throws Exception {
+    void existingAndLiveOutputsBothForceUniqueNames(@TempDir Path destination) throws Exception {
         Files.writeString(destination.resolve("v.mp4"), "old output");
         Download first = new Download(URI.create("https://host-a.test/v.mp4"));
         first.setDestination(destination);
@@ -84,13 +84,13 @@ class OutputNameUniquifierTest {
 
         Download second = new Download(URI.create("https://host-b.test/v.mp4"));
         second.setDestination(destination);
-        assertTrue(OutputNameUniquifier.applyTo(second, List.of(first), true));
+        assertTrue(OutputNameUniquifier.applyTo(second, List.of(first)));
         assertEquals("v_1.mp4", second.getRequestedFileName());
 
         Download lone = new Download(URI.create("https://host-c.test/v.mp4"));
         lone.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(lone, List.of(), true));
-        assertNull(lone.getRequestedFileName());
+        assertTrue(OutputNameUniquifier.applyTo(lone, List.of()));
+        assertEquals("v_1.mp4", lone.getRequestedFileName());
     }
 
     @Test
@@ -99,7 +99,7 @@ class OutputNameUniquifierTest {
         Download download = new Download(URI.create("https://host-a.test/v.mp4"));
         download.setDestination(destination);
         download.recordOutputPath(partial);
-        assertFalse(OutputNameUniquifier.applyTo(download, List.of(), false));
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of()));
     }
 
     @Test
@@ -107,7 +107,7 @@ class OutputNameUniquifierTest {
         Download download = new Download(URI.create("https://host-a.test/spaced.zip"));
         download.setDestination(destination);
         download.setName("  spaced.zip");
-        assertFalse(OutputNameUniquifier.applyTo(download, List.of(), false));
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of()));
         assertEquals("  spaced.zip", download.getName());
         assertNull(download.getRequestedFileName());
     }
@@ -125,7 +125,7 @@ class OutputNameUniquifierTest {
         sibling.setDestination(otherDestination);
         Download download = new Download(URI.create("https://host-b.test/v.mp4"));
         download.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(download, List.of(sibling), false));
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of(sibling)));
         assertNull(download.getRequestedFileName());
     }
 
@@ -138,7 +138,7 @@ class OutputNameUniquifierTest {
         sibling.setStatus(terminal);
         Download download = new Download(URI.create("https://host-b.test/v.mp4"));
         download.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(download, List.of(sibling), false));
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of(sibling)));
         assertNull(download.getRequestedFileName());
     }
 
@@ -153,22 +153,22 @@ class OutputNameUniquifierTest {
         self.setDestination(destination);
         self.setName("a.zip");
 
-        assertTrue(OutputNameUniquifier.applyTo(self, List.of(sibling), false));
+        assertTrue(OutputNameUniquifier.applyTo(self, List.of(sibling)));
         assertEquals("a_1.zip", self.getName());
     }
 
     @Test
     void nullDestinationAndBlankBaseReturnFalse(@TempDir Path destination) throws Exception {
         Download noDestination = new Download(URI.create("https://host-a.test/v.mp4"));
-        assertFalse(OutputNameUniquifier.applyTo(noDestination, List.of(), false));
+        assertFalse(OutputNameUniquifier.applyTo(noDestination, List.of()));
 
         Download blankBase = new Download();
         blankBase.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(blankBase, List.of(), false));
+        assertFalse(OutputNameUniquifier.applyTo(blankBase, List.of()));
 
         Download fresh = new Download(URI.create("https://host-b.test/w.mp4"));
         fresh.setDestination(destination);
-        assertFalse(OutputNameUniquifier.applyTo(fresh, null, false));
+        assertFalse(OutputNameUniquifier.applyTo(fresh, null));
         assertNull(fresh.getRequestedFileName());
     }
 
@@ -191,6 +191,59 @@ class OutputNameUniquifierTest {
     }
 
     @Test
+    void mediaDisplayNameNeverBecomesALiteralOutput(@TempDir Path destination) throws Exception {
+        Files.writeString(destination.resolve("watch"), "unrelated");
+        Download download = mediaDownload(destination);
+        assertFalse(OutputNameUniquifier.applyTo(download, List.of()));
+        assertNull(download.getRequestedFileName());
+    }
+
+    @Test
+    void mediaReservationProtectsPartialFilesAndEveryPlaylistEntry(@TempDir Path destination) throws Exception {
+        Files.writeString(destination.resolve("second.mp4.part-Frag1"), "unrelated fragment");
+        Files.writeString(destination.resolve("first_1.mp3"), "unrelated audio");
+        Download download = mediaDownload(destination);
+        OutputNameUniquifier.applyToMedia(download, List.of(), List.of("first.webm", "second.mp4"));
+        var settings = (org.ytdlp.YtDlpSettings) download.getSettings();
+        assertEquals(2, settings.getOutputNameCounter());
+        assertEquals(List.of("first_2.webm", "second_2.mp4"), settings.getReservedOutputNames());
+        assertNull(download.getRequestedFileName());
+        assertTrue(download.getOutputPaths().isEmpty(), "reservations are not produced files or deletion authority");
+    }
+
+    @Test
+    void pausedMediaReservationsRemainTakenBeforeAnyOutputExists(@TempDir Path destination) throws Exception {
+        Download first = mediaDownload(destination);
+        OutputNameUniquifier.applyToMedia(first, List.of(), List.of("clip.webm"));
+        first.setStatus(Download.Status.PAUSED);
+        Download second = mediaDownload(destination);
+        OutputNameUniquifier.applyToMedia(second, List.of(first), List.of("clip.mp4"));
+        assertEquals(List.of("clip_1.mp4"),
+                ((org.ytdlp.YtDlpSettings) second.getSettings()).getReservedOutputNames());
+    }
+
+    @Test
+    void scalarDownloadRespectsTheMediaReservationAfterConversion(@TempDir Path destination) {
+        Download media = mediaDownload(destination);
+        OutputNameUniquifier.applyToMedia(media, List.of(), List.of("clip.webm"));
+        media.setStatus(Download.Status.PAUSED);
+        Download file = new Download(URI.create("https://example.test/clip.mp3"));
+        file.setDestination(destination);
+
+        assertTrue(OutputNameUniquifier.applyTo(file, List.of(media)));
+        assertEquals("clip_1.mp3", file.getRequestedFileName(),
+                "a paused audio extraction still owns the converted output before it exists");
+    }
+
+    private static Download mediaDownload(Path destination) {
+        Download download = new Download(URI.create("https://example.test/watch"));
+        download.setType(Download.Type.YOUTUBE);
+        download.setSettings(new org.ytdlp.YtDlpSettings());
+        download.setDestination(destination);
+        return download;
+    }
+
+    @Test
     void concurrentSameNameStartsAlwaysDiverge(@TempDir Path destination) throws Exception {
         Download first = new Download(URI.create("https://host-a.test/v.mp4"));
         first.setDestination(destination);
@@ -201,12 +254,12 @@ class OutputNameUniquifierTest {
             var results = pool.invokeAll(java.util.List.of(
                     () -> {
                         first.prepareUniquifiedOutput(() -> OutputNameUniquifier.applyTo(
-                                first, java.util.List.of(second), false));
+                                first, java.util.List.of(second)));
                         return null;
                     },
                     () -> {
                         second.prepareUniquifiedOutput(() -> OutputNameUniquifier.applyTo(
-                                second, java.util.List.of(first), false));
+                                second, java.util.List.of(first)));
                         return null;
                     }));
             for (var result : results) {

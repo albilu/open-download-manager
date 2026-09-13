@@ -2,12 +2,17 @@ package org.manager.download.handler;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Supplier;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettingsFactory;
+import org.manager.download.OutputNameUniquifier;
 import org.manager.tools.ToolManagerFactory;
 import org.ytdlp.YtDlpToolManager;
 import org.ytdlp.YtDlpDownloadTask;
@@ -25,6 +30,8 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
     private final ConcurrentHashMap<String, YtDlpDownloadTask> activeDownloadTasks;
     private final YtDlpFactory ytDlpFactory;
+    private final Supplier<? extends Collection<Download>> downloads;
+    private final ConcurrentHashMap<String, Download> knownDownloads = new ConcurrentHashMap<>();
 
     /**
      * Creates a new YtDlpDownloadHandler.
@@ -38,7 +45,14 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             DownloadSettingsFactory settingsFactory,
             ExecutorService executor,
             ToolManagerFactory toolManagerFactory) {
+        this(globalSettings, settingsFactory, executor, toolManagerFactory, List::of);
+    }
+
+    public YtDlpDownloadHandler(GlobalSettings globalSettings,
+            DownloadSettingsFactory settingsFactory, ExecutorService executor,
+            ToolManagerFactory toolManagerFactory, Supplier<? extends Collection<Download>> downloads) {
         super(globalSettings, settingsFactory, executor);
+        this.downloads = downloads;
         this.ytDlpFactory = YtDlpFactory.getInstance(globalSettings, toolManagerFactory);
         this.activeDownloadTasks = new ConcurrentHashMap<>();
     }
@@ -82,6 +96,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
         // Clear active tasks
         activeDownloadTasks.clear();
+        knownDownloads.clear();
 
         LOGGER.info("yt-dlp download handler shut down successfully");
     }
@@ -98,9 +113,10 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
                 // Set default destination if none provided
                 setDefaultDestinationIfNeeded(download);
+                knownDownloads.put(download.getId(), download);
 
                 // Override output
-                boolean overrideOutputs = overrideOutputPath(download);
+                boolean overrideOutputs = overrideOutputPath(download) && !globalSettings.isUniquifyOutputName();
 
                 // Set download status to connecting
                 download.setStatus(Download.Status.CONNECTING);
@@ -115,6 +131,10 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     }
                 };
                 settingsFactory.applyGlobalTransferPreferences(settings);
+                if (download.isUniquifiedOutputPreparationPending()) {
+                    settings.setOutputNameCounter(0);
+                    settings.setReservedOutputNames(List.of());
+                }
                 if (download.getRequestedFileName() != null) {
                     settings.setOutputTemplate(download.getRequestedFileName());
                 }
@@ -131,6 +151,16 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         download.getUri().toString(),
                         settings,
                         destinationDir);
+
+                if (globalSettings.isUniquifyOutputName() && download.isUniquifiedOutputPreparationPending()) {
+                    task.setOutputNamePreparation(names -> download.prepareUniquifiedOutput(() -> {
+                        Collection<Download> claimants = new ArrayList<>(downloads.get());
+                        claimants.addAll(knownDownloads.values());
+                        OutputNameUniquifier.applyToMedia(download, claimants, names);
+                    }));
+                } else {
+                    download.prepareUniquifiedOutput(() -> { });
+                }
 
                 // Store the task
                 activeDownloadTasks.put(download.getId(), task);
@@ -149,6 +179,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
                 return download.getId(); // Return download ID as the GID equivalent
             } catch (Exception e) {
+                knownDownloads.remove(download.getId(), download);
                 download.setStatus(Download.Status.ERROR);
                 download.setErrorMessage("Failed to start yt-dlp download: " + e.getMessage());
                 notifyDownloadError(download, download.getErrorMessage());
@@ -160,6 +191,13 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
     @Override
     protected Path initialOutputPath(Download download) {
+        if (globalSettings.getBooleanProperty("ytdlp.skipDownloaded", true)
+                || globalSettings.isUniquifyOutputName() && download.isUniquifiedOutputPreparationPending()) {
+            // yt-dlp checks archive identity before applying its overwrite flags.
+            // Deleting a literal output here would destroy a file it then skips.
+            // Unique names likewise must be resolved before touching any output.
+            return null;
+        }
         // A media page's display name (often "watch") is not its output.
         // yt-dlp resolves generated names before invoking its downloader.
         return download.getRequestedFileName() != null || !download.getOutputPaths().isEmpty()
@@ -240,7 +278,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             // Clean up completed task and reclaim its dedicated
             // client/thread pool; scoped to this exact task so a
             // replacement registration is never removed
-            activeDownloadTasks.remove(download.getId(), task);
+            if (activeDownloadTasks.remove(download.getId(), task)) {
+                knownDownloads.remove(download.getId(), download);
+            }
             ytDlpFactory.removeDownloadTask(download.getId(), task);
         });
     }
@@ -249,6 +289,7 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
         return CompletableFuture.runAsync(() -> {
             YtDlpDownloadTask task = activeDownloadTasks.remove(download.getId());
+            knownDownloads.remove(download.getId(), download);
             if (task != null) {
                 // Cancellation ordering: the cancelled flag lands first and
                 // invalidates progress/terminal callbacks (a late process

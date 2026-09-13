@@ -143,6 +143,9 @@ public class YtDlpSettings extends DownloadSettings {
     /** Empty means yt-dlp's automatic, protocol-aware best-quality choice. */
     private String format = "";
     private String outputTemplate;
+    /** Reserved once after extraction; retained across retries and restored sessions. */
+    private int outputNameCounter;
+    private List<String> reservedOutputNames = List.of();
     private boolean writeThumbnail = false;
     private boolean embedThumbnail = false;
     private boolean embedMetadata = false;
@@ -193,6 +196,27 @@ public class YtDlpSettings extends DownloadSettings {
 
     public String getOutputTemplate() {
         return outputTemplate;
+    }
+
+    public int getOutputNameCounter() {
+        return outputNameCounter;
+    }
+
+    public void setOutputNameCounter(int counter) {
+        if (counter < 0 || counter > 999_999) {
+            throw new IllegalArgumentException("Invalid output name counter");
+        }
+        outputNameCounter = counter;
+    }
+
+    public List<String> getReservedOutputNames() {
+        return reservedOutputNames;
+    }
+
+    public void setReservedOutputNames(List<String> names) {
+        List<String> copy = names == null ? List.of() : List.copyOf(names);
+        copy.forEach(org.manager.util.PathSafety::requireSafeFileName);
+        reservedOutputNames = copy;
     }
 
     public YtDlpSettings setOutputTemplate(String outputTemplate) {
@@ -1220,6 +1244,8 @@ public class YtDlpSettings extends DownloadSettings {
         // Copy YtDlp-specific settings
         copy.format = this.format;
         copy.outputTemplate = this.outputTemplate;
+        copy.outputNameCounter = this.outputNameCounter;
+        copy.reservedOutputNames = this.reservedOutputNames;
         copy.writeThumbnail = this.writeThumbnail;
         copy.embedThumbnail = this.embedThumbnail;
         copy.embedMetadata = this.embedMetadata;

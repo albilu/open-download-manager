@@ -251,7 +251,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 container.getRequired(GlobalSettings.class),
                 container.getRequired(DownloadSettingsFactory.class),
                 executorManager.getGeneralExecutor(),
-                container.getRequired(ToolManagerFactory.class)));
+                container.getRequired(ToolManagerFactory.class), this::getAllDownloads));
 
         // Check dependencies asynchronously
         executorManager.submit(() -> {
@@ -564,13 +564,15 @@ public class DownloadManagerImpl implements DownloadManager {
             // recovered records and mirror updates reuse the stamped name:
             // restored records are never armed (the JSON ctor leaves the flag false). Mirror updates arrive
             // here via updateWebsiteMirror -> startDownload.
-            download.prepareUniquifiedOutput(() -> {
-                GlobalSettings settings = getGlobalSettings();
-                if (settings != null && settings.isUniquifyOutputName()) {
-                    OutputNameUniquifier.applyTo(download, getAllDownloads(),
-                            settings.isOverrideOutputPath());
-                }
-            });
+            // Media names are resolved asynchronously by yt-dlp before its transfer.
+            if (download.getType() != Download.Type.YOUTUBE) {
+                download.prepareUniquifiedOutput(() -> {
+                    GlobalSettings settings = getGlobalSettings();
+                    if (settings != null && settings.isUniquifyOutputName()) {
+                        OutputNameUniquifier.applyTo(download, getAllDownloads());
+                    }
+                });
+            }
 
             // Get the appropriate handler for this download type
             DownloadHandler handler = getHandlerFactory().getHandler(download);

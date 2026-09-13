@@ -845,7 +845,7 @@ public class HttrackSettings extends DownloadSettings {
                 // HTTrack purges old files during updates by default. ODM's
                 // safe default is explicit preservation; removal requires a
                 // separate user choice in the UI.
-                args.add(purgeOldFiles ? "-X1" : "-X0");
+                args.add(purgeOldFiles ? "-X" : "-X0");
             }
         }
         if (!mirrorMode) {

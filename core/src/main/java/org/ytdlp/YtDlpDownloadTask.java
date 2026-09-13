@@ -2,10 +2,13 @@ package org.ytdlp;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,6 +89,12 @@ public class YtDlpDownloadTask {
      * polling task fields from a dedicated monitor thread.
      */
     private volatile ProgressCallback progressListener;
+    private Consumer<List<String>> outputNamePreparation;
+
+    /** First-run naming hook; install before starting the task. */
+    public synchronized void setOutputNamePreparation(Consumer<List<String>> preparation) {
+        outputNamePreparation = preparation;
+    }
 
     /**
      * Installs a receiver for pushed progress events. Call before
@@ -223,7 +232,17 @@ public class YtDlpDownloadTask {
             // collected); the derived downloadFuture below is completed
             // eagerly by cancel(), so awaiting the run future is the only
             // confirmed-completion signal.
-            CompletableFuture<String> run = overrideOutputs
+            CompletableFuture<String> run = outputNamePreparation != null
+                    ? client.download(url, settings, outputPath, callback, processId, overrideOutputs, names -> {
+                        synchronized (YtDlpDownloadTask.this) {
+                            if (cancelled.get() || !isCurrentGeneration(generation)) {
+                                throw new CancellationException();
+                            }
+                            outputNamePreparation.accept(names);
+                            outputNamePreparation = null;
+                        }
+                    })
+                    : overrideOutputs
                     ? client.download(url, settings, outputPath, callback, processId, true)
                     : client.download(url, settings, outputPath, callback, processId);
             runFuture = run;
@@ -314,9 +333,10 @@ public class YtDlpDownloadTask {
      *
      * @return true if paused successfully
      */
-    public boolean pause() {
+    public synchronized boolean pause() {
+        // start() must publish its cancellation key and launch reservation first.
         Status currentStatus = status.get();
-        if (currentStatus != Status.DOWNLOADING) {
+        if (currentStatus != Status.DOWNLOADING && currentStatus != Status.STARTING) {
             return false;
         }
 
