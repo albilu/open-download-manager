@@ -68,7 +68,7 @@ public class MainWindow {
     /** Applicability of selection-scoped context and Download-menu actions. */
     record DownloadSelectionCapabilities(boolean any, boolean single,
             boolean openFile, boolean openFolder, boolean pause, boolean resume,
-            boolean start, boolean copyMagnet, boolean changeDestination,
+            boolean start, boolean copyLinks, boolean changeDestination,
             boolean recheckData, boolean downloadSubtitles, boolean updateMirror,
             boolean openHttrackLog, boolean openHttrackErrorLog, boolean delete,
             boolean deleteWithFiles, boolean properties) {
@@ -1314,6 +1314,7 @@ public class MainWindow {
             contextMenu.dispose();
         }
         DownloadSelectionCapabilities capabilities = selectionCapabilities(selectedDownloads);
+        DownloadLinkCopy linkCopy = DownloadLinkCopy.from(selectedDownloads);
         contextMenu = new PopupMenu()
                 .add("Open", capabilities.openFile(), () -> openSelected("file"))
                 .add("Open Folder", capabilities.openFolder(), () -> openSelected("folder"))
@@ -1322,7 +1323,7 @@ public class MainWindow {
                 .add("Resume", capabilities.resume(), this::onResumeClicked)
                 .add("Start", capabilities.start(), this::startSelectedDownloads)
                 .separator()
-                .add("Copy Magnet URI", capabilities.copyMagnet(), this::copyMagnetUri)
+                .add(linkCopy.label(), capabilities.copyLinks(), this::copyDownloadLinks)
                 .add("Change Destination…", capabilities.changeDestination(), this::changeDestination)
                 .add("Recheck Data", capabilities.recheckData(), this::recheckData)
                 .add("Download Subtitles", capabilities.downloadSubtitles(),
@@ -1343,17 +1344,19 @@ public class MainWindow {
         contextMenu.popupAt(menuBar, downloadsTreeview, x, y);
     }
 
-    /** Copies the selected download's magnet URI (or builds one from its info hash). */
-    private void copyMagnetUri() {
-        String magnet = magnetUri(selectedDownload);
-        if (magnet != null) {
+    /** Copies every selected source or magnet URI, one per line. */
+    private void copyDownloadLinks() {
+        onDownloadSelectionChanged();
+        DownloadLinkCopy linkCopy = DownloadLinkCopy.from(selectedDownloads);
+        if (linkCopy.available()) {
+            String text = linkCopy.text();
             org.manager.clipboard.ClipboardService clipboardService =
                     downloadManager.getClipboardService();
             if (clipboardService != null) {
-                clipboardService.bypassNextMonitoredContent(magnet);
+                clipboardService.bypassNextMonitoredContent(text);
             }
-            downloadsTreeview.getClipboard().setText(magnet);
-            AccessibilitySupport.status(infoLabel, "Magnet URI copied");
+            downloadsTreeview.getClipboard().setText(text);
+            AccessibilitySupport.status(infoLabel, linkCopy.confirmation());
         }
     }
 
@@ -1421,7 +1424,7 @@ public class MainWindow {
                 allSelectedMatch(downloads,
                         download -> download.getStatus() == Download.Status.PAUSED),
                 allSelectedMatch(downloads, MainWindow::canStart),
-                single && magnetUri(only) != null,
+                allSelectedMatch(downloads, download -> DownloadLinkCopy.linkFor(download) != null),
                 single && canChangeDestination(only),
                 allSelectedMatch(downloads, MainWindow::canRecheckData),
                 allSelectedMatch(downloads, MainWindow::canDownloadSubtitles),
@@ -1467,17 +1470,6 @@ public class MainWindow {
         return download != null
                 && download.getStatus() == Download.Status.COMPLETED
                 && download.getType() != Download.Type.WEBSITE_SCRAPING;
-    }
-
-    private static String magnetUri(Download download) {
-        if (download == null) {
-            return null;
-        }
-        if (download.getProtocol() == Download.Protocol.MAGNET && download.getUri() != null) {
-            return download.getUri().toString();
-        }
-        return download.getInfoHash() == null || download.getInfoHash().isBlank()
-                ? null : "magnet:?xt=urn:btih:" + download.getInfoHash();
     }
 
     /** Requests an immediate one-shot data recheck from each selected aria2 item. */

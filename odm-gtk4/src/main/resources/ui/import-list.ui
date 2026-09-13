@@ -213,7 +213,15 @@
             <property name="margin-end">12</property>
             <property name="margin-top">8</property>
             <property name="margin-bottom">12</property>
-            <property name="halign">end</property>
+            <property name="halign">fill</property>
+            <child>
+              <object class="GtkLabel" id="item_count_label">
+                <property name="label">0 of 0 items selected</property>
+                <property name="hexpand">true</property>
+                <property name="xalign">0</property>
+                <style><class name="dim-label"/></style>
+              </object>
+            </child>
             <child>
               <object class="GtkSpinner" id="import_spinnet">
                 <property name="valign">center</property>

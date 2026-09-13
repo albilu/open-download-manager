@@ -54,6 +54,7 @@ public class ImportListDialog {
     private final ListStore extensionFilterStore;
     private final DropDown extensionFilterCombo;
     private final Label diskSpaceLabel;
+    private final Label itemCountLabel;
     private final PathChooserButton destinationChooser;
     private final NetworkOptionControls networkControls;
 
@@ -78,6 +79,7 @@ public class ImportListDialog {
         this.extensionFilterStore = Widgets.require(builder, "extension_filter_store", ListStore.class);
         this.extensionFilterCombo = Widgets.require(builder, "extension_filter_combo", DropDown.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
+        this.itemCountLabel = Widgets.require(builder, "item_count_label", Label.class);
 
         AccessibilitySupport.label(extensionFilterCombo, "Imported URL extension filter");
         AccessibilitySupport.label(Widgets.require(builder, "url_treeview",
@@ -156,7 +158,7 @@ public class ImportListDialog {
                 nv.setBoolean(!current);
                 urlStore.setValue(iter, 0, nv);
                 nv.unset();
-                refreshNetworkCapabilities();
+                refreshSelection();
             }
         });
 
@@ -301,7 +303,7 @@ public class ImportListDialog {
             }
         }
         rebuildExtensionFilter(extensions);
-        refreshNetworkCapabilities();
+        refreshSelection();
         LOGGER.info("Loaded " + candidates.size()
                 + " URLs into import list");
     }
@@ -335,7 +337,7 @@ public class ImportListDialog {
                 nv.unset();
             } while (urlStore.iterNext(iter));
         }
-        refreshNetworkCapabilities();
+        refreshSelection();
     }
 
     private void onImport() {
@@ -381,9 +383,13 @@ public class ImportListDialog {
         return urls;
     }
 
-    private void refreshNetworkCapabilities() {
+    private void refreshSelection() {
+        List<String> selected = markedUrls();
+        int total = urlStore.iterNChildren(null);
+        itemCountLabel.setLabel(selected.size() + " of " + total
+                + (total == 1 ? " item selected" : " items selected"));
         networkControls.applyCapabilities(NetworkOptionControls.commonCapabilities(
-                downloadManager.getGlobalSettings(), markedUrls()));
+                downloadManager.getGlobalSettings(), selected));
     }
 
     private ImportOptions captureOptions() {

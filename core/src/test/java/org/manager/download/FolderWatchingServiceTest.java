@@ -120,13 +120,16 @@ class FolderWatchingServiceTest {
         // the destination directory are the observable contract
         org.mockito.ArgumentCaptor<Path> torrentPath = org.mockito.ArgumentCaptor.forClass(Path.class);
         org.mockito.ArgumentCaptor<Path> torrentDest = org.mockito.ArgumentCaptor.forClass(Path.class);
-        await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
-                verify(downloadManager).createTorrentDownload(torrentPath.capture(), torrentDest.capture()));
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
+            verify(downloadManager).createTorrentDownload(torrentPath.capture(), torrentDest.capture());
+            verify(downloadManager).queueDownloadFromBackgroundSource(any());
+        });
         assertTrue(torrentPath.getValue().getFileName().toString().endsWith("dropped.torrent"),
                 "the dispatched descriptor must be the dropped torrent (possibly staged with a "
                         + "generation prefix), got: " + torrentPath.getValue().getFileName());
         assertEquals(tempDir.resolve("downloads"), torrentDest.getValue());
-        verify(downloadManager).queueDownloadFromBackgroundSource(any());
+        // Wait for the default trash action before temporary-directory cleanup.
+        await().atMost(Duration.ofSeconds(60)).until(() -> Files.notExists(torrent));
 
         service.stopTorrentFolderMonitoring(watch).get(30, TimeUnit.SECONDS);
         assertFalse(service.isTorrentFolderMonitored(watch));
@@ -161,13 +164,16 @@ class FolderWatchingServiceTest {
 
         org.mockito.ArgumentCaptor<URI> metalinkUri = org.mockito.ArgumentCaptor.forClass(URI.class);
         org.mockito.ArgumentCaptor<Path> metalinkDest = org.mockito.ArgumentCaptor.forClass(Path.class);
-        await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
-                verify(downloadManager).createMetaLinkDownload(metalinkUri.capture(), metalinkDest.capture()));
+        await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
+            verify(downloadManager).createMetaLinkDownload(metalinkUri.capture(), metalinkDest.capture());
+            verify(downloadManager).queueDownloadFromBackgroundSource(any());
+        });
         assertTrue(metalinkUri.getValue().getPath().endsWith("dropped.metalink"),
                 "the dispatched descriptor must reference the dropped metalink, got: "
                         + metalinkUri.getValue());
         assertEquals(tempDir.resolve("downloads"), metalinkDest.getValue());
-        verify(downloadManager).queueDownloadFromBackgroundSource(any());
+        // Wait for the default trash action before temporary-directory cleanup.
+        await().atMost(Duration.ofSeconds(60)).until(() -> Files.notExists(metalink));
 
         service.stopMetaLinkFolderMonitoring(watch).get(30, TimeUnit.SECONDS);
     }

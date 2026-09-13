@@ -1126,6 +1126,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "folder_destination", MenuButton.class);
         Widgets.require(builder, "disk_space_label", Label.class);
         Widgets.require(builder, "import_spinnet", Spinner.class);
+        Widgets.require(builder, "item_count_label", Label.class);
         Widgets.require(builder, "cancel_button", Button.class);
         Widgets.require(builder, "validate_button", Button.class);
         assertDiskLabelBelowChooser(builder, "folder_destination", "disk_space_label");
@@ -1156,6 +1157,7 @@ class WindowSmokeTest {
         Widgets.require(builder, "num_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "char_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "preview_treeview", TreeView.class);
+        Widgets.require(builder, "item_count_label", Label.class);
         Widgets.require(builder, "preview_liststore", ListStore.class);
         Widgets.require(builder, "destination_folder", MenuButton.class);
         Widgets.require(builder, "disk_space_label", Label.class);
@@ -1192,6 +1194,203 @@ class WindowSmokeTest {
             parent.close();
             drainGtkEvents();
         }
+    }
+
+    @Test
+    @DisplayName("import counts follow admitted URLs, marks, and extension filters")
+    void importListCountsFollowSelection() throws Exception {
+        var constructor = ImportListDialog.class.getDeclaredConstructor(Window.class,
+                org.manager.download.DownloadManager.class, Runnable.class, List.class,
+                ImportLimits.class);
+        constructor.setAccessible(true);
+        ImportListDialog imported = constructor.newInstance(null, emptyManager(), null,
+                List.of("https://files.test/a.zip", "https://files.test/b.txt",
+                        "https://files.test/c.zip", "https://files.test/a.zip",
+                        "not a URL", "https://files.test/over-limit.zip"),
+                new ImportLimits(3, 1));
+        GtkBuilder builder = dialogBuilder(imported, "builder");
+        Window dialog = Widgets.require(builder, "import_dialog", Window.class);
+        Label count = Widgets.require(builder, "item_count_label", Label.class);
+        var mark = Widgets.require(builder, "mark_renderer", org.gnome.gtk.CellRendererToggle.class);
+        DropDown filter = Widgets.require(builder, "extension_filter_combo", DropDown.class);
+        try {
+            imported.present();
+            drainGtkEvents();
+            assertTrue(count.getMapped());
+            assertEquals("3 of 3 items selected", count.getLabel());
+            mark.emitToggled("0");
+            assertEquals("2 of 3 items selected", count.getLabel());
+
+            filter.setSelected(1); // .zip marks the first and third rows.
+            assertEquals("2 of 3 items selected", count.getLabel());
+            mark.emitToggled("0");
+            mark.emitToggled("2");
+            assertEquals("0 of 3 items selected", count.getLabel());
+            filter.setSelected(0);
+            assertEquals("3 of 3 items selected", count.getLabel());
+
+            Widgets.require(builder, "options_notebook", Notebook.class).setCurrentPage(1);
+            drainGtkEvents();
+            assertTrue(count.getMapped(), "the count remains visible while editing import options");
+        } finally {
+            dialog.destroy();
+            drainGtkEvents();
+        }
+    }
+
+    @Test
+    @DisplayName("sequence counts track valid previews and configured limits")
+    void importSequenceCountsFollowPreview() throws Exception {
+        var settings = new org.manager.GlobalSettings();
+        settings.setProperty(ImportLimits.MAX_URLS_KEY, "3");
+        org.manager.download.DownloadManager manager =
+                (org.manager.download.DownloadManager) java.lang.reflect.Proxy.newProxyInstance(
+                        org.manager.download.DownloadManager.class.getClassLoader(),
+                        new Class<?>[]{org.manager.download.DownloadManager.class},
+                        (proxy, method, args) -> method.getName().equals("getGlobalSettings")
+                                ? settings : defaultValue(method.getReturnType()));
+        ImportSequenceDialog imported = new ImportSequenceDialog(null, manager, null);
+        GtkBuilder builder = dialogBuilder(imported, "builder");
+        Label count = Widgets.require(builder, "item_count_label", Label.class);
+        Entry pattern = Widgets.require(builder, "uri_entry", Entry.class);
+        SpinButton end = Widgets.require(builder, "num_vers_spin", SpinButton.class);
+        ListStore preview = Widgets.require(builder, "preview_liststore", ListStore.class);
+        try {
+            imported.present();
+            assertEquals("0 items", count.getLabel());
+            Widgets.require(builder, "num_start_spin", SpinButton.class).setValue(1);
+            end.setValue(10);
+            Widgets.require(builder, "num_count_spin", SpinButton.class).setValue(100);
+            pattern.setText("https://files.test/{}.zip");
+            awaitGtk(() -> count.getLabel().equals("3 items"), "Limited preview was not counted");
+            assertEquals(3, preview.iterNChildren(null));
+
+            end.setValue(1);
+            assertEquals("0 items", count.getLabel(), "an obsolete preview clears immediately");
+            awaitGtk(() -> count.getLabel().equals("1 item"), "Single-item preview was not counted");
+
+            Widgets.require(builder, "char_entry", Entry.class).setText("a");
+            Widgets.require(builder, "char_vers_entry", Entry.class).setText("z");
+            Widgets.require(builder, "num_combo", DropDown.class).setSelected(1);
+            awaitGtk(() -> count.getLabel().equals("3 items"), "Character preview was not counted");
+
+            // Older asynchronous previews must not restore a count after invalid input.
+            pattern.setText("https://files.test/new-{}.zip");
+            pattern.setText("javascript:{}");
+            awaitGtk(() -> !Widgets.require(builder, "import_sequence_spinner", Spinner.class)
+                    .getSpinning(), "Preview work did not finish");
+            assertEquals("0 items", count.getLabel());
+            assertEquals(0, preview.iterNChildren(null));
+            assertFalse(Widgets.require(builder, "validate_button", Button.class).getSensitive());
+        } finally {
+            imported.close();
+            drainGtkEvents();
+        }
+    }
+
+    private static GtkBuilder dialogBuilder(Object dialog, String fieldName) throws Exception {
+        var field = dialog.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return (GtkBuilder) field.get(dialog);
+    }
+
+    @Test
+    @DisplayName("context copy writes every selected link to the GTK clipboard")
+    void contextCopySupportsMixedSelectionsAndClipboardBypass() throws Exception {
+        String url = "https://files.test/video%20name.mp4?token=a%2Bb";
+        String magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+                + "&dn=My%20release&tr=https%3A%2F%2Ftracker.test%2Fannounce";
+        var downloads = List.of(new org.manager.download.Download(URI.create(url)),
+                new org.manager.download.Download(URI.create(magnet)));
+        AtomicReference<org.manager.clipboard.ClipboardService> clipboardService = new AtomicReference<>();
+        AtomicReference<String> bypassed = new AtomicReference<>();
+        org.manager.download.DownloadManager manager =
+                (org.manager.download.DownloadManager) java.lang.reflect.Proxy.newProxyInstance(
+                        org.manager.download.DownloadManager.class.getClassLoader(),
+                        new Class<?>[]{org.manager.download.DownloadManager.class},
+                        (proxy, method, args) -> switch (method.getName()) {
+                            case "getGlobalSettings" -> new org.manager.GlobalSettings();
+                            case "getDownloads", "getAllDownloads" -> downloads;
+                            case "getDownloadsByStatus", "getDownloadSources",
+                                    "getDownloadTrackers", "getDownloadPeers",
+                                    "getDownloadFiles" -> List.of();
+                            case "getDownloadCount" -> downloads.size();
+                            case "getClipboardService" -> clipboardService.get();
+                            default -> defaultValue(method.getReturnType());
+                        });
+        GdkClipboardMonitor monitor = new GdkClipboardMonitor();
+        clipboardService.set(new org.manager.clipboard.ClipboardService(manager, monitor) {
+            @Override
+            public void bypassNextMonitoredContent(String text) {
+                super.bypassNextMonitoredContent(text);
+                bypassed.set(text);
+            }
+        });
+        MainWindow window = new MainWindow(null, manager, new org.tor.TorService("tor"),
+                new org.manager.schedule.ScheduleManager(manager));
+        GtkBuilder builder = dialogBuilder(window, "uiBuilder");
+        TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+        try {
+            window.present();
+            awaitGtk(() -> tree.getModel().iterNChildren(null) == 2, "Downloads were not presented");
+            tree.getSelection().selectAll();
+            clickContextCopy(window, "Copy Links");
+            assertEquals(url + "\n" + magnet, readClipboard(tree));
+            assertEquals(url + "\n" + magnet, bypassed.get(),
+                    "clipboard monitoring must bypass the complete batch, not just its first URI");
+
+            tree.getSelection().unselectAll();
+            tree.getSelection().selectPath(TreePath.fromString("0"));
+            clickContextCopy(window, "Copy URL");
+            assertEquals(url, readClipboard(tree));
+            assertEquals(url, bypassed.get());
+
+            tree.getSelection().unselectAll();
+            tree.getSelection().selectPath(TreePath.fromString("1"));
+            clickContextCopy(window, "Copy Magnet URI");
+            assertEquals(magnet, readClipboard(tree));
+        } finally {
+            window.dispose();
+            var stopped = monitor.stopMonitoring();
+            awaitGtk(stopped::isDone, "Clipboard monitor did not stop");
+            stopped.join();
+            drainGtkEvents();
+        }
+    }
+
+    private static void clickContextCopy(MainWindow window, String label) throws Exception {
+        var show = MainWindow.class.getDeclaredMethod("showContextMenuAt", int.class, int.class);
+        show.setAccessible(true);
+        show.invoke(window, 0, 0);
+        var field = MainWindow.class.getDeclaredField("contextMenu");
+        field.setAccessible(true);
+        PopupMenu menu = (PopupMenu) field.get(window);
+        for (Widget item = menu.getPopover().getChild().getFirstChild(); item != null;
+                item = item.getNextSibling()) {
+            if (item instanceof Button button && button.getChild() instanceof Label text
+                    && label.equals(text.getLabel())) {
+                assertTrue(button.getSensitive(), label + " should be enabled");
+                button.emitClicked();
+                return;
+            }
+        }
+        throw new AssertionError("Context menu did not contain " + label);
+    }
+
+    private static String readClipboard(Widget owner) throws Exception {
+        AtomicReference<String> text = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        var clipboard = owner.getClipboard();
+        clipboard.readTextAsync(null, result -> {
+            try {
+                text.set(clipboard.readTextFinish(result));
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        });
+        awaitGtk(() -> text.get() != null || failure.get() != null, "Clipboard read did not complete");
+        assertNull(failure.get());
+        return text.get();
     }
 
     @Test

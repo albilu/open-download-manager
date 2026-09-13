@@ -54,6 +54,7 @@ public class ImportSequenceDialog {
     private final DropDown charModeCombo;
     private final ListStore previewStore;
     private final Label diskSpaceLabel;
+    private final Label itemCountLabel;
     private final PathChooserButton destinationChooser;
     private final Button validateButton;
     private final SpinnerActivity activity;
@@ -89,6 +90,7 @@ public class ImportSequenceDialog {
         this.charModeCombo = Widgets.require(builder, "char_combo", DropDown.class);
         this.previewStore = Widgets.require(builder, "preview_liststore", ListStore.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
+        this.itemCountLabel = Widgets.require(builder, "item_count_label", Label.class);
         this.validateButton = Widgets.require(builder, "validate_button", Button.class);
         this.activity = new SpinnerActivity(
                 Widgets.require(builder, "import_sequence_spinner", Spinner.class));
@@ -258,6 +260,7 @@ public class ImportSequenceDialog {
         SequenceInput input = sequenceInput();
         previewStore.clear();
         currentPreviewUrls = List.of();
+        itemCountLabel.setLabel("0 items");
         validateButton.setSensitive(false);
         activity.track(CompletableFuture.supplyAsync(
                 () -> DownloadSubmission.validUrls(input.generate(importLimits.maxUrls()),
@@ -273,6 +276,7 @@ public class ImportSequenceDialog {
                     }
                     currentPreviewUrls = List.copyOf(urls);
                     appendPreview(urls);
+                    itemCountLabel.setLabel(urls.size() + (urls.size() == 1 ? " item" : " items"));
                     networkControls.applyCapabilities(
                             NetworkOptionControls.commonCapabilities(
                                     downloadManager.getGlobalSettings(), urls));

@@ -30,7 +30,7 @@ class MainWindowSelectionCapabilitiesTest {
         assertFalse(capabilities.single());
         assertFalse(capabilities.openFile());
         assertFalse(capabilities.openFolder());
-        assertFalse(capabilities.copyMagnet());
+        assertTrue(capabilities.copyLinks());
         assertFalse(capabilities.changeDestination());
         assertTrue(capabilities.downloadSubtitles());
         assertTrue(capabilities.delete());
@@ -66,7 +66,7 @@ class MainWindowSelectionCapabilitiesTest {
 
         assertTrue(completedCapabilities.openFile());
         assertTrue(completedCapabilities.openFolder());
-        assertTrue(completedCapabilities.copyMagnet());
+        assertTrue(completedCapabilities.copyLinks());
         assertTrue(completedCapabilities.changeDestination());
         assertTrue(completedCapabilities.downloadSubtitles());
 
