@@ -16,19 +16,21 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,25 +42,25 @@ import org.manager.download.Download;
 import org.manager.download.DownloadListener;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.tor.TorService;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import utils.SocksHttpServer;
 
 /**
- * Integration tests for ProxychainsClient that avoid mocking critical
- * components
- * like Process and ProcessBuilder, but use mock HTTP servers for external
- * dependencies.
+ * Integration tests using real proxychains and aria2 processes, a loopback
+ * SOCKS5 endpoint, and deterministic local HTTP responses. The .invalid host
+ * makes successful transfers depend on the configured proxy and remote DNS.
  */
 @DisplayName("ProxychainsClient Integration Tests")
 @EnabledOnOs({ OS.LINUX, OS.MAC }) // proxychains is primarily available on Unix-like systems
 class ProxychainsClientTest {
 
     private static final String TEST_PROXYCHAINS_PATH = "proxychains4";
-    private static final String TEST_CONFIG_PATH = "/etc/proxychains4.conf";
-    private static final TorService torService = new TorService("tor");
+    private static final String TEST_HOST = "downloads.odm.invalid";
+    private static final int LARGE_FILE_CHUNK_SIZE = 16 * 1024;
+    private static final int LARGE_FILE_CHUNKS = 64;
 
     @Mock
     private DownloadListener mockListener;
@@ -69,23 +71,27 @@ class ProxychainsClientTest {
     private ProxychainsClient client;
     private AutoCloseable mocks;
     private HttpServer mockServer;
+    private ExecutorService serverExecutor;
+    private SocksHttpServer proxy;
     private String mockServerUrl;
     private String testFileContent;
 
     @BeforeEach
-    void setUp() throws IOException {
+    void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
 
-        // Setup mock HTTP server for external dependencies
         setupMockServer();
-
-        // Try to create client - will skip tests if proxychains not available
-        try {
-            client = new ProxychainsClient(TEST_PROXYCHAINS_PATH, TEST_CONFIG_PATH);
-        } catch (RuntimeException e) {
-            // proxychains not available - tests will be skipped
-            client = null;
-        }
+        proxy = new SocksHttpServer(mockServer.getAddress());
+        Path config = tempDir.resolve("proxychains.conf");
+        Files.writeString(config, """
+                strict_chain
+                proxy_dns
+                tcp_read_time_out 5000
+                tcp_connect_time_out 5000
+                [ProxyList]
+                socks5 127.0.0.1 %d
+                """.formatted(proxy.port()));
+        client = new ProxychainsClient(TEST_PROXYCHAINS_PATH, config.toString());
     }
 
     @AfterEach
@@ -93,32 +99,27 @@ class ProxychainsClientTest {
         if (client != null) {
             client.shutdown();
         }
+        if (proxy != null) {
+            proxy.close();
+        }
         if (mockServer != null) {
-            mockServer.stop(1);
+            mockServer.stop(0);
+        }
+        if (serverExecutor != null) {
+            serverExecutor.shutdownNow();
+            assertTrue(serverExecutor.awaitTermination(5, TimeUnit.SECONDS), "HTTP fixture should stop");
         }
         if (mocks != null) {
             mocks.close();
         }
     }
 
-    @BeforeAll
-    static void startTorService() {
-        // Tor bootstrap needs the live Tor network and is flaky in CI
-        // sandboxes: abort the class when it is unavailable instead of
-        // failing every test on an environment limitation.
-        Assumptions.assumeTrue(torService.start().join(),
-                "Tor network bootstrap unavailable; aborting proxychains client tests");
-    }
-
-    @AfterAll
-    static void stopTorService() {
-        assertTrue(torService.stop());
-    }
-
     private void setupMockServer() throws IOException {
-        mockServer = HttpServer.create(new InetSocketAddress(0), 0);
+        mockServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        serverExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        mockServer.setExecutor(serverExecutor);
         int port = mockServer.getAddress().getPort();
-        mockServerUrl = "http://localhost:" + port;
+        mockServerUrl = "http://" + TEST_HOST + ":" + port;
 
         // Create test file content
         testFileContent = "This is test file content for download testing.\n".repeat(1000);
@@ -127,7 +128,7 @@ class ProxychainsClientTest {
         mockServer.createContext("/test-file.zip", new HttpHandler() {
             @Override
             public void handle(HttpExchange exchange) throws IOException {
-                byte[] content = testFileContent.getBytes();
+                byte[] content = testFileContent.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
                 exchange.getResponseHeaders().set("Content-Length", String.valueOf(content.length));
                 exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"test-file.zip\"");
@@ -142,9 +143,9 @@ class ProxychainsClientTest {
         mockServer.createContext("/large-file.bin", new HttpHandler() {
             @Override
             public void handle(HttpExchange exchange) throws IOException {
-                byte[] chunk = new byte[1024]; // 1KB chunks
+                byte[] chunk = new byte[LARGE_FILE_CHUNK_SIZE];
                 java.util.Arrays.fill(chunk, (byte) 'A');
-                int totalChunks = 100; // 100KB total
+                int totalChunks = LARGE_FILE_CHUNKS;
 
                 exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
                 exchange.getResponseHeaders().set("Content-Length", String.valueOf(chunk.length * totalChunks));
@@ -155,8 +156,9 @@ class ProxychainsClientTest {
                         os.write(chunk);
                         os.flush();
                         try {
-                            Thread.sleep(10); // Simulate slow download
+                            Thread.sleep(100); // Outlast aria2's 1-second progress interval.
                         } catch (InterruptedException ignored) {
+                            Thread.currentThread().interrupt();
                             break;
                         }
                     }
@@ -186,6 +188,7 @@ class ProxychainsClientTest {
                         try {
                             Thread.sleep(60);
                         } catch (InterruptedException ignored) {
+                            Thread.currentThread().interrupt();
                             break;
                         }
                     }
@@ -202,6 +205,31 @@ class ProxychainsClientTest {
             }
         });
 
+        CountDownLatch concurrentRequests = new CountDownLatch(2);
+        Set<String> requestedPaths = ConcurrentHashMap.newKeySet();
+        mockServer.createContext("/concurrent/", exchange -> {
+            if (requestedPaths.add(exchange.getRequestURI().getPath())) {
+                concurrentRequests.countDown();
+            }
+            try {
+                if (!concurrentRequests.await(15, TimeUnit.SECONDS)) {
+                    exchange.sendResponseHeaders(504, -1);
+                    exchange.close();
+                    return;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                exchange.close();
+                return;
+            }
+            byte[] content = (testFileContent + exchange.getRequestURI().getPath())
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, content.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(content);
+            }
+        });
+
         mockServer.start();
     }
 
@@ -214,32 +242,42 @@ class ProxychainsClientTest {
         return download;
     }
 
+    private void assertProxiedTransfer() {
+        assertTrue(proxy.hosts.contains(TEST_HOST), "The transfer must use the local SOCKS5 proxy");
+        assertTrue(proxy.failures.isEmpty(), () -> "SOCKS fixture failures: " + proxy.failures);
+    }
+
+    private CountDownLatch expectTransferProgress() {
+        CountDownLatch progressLatch = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            float progress = invocation.getArgument(1);
+            long downloadedBytes = invocation.getArgument(2);
+            long totalBytes = invocation.getArgument(3);
+            if (progress > 0 && progress < 100 && downloadedBytes > 0 && downloadedBytes < totalBytes) {
+                progressLatch.countDown();
+            }
+            return null;
+        }).when(mockListener).onDownloadProgress(any(Download.class), anyFloat(), anyLong(), anyLong(), anyFloat());
+        return progressLatch;
+    }
+
     @Test
     @DisplayName("Should create client with defaults")
     void shouldCreateClientWithDefaults() {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         assertNotNull(client);
 
         // Test alternative constructor
+        ProxychainsClient defaultClient = new ProxychainsClient();
         try {
-            ProxychainsClient defaultClient = new ProxychainsClient();
             assertNotNull(defaultClient);
+        } finally {
             defaultClient.shutdown();
-        } catch (RuntimeException e) {
-            // Expected if proxychains not available
         }
     }
 
     @Test
     @DisplayName("Should validate proxychains installation")
     void shouldValidateProxychainsInstallation() {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         // If we got here, validation passed during construction
         assertNotNull(client);
     }
@@ -255,10 +293,6 @@ class ProxychainsClientTest {
     @Test
     @DisplayName("Should create temp config")
     void shouldCreateTempConfig() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         Path tempConfig = client.createTempConfig("socks5", "127.0.0.1", 9050);
         assertNotNull(tempConfig);
         assertTrue(Files.exists(tempConfig));
@@ -276,11 +310,7 @@ class ProxychainsClientTest {
     @DisplayName("Should start download with proper command execution")
     @Timeout(30)
     void shouldStartDownloadWithProperCommand() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
-        Download download = createTestDownload("test-file.zip", "https://httpbin.org/bytes/1024");
+        Download download = createTestDownload("test-file.zip", mockServerUrl + "/test-file.zip");
 
         CountDownLatch completeLatch = new CountDownLatch(1);
         AtomicBoolean downloadStarted = new AtomicBoolean(false);
@@ -301,10 +331,11 @@ class ProxychainsClientTest {
         options.put("aria2.max-connection-per-server", "2");
         options.put("aria2.split", "2");
 
-        client.startDownload(download, mockListener, options);
+        client.startDownload(download, mockListener, options).get(10, TimeUnit.SECONDS);
 
         // Wait for download to complete or timeout
-        assertTrue(completeLatch.await(25, TimeUnit.SECONDS), "Download should complete within timeout");
+        assertTrue(completeLatch.await(25, TimeUnit.SECONDS),
+                () -> "Download should complete: " + download.getStatus() + " " + download.getErrorMessage());
 
         assertTrue(downloadStarted.get(), "Download should have started");
         assertTrue(downloadCompleted.get(), "Download should have completed");
@@ -313,9 +344,8 @@ class ProxychainsClientTest {
         Path downloadedFile = tempDir.resolve("test-file.zip");
         assertTrue(Files.exists(downloadedFile), "Downloaded file should exist");
 
-        // String downloadedContent = Files.readString(downloadedFile);
-        // assertEquals(testFileContent, downloadedContent, "Downloaded content should
-        // match");
+        assertEquals(testFileContent, Files.readString(downloadedFile), "Downloaded content should match");
+        assertProxiedTransfer();
     }
 
     @Test
@@ -323,42 +353,31 @@ class ProxychainsClientTest {
     @Timeout(45)
     void shouldParseAria2Progress() throws Exception {
 
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
+        Download download = createTestDownload("large-file.bin", mockServerUrl + "/large-file.bin");
 
-        Download download = createTestDownload("large-file.bin", "https://ash-speed.hetzner.com/100MB.bin");
-
-        CountDownLatch progressLatch = new CountDownLatch(1);
-        AtomicBoolean progressReceived = new AtomicBoolean(false);
-
+        CountDownLatch progressLatch = expectTransferProgress();
+        CountDownLatch completeLatch = new CountDownLatch(1);
         doAnswer(invocation -> {
-            float progress = invocation.getArgument(1);
-
-            if (progress > 0) {
-                progressReceived.set(true);
-                progressLatch.countDown();
-            }
+            completeLatch.countDown();
             return null;
-        }).when(mockListener).onDownloadProgress(any(Download.class), anyFloat(), anyLong(), anyLong(), anyFloat());
+        }).when(mockListener).onDownloadComplete(any(Download.class));
 
         Map<String, String> options = new HashMap<>();
-        client.startDownload(download, mockListener, options);
+        client.startDownload(download, mockListener, options).get(10, TimeUnit.SECONDS);
 
         // Wait for progress updates
-        assertTrue(progressLatch.await(40, TimeUnit.SECONDS), "Should receive progress updates");
-        assertTrue(progressReceived.get(), "Should have received progress updates");
-
+        assertTrue(progressLatch.await(15, TimeUnit.SECONDS),
+                () -> "Should receive progress during transfer: " + download.getStatus() + " " + download.getErrorMessage());
+        assertTrue(completeLatch.await(15, TimeUnit.SECONDS), "Download should complete after reporting progress");
+        assertEquals("A".repeat(LARGE_FILE_CHUNK_SIZE * LARGE_FILE_CHUNKS),
+                Files.readString(tempDir.resolve("large-file.bin")));
+        assertProxiedTransfer();
     }
 
     @Test
     @DisplayName("Should handle download errors")
     @Timeout(20)
     void shouldHandleDownloadErrors() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         Download download = createTestDownload("error-file.zip", mockServerUrl + "/error");
 
         CountDownLatch errorLatch = new CountDownLatch(1);
@@ -377,20 +396,19 @@ class ProxychainsClientTest {
         // Wait for error
         assertTrue(errorLatch.await(15, TimeUnit.SECONDS), "Should receive error callback");
         assertNotNull(errorMessage.get(), "Should have error message");
+        assertEquals(Download.Status.ERROR, download.getStatus());
+        assertProxiedTransfer();
     }
 
     @Test
     @DisplayName("Should pause download")
     @Timeout(20)
     void shouldPauseDownload() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
-        Download download = createTestDownload("pause-test.bin", "https://ash-speed.hetzner.com/100MB.bin");
+        Download download = createTestDownload("pause-test.bin", mockServerUrl + "/large-file.bin");
 
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch pauseLatch = new CountDownLatch(1);
+        CountDownLatch progressLatch = expectTransferProgress();
 
         doAnswer(invocation -> {
             startLatch.countDown();
@@ -408,8 +426,7 @@ class ProxychainsClientTest {
         // Wait for download to start
         assertTrue(startLatch.await(10, TimeUnit.SECONDS), "Download should start");
 
-        // Allow some download progress
-        Thread.sleep(1000);
+        assertTrue(progressLatch.await(10, TimeUnit.SECONDS), "Download should transfer bytes before pausing");
 
         // Pause the download
         client.pauseDownload(download, mockListener);
@@ -424,13 +441,10 @@ class ProxychainsClientTest {
     @DisplayName("Should resume download")
     @Timeout(30)
     void shouldResumeDownload() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
-        Download download = createTestDownload("resume-test.bin", "https://ash-speed.hetzner.com/100MB.bin");
+        Download download = createTestDownload("resume-test.bin", mockServerUrl + "/large-file.bin");
 
         CountDownLatch resumeLatch = new CountDownLatch(1);
+        CountDownLatch progressLatch = expectTransferProgress();
 
         doAnswer(invocation -> {
             resumeLatch.countDown();
@@ -440,11 +454,11 @@ class ProxychainsClientTest {
         // Start download
         Map<String, String> options = new HashMap<>();
         client.startDownload(download, mockListener, options);
-        Thread.sleep(500);
+        assertTrue(progressLatch.await(10, TimeUnit.SECONDS), "Download should transfer bytes before pausing");
 
         // Pause it
         client.pauseDownload(download, mockListener);
-        Thread.sleep(500);
+        assertEquals(Download.Status.PAUSED, download.getStatus());
 
         // Resume it
         client.resumeDownload(download, mockListener, options);
@@ -457,13 +471,10 @@ class ProxychainsClientTest {
     @DisplayName("Should cancel download and delete file")
     @Timeout(20)
     void shouldCancelDownloadAndDeleteFile() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         Download download = createTestDownload("cancel-test.bin", mockServerUrl + "/large-file.bin");
 
         CountDownLatch cancelLatch = new CountDownLatch(1);
+        CountDownLatch progressLatch = expectTransferProgress();
 
         doAnswer(invocation -> {
             cancelLatch.countDown();
@@ -473,10 +484,11 @@ class ProxychainsClientTest {
         Map<String, String> options = new HashMap<>();
         client.startDownload(download, mockListener, options);
 
-        // Allow some download progress
-        Thread.sleep(1000);
+        assertTrue(progressLatch.await(10, TimeUnit.SECONDS), "Download should transfer bytes before cancellation");
 
         Path partialFile = tempDir.resolve("cancel-test.bin");
+        // aria2 may still buffer the received bytes in memory before cancellation.
+        assertTrue(Files.exists(partialFile), "A partial file must exist before cancellation");
 
         // Cancel with file deletion
         client.cancelDownload(download, mockListener, true);
@@ -494,13 +506,10 @@ class ProxychainsClientTest {
     @DisplayName("Should cancel download without deleting file")
     @Timeout(20)
     void shouldCancelDownloadWithoutDeletingFile() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         Download download = createTestDownload("cancel-no-delete.bin", mockServerUrl + "/large-file.bin");
 
         CountDownLatch cancelLatch = new CountDownLatch(1);
+        CountDownLatch progressLatch = expectTransferProgress();
 
         doAnswer(invocation -> {
             cancelLatch.countDown();
@@ -510,8 +519,7 @@ class ProxychainsClientTest {
         Map<String, String> options = new HashMap<>();
         client.startDownload(download, mockListener, options);
 
-        // Allow some download progress
-        Thread.sleep(1000);
+        assertTrue(progressLatch.await(10, TimeUnit.SECONDS), "Download should transfer bytes before cancellation");
 
         // Cancel without file deletion
         client.cancelDownload(download, mockListener, false);
@@ -520,23 +528,24 @@ class ProxychainsClientTest {
         assertTrue(cancelLatch.await(15, TimeUnit.SECONDS), "Should receive cancel callback");
 
         assertEquals(Download.Status.CANCELED, download.getStatus(), "Download should be canceled");
+        assertTrue(Files.size(tempDir.resolve("cancel-no-delete.bin")) > 0, "The partial file should be preserved");
     }
 
     @Test
     @DisplayName("Should handle concurrent downloads")
     @Timeout(60)
     void shouldHandleConcurrentDownloads() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
-        Download download1 = createTestDownload("concurrent1.zip", "https://httpbin.org/bytes/1024");
-        Download download2 = createTestDownload("concurrent2.zip", "https://httpbin.org/bytes/2048");
+        Download download1 = createTestDownload("concurrent1.zip", mockServerUrl + "/concurrent/1");
+        Download download2 = createTestDownload("concurrent2.zip", mockServerUrl + "/concurrent/2");
 
         CountDownLatch completeLatch = new CountDownLatch(2);
+        Set<String> completedIds = ConcurrentHashMap.newKeySet();
 
         doAnswer(invocation -> {
-            completeLatch.countDown();
+            Download completed = invocation.getArgument(0);
+            if (completedIds.add(completed.getId())) {
+                completeLatch.countDown();
+            }
             return null;
         }).when(mockListener).onDownloadComplete(any(Download.class));
 
@@ -547,27 +556,29 @@ class ProxychainsClientTest {
         client.startDownload(download2, mockListener, options);
 
         // Wait for both to complete
-        assertTrue(completeLatch.await(45, TimeUnit.SECONDS), "Both downloads should complete");
+        assertTrue(completeLatch.await(45, TimeUnit.SECONDS),
+                () -> "Both downloads should complete: " + download1.getStatus() + " " + download1.getErrorMessage()
+                        + "; " + download2.getStatus() + " " + download2.getErrorMessage());
 
         // Verify both files exist
         assertTrue(Files.exists(tempDir.resolve("concurrent1.zip")), "First file should exist");
         assertTrue(Files.exists(tempDir.resolve("concurrent2.zip")), "Second file should exist");
+        assertEquals(testFileContent + "/concurrent/1", Files.readString(tempDir.resolve("concurrent1.zip")));
+        assertEquals(testFileContent + "/concurrent/2", Files.readString(tempDir.resolve("concurrent2.zip")));
+        assertEquals(Set.of(download1.getId(), download2.getId()), completedIds);
+        assertProxiedTransfer();
     }
 
     @Test
     @DisplayName("Should shutdown gracefully")
     void shouldShutdownGracefully() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         Download download = createTestDownload("shutdown-test.bin", mockServerUrl + "/large-file.bin");
+        CountDownLatch progressLatch = expectTransferProgress();
 
         Map<String, String> options = new HashMap<>();
         client.startDownload(download, mockListener, options);
 
-        // Allow download to start
-        Thread.sleep(500);
+        assertTrue(progressLatch.await(10, TimeUnit.SECONDS), "Download should transfer bytes before shutdown");
 
         // Shutdown should complete without hanging
         assertDoesNotThrow(() -> client.shutdown());
@@ -579,28 +590,14 @@ class ProxychainsClientTest {
         // Test static method
         boolean available = ProxychainsClient.isProxychainsAvailable();
 
-        if (client == null) {
-            // proxychains not available - static method should return false
-            assertFalse(available);
-
-            // Verify construction fails
-            assertThrows(RuntimeException.class, () -> {
-                new ProxychainsClient("nonexistent-proxychains", null);
-            });
-        } else {
-            // proxychains available - static method should return true
-            assertTrue(available);
-            assertNotNull(client);
-        }
+        assertTrue(available);
+        assertNotNull(client);
+        assertThrows(RuntimeException.class, () -> new ProxychainsClient("nonexistent-proxychains", null));
     }
 
     @Test
     @DisplayName("Should handle invalid download parameters")
     void shouldHandleInvalidDownloadParameters() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
         // Test 1: null download
         CountDownLatch errorLatch1 = new CountDownLatch(1);
         AtomicReference<String> errorMessage1 = new AtomicReference<>();
@@ -648,24 +645,6 @@ class ProxychainsClientTest {
     @DisplayName("Should parse different speed formats correctly")
     @Timeout(60)
     void shouldParseDifferentSpeedFormats() throws Exception {
-        if (client == null) {
-            return; // Skip if proxychains not available
-        }
-
-        // Hermetic: deterministic chunked payload from the local mock
-        // server (no WAN dependency, no flaky remote throughput). tor's
-        // exit policy refuses loopback targets, so a dedicated config
-        // exempts 127.0.0.0/8 from the proxy chain — proxychains itself
-        // stays in the execution path, only the localhost hop goes direct.
-        Path localConfig = tempDir.resolve("proxychains-local.conf");
-        Files.writeString(localConfig, """
-                strict_chain
-                localnet 127.0.0.0/255.0.0.0
-                [ProxyList]
-                socks4 127.0.0.1 9050
-                """);
-        ProxychainsClient localClient = new ProxychainsClient(TEST_PROXYCHAINS_PATH, localConfig.toString());
-
         Download download = createTestDownload("speed-test.bin", mockServerUrl + "/speed-test.bin");
 
         int requiredProgressSamples = 3;
@@ -688,19 +667,16 @@ class ProxychainsClientTest {
         }).when(mockListener).onDownloadComplete(any(Download.class));
 
         Map<String, String> options = new HashMap<>();
-        try {
-            localClient.startDownload(download, mockListener, options);
+        client.startDownload(download, mockListener, options).get(10, TimeUnit.SECONDS);
 
-            assertTrue(progressLatch.await(40, TimeUnit.SECONDS),
-                    "Should receive distinct progress updates with positive speed");
-            assertTrue(completeLatch.await(40, TimeUnit.SECONDS), "Download should complete within timeout");
+        assertTrue(progressLatch.await(20, TimeUnit.SECONDS),
+                "Should receive distinct progress updates with positive speed");
+        assertTrue(completeLatch.await(20, TimeUnit.SECONDS), "Download should complete within timeout");
 
-            Path downloadedFile = tempDir.resolve("speed-test.bin");
-            assertTrue(Files.exists(downloadedFile), "Downloaded file should exist");
-            assertEquals(128L * 1024 * 80, Files.size(downloadedFile),
-                    "The full deterministic payload must be downloaded");
-        } finally {
-            localClient.shutdown();
-        }
+        Path downloadedFile = tempDir.resolve("speed-test.bin");
+        assertTrue(Files.exists(downloadedFile), "Downloaded file should exist");
+        assertEquals(128L * 1024 * 80, Files.size(downloadedFile),
+                "The full deterministic payload must be downloaded");
+        assertProxiedTransfer();
     }
 }

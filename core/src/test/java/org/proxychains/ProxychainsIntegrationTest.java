@@ -261,50 +261,57 @@ class ProxychainsIntegrationTest {
 
     @Test
     @DisplayName("Should handle download lifecycle with proper state management")
-    void shouldHandleDownloadLifecycleWithProperStateManagement() {
+    void shouldHandleDownloadLifecycleWithProperStateManagement() throws Exception {
         handler = new ProxychainsDownloadHandler(mockGlobalSettings, mockSettingsFactory, executorService, ApplicationContext.getToolManagerFactory());
         handler.addDownloadListener(mockListener);
 
         assertDoesNotThrow(() -> handler.initialize().join());
 
-        // Create test download
-        URI testUri = URI.create("https://httpbin.org/bytes/1024");
-        Download download = new Download(testUri);
-        download.setDestination(tempDir);
-        download.setName("test-file.bin");
-        download.setType(Download.Type.PROXYCHAINS);
+        // Hold the response open so completion cannot race the lifecycle assertions.
+        try (var proxy = new utils.SocksHttpServer(false, "lifecycle payload", new CountDownLatch(1))) {
+            URI testUri = URI.create("http://lifecycle.odm.invalid/test-file.bin");
+            Download download = new Download(testUri);
+            download.setDestination(tempDir);
+            download.setName("test-file.bin");
+            download.setType(Download.Type.PROXYCHAINS);
+            download.setProxyAddress("socks5h://127.0.0.1:" + proxy.port());
+            download.setUseProxy(true);
 
-        // Set up download options
-        Map<String, String> options = new HashMap<>();
-        options.put("aria2.max-connection-per-server", "1");
-        options.put("aria2.split", "1");
-        handler.setDownloadOptions(download.getId(), options);
+            // Set up download options
+            Map<String, String> options = new HashMap<>();
+            options.put("aria2.max-connection-per-server", "1");
+            options.put("aria2.split", "1");
+            handler.setDownloadOptions(download.getId(), options);
 
-        // Start download (will likely fail due to no proxy, but we're testing the flow)
-        handler.startDownload(download);
+            handler.startDownload(download).get(10, TimeUnit.SECONDS);
 
-        // Verify download type was set
-        assertEquals(Download.Type.PROXYCHAINS, download.getType());
+            // Verify download type was set
+            assertEquals(Download.Type.PROXYCHAINS, download.getType());
 
-        // Verify download is tracked as active
-        Awaitility.await()
-                .atMost(10, TimeUnit.SECONDS)
-                .until(() -> handler.getActiveDownloadCount() == 1);
-        assertTrue(handler.isActive(download.getId()));
-        // assertEquals(1, handler.getActiveDownloadCount());
+            Awaitility.await()
+                    .atMost(10, TimeUnit.SECONDS)
+                    .until(() -> proxy.hosts.contains("lifecycle.odm.invalid"));
+            assertTrue(handler.isActive(download.getId()));
+            assertEquals(1, handler.getActiveDownloadCount());
+            assertEquals(Download.Status.DOWNLOADING, download.getStatus());
 
-        // Test pause functionality. (No doNothing() stubbing here: a mock's
-        // default behavior is already a no-op, and mid-test stubbing races
-        // the handler thread's asynchronous listener notifications, which
-        // Mockito reports as "Unfinished stubbing".)
-        handler.pauseDownload(download);
+            // Test pause functionality. (No doNothing() stubbing here: a mock's
+            // default behavior is already a no-op, and mid-test stubbing races
+            // the handler thread's asynchronous listener notifications, which
+            // Mockito reports as "Unfinished stubbing".)
+            handler.pauseDownload(download).get(10, TimeUnit.SECONDS);
+            assertEquals(Download.Status.PAUSED, download.getStatus());
 
-        // Test resume functionality
-        download.setStatus(Download.Status.PAUSED);
-        handler.resumeDownload(download);
+            // Test resume functionality
+            handler.resumeDownload(download).get(10, TimeUnit.SECONDS);
+            assertEquals(Download.Status.DOWNLOADING, download.getStatus());
+            assertTrue(handler.isActive(download.getId()));
 
-        // Test cancellation
-        handler.cancelDownload(download, false);
+            // Test cancellation
+            handler.cancelDownload(download, false).get(10, TimeUnit.SECONDS);
+            assertEquals(Download.Status.CANCELED, download.getStatus());
+            assertEquals(0, handler.getActiveDownloadCount());
+        }
     }
 
     @Test
@@ -550,7 +557,7 @@ class ProxychainsIntegrationTest {
 
     @Test
     @DisplayName("Should handle cleanup and resource management")
-    void shouldHandleCleanupAndResourceManagement() throws IOException {
+    void shouldHandleCleanupAndResourceManagement() throws Exception {
         // Create resources that need cleanup
         Path tempConfigFile = config.createTempConfig();
         assertTrue(Files.exists(tempConfigFile));
@@ -560,27 +567,28 @@ class ProxychainsIntegrationTest {
 
         assertDoesNotThrow(() -> handler.initialize().join());
 
-        // Start some downloads
-        for (int i = 0; i < 3; i++) {
-            Download download = new Download(URI.create("https://example.com/file" + i + ".zip"));
-            download.setDestination(tempDir);
-            download.setType(Download.Type.PROXYCHAINS);
-            handler.startDownload(download);
+        try (var proxy = new utils.SocksHttpServer(false, "cleanup payload", new CountDownLatch(1))) {
+            // Keep all three real transfers open until shutdown.
+            for (int i = 0; i < 3; i++) {
+                Download download = new Download(URI.create("http://cleanup.odm.invalid/file" + i + ".zip"));
+                download.setDestination(tempDir);
+                download.setType(Download.Type.PROXYCHAINS);
+                download.setProxyAddress("socks5h://127.0.0.1:" + proxy.port());
+                download.setUseProxy(true);
+                handler.startDownload(download).get(10, TimeUnit.SECONDS);
+            }
+
+            Awaitility.await()
+                    .atMost(10, TimeUnit.SECONDS)
+                    .until(() -> proxy.hosts.size() == 3);
+            assertEquals(3, handler.getActiveDownloadCount());
+
+            // Shutdown should clean up all resources
+            handler.shutdown().get(10, TimeUnit.SECONDS);
+
+            // Verify cleanup
+            assertEquals(0, handler.getActiveDownloadCount());
         }
-
-        Awaitility.await()
-                .atMost(10, TimeUnit.SECONDS)
-                .until(() -> handler.getActiveDownloadCount() == 3);
-        // assertEquals(3, handler.getActiveDownloadCount());
-
-        // Shutdown should clean up all resources
-        handler.shutdown();
-
-        // Verify cleanup
-        Awaitility.await()
-                .atMost(5, TimeUnit.SECONDS)
-                .until(() -> handler.getActiveDownloadCount() == 0);
-        // assertEquals(0, handler.getActiveDownloadCount());
 
         // Verify we can create new handler after shutdown
         ExecutorService newExecutor = Executors.newCachedThreadPool();

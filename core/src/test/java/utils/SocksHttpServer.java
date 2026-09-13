@@ -3,15 +3,17 @@ package utils;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Loopback SOCKS5 endpoint that serves HTTP itself; no public DNS or upstream connection. */
+/** Loopback SOCKS5 endpoint serving HTTP itself or forwarding to a local HTTP fixture. */
 public final class SocksHttpServer implements AutoCloseable {
     private final ServerSocket server;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
@@ -20,14 +22,36 @@ public final class SocksHttpServer implements AutoCloseable {
     public final List<Throwable> failures = new CopyOnWriteArrayList<>();
     private final boolean authenticate;
     private final byte[] body;
+    private final InetSocketAddress upstream;
+    private final CountDownLatch responseReady;
 
     public SocksHttpServer(boolean authenticate, String body) throws Exception {
         this(authenticate, body.getBytes(StandardCharsets.UTF_8));
     }
 
     public SocksHttpServer(boolean authenticate, byte[] body) throws Exception {
+        this(authenticate, body, null, null);
+    }
+
+    /** Keeps transfers active until the test releases the response or closes the fixture. */
+    public SocksHttpServer(boolean authenticate, String body, CountDownLatch responseReady) throws Exception {
+        this(authenticate, body.getBytes(StandardCharsets.UTF_8), null, responseReady);
+    }
+
+    /** Routes every requested host to the given loopback HTTP server without resolving it. */
+    public SocksHttpServer(InetSocketAddress upstream) throws Exception {
+        this(false, null, upstream, null);
+    }
+
+    private SocksHttpServer(boolean authenticate, byte[] body, InetSocketAddress upstream,
+            CountDownLatch responseReady) throws Exception {
+        if (upstream != null && (upstream.isUnresolved() || !upstream.getAddress().isLoopbackAddress())) {
+            throw new IllegalArgumentException("The HTTP fixture must be on loopback");
+        }
         this.authenticate = authenticate;
         this.body = body;
+        this.upstream = upstream;
+        this.responseReady = responseReady;
         server = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
         workers.submit(() -> {
             while (!server.isClosed()) {
@@ -75,8 +99,30 @@ public final class SocksHttpServer implements AutoCloseable {
             out.write(new byte[] {5, 0, 0, 1, 127, 0, 0, 1, 0, 80});
             out.flush();
             BufferedReader request = new BufferedReader(new InputStreamReader(in, StandardCharsets.US_ASCII));
+            StringBuilder headers = new StringBuilder();
             String line;
-            while ((line = request.readLine()) != null && !line.isEmpty()) { }
+            while ((line = request.readLine()) != null && !line.isEmpty()) {
+                if (!line.regionMatches(true, 0, "Connection:", 0, "Connection:".length())) {
+                    headers.append(line).append("\r\n");
+                }
+            }
+            if (responseReady != null) {
+                responseReady.await();
+            }
+            if (upstream != null) {
+                // These fixtures receive GET/HEAD requests. Closing the upstream
+                // connection bounds the response copy even with HTTP/1.1 servers.
+                headers.append("Connection: close\r\n\r\n");
+                try (Socket target = new Socket()) {
+                    target.connect(upstream, 5_000);
+                    target.setSoTimeout(10_000);
+                    target.getOutputStream().write(headers.toString().getBytes(StandardCharsets.US_ASCII));
+                    target.getOutputStream().flush();
+                    target.getInputStream().transferTo(out);
+                    out.flush();
+                }
+                return;
+            }
             byte[] payload = body;
             out.write(("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: "
                     + payload.length + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
