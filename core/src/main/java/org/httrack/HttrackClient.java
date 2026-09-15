@@ -46,6 +46,8 @@ public class HttrackClient {
             "Bytes\\s+received:\\s+(\\d+)");
     private static final Pattern RATE_PATTERN = Pattern.compile(
             "Transfer\\s+rate:\\s+(\\d+)\\s+bytes/sec");
+    private static final Pattern CONNECTION_PATTERN = Pattern.compile(
+            "Active connections:\\s*(\\d+)(?=\\s|$)");
     /** Strips the VT100 escapes httrack emits in verbose status lines. */
     private static final Pattern ANSI_PATTERN = Pattern.compile("\u001B\\[[0-9;]*[A-Za-z]");
     /** "Files written: N" summary line; 0 written + errors = total failure. */
@@ -425,9 +427,40 @@ public class HttrackClient {
         return command;
     }
 
+    private static List<String> lineBufferedCommand(List<String> command) {
+        // HTTrack block-buffers its status display when stdout is a pipe.
+        // Without line buffering, a small mirror can finish before any live
+        // telemetry reaches the monitor. Keep stdbuf outside proxychains so
+        // proxychains initializes its SOCKS/DNS interception only in HTTrack.
+        String stdbuf = findStdbuf();
+        if (stdbuf == null) {
+            // Platforms without GNU coreutils retain normal HTTrack output.
+            return command;
+        }
+        List<String> buffered = new ArrayList<>(List.of(stdbuf, "-oL"));
+        buffered.addAll(command);
+        return buffered;
+    }
+
+    private static String findStdbuf() {
+        String path = System.getenv("PATH");
+        if (path == null) {
+            return null;
+        }
+        for (String directory : path.split(Pattern.quote(java.io.File.pathSeparator))) {
+            if (!directory.isBlank()) {
+                Path executable = Path.of(directory, "stdbuf");
+                if (Files.isRegularFile(executable) && Files.isExecutable(executable)) {
+                    return executable.toString();
+                }
+            }
+        }
+        return null;
+    }
+
     PreparedCommand prepareCommand(HttrackSettings settings) throws IOException {
         if (!settings.isUseProxy()) {
-            return new PreparedCommand(buildCommand(settings), null);
+            return new PreparedCommand(lineBufferedCommand(buildCommand(settings)), null);
         }
         String proxy = org.manager.tools.NetworkProcessPolicy.proxyAddress(settings.proxyWithCredentials());
         if (proxy.startsWith("https://")) {
@@ -437,7 +470,7 @@ public class HttrackClient {
             throw new IllegalArgumentException("An enabled proxy requires an address");
         }
         if (!org.manager.download.handler.DownloadHandlerFactory.isSocksProxyAddress(proxy)) {
-            return new PreparedCommand(buildCommand(settings), null);
+            return new PreparedCommand(lineBufferedCommand(buildCommand(settings)), null);
         }
         // Older packaged HTTrack versions lack native SOCKS. Use the same
         // mandatory SOCKS/DNS route as the other proxychains downloads.
@@ -448,7 +481,7 @@ public class HttrackClient {
         Path configFile = config.createTempConfig();
         command.add(configFile.toString());
         command.addAll(buildCommand(nativeSettings));
-        return new PreparedCommand(command, configFile);
+        return new PreparedCommand(lineBufferedCommand(command), configFile);
     }
 
     record PreparedCommand(List<String> arguments, Path configFile) implements AutoCloseable {
@@ -473,7 +506,16 @@ public class HttrackClient {
             int filesWritten = 0;
 
             while ((line = reader.readLine()) != null && !Thread.currentThread().isInterrupted()) {
-                parseProgressLine(line, job);
+                boolean connectionsChanged;
+                synchronized (this) {
+                    if (job.getStatus() != HttrackJob.Status.RUNNING
+                            || activeProcesses.get(job.getJobId()) != process) {
+                        return;
+                    }
+                    int previousConnections = job.getConnectionCount();
+                    parseProgressLine(line, job);
+                    connectionsChanged = previousConnections != job.getConnectionCount();
+                }
 
                 // httrack exits 0 even when the whole mirror failed (e.g.
                 // unresolvable host); " error - " entries in the (ANSI
@@ -489,20 +531,30 @@ public class HttrackClient {
 
                 // Throttle progress updates
                 long currentTime = System.currentTimeMillis();
-                if (currentTime - lastUpdateTime > 1000) {
-                    notifyJobProgress(job);
+                if (connectionsChanged || currentTime - lastUpdateTime > 1000) {
+                    synchronized (this) {
+                        if (job.getStatus() == HttrackJob.Status.RUNNING
+                                && activeProcesses.get(job.getJobId()) == process) {
+                            notifyJobProgress(job);
+                        }
+                    }
                     lastUpdateTime = currentTime;
                 }
             }
 
             // Wait for process completion
             int exitCode = process.waitFor();
-            handleProcessCompletion(exitCode, job, sawErrors && filesWritten == 0);
+            synchronized (this) {
+                if (activeProcesses.get(job.getJobId()) == process) {
+                    handleProcessCompletion(exitCode, job, sawErrors && filesWritten == 0);
+                }
+            }
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             synchronized (this) {
-                if (job.getStatus() != HttrackJob.Status.PAUSED
+                if (activeProcesses.get(job.getJobId()) == process
+                        && job.getStatus() != HttrackJob.Status.PAUSED
                         && job.getStatus() != HttrackJob.Status.CANCELED) {
                     job.setStatus(HttrackJob.Status.CANCELED);
                     notifyJobCanceled(job);
@@ -513,14 +565,14 @@ public class HttrackClient {
             // already paused/canceled (intentionally destroyed process)
             synchronized (this) {
                 if (Thread.currentThread().isInterrupted() || job.getStatus() == HttrackJob.Status.PAUSED
-                        || job.getStatus() == HttrackJob.Status.CANCELED) {
+                        || job.getStatus() == HttrackJob.Status.CANCELED
+                        || activeProcesses.get(job.getJobId()) != process) {
                     return;
                 }
+                job.setStatus(HttrackJob.Status.ERROR);
+                job.setErrorMessage("IO error during monitoring: " + e.getMessage());
+                notifyJobError(job, e.getMessage());
             }
-
-            job.setStatus(HttrackJob.Status.ERROR);
-            job.setErrorMessage("IO error during monitoring: " + e.getMessage());
-            notifyJobError(job, e.getMessage());
         } finally {
             // Generation-safe cleanup: a monitor for a replaced run (resume
             // raced it) must not unregister the newer process under the key
@@ -530,7 +582,16 @@ public class HttrackClient {
         }
     }
 
-    private void parseProgressLine(String line, HttrackJob job) {
+    static void parseProgressLine(String line, HttrackJob job) {
+        line = ANSI_PATTERN.matcher(line).replaceAll("");
+        Matcher connections = CONNECTION_PATTERN.matcher(line);
+        if (connections.find()) {
+            try {
+                job.setConnectionCount(Integer.parseInt(connections.group(1)));
+            } catch (NumberFormatException ignored) {
+                // Ignore an invalid count without interrupting the mirror.
+            }
+        }
         // Parse progress information from httrack output
         Matcher progressMatcher = PROGRESS_PATTERN.matcher(line);
         if (progressMatcher.find()) {

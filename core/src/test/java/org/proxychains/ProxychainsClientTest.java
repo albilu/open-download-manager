@@ -253,7 +253,9 @@ class ProxychainsClientTest {
             float progress = invocation.getArgument(1);
             long downloadedBytes = invocation.getArgument(2);
             long totalBytes = invocation.getArgument(3);
-            if (progress > 0 && progress < 100 && downloadedBytes > 0 && downloadedBytes < totalBytes) {
+            Download active = invocation.getArgument(0);
+            if (progress > 0 && progress < 100 && downloadedBytes > 0 && downloadedBytes < totalBytes
+                    && active.getConnectionCount() > 0) {
                 progressLatch.countDown();
             }
             return null;
@@ -369,6 +371,7 @@ class ProxychainsClientTest {
         assertTrue(progressLatch.await(15, TimeUnit.SECONDS),
                 () -> "Should receive progress during transfer: " + download.getStatus() + " " + download.getErrorMessage());
         assertTrue(completeLatch.await(15, TimeUnit.SECONDS), "Download should complete after reporting progress");
+        assertEquals(0, download.getConnectionCount(), "completed transfers have no active connections");
         assertEquals("A".repeat(LARGE_FILE_CHUNK_SIZE * LARGE_FILE_CHUNKS),
                 Files.readString(tempDir.resolve("large-file.bin")));
         assertProxiedTransfer();
@@ -435,6 +438,7 @@ class ProxychainsClientTest {
         assertTrue(pauseLatch.await(10, TimeUnit.SECONDS), "Should receive pause callback");
 
         assertEquals(Download.Status.PAUSED, download.getStatus(), "Download should be paused");
+        assertEquals(0, download.getConnectionCount());
     }
 
     @Test
@@ -459,6 +463,7 @@ class ProxychainsClientTest {
         // Pause it
         client.pauseDownload(download, mockListener);
         assertEquals(Download.Status.PAUSED, download.getStatus());
+        assertEquals(0, download.getConnectionCount());
 
         // Resume it
         client.resumeDownload(download, mockListener, options);
@@ -497,6 +502,7 @@ class ProxychainsClientTest {
         assertTrue(cancelLatch.await(15, TimeUnit.SECONDS), "Should receive cancel callback");
 
         assertEquals(Download.Status.CANCELED, download.getStatus(), "Download should be canceled");
+        assertEquals(0, download.getConnectionCount());
 
         // File should be deleted
         assertFalse(Files.exists(partialFile), "Partial file should be deleted");
@@ -582,6 +588,7 @@ class ProxychainsClientTest {
 
         // Shutdown should complete without hanging
         assertDoesNotThrow(() -> client.shutdown());
+        assertEquals(0, download.getConnectionCount());
     }
 
     @Test

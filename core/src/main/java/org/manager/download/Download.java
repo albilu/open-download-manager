@@ -171,7 +171,7 @@ public class Download {
     private final DownloadSpeedHistory speedHistory = new DownloadSpeedHistory();
     private volatile float progress; // 0-100
     private volatile float uploadSpeed; // current upload speed in bytes/second (BitTorrent)
-    private volatile int connections; // current connection count (aria2)
+    private volatile int connections; // current connection count reported by the engine
     private volatile int seeders; // connected seeder count (BitTorrent)
     private volatile String infoHash; // BitTorrent info hash, when applicable
     private volatile int queuePosition; // position in the download queue (lower = earlier)

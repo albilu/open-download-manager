@@ -95,6 +95,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                 if (download == null || download.getUri() == null) {
                     throw new IllegalArgumentException("Invalid download or URI is null");
                 }
+                download.setConnectionCount(0);
 
                 // Set default destination if none provided
                 setDefaultDestinationIfNeeded(download);
@@ -294,6 +295,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             public void onJobStarted(HttrackJob job) {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
+                    download.setConnectionCount(0);
                     download.setStatus(Download.Status.DOWNLOADING);
                     LOGGER.info("Httrack job started: " + job.getJobId() + " for download " + download.getId());
                 }
@@ -307,6 +309,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
                     download.setSpeed(job.getTransferRate());
                     download.setSize(job.getTotalBytes());
                     download.setDownloaded(job.getBytesDownloaded());
+                    download.setConnectionCount(job.getConnectionCount());
 
                     // Notify progress
                     notifyDownloadProgress(download, job.getProgress(),
@@ -319,6 +322,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             public void onJobCompleted(HttrackJob job) {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
+                    download.setConnectionCount(0);
                     download.setStatus(Download.Status.COMPLETED);
                     download.setDownloaded(job.getBytesDownloaded());
                     download.setSize(job.getTotalBytes());
@@ -336,6 +340,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             public void onJobPaused(HttrackJob job) {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
+                    download.setConnectionCount(0);
                     download.setStatus(Download.Status.PAUSED);
                     LOGGER.info("Httrack job paused: " + job.getJobId() + " for download " + download.getId());
                 }
@@ -345,6 +350,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             public void onJobResumed(HttrackJob job) {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
+                    download.setConnectionCount(0);
                     download.setStatus(Download.Status.DOWNLOADING);
                     notifyDownloadResume(download);
                     LOGGER.info("Httrack job resumed: " + job.getJobId() + " for download " + download.getId());
@@ -355,6 +361,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             public void onJobCanceled(HttrackJob job) {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
+                    download.setConnectionCount(0);
                     download.setStatus(Download.Status.CANCELED);
 
                     // Clean up mappings
@@ -369,6 +376,7 @@ public class HttrackDownloadHandler extends AbstractDownloadHandler {
             public void onJobError(HttrackJob job, String errorMessage) {
                 Download download = jobToDownloadMap.get(job.getJobId());
                 if (download != null) {
+                    download.setConnectionCount(0);
                     download.setStatus(Download.Status.ERROR);
                     download.setErrorMessage(errorMessage);
                     notifyDownloadError(download, errorMessage);

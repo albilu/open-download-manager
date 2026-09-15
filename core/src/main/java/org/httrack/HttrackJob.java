@@ -36,6 +36,7 @@ public class HttrackJob {
     private final AtomicLong totalBytes;
     private volatile float progress;
     private volatile int transferRate; // bytes per second
+    private volatile int connectionCount;
 
     // Error tracking
     private volatile String errorMessage;
@@ -102,6 +103,15 @@ public class HttrackJob {
         return status.get();
     }
 
+    /** Current sockets reported by HTTrack, independent of its configured limit. */
+    public int getConnectionCount() {
+        return status.get() == Status.RUNNING ? connectionCount : 0;
+    }
+
+    public void setConnectionCount(int count) {
+        connectionCount = Math.max(0, count);
+    }
+
     /**
      * Sets the job status.
      *
@@ -109,6 +119,9 @@ public class HttrackJob {
      */
     public void setStatus(Status newStatus) {
         Status oldStatus = this.status.getAndSet(newStatus);
+        if (oldStatus != newStatus) {
+            connectionCount = 0;
+        }
 
         // Update timestamps based on status change
         if (oldStatus != Status.RUNNING && newStatus == Status.RUNNING) {

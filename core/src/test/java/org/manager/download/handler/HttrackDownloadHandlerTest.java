@@ -318,16 +318,64 @@ class HttrackDownloadHandlerTest {
         var listeners = (List<org.httrack.HttrackClient.HttrackNotificationListener>)
                 listenersField.get(clientField.get(handler));
         job.setTotalFiles(123);
+        job.setStatus(org.httrack.HttrackJob.Status.RUNNING);
+        job.setConnectionCount(3);
         job.setFilesDownloaded(42);
         job.setBytesDownloaded(4096);
         listeners.forEach(listener -> listener.onJobProgress(job));
         assertEquals(4096, download.getDownloaded());
+        assertEquals(3, download.getConnectionCount());
         assertEquals(0, download.getSize(), "unknown total bytes remain unknown");
         job.setTotalBytes(8192);
         job.setBytesDownloaded(8192);
         listeners.forEach(listener -> listener.onJobCompleted(job));
         assertEquals(8192, download.getSize());
         assertEquals(8192, download.getDownloaded());
+        assertEquals(0, download.getConnectionCount());
+    }
+
+    @Test
+    void reportsTheRealMirrorsActiveConnectionsAndClearsThemOnCompletion() throws Exception {
+        try (MockWebServer slowSite = new MockWebServer()) {
+            slowSite.setDispatcher(new okhttp3.mockwebserver.Dispatcher() {
+                @Override
+                public MockResponse dispatch(okhttp3.mockwebserver.RecordedRequest request) {
+                    if ("/index.html".equals(request.getPath())) {
+                        return new MockResponse().setHeader("Content-Type", "text/html")
+                                .setBody("<html><a href='payload.bin'>payload</a></html>");
+                    }
+                    if (!"/payload.bin".equals(request.getPath())) {
+                        return new MockResponse().setResponseCode(404);
+                    }
+                    return new MockResponse().setHeader("Content-Type", "application/octet-stream")
+                            .setBody("x".repeat(64 * 1024))
+                            .throttleBody(4096, 200, TimeUnit.MILLISECONDS);
+                }
+            });
+            slowSite.start(java.net.InetAddress.getByName("127.0.0.1"), 0);
+            Download download = new Download(URI.create(
+                    "http://127.0.0.1:" + slowSite.getPort() + "/index.html"));
+            download.setName("connection-count-mirror");
+            download.setDestination(tempDir);
+            download.setType(Download.Type.WEBSITE_SCRAPING);
+            download.setSettings(new HttrackSettings().setDepth(2).setConnections(4));
+
+            var observed = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+            handler.getHttrackClient().addNotificationListener(new org.httrack.HttrackClient.HttrackNotificationListener() {
+                @Override public void onJobProgress(org.httrack.HttrackJob job) {
+                    observed.add(job.getConnectionCount());
+                }
+            });
+
+            handler.startDownload(download).get(10, TimeUnit.SECONDS);
+            org.awaitility.Awaitility.await().atMost(15, TimeUnit.SECONDS)
+                    .untilAsserted(() -> assertEquals(1, download.getConnectionCount(),
+                            "Native job observations: " + observed));
+            assertEquals(4, download.getConnections(), "actual sockets differ from the limit");
+            org.awaitility.Awaitility.await().atMost(15, TimeUnit.SECONDS)
+                    .until(() -> download.getStatus() == Download.Status.COMPLETED);
+            assertEquals(0, download.getConnectionCount());
+        }
     }
 
 }

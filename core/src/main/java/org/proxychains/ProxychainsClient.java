@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -197,6 +198,7 @@ public class ProxychainsClient {
                 return CompletableFuture.failedFuture(new CancellationException("Download was stopped before launch"));
             }
             launch = activeProcesses.reserve(download.getId());
+            download.setConnectionCount(0);
             download.setStatus(Download.Status.CONNECTING);
             activeDownloads.put(download.getId(), download);
             CompletableFuture<String> previous = launchFutures.put(download.getId(), started);
@@ -208,6 +210,7 @@ public class ProxychainsClient {
         // Start download in a separate thread
         try {
             executorService.submit(() -> {
+                ConnectionProgress connections = new ConnectionProgress();
                 Process process = null;
                 Path generatedConfig = null;
                 org.manager.tools.ExternalProcessRegistry.Registration registration = null;
@@ -287,8 +290,8 @@ public class ProxychainsClient {
                                 // Per-line tool output at 1+ lines/second: FINE
                                 LOGGER.debug("[ARIA2 STDERR]: " + line);
                                 synchronized (download) {
-                                    if (!launch.isCancelled()) {
-                                        processAria2Output(line, download, listener);
+                                    if (!launch.isCancelled() && download.getStatus() == Download.Status.DOWNLOADING) {
+                                        processAria2Output(line, download, listener, connections);
                                     }
                                 }
                             }
@@ -307,8 +310,8 @@ public class ProxychainsClient {
                             // Per-line tool output at 1+ lines/second: FINE
                             LOGGER.debug("[ARIA2 STDOUT]: " + line);
                             synchronized (download) {
-                                if (!launch.isCancelled()) {
-                                    processAria2Output(line, download, listener);
+                                if (!launch.isCancelled() && download.getStatus() == Download.Status.DOWNLOADING) {
+                                    processAria2Output(line, download, listener, connections);
                                 }
                             }
                         }
@@ -321,6 +324,7 @@ public class ProxychainsClient {
                         if (launch.isCancelled()) {
                             return;
                         }
+                        download.setConnectionCount(0);
 
                         // Handle process completion
                         if (exitCode == 0) {
@@ -358,6 +362,7 @@ public class ProxychainsClient {
                         if (e instanceof InterruptedException) {
                             Thread.currentThread().interrupt();
                         }
+                        download.setConnectionCount(0);
                         if (download.compareAndSetStatus(Download.Status.DOWNLOADING,
                                 Download.Status.ERROR)
                                 || download.compareAndSetStatus(Download.Status.CONNECTING,
@@ -652,6 +657,7 @@ public class ProxychainsClient {
             // Graceful terminate (SIGTERM: aria2c saves its control file),
             // escalating to a hard kill if it ignores the signal
             activeProcesses.terminate(download.getId(), 5);
+            download.setConnectionCount(0);
             CompletableFuture<String> pending = launchFutures.get(download.getId());
             if (pending != null) pending.completeExceptionally(new CancellationException("Download paused"));
 
@@ -670,9 +676,12 @@ public class ProxychainsClient {
      * this deliberately emits no pause or cancellation callback.
      */
     public void stopForRouteChange(Download download) {
-        activeProcesses.terminate(download.getId(), 5);
-        gidMap.remove(download.getId());
-        activeDownloads.remove(download.getId());
+        synchronized (download) {
+            activeProcesses.terminate(download.getId(), 5);
+            download.setConnectionCount(0);
+            gidMap.remove(download.getId());
+            activeDownloads.remove(download.getId());
+        }
     }
 
     /**
@@ -700,6 +709,7 @@ public class ProxychainsClient {
         synchronized (download) {
             download.setStatus(Download.Status.CANCELED);
             activeProcesses.terminate(download.getId(), 5);
+            download.setConnectionCount(0);
             CompletableFuture<String> pending = launchFutures.get(download.getId());
             if (pending != null) pending.completeExceptionally(new CancellationException("Download canceled"));
 
@@ -745,7 +755,9 @@ public class ProxychainsClient {
      */
     public void shutdown() {
         // Stop all active processes (SIGTERM -> bounded wait -> SIGKILL)
+        List<Download> stopping = List.copyOf(activeDownloads.values());
         activeProcesses.terminateAll(5);
+        stopping.forEach(download -> download.setConnectionCount(0));
         launchFutures.values().forEach(future -> future.completeExceptionally(
                 new CancellationException("Download client shut down")));
         launchFutures.clear();
@@ -809,7 +821,9 @@ public class ProxychainsClient {
      * @param download The download being processed
      * @param listener The download listener
      */
-    private void processAria2Output(String line, Download download, DownloadListener listener) {
+    void processAria2Output(String line, Download download, DownloadListener listener,
+            ConnectionProgress connections) {
+        boolean connectionsChanged = connections.update(line, download);
         // Check for GID assignment
         if (line.contains("GID")) {
             String gid = extractGid(line);
@@ -871,6 +885,53 @@ public class ProxychainsClient {
                 listener.onDownloadProgress(download, progress,
                         downloadedBytes, totalBytes, speed);
             }
+        } else if (connectionsChanged && listener != null) {
+            // Seeding and unknown-size transfers have no percentage tuple.
+            listener.onDownloadProgress(download, download.getProgress(),
+                    download.getDownloaded(), download.getSize(), download.getSpeed());
+        }
+    }
+
+    /** Per-process telemetry; readers serialize updates on the download lock. */
+    static final class ConnectionProgress {
+        private static final Pattern CONNECTION_PATTERN = Pattern.compile(
+                "\\[#([0-9a-f]+)\\s[^\\[\\]\\r\\n]*?\\sCN:(\\d+)(?=\\s|\\]|$)");
+        private final Map<String, Integer> counts = new HashMap<>();
+        private Map<String, Integer> summary;
+
+        boolean update(String line, Download download) {
+            if (line.stripLeading().startsWith("*** Download Progress Summary")) {
+                summary = new HashMap<>();
+                return false;
+            }
+            boolean reported = false;
+            if (summary != null && line.isBlank()) {
+                // Each summary lists all active GIDs. Replace the snapshot to
+                // discard completed metadata/payload GIDs without double counting
+                // the same GID in the summary and ordinary console readout.
+                counts.clear();
+                counts.putAll(summary);
+                summary = null;
+                reported = true;
+            }
+            Matcher matcher = CONNECTION_PATTERN.matcher(line);
+            while (matcher.find()) {
+                try {
+                    (summary != null ? summary : counts).put(matcher.group(1),
+                            Integer.parseInt(matcher.group(2)));
+                    reported = true;
+                } catch (NumberFormatException ignored) {
+                    // Malformed tool output must not terminate the transfer.
+                }
+            }
+            if (!reported || summary != null) {
+                return false;
+            }
+            long total = counts.values().stream().mapToLong(Integer::longValue).sum();
+            int count = (int) Math.min(Integer.MAX_VALUE, total);
+            boolean changed = count != download.getConnectionCount();
+            download.setConnectionCount(count);
+            return changed;
         }
     }
 
