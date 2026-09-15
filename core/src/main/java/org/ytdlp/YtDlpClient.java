@@ -937,8 +937,10 @@ public class YtDlpClient {
             }
             if (launch.isCancelled()) { throw new CancellationException(); }
             if (process.exitValue() != 0) {
-                throw new MediaExtractionException("yt-dlp metadata command failed with exit code "
-                        + process.exitValue());
+                var diagnostics = new org.manager.tools.ProcessDiagnostics();
+                output.toString().lines().forEach(diagnostics::addLine);
+                throw new MediaExtractionException(diagnostics.message(
+                        "yt-dlp metadata command failed with exit code " + process.exitValue()));
             }
             return output.toString();
         } finally {
@@ -1057,7 +1059,7 @@ public class YtDlpClient {
                 String filename = null;
                 var completedFilenames = new LinkedHashSet<String>();
                 int skipped = 0;
-                String reportedError = null;
+                var diagnostics = new org.manager.tools.ProcessDiagnostics();
                 if (callback != null) { callback.onSkipped(0); }
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
@@ -1098,8 +1100,9 @@ public class YtDlpClient {
 
                         // Check for errors
                         if (line.contains("ERROR:") || line.startsWith("yt-dlp: error:")) {
-                            reportedError = line;
-                            if (callback != null) { callback.onError(line); }
+                            // A playlist or fragment worker can keep going
+                            // after an error. Terminal callbacks wait for exit.
+                            diagnostics.addLine(line);
                         }
                     }
                 }
@@ -1130,31 +1133,34 @@ public class YtDlpClient {
                     LOGGER.info("yt-dlp download completed successfully");
                     return filename;
                 } else {
-                    String error = "yt-dlp failed with exit code: " + exitCode
-                            + (reportedError == null ? "" : "\n" + reportedError);
-                    if (callback != null) {
-                        callback.onError(error);
-                    }
-                    throw new RuntimeException(error);
+                    throw new RuntimeException(diagnostics.message("yt-dlp failed with exit code: " + exitCode));
                 }
 
             } catch (CancellationException e) {
                 throw e;
             } catch (Exception e) {
-                if (launch.isCancelled()) {
+                boolean cancelled = launch.isCancelled();
+                // Parser, callback or stream failures can occur before exit.
+                // Stop that process before reporting a terminal failure.
+                if (registration != null && registration.process().isAlive()) {
+                    registration.terminate(5);
+                }
+                if (cancelled) {
                     throw new CancellationException("yt-dlp download was cancelled");
                 }
-                LOGGER.error("Download failed", e);
+                String error = org.manager.tools.ProcessDiagnostics.failureMessage(e);
+                LOGGER.debug("yt-dlp process {} failed: {}", processId, error);
                 if (callback != null) {
-                    callback.onError(e.getMessage());
+                    callback.onError(error);
                 }
-                throw new RuntimeException("Download failed: " + e.getMessage(), e);
+                throw new RuntimeException(error, e);
             } finally {
                 if (archive != null) {
                     try { archive.close(); }
                     catch (Exception error) { LOGGER.error("Could not save media archive; retained at " + archive.path(), error); }
                 }
                 if (registration != null) {
+                    if (registration.process().isAlive()) { registration.terminate(5); }
                     registration.unregister();
                 } else {
                     launch.unregister();

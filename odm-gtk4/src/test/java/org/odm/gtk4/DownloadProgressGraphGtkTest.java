@@ -61,6 +61,18 @@ class DownloadProgressGraphGtkTest {
             assertEquals("Speed: 0 B/s", label(builder, "info_speed_value"));
             assertEquals("Average: 1 KB/s", label(builder, "info_average_speed_value"));
 
+            for (Download.Status status : List.of(Download.Status.COMPLETED, Download.Status.SEEDING)) {
+                download.setStatus(status);
+                graph.update(download);
+                assertEquals("Max speed: 2 KB/s", label(builder, "info_speed_value"));
+                assertTrue(Widgets.require(builder, "info_progress_bar", DrawingArea.class)
+                        .getTooltipText().contains("Max speed: 2 KB/s"));
+            }
+            download.setStatus(Download.Status.DOWNLOADING);
+            download.setSpeed(1024);
+            graph.update(download);
+            assertEquals("Speed: 1 KB/s", label(builder, "info_speed_value"));
+
             graph.update(download());
             assertEquals("Average: —", label(builder, "info_average_speed_value"));
             graph.update(null);
@@ -80,7 +92,7 @@ class DownloadProgressGraphGtkTest {
         original.setStatus(Download.Status.COMPLETED);
         original.setSpeedHistoryState(new DownloadSpeedHistory.State(1, List.of(
                 new DownloadSpeedHistory.Sample(1000, 1000, 1024),
-                new DownloadSpeedHistory.Sample(2000, 4267, 2048)), 1000, 1_536_000));
+                new DownloadSpeedHistory.Sample(2000, 4267, 2048)), 1000, 1_536_000, 8192));
         Path database = directory.resolve("history.db");
         Path legacy = directory.resolve("history.json");
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
@@ -94,7 +106,7 @@ class DownloadProgressGraphGtkTest {
             graph.update(restored);
             assertEquals(original.getSpeedHistory(), restored.getSpeedHistory());
             assertEquals("100.00%", label(builder, "info_progress_value"));
-            assertEquals("Speed: 0 B/s", label(builder, "info_speed_value"));
+            assertEquals("Max speed: 8 KB/s", label(builder, "info_speed_value"));
             assertEquals("Average: 1 KB/s", label(builder, "info_average_speed_value"));
         } finally {
             graph.dispose();
@@ -118,7 +130,28 @@ class DownloadProgressGraphGtkTest {
             download.setStatus(Download.Status.COMPLETED);
             graph.update(download);
             assertEquals("100.00%", label(builder, "info_progress_value"));
-            assertEquals("Speed: 0 B/s", label(builder, "info_speed_value"));
+            assertEquals("Max speed: 2 KB/s", label(builder, "info_speed_value"));
+        } finally {
+            graph.dispose();
+        }
+    }
+
+    @Test
+    void completedDownloadsDistinguishMissingHistoryFromRecordedZeroSpeed() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        var graph = new DownloadProgressGraph(builder);
+        try {
+            for (Download.Status status : List.of(Download.Status.COMPLETED, Download.Status.SEEDING)) {
+                Download download = download();
+                download.setStatus(status);
+                download.setSpeed(8192);
+                graph.update(download);
+                assertEquals("Max speed: —", label(builder, "info_speed_value"));
+                download.setSpeedHistoryState(new DownloadSpeedHistory.State(1, List.of(
+                        new DownloadSpeedHistory.Sample(0, 0, 0)), 0, 0));
+                graph.update(download);
+                assertEquals("Max speed: 0 B/s", label(builder, "info_speed_value"));
+            }
         } finally {
             graph.dispose();
         }

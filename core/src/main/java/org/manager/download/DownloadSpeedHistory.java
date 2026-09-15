@@ -3,7 +3,7 @@ package org.manager.download;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Bounded speed samples and time-weighted averages belonging to one download. */
+/** Bounded speed samples, time-weighted averages and peak speed belonging to one download. */
 public final class DownloadSpeedHistory {
 
     public static final int MAX_SAMPLES = 512;
@@ -18,20 +18,26 @@ public final class DownloadSpeedHistory {
         }
     }
 
-    public record Snapshot(List<Sample> samples, double averageBytesPerSecond) {
-        public static final Snapshot EMPTY = new Snapshot(List.of(), 0);
+    public record Snapshot(List<Sample> samples, double averageBytesPerSecond, double maxBytesPerSecond) {
+        public static final Snapshot EMPTY = new Snapshot(List.of(), 0, 0);
 
         public Snapshot {
             samples = List.copyOf(samples);
         }
     }
 
-    /** Persist the original integration totals; compacted samples cannot reproduce them. */
-    public record State(int version, List<Sample> samples, long durationMillis, double speedMillis) {
+    /** Persist the original totals and peak; compacted samples cannot reproduce them. */
+    public record State(int version, List<Sample> samples, long durationMillis, double speedMillis,
+            double maxBytesPerSecond) {
+        public State(int version, List<Sample> samples, long durationMillis, double speedMillis) {
+            this(version, samples, durationMillis, speedMillis, 0);
+        }
+
         public State {
             samples = List.copyOf(samples);
             if (version != STATE_VERSION || samples.size() > MAX_SAMPLES
                     || durationMillis < 0 || !Double.isFinite(speedMillis) || speedMillis < 0
+                    || !Double.isFinite(maxBytesPerSecond) || maxBytesPerSecond < 0
                     || (durationMillis == 0 && speedMillis != 0)) {
                 throw new IllegalArgumentException("Invalid speed history state");
             }
@@ -41,6 +47,8 @@ public final class DownloadSpeedHistory {
                         || sample.downloadedBytes() < previous.downloadedBytes())) {
                     throw new IllegalArgumentException("Unordered speed history");
                 }
+                // Older saved histories lack the peak field; use their highest retained sample.
+                maxBytesPerSecond = Math.max(maxBytesPerSecond, sample.bytesPerSecond());
                 previous = sample;
             }
             long span = samples.isEmpty() ? 0
@@ -54,6 +62,7 @@ public final class DownloadSpeedHistory {
     private final List<Sample> samples = new ArrayList<>();
     private long durationMillis;
     private double speedMillis;
+    private double maxBytesPerSecond;
     private Sample latest;
     private boolean continueInterval;
 
@@ -68,6 +77,7 @@ public final class DownloadSpeedHistory {
             // A restart/recheck can discard bytes from the previous attempt.
             clear();
         }
+        maxBytesPerSecond = Math.max(maxBytesPerSecond, sample.bytesPerSecond());
         if (latest != null) {
             long interval = sample.elapsedMillis() - latest.elapsedMillis();
             if (continueInterval) {
@@ -98,17 +108,19 @@ public final class DownloadSpeedHistory {
         samples.clear();
         durationMillis = 0;
         speedMillis = 0;
+        maxBytesPerSecond = 0;
         latest = null;
         continueInterval = false;
     }
 
     synchronized Snapshot snapshot() {
         return latest == null ? Snapshot.EMPTY : new Snapshot(samples, durationMillis > 0
-                ? speedMillis / durationMillis : latest.bytesPerSecond());
+                ? speedMillis / durationMillis : latest.bytesPerSecond(), maxBytesPerSecond);
     }
 
     synchronized State state() {
-        return latest == null ? null : new State(STATE_VERSION, samples, durationMillis, speedMillis);
+        return latest == null ? null : new State(STATE_VERSION, samples, durationMillis, speedMillis,
+                maxBytesPerSecond);
     }
 
     synchronized void restore(State state) {
@@ -117,6 +129,7 @@ public final class DownloadSpeedHistory {
             samples.addAll(state.samples());
             durationMillis = state.durationMillis();
             speedMillis = state.speedMillis();
+            maxBytesPerSecond = state.maxBytesPerSecond();
             latest = samples.isEmpty() ? null : samples.getLast();
         }
     }

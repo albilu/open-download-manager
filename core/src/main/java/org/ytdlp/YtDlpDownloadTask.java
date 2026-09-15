@@ -220,7 +220,7 @@ public class YtDlpDownloadTask {
                     }
                     errorMessage.set(error);
                     status.set(Status.ERROR);
-                    LOGGER.error("Download error for task " + taskId + ": " + error);
+                    LOGGER.debug("yt-dlp task {} failed: {}", taskId, error);
                     forwardToListener(l -> l.onError(error));
                 }
             };
@@ -249,7 +249,7 @@ public class YtDlpDownloadTask {
             downloadFuture = run.whenComplete((result, throwable) -> {
                 if (throwable != null && !cancelled.get() && isCurrentGeneration(generation)
                         && status.get() != Status.PAUSED) {
-                    errorMessage.set(throwable.getMessage());
+                    errorMessage.set(org.manager.tools.ProcessDiagnostics.failureMessage(throwable));
                     status.set(Status.ERROR);
                 }
             });

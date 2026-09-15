@@ -51,8 +51,11 @@ final class DownloadProgressGraph {
                 && Float.isFinite(download.getSpeed()) ? Math.max(0, download.getSpeed()) : 0;
         String average = history.samples().isEmpty() ? "—"
                 : DownloadFormats.rate((long) history.averageBytesPerSecond());
+        String speed = complete
+                ? history.samples().isEmpty() ? "—" : DownloadFormats.rate((long) history.maxBytesPerSecond())
+                : download == null ? "—" : DownloadFormats.rate((long) currentSpeed);
         progressLabel.setLabel(progress);
-        speedLabel.setLabel("Speed: " + (download == null ? "—" : DownloadFormats.rate((long) currentSpeed)));
+        speedLabel.setLabel((complete ? "Max speed: " : "Speed: ") + speed);
         averageLabel.setLabel("Average: " + average);
         boolean timeAxis = download != null && totalBytes <= 0;
         axisLabel.setLabel(timeAxis ? "Active transfer time" : "Download progress");

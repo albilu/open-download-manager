@@ -321,8 +321,9 @@ public class DownloadHandlerFactory {
             download.setType(Download.Type.PROXYCHAINS);
             try {
                 if (proxychains.canHandle(download)) {
-                    LOGGER.info("Routing SOCKS download through proxychains: "
-                            + download.getName());
+                    if (originalType != Download.Type.PROXYCHAINS) {
+                        LOGGER.info("Routing download {} through proxychains", download.getId());
+                    }
                     return proxychains;
                 }
             } catch (RuntimeException routingFailure) {

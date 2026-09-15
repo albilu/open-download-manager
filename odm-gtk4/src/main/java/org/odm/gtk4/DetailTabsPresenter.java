@@ -249,12 +249,16 @@ final class DetailTabsPresenter {
         List<FileTreeSupport.Entry> files = new java.util.ArrayList<>();
         int fallbackIndex = 1;
         for (Map<String, Object> file : data.files()) {
+            int index = (int) parseLong(file.get("index"), fallbackIndex++);
+            // aria2 can report a placeholder before it knows the output path.
+            // It has no file identity yet and must not enter the GTK tree.
+            if (!(file.get("path") instanceof String path) || path.isBlank()) {
+                continue;
+            }
             boolean selected = !"false".equalsIgnoreCase(
                     String.valueOf(file.getOrDefault("selected", "true")));
             long length = parseLong(file.get("length"), 0);
             long completedLength = parseLong(file.get("completedLength"), 0);
-            int index = (int) parseLong(file.get("index"), fallbackIndex++);
-            String path = String.valueOf(file.getOrDefault("path", "—"));
             files.add(new FileTreeSupport.Entry(selected, path, length, completedLength,
                     index, priorities.getOrDefault(index, FileTreeSupport.PRIORITY_NORMAL)));
         }

@@ -112,6 +112,47 @@ class DetailTabsPresenterGtkTest {
     }
 
     @Test
+    @Timeout(30)
+    void unresolvedPathsAreDeferredAndLaterAppearWithoutBreakingGtk() throws Exception {
+        Download download = download("unresolved");
+        Map<String, Object> nullPath = new java.util.HashMap<>();
+        nullPath.put("path", null);
+        Mockito.when(manager.getDownloadFiles(download)).thenReturn(List.of(
+                file("", 100, 0, 1), file("  ", 100, 0, 2), Map.of("index", "3"), nullPath,
+                file("ready.bin", 100, 25, 5)));
+        onLoop(() -> { selection.set(download); presenter.load(); });
+        awaitTrue(() -> {
+            try { return "ready.bin".equals(onLoop(() -> firstTreeValue(filesStore, 1))); }
+            catch (Exception failure) { throw new RuntimeException(failure); }
+        }, "valid file must render alongside unresolved entries");
+        assertEquals(1, onLoop(() -> filesStore.iterNChildren(null)));
+
+        Mockito.when(manager.getDownloadFiles(download)).thenReturn(List.of(file("resolved.bin", 100, 50, 1)));
+        onLoop(presenter::load);
+        awaitTrue(() -> {
+            try { return "resolved.bin".equals(onLoop(() -> firstTreeValue(filesStore, 1))); }
+            catch (Exception failure) { throw new RuntimeException(failure); }
+        }, "a later valid response must still update GTK");
+        onLoop(presenter::shutdown);
+    }
+
+    @Test
+    @Timeout(30)
+    void failingMarshaledWorkDoesNotPoisonTheNextGtkCallback() throws Exception {
+        CountDownLatch attempted = new CountDownLatch(1);
+        UiThread.marshal(() -> {
+            attempted.countDown();
+            throw new IllegalArgumentException("invalid detail fixture");
+        });
+        assertTrue(attempted.await(5, TimeUnit.SECONDS));
+        assertEquals("still responsive", onLoop(() -> {
+            var label = new org.gnome.gtk.Label("still responsive");
+            return label.getText();
+        }));
+        onLoop(presenter::shutdown);
+    }
+
+    @Test
     @Timeout(60)
     @DisplayName("a stale fetch completing after a newer selection never reaches the stores")
     void staleFetchResultIsDropped() throws Exception {

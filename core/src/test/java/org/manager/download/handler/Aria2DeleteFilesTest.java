@@ -37,6 +37,7 @@ import org.manager.download.DownloadSettingsFactory;
  * via real-path containment).
  */
 @DisplayName("Aria2 cancel with deleteFiles removes only validated payloads")
+@org.junit.jupiter.api.parallel.Execution(org.junit.jupiter.api.parallel.ExecutionMode.SAME_THREAD)
 class Aria2DeleteFilesTest {
 
     @TempDir
@@ -181,6 +182,39 @@ class Aria2DeleteFilesTest {
     @BeforeAll
     static void initContext() {
         ApplicationContext.initialize();
+    }
+
+    @Test
+    @Timeout(60)
+    void completedAndAlreadyRemovedDownloadsCanBeRemovedWhileKeepingFiles() throws Exception {
+        try (MockWebServer server = new MockWebServer()) {
+            server.enqueue(new MockResponse().setBody("completed payload"));
+            server.start();
+            GlobalSettings settings = new GlobalSettings();
+            settings.setDefaultDownloadDirectory(tempDir);
+            ExecutorService executor = Executors.newCachedThreadPool();
+            Aria2DownloadHandler handler = new Aria2DownloadHandler(settings,
+                    new DownloadSettingsFactory(settings), executor, ApplicationContext.getToolManagerFactory());
+            try {
+                handler.initialize().get(20, TimeUnit.SECONDS);
+                Download download = new Download(server.url("/completed.bin").uri());
+                download.setDestination(tempDir);
+                String gid = handler.startDownload(download).get(20, TimeUnit.SECONDS);
+                await().atMost(Duration.ofSeconds(20)).until(() -> download.getStatus() == Download.Status.COMPLETED);
+                Path payload = tempDir.resolve("completed.bin");
+                org.junit.jupiter.api.Assertions.assertEquals("completed payload", Files.readString(payload));
+
+                handler.cancelDownload(download, false).get(10, TimeUnit.SECONDS);
+                org.junit.jupiter.api.Assertions.assertEquals(Download.Status.CANCELED, download.getStatus());
+                org.junit.jupiter.api.Assertions.assertThrows(org.aria2.Aria2Client.Aria2RpcException.class,
+                        () -> handler.getAria2Client().tellStatus(gid));
+                handler.cancelDownload(download, false).get(10, TimeUnit.SECONDS);
+                org.junit.jupiter.api.Assertions.assertEquals("completed payload", Files.readString(payload));
+            } finally {
+                handler.shutdown().get(20, TimeUnit.SECONDS);
+                executor.shutdownNow();
+            }
+        }
     }
 
     @Test

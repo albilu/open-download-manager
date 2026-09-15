@@ -51,6 +51,25 @@ class DownloadSpeedHistoryTest {
     }
 
     @Test
+    void peakSurvivesCompactionAndRestorationEvenWhenTheSpikeIsSmoothedOut() {
+        var history = new DownloadSpeedHistory();
+        for (int i = 0; i < 2000; i++) {
+            history.record(i * 1000L, i * 2500L, i == 123 ? 50_000 : 2500);
+        }
+        var snapshot = history.snapshot();
+        assertTrue(snapshot.samples().stream().allMatch(sample -> sample.bytesPerSecond() < 50_000),
+                "the original spike must have been smoothed out of the chart samples");
+        assertEquals(50_000, snapshot.maxBytesPerSecond());
+        var restored = new DownloadSpeedHistory();
+        restored.restore(history.state());
+        assertEquals(snapshot, restored.snapshot());
+        restored.record(2_001_000, 5_000_000, 1000);
+        assertEquals(50_000, restored.snapshot().maxBytesPerSecond());
+        restored.record(2_002_000, 5_001_000, 60_000);
+        assertEquals(60_000, restored.snapshot().maxBytesPerSecond());
+    }
+
+    @Test
     void restartingFromEarlierBytesOrElapsedTimeClearsThePreviousAttempt() {
         var history = new DownloadSpeedHistory();
         history.record(1000, 5000, 5000);
@@ -58,9 +77,11 @@ class DownloadSpeedHistoryTest {
         history.record(3000, 100, 100);
         assertEquals(1, history.snapshot().samples().size());
         assertEquals(100, history.snapshot().averageBytesPerSecond());
+        assertEquals(100, history.snapshot().maxBytesPerSecond());
         history.record(0, 200, 200);
         assertEquals(1, history.snapshot().samples().size());
         assertEquals(200, history.snapshot().averageBytesPerSecond());
+        assertEquals(200, history.snapshot().maxBytesPerSecond());
     }
 
     @Test
@@ -70,6 +91,7 @@ class DownloadSpeedHistoryTest {
         download.recordSpeedSample(5000, 5000);
         download.setDownloaded(0);
         assertTrue(download.getSpeedHistory().samples().isEmpty());
+        assertEquals(0, download.getSpeedHistory().maxBytesPerSecond());
         assertNull(download.getSpeedHistoryState());
     }
 
@@ -107,6 +129,16 @@ class DownloadSpeedHistoryTest {
         assertEquals(300, history.snapshot().averageBytesPerSecond());
         history.record(2000, 500, 300);
         assertEquals(300, history.snapshot().averageBytesPerSecond());
+    }
+
+    @Test
+    void replacingASampleAtTheSameInstantKeepsTheHigherObservedSpeed() {
+        var history = new DownloadSpeedHistory();
+        history.record(1000, 100, 5000);
+        history.record(1000, 200, 1000);
+        assertEquals(1, history.snapshot().samples().size());
+        assertEquals(1000, history.snapshot().samples().getFirst().bytesPerSecond());
+        assertEquals(5000, history.snapshot().maxBytesPerSecond());
     }
 
     @Test

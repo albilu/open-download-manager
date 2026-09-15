@@ -171,11 +171,14 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
 
                 // Start the download; the completion watcher is generation
                 // scoped so a retired run's late callback stays inert
-                watchRun(download, task, task.start(overrideOutputs));
+                CompletableFuture<String> started = task.start(overrideOutputs);
 
                 // Update download status
                 download.setStatus(Download.Status.DOWNLOADING);
                 notifyDownloadStart(download);
+                // Attach after publishing start, including when the process
+                // has already exited, so start cannot overwrite its outcome.
+                watchRun(download, task, started);
 
                 return download.getId(); // Return download ID as the GID equivalent
             } catch (Exception e) {
@@ -226,10 +229,11 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 // Resume the task on a new run generation; the retired
                 // run's late callbacks cannot touch it
                 settingsFactory.applyGlobalTransferPreferences(task.getSettings());
-                watchRun(download, task, task.resume());
+                CompletableFuture<String> resumed = task.resume();
 
                 download.setStatus(Download.Status.DOWNLOADING);
                 notifyDownloadResume(download);
+                watchRun(download, task, resumed);
                 LOGGER.info("Resumed yt-dlp download: " + download.getId());
             } else {
                 LOGGER.warn("Could not resume yt-dlp download: " + download.getId());
@@ -267,8 +271,11 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             }
             if (throwable != null && !task.isCancelled()) {
                 download.setStatus(Download.Status.ERROR);
-                download.setErrorMessage("Download failed: " + throwable.getMessage());
+                download.setErrorMessage(org.manager.tools.ProcessDiagnostics.failureMessage(throwable));
                 notifyDownloadError(download, download.getErrorMessage());
+            } else if (throwable == null && !task.isCancelled()) {
+                download.setStatus(Download.Status.COMPLETED);
+                notifyDownloadComplete(download);
             }
             if (task.getStatus() == YtDlpDownloadTask.Status.PAUSED) {
                 LOGGER.info("yt-dlp run of " + download.getId()
@@ -506,8 +513,8 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     download.setDownloaded(download.getSize());
                 }
                 download.setSpeed(0);
-                download.setStatus(Download.Status.COMPLETED);
-                notifyDownloadComplete(download);
+                // watchRun owns the terminal event after the process and its
+                // resources have settled; this callback records output only.
             }
 
             @Override
@@ -515,11 +522,9 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                 if (task.isCancelled()) {
                     return; // a late error must not replace CANCELED
                 }
-                download.setStatus(Download.Status.ERROR);
                 if (error != null && !error.isBlank()) {
-                    download.setErrorMessage(error);
+                    download.setErrorMessage(org.manager.tools.ProcessDiagnostics.sanitize(error));
                 }
-                notifyDownloadError(download, download.getErrorMessage());
             }
         });
     }

@@ -635,55 +635,61 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     }
 
     /**
-     * Cancels every tracked GID with force-removal (deleteFiles=true path)
-     * and deletes the payload and control files aria2 reported for them.
-     * File paths are collected BEFORE removal (tellStatus files[].path);
-     * deletion happens only after the removal succeeded, and the download
-     * result entries are dropped last.
+     * Removes every tracked GID and its stopped result, tolerating GIDs that
+     * already left the daemon's queue. With deleteFiles enabled, collect
+     * aria2-reported paths before force-removal and delete validated payloads
+     * and control files only after all removals succeed.
      */
-    private void cancelAndDeleteFiles(Download download, List<String> gids) throws Exception {
+    private void cancelGids(Download download, List<String> gids, boolean deleteFiles) throws Exception {
         List<String> reportedPaths = new ArrayList<>();
         Exception firstFailure = null;
-        int failures = 0;
         for (String gid : gids) {
             try {
-                reportedPaths.addAll(collectReportedFilePaths(gid));
-                aria2Client.forceRemove(gid);
+                if (deleteFiles) {
+                    reportedPaths.addAll(collectReportedFilePaths(gid));
+                    aria2Client.forceRemove(gid);
+                } else {
+                    aria2Client.remove(gid);
+                }
             } catch (Aria2RpcException e) {
-                if (e.getMessage() != null && e.getMessage().contains("not found")) {
+                if (isGidNotFoundResponse(e)) {
                     // Already out of the daemon's queue (completed, errored,
                     // or removed moments ago): removal is implicitly done
                     // and the reported files stay deletion-authorized
                     continue;
                 }
-                failures++;
                 if (firstFailure == null) {
                     firstFailure = e;
                 }
-                LOGGER.warn("Failed to force-remove GID " + gid, e);
             } catch (Exception e) {
-                failures++;
                 if (firstFailure == null) {
                     firstFailure = e;
                 }
-                LOGGER.warn("Failed to force-remove GID " + gid, e);
             }
         }
-        if (!gids.isEmpty() && failures == gids.size()) {
+        // Attempt every GID, but never forget an active one whose removal
+        // failed merely because another GID was successfully removed.
+        if (firstFailure != null) {
             throw firstFailure;
         }
-        deleteAria2Payloads(download, reportedPaths);
+        if (deleteFiles) {
+            deleteAria2Payloads(download, reportedPaths);
+        }
         for (String gid : gids) {
             try {
                 aria2Client.removeDownloadResult(gid);
             } catch (Exception e) {
-                LOGGER.warn("Failed to remove download result for GID " + gid, e);
+                if (!isGidNotFoundResponse(e)) {
+                    LOGGER.warn("Failed to remove download result for GID " + gid, e);
+                }
             }
         }
         // aria2 flushes .aria2 control files asynchronously: a stale write
         // can land after the first sweep. Sweep again once every aria2
         // interaction for this download is done.
-        deleteAria2Payloads(download, reportedPaths);
+        if (deleteFiles) {
+            deleteAria2Payloads(download, reportedPaths);
+        }
     }
 
     /**
@@ -837,17 +843,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                         stopProgressPolling(gid);
                     }
 
-                    if (deleteFiles) {
-                        cancelAndDeleteFiles(download, gids);
-                    } else {
-                        applyToEveryGid(gids, "remove", aria2Client::remove);
-                    }
+                    cancelGids(download, gids, deleteFiles);
 
                     untrackEntireDownload(download.getId());
 
-                    download.setStatus(Download.Status.CANCELED);
-                    notifyDownloadCanceled(download);
                 }
+                download.setConnectionCount(0);
+                download.setStatus(Download.Status.CANCELED);
+                notifyDownloadCanceled(download);
             } catch (Exception e) {
                 LOGGER.error("Failed to cancel download: " + download.getName(), e);
                 throw new RuntimeException("Failed to cancel download", e);

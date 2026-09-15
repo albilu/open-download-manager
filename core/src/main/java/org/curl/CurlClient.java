@@ -214,6 +214,7 @@ public class CurlClient {
 
                     // Read process error stream (stderr) to track progress
                     // curl sends progress information to stderr
+                    var diagnostics = new org.manager.tools.ProcessDiagnostics();
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
                         String line;
                         long lastUpdateTime = System.currentTimeMillis();
@@ -221,6 +222,9 @@ public class CurlClient {
                         boolean firstProgressUpdate = true;
 
                         while ((line = reader.readLine()) != null && !launch.isCancelled()) {
+                            if (line.contains("curl:") || line.toLowerCase(java.util.Locale.ROOT).contains("error")) {
+                                diagnostics.addLine(line);
+                            }
                             // Check for content length
                             Matcher sizeMatcher = TOTAL_SIZE_PATTERN.matcher(line);
                             if (sizeMatcher.find()) {
@@ -303,7 +307,8 @@ public class CurlClient {
                                     Download.Status.ERROR)
                                     || download.compareAndSetStatus(Download.Status.CONNECTING,
                                             Download.Status.ERROR)) {
-                                download.setErrorMessage("curl process exited with code: " + exitCode);
+                                download.setErrorMessage(diagnostics.message(
+                                        "curl process exited with code: " + exitCode));
                                 if (listener != null) {
                                     listener.onDownloadError(download, download.getErrorMessage());
                                 }

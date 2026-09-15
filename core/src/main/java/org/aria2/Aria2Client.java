@@ -83,8 +83,11 @@ public class Aria2Client {
      * shutdown latch, so visibility of that write must not be assumed.
      */
     private volatile boolean useWebSocket = false;
-    private WebSocketClient wsClient;
-    private final ConcurrentHashMap<Integer, CompletableFuture<String>> wsResponses = new ConcurrentHashMap<>();
+    private volatile WebSocketClient wsClient;
+    private final Object wsConnectionLock = new Object();
+    private final Object wsConnectLock = new Object();
+    private record PendingResponse(WebSocketClient socket, CompletableFuture<String> future) { }
+    private final ConcurrentHashMap<Integer, PendingResponse> wsResponses = new ConcurrentHashMap<>();
     private final AtomicInteger wsRequestId = new AtomicInteger(1);
     private final List<Aria2NotificationListener> listeners = new CopyOnWriteArrayList<>();
     private List<String> lastExtraArgs;
@@ -95,7 +98,7 @@ public class Aria2Client {
     /** HTTP RPC read timeout; matches the WebSocket RPC future timeout scale. */
     private static final int HTTP_READ_TIMEOUT_MS = 30000;
     private ScheduledExecutorService wsHealthCheckExecutor;
-    private boolean isReconnecting = false;
+    private volatile boolean isReconnecting = false;
     private volatile boolean isShuttingDown = false;
 
     /**
@@ -1102,20 +1105,23 @@ public class Aria2Client {
      * transport, then succeed — or fail cleanly.
      */
     public void connectWebSocket() throws Exception {
-        if (wsClient != null && wsClient.isOpen()) {
+        if (isWebSocketOpen()) {
             return;
         }
 
-        if (isReconnecting) {
-            long deadline = System.currentTimeMillis() + WS_RECONNECT_WAIT_MS;
-            while (isReconnecting && System.currentTimeMillis() < deadline) {
-                Thread.sleep(100);
+        synchronized (wsConnectionLock) {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WS_RECONNECT_WAIT_MS);
+            while (isReconnecting && !isShuttingDown) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    throw new IOException("WebSocket recovery timed out");
+                }
+                TimeUnit.NANOSECONDS.timedWait(wsConnectionLock, remaining);
             }
-            if (wsClient != null && wsClient.isOpen()) {
+            if (isShuttingDown) { throw new IOException("WebSocket is shutting down"); }
+            if (isWebSocketOpen()) {
                 return;
             }
-            // Reconnection gave up: fall through and attempt a direct
-            // connect so the caller fails cleanly instead of hanging
         }
 
         connectWebSocketDirect();
@@ -1129,15 +1135,28 @@ public class Aria2Client {
      * worker itself, which must never wait on its own in-progress flag.
      */
     void connectWebSocketDirect() throws Exception {
-        if (wsClient != null && wsClient.isOpen()) {
+        synchronized (wsConnectLock) {
+            connectWebSocketLocked();
+        }
+    }
+
+    private void connectWebSocketLocked() throws Exception {
+        if (isShuttingDown) { throw new IOException("WebSocket is shutting down"); }
+        if (isWebSocketOpen()) {
             return;
         }
 
-        wsClient = new WebSocketClient(new URI(rpcUrl.replaceFirst("^http", "ws"))) {
+        WebSocketClient socket = new WebSocketClient(new URI(rpcUrl.replaceFirst("^http", "ws"))) {
             @Override
             public void onOpen(ServerHandshake handshakedata) {
-                LOGGER.info("WebSocket connection opened");
-                startWebSocketHealthCheck();
+                synchronized (wsConnectionLock) {
+                    if (wsClient != this || isShuttingDown) {
+                        close();
+                        return;
+                    }
+                    LOGGER.info("WebSocket connection opened");
+                    startWebSocketHealthCheck();
+                }
             }
 
             @Override
@@ -1146,10 +1165,9 @@ public class Aria2Client {
                     JsonNode json = OBJECT_MAPPER.readTree(message);
                     if (json.has("id")) {
                         int id = json.get("id").asInt();
-                        CompletableFuture<String> future = wsResponses.get(id);
-                        if (future != null) {
-                            future.complete(message);
-                            wsResponses.remove(id);
+                        PendingResponse pending = wsResponses.get(id);
+                        if (pending != null && pending.socket() == this && wsResponses.remove(id, pending)) {
+                            pending.future().complete(message);
                         }
                     } else if (json.has("method")) {
                         handleNotification(json);
@@ -1163,15 +1181,19 @@ public class Aria2Client {
             public void onClose(int code, String reason, boolean remote) {
                 LOGGER.info(
                         "WebSocket connection closed: " + reason + " (code: " + code + ", remote: " + remote + ")");
-                stopWebSocketHealthCheck();
-
-                // Attempt to reconnect if closed unexpectedly AND not shutting down
-                if (remote && useWebSocket && !isReconnecting && !isShuttingDown) {
-                    tryReconnect();
-                } else if (isShuttingDown) {
-                    // During shutdown, don't attempt reconnection
-                    useWebSocket = false;
+                boolean current;
+                synchronized (wsConnectionLock) {
+                    current = wsClient == this;
+                    if (current) {
+                        wsClient = null;
+                        stopWebSocketHealthCheck();
+                    }
                 }
+                // Missed-pong closures originate locally (remote=false).
+                // Explicit closes detach first, so only unexpected closures
+                // of the current socket can schedule recovery.
+                if (current) { tryReconnect(); }
+                failPendingResponses(this, "connection closed (code " + code + ")");
             }
 
             @Override
@@ -1180,12 +1202,18 @@ public class Aria2Client {
             }
         };
 
+        synchronized (wsConnectionLock) {
+            if (isShuttingDown) { throw new IOException("WebSocket is shutting down"); }
+            wsClient = socket;
+        }
+
         // Set connection timeout
-        wsClient.setConnectionLostTimeout(WS_CONNECTION_TIMEOUT / 1000);
+        socket.setConnectionLostTimeout(WS_CONNECTION_TIMEOUT / 1000);
 
         // Connect with timeout
-        boolean connected = wsClient.connectBlocking(WS_CONNECTION_TIMEOUT, TimeUnit.MILLISECONDS);
+        boolean connected = socket.connectBlocking(WS_CONNECTION_TIMEOUT, TimeUnit.MILLISECONDS);
         if (!connected) {
+            socket.closeConnection(1006, "Connection timed out");
             throw new IOException("Failed to connect to WebSocket within timeout");
         }
     }
@@ -1265,31 +1293,54 @@ public class Aria2Client {
      * it safely.
      */
     void closeWebSocketSocket(String reason) {
-        stopWebSocketHealthCheck();
-
-        if (wsClient != null) {
+        WebSocketClient socket;
+        synchronized (wsConnectionLock) {
+            socket = wsClient;
+            wsClient = null;
+            stopWebSocketHealthCheck();
+            wsConnectionLock.notifyAll();
+        }
+        if (socket != null) {
+            failPendingResponses(socket, reason);
             try {
                 // Send close frame with normal closure code
-                wsClient.close(1000, reason);
+                socket.close(1000, reason);
 
                 // Wait briefly for graceful close, then force if needed
-                wsClient.closeBlocking();
+                socket.closeBlocking();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                wsClient.close(); // Force close on interruption
+                socket.close(); // Force close on interruption
             } catch (Exception e) {
                 // Log error but continue with cleanup
                 LOGGER.error("Error during WebSocket close: " + e.getMessage());
-                wsClient.close(); // Force close on any error
-            } finally {
-                wsClient = null;
+                socket.close(); // Force close on any error
             }
         }
+    }
 
-        // Clear any pending responses
-        wsResponses.forEach((id, future) -> future.completeExceptionally(
-                new IOException("WebSocket disconnected: " + reason)));
-        wsResponses.clear();
+    private boolean isWebSocketOpen() {
+        WebSocketClient socket = wsClient;
+        return socket != null && socket.isOpen();
+    }
+
+    private void failPendingResponses(WebSocketClient socket, String reason) {
+        wsResponses.forEach((id, pending) -> {
+            if (pending.socket() == socket && wsResponses.remove(id, pending)) {
+                pending.future().completeExceptionally(new IOException("WebSocket disconnected: " + reason));
+            }
+        });
+    }
+
+    private CompletableFuture<String> registerResponse(int id, WebSocketClient socket) throws IOException {
+        synchronized (wsConnectionLock) {
+            if (isShuttingDown || socket == null || socket != wsClient || !socket.isOpen()) {
+                throw new IOException("WebSocket transport is not connected");
+            }
+            CompletableFuture<String> future = new CompletableFuture<>();
+            wsResponses.put(id, new PendingResponse(socket, future));
+            return future;
+        }
     }
 
     /** Whether the permanent shutdown latch is set. Test/inspection accessor. */
@@ -1364,8 +1415,9 @@ public class Aria2Client {
                 // Keepalive ping: detects a silently-dead connection through
                 // the onClose/onError callbacks. (Futures that complete are
                 // already removed in onMessage, so no sweeping is needed.)
-                if (wsClient != null && wsClient.isOpen()) {
-                    wsClient.sendPing();
+                WebSocketClient socket = wsClient;
+                if (socket != null && socket.isOpen()) {
+                    socket.sendPing();
                 }
             } catch (Exception e) {
                 LOGGER.debug("WebSocket health check ping failed: " + e.getMessage());
@@ -1393,11 +1445,13 @@ public class Aria2Client {
      * healthy daemon as gone, restarting or detaching it needlessly.
      */
     private void tryReconnect() {
-        if (isReconnecting || !useWebSocket || isShuttingDown) {
-            return;
+        synchronized (wsConnectionLock) {
+            if (isReconnecting || !useWebSocket || isShuttingDown
+                    || isWebSocketOpen()) {
+                return;
+            }
+            isReconnecting = true;
         }
-
-        isReconnecting = true;
         Thread reconnectThread = new Thread(() -> {
             int attempts = 0;
             try {
@@ -1409,6 +1463,7 @@ public class Aria2Client {
                                 "Attempting to reconnect WebSocket in " + backoffMs + "ms (attempt " + attempts + ")");
 
                         Thread.sleep(backoffMs);
+                        if (isShuttingDown || !useWebSocket || isWebSocketOpen()) { return; }
 
                         boolean wasUsingWebSocket = useWebSocket;
                         useWebSocket = false;
@@ -1446,7 +1501,10 @@ public class Aria2Client {
 
                 LOGGER.error("Failed to reconnect WebSocket after " + attempts + " attempts");
             } finally {
-                isReconnecting = false;
+                synchronized (wsConnectionLock) {
+                    isReconnecting = false;
+                    wsConnectionLock.notifyAll();
+                }
             }
         }, "ws-reconnect");
 
@@ -1516,7 +1574,7 @@ public class Aria2Client {
         if (isShuttingDown) {
             throw new IOException("Cannot send WebSocket RPC during shutdown");
         }
-        if (wsClient == null || !wsClient.isOpen()) {
+        if (!isWebSocketOpen()) {
             connectWebSocket();
         }
 
@@ -1533,8 +1591,7 @@ public class Aria2Client {
         if (socket == null || !socket.isOpen()) {
             throw new IOException("WebSocket transport is not connected");
         }
-        CompletableFuture<String> future = new CompletableFuture<>();
-        wsResponses.put(id, future);
+        CompletableFuture<String> future = registerResponse(id, socket);
         try {
             socket.send(payload);
             String response = future.get(30, TimeUnit.SECONDS);
@@ -1597,7 +1654,7 @@ public class Aria2Client {
         if (isShuttingDown) {
             throw new IOException("Cannot send WebSocket RPC during shutdown");
         }
-        if (wsClient == null || !wsClient.isOpen()) {
+        if (!isWebSocketOpen()) {
             connectWebSocket();
         }
 
@@ -1607,8 +1664,7 @@ public class Aria2Client {
         if (socket == null || !socket.isOpen()) {
             throw new IOException("WebSocket transport is not connected");
         }
-        CompletableFuture<String> future = new CompletableFuture<>();
-        wsResponses.put(id, future);
+        CompletableFuture<String> future = registerResponse(id, socket);
 
         try {
             socket.send(payload);
@@ -1640,7 +1696,7 @@ public class Aria2Client {
         if (isShuttingDown) {
             throw new IOException("Cannot send WebSocket RPC during shutdown");
         }
-        if (wsClient == null || !wsClient.isOpen()) {
+        if (!isWebSocketOpen()) {
             connectWebSocket();
         }
 
@@ -1650,8 +1706,7 @@ public class Aria2Client {
         if (socket == null || !socket.isOpen()) {
             throw new IOException("WebSocket transport is not connected");
         }
-        CompletableFuture<String> future = new CompletableFuture<>();
-        wsResponses.put(id, future);
+        CompletableFuture<String> future = registerResponse(id, socket);
 
         try {
             socket.send(payload);

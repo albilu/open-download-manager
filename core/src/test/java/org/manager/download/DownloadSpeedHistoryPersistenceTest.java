@@ -32,6 +32,8 @@ class DownloadSpeedHistoryPersistenceTest {
         Download completed = downloadWithHistory("completed", Download.Status.COMPLETED);
         var expected = paused.getSpeedHistory();
         var expectedState = paused.getSpeedHistoryState();
+        assertEquals(50_000, expected.maxBytesPerSecond());
+        assertTrue(expected.samples().stream().allMatch(sample -> sample.bytesPerSecond() < 50_000));
         try (var store = store()) {
             store.save(List.of(paused, completed), Set.of(paused.getId()));
         }
@@ -65,6 +67,36 @@ class DownloadSpeedHistoryPersistenceTest {
     }
 
     @Test
+    void historiesSavedWithoutAPeakUseTheHighestRetainedSample() throws Exception {
+        Download original = downloadWithHistory("legacy-peak", Download.Status.COMPLETED);
+        var legacyHistory = mapper.valueToTree(original.getSpeedHistoryState());
+        ((com.fasterxml.jackson.databind.node.ObjectNode) legacyHistory).remove("maxBytesPerSecond");
+        try (var store = store()) {
+            store.save(List.of(original), Set.of());
+        }
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                var update = connection.prepareStatement("UPDATE downloads SET speed_history = ?")) {
+            update.setString(1, mapper.writeValueAsString(legacyHistory));
+            update.executeUpdate();
+        }
+        double retainedPeak = original.getSpeedHistory().samples().stream()
+                .mapToDouble(DownloadSpeedHistory.Sample::bytesPerSecond).max().orElseThrow();
+        assertTrue(retainedPeak < original.getSpeedHistory().maxBytesPerSecond());
+        try (var reopened = store()) {
+            Download restored = reopened.load().downloads().getFirst();
+            assertEquals(original.getSpeedHistory().samples(), restored.getSpeedHistory().samples());
+            assertEquals(original.getSpeedHistory().averageBytesPerSecond(),
+                    restored.getSpeedHistory().averageBytesPerSecond());
+            assertEquals(retainedPeak, restored.getSpeedHistory().maxBytesPerSecond());
+            reopened.save(List.of(restored), Set.of());
+        }
+        try (var reopened = store()) {
+            assertEquals(retainedPeak, reopened.load().downloads().getFirst()
+                    .getSpeedHistory().maxBytesPerSecond());
+        }
+    }
+
+    @Test
     void olderDatabaseGainsAnEmptyOptionalHistoryColumn() throws Exception {
         Download legacy = new Download(URI.create("https://example.com/legacy"));
         legacy.setStatus(Download.Status.COMPLETED);
@@ -94,7 +126,9 @@ class DownloadSpeedHistoryPersistenceTest {
         "not-json",
         "{\"version\":99,\"samples\":[],\"durationMillis\":0,\"speedMillis\":0}",
         "{\"version\":1,\"samples\":[{\"elapsedMillis\":-1,\"downloadedBytes\":0,\"bytesPerSecond\":1}],\"durationMillis\":0,\"speedMillis\":0}",
-        "{\"version\":1,\"samples\":[],\"durationMillis\":1000,\"speedMillis\":1000}"
+        "{\"version\":1,\"samples\":[],\"durationMillis\":1000,\"speedMillis\":1000}",
+        "{\"version\":1,\"samples\":[],\"durationMillis\":0,\"speedMillis\":0,\"maxBytesPerSecond\":-1}",
+        "{\"version\":1,\"samples\":[],\"durationMillis\":0,\"speedMillis\":0,\"maxBytesPerSecond\":\"NaN\"}"
     })
     void malformedOrUnsupportedHistoryDoesNotDiscardTheDownload(String history) throws Exception {
         Download original = downloadWithHistory("corrupt", Download.Status.COMPLETED);
@@ -142,7 +176,7 @@ class DownloadSpeedHistoryPersistenceTest {
         Download download = new Download(URI.create("https://example.com/" + name));
         var history = new DownloadSpeedHistory();
         for (int i = 0; i < 2000; i++) {
-            history.record(i * 1000L, i * 5000L, i % 7 * 1000);
+            history.record(i * 1000L, i * 5000L, i == 123 ? 50_000 : i % 7 * 1000);
         }
         download.setStatus(status);
         download.setSize(30_000_000);

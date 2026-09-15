@@ -165,7 +165,7 @@ class CurlClientTest {
     @Timeout(30)
     void shouldHandleDownloadError() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(404).setBody("Not found"));
-        String invalidUrl = server.url("/missing.bin").toString();
+        String invalidUrl = server.url("/missing.bin?signature=private-signature").toString();
 
         Download download = createTestDownload(URI.create(invalidUrl));
         download.setDestination(tempDir);
@@ -182,6 +182,8 @@ class CurlClientTest {
 
         assertTrue(listener.errorReceived.get());
         assertNotNull(listener.errorMessage.get());
+        assertTrue(listener.errorMessage.get().contains("404"), listener.errorMessage.get());
+        assertFalse(listener.errorMessage.get().contains("private-signature"));
         assertEquals(Download.Status.ERROR, download.getStatus());
     }
 

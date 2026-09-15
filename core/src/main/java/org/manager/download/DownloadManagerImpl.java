@@ -608,11 +608,11 @@ public class DownloadManagerImpl implements DownloadManager {
             future.thenAccept(gid -> {
                 synchronized (generationLock) {
                     if (!isCurrentAttempt(download.getId(), startGeneration)) {
-                        LOGGER.warn("Dropping stale generation result for download: " + download.getName());
+                        LOGGER.debug("Dropping stale generation result for download: " + download.getName());
                         return;
                     }
                     if (isTerminalAttempt(download.getId(), startGeneration)) {
-                        LOGGER.warn("Dropping start result after terminal event for download: "
+                        LOGGER.debug("Dropping start result after terminal event for download: "
                                 + download.getName());
                         return;
                     }
@@ -639,7 +639,7 @@ public class DownloadManagerImpl implements DownloadManager {
                 }
             }).exceptionally(e -> {
                 if (!isCurrentAttempt(download.getId(), startGeneration)) {
-                    LOGGER.warn("Dropping stale generation failure for download: " + download.getName());
+                    LOGGER.debug("Dropping stale generation failure for download: " + download.getName());
                     return null;
                 }
                 if (pauseRevisions.getOrDefault(download.getId(), 0L) != pauseRevision) {
@@ -786,13 +786,13 @@ public class DownloadManagerImpl implements DownloadManager {
         synchronized (generationLock) {
             Long current = attemptGenerations.get(downloadId);
             if (current == null || current.longValue() != generation) {
-                LOGGER.warn("Stale terminal event for download " + downloadId
+                LOGGER.debug("Stale terminal event for download " + downloadId
                         + " (generation " + generation + ") ignored");
                 return false;
             }
             Long terminated = terminalGenerations.get(downloadId);
             if (terminated != null && terminated.longValue() == generation) {
-                LOGGER.warn("Duplicate terminal event for download " + downloadId
+                LOGGER.debug("Duplicate terminal event for download " + downloadId
                         + " (generation " + generation + ") ignored");
                 return false;
             }
@@ -1630,7 +1630,14 @@ public class DownloadManagerImpl implements DownloadManager {
 
     /** Returns the aria2 handler if the given download is handled by it. */
     private org.manager.download.handler.Aria2DownloadHandler aria2HandlerFor(Download download) {
-        DownloadHandler handler = getHandlerFactory().getHandler(download);
+        if (download == null || download.getType() != Download.Type.ARIA2) {
+            return null;
+        }
+        // Reading details must not re-route or mutate a persisted download.
+        DownloadHandler handler = activeHandlers.get(download.getId());
+        if (!(handler instanceof org.manager.download.handler.Aria2DownloadHandler)) {
+            handler = getHandlerFactory().getHandler(Download.Type.ARIA2);
+        }
         return handler instanceof org.manager.download.handler.Aria2DownloadHandler aria2Handler
                 ? aria2Handler
                 : null;
@@ -3113,7 +3120,6 @@ public class DownloadManagerImpl implements DownloadManager {
 
         @Override
         public void onDownloadError(Download d, String errorMessage) {
-            LOGGER.info("Download error: " + d.getName() + " - " + errorMessage);
             long errorGeneration = d.getAttemptGeneration();
 
             // A retry wrapper owns intermediate retryable failures: it
@@ -3128,14 +3134,14 @@ public class DownloadManagerImpl implements DownloadManager {
                     return;
                 }
                 if (decision == RetryEventInterceptor.RetryDecision.STALE) {
-                    LOGGER.warn("Stale generation error for download " + d.getName()
+                    LOGGER.debug("Stale generation error for download " + d.getName()
                             + " dropped; terminal handling skipped");
                     return;
                 }
             }
 
             if (!isCurrentAttempt(d.getId(), errorGeneration)) {
-                LOGGER.warn("Stale generation error for download " + d.getName()
+                LOGGER.debug("Stale generation error for download " + d.getName()
                         + " dropped after handler interception");
                 return;
             }
@@ -3148,6 +3154,9 @@ public class DownloadManagerImpl implements DownloadManager {
             if (!tryBeginTerminal(d.getId(), errorGeneration)) {
                 return;
             }
+
+            LOGGER.error("Download {} failed: {}", d.getId(),
+                    org.manager.tools.ProcessDiagnostics.sanitize(errorMessage));
 
             // CRITICAL: Update repository status indices to prevent inconsistency
             downloadRepository.updateDownloadStatus(d, Download.Status.ERROR);
@@ -3205,7 +3214,7 @@ public class DownloadManagerImpl implements DownloadManager {
     private void cleanupDownloadResources(String downloadId, long generation) {
         try {
             if (!isCurrentAttempt(downloadId, generation)) {
-                LOGGER.warn("Stale generation terminal result for download " + downloadId
+                LOGGER.debug("Stale generation terminal result for download " + downloadId
                         + " dropped; current operation left untouched");
                 return;
             }

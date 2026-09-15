@@ -169,9 +169,15 @@ class YtDlpCancelOrderingTest {
                     new YtDlpSettings().setUseDownloadArchive(true), tempDir, client);
             wireProgressListener(task, download);
             CompletableFuture<String> completion = task.start();
+            Method watch = YtDlpDownloadHandler.class.getDeclaredMethod("watchRun",
+                    Download.class, YtDlpDownloadTask.class, CompletableFuture.class);
+            watch.setAccessible(true);
+            watch.invoke(handler, download, task, completion);
             var callback = awaitCallback(client);
             callback.onSkipped(3);
             callback.onComplete(null);
+            assertFalse(download.getStatus() == Download.Status.COMPLETED,
+                    "an output callback must wait for the process future before completing the download");
             client.run.complete(null);
             completion.get(5, TimeUnit.SECONDS);
             assertEquals(Download.Status.COMPLETED, download.getStatus());

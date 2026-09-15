@@ -21,6 +21,7 @@ Open Download Manager (ODM) combines proven engines — aria2, yt-dlp, and HTTra
 - BitTorrent, magnet, and Metalink support
 - Video and media downloads through yt-dlp
 - Website mirroring through HTTrack
+- Torrents search
 - Pause, resume, cancel, reorder, and concurrent download limits
 - Clipboard URL monitoring and torrent/Metalink folder monitoring
 - Persistent download history and automatic resume

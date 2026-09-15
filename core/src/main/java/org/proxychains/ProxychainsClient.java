@@ -43,7 +43,8 @@ public class ProxychainsClient {
     private static final Pattern UPLOAD_SPEED_PATTERN = Pattern.compile(
             ".*UL:([0-9]+(?:\\.[0-9]+)?)([KMGTkmgt]?i?)B(/s)?.*");
     private static final Set<String> PROXYCHAIN_OWNED_ARIA2_OPTIONS = Set.of(
-            "all-proxy", "dir", "out", "allow-overwrite", "file-allocation");
+            "all-proxy", "http-proxy", "https-proxy", "ftp-proxy", "no-proxy",
+            "dir", "out", "allow-overwrite", "file-allocation");
 
     private final String proxychainsPath;
     private final String configPath;
@@ -282,13 +283,15 @@ public class ProxychainsClient {
                     }
 
                     // Read both stdout and stderr in separate threads
+                    var diagnostics = new org.manager.tools.ProcessDiagnostics();
                     Thread stderrReader = new Thread(() -> {
                         try (BufferedReader reader = new BufferedReader(
                                 new InputStreamReader(finalProcess.getErrorStream()))) {
                             String line;
                             while ((line = reader.readLine()) != null && !launch.isCancelled()) {
                                 // Per-line tool output at 1+ lines/second: FINE
-                                LOGGER.debug("[ARIA2 STDERR]: " + line);
+                                diagnostics.addLine(line);
+                                LOGGER.debug("[ARIA2 STDERR]: {}", org.manager.tools.ProcessDiagnostics.sanitize(line));
                                 synchronized (download) {
                                     if (!launch.isCancelled() && download.getStatus() == Download.Status.DOWNLOADING) {
                                         processAria2Output(line, download, listener, connections);
@@ -308,7 +311,8 @@ public class ProxychainsClient {
 
                         while ((line = reader.readLine()) != null && !launch.isCancelled()) {
                             // Per-line tool output at 1+ lines/second: FINE
-                            LOGGER.debug("[ARIA2 STDOUT]: " + line);
+                            diagnostics.addLine(line);
+                            LOGGER.debug("[ARIA2 STDOUT]: {}", org.manager.tools.ProcessDiagnostics.sanitize(line));
                             synchronized (download) {
                                 if (!launch.isCancelled() && download.getStatus() == Download.Status.DOWNLOADING) {
                                     processAria2Output(line, download, listener, connections);
@@ -319,6 +323,7 @@ public class ProxychainsClient {
 
                     // Wait for process to complete
                     int exitCode = process.waitFor();
+                    stderrReader.join(1000);
 
                     synchronized (download) {
                         if (launch.isCancelled()) {
@@ -343,7 +348,8 @@ public class ProxychainsClient {
                                     Download.Status.ERROR)
                                     || download.compareAndSetStatus(Download.Status.CONNECTING,
                                             Download.Status.ERROR)) {
-                                download.setErrorMessage("proxychains process exited with code: " + exitCode);
+                                download.setErrorMessage(diagnostics.message(
+                                        "proxychains process exited with code: " + exitCode));
                                 if (listener != null) {
                                     listener.onDownloadError(download, download.getErrorMessage());
                                 }

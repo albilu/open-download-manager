@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,6 +76,40 @@ class ProxychainsClientTest {
     private SocksHttpServer proxy;
     private String mockServerUrl;
     private String testFileContent;
+
+    @Test
+    void generatedProxyOptionsAreQuietWhileImportedRoutingOverridesRemainRejected() throws Exception {
+        var warnings = new java.util.concurrent.ConcurrentLinkedQueue<String>();
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                .getLogger(org.manager.tools.ToolOptionFilter.class);
+        var appender = new ch.qos.logback.core.AppenderBase<ch.qos.logback.classic.spi.ILoggingEvent>() {
+            @Override protected void append(ch.qos.logback.classic.spi.ILoggingEvent event) {
+                if (event.getLevel() == ch.qos.logback.classic.Level.WARN) {
+                    warnings.add(event.getFormattedMessage());
+                }
+            }
+        };
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            var download = new Download(java.net.URI.create(mockServerUrl + "/test-file"));
+            download.setSettings(new org.aria2.Aria2Settings());
+            var command = client.buildProxychainsCommand(download, tempDir.resolve("file.bin"), null, Map.of());
+            assertTrue(warnings.isEmpty(), warnings.toString());
+            for (String key : List.of("http-proxy", "https-proxy", "ftp-proxy", "no-proxy")) {
+                assertTrue(command.contains("--" + key + "="));
+            }
+            command = client.buildProxychainsCommand(download, tempDir.resolve("file.bin"), null,
+                    Map.of("aria2.http-proxy", "http://untrusted.invalid:8080",
+                            "aria2.on-download-complete", "untrusted-command"));
+            assertFalse(command.stream().anyMatch(value -> value.contains("untrusted")));
+            assertTrue(warnings.stream().anyMatch(value -> value.contains("http-proxy")));
+            assertTrue(warnings.stream().anyMatch(value -> value.contains("on-download-complete")));
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
 
     @BeforeEach
     void setUp() throws Exception {
@@ -381,7 +416,7 @@ class ProxychainsClientTest {
     @DisplayName("Should handle download errors")
     @Timeout(20)
     void shouldHandleDownloadErrors() throws Exception {
-        Download download = createTestDownload("error-file.zip", mockServerUrl + "/error");
+        Download download = createTestDownload("error-file.zip", mockServerUrl + "/error?token=private-token");
 
         CountDownLatch errorLatch = new CountDownLatch(1);
         AtomicReference<String> errorMessage = new AtomicReference<>();
@@ -399,6 +434,9 @@ class ProxychainsClientTest {
         // Wait for error
         assertTrue(errorLatch.await(15, TimeUnit.SECONDS), "Should receive error callback");
         assertNotNull(errorMessage.get(), "Should have error message");
+        assertTrue(errorMessage.get().contains("Resource not found"), errorMessage.get());
+        assertFalse(errorMessage.get().contains("private-token"));
+        assertFalse(errorMessage.get().contains(mockServerUrl));
         assertEquals(Download.Status.ERROR, download.getStatus());
         assertProxiedTransfer();
     }

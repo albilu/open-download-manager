@@ -11,6 +11,8 @@ import org.gnome.glib.GLib;
  */
 public final class UiThread {
 
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(UiThread.class);
+
     private UiThread() {
     }
 
@@ -21,6 +23,14 @@ public final class UiThread {
      * @param task the UI work to run on the GTK thread
      */
     public static void marshal(Runnable task) {
-        GLib.idleAddOnce(task::run);
+        GLib.idleAddOnce(() -> {
+            try {
+                task.run();
+            } catch (RuntimeException failure) {
+                // An exception crossing the native callback boundary can be
+                // rethrown by unrelated GTK calls and accumulate wrappers.
+                LOGGER.error("Could not apply GTK update", failure);
+            }
+        });
     }
 }

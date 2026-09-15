@@ -14,6 +14,7 @@ import org.aria2.Aria2Client.Aria2RpcError;
 import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -385,35 +386,32 @@ class Aria2E2ETest {
                 "--rpc-secret=" + TEST_RPC_TOKEN,
                 "--dir=" + downloadDir.toString());
 
-        client.startAria2cWithRpc(args);
-
-        // Test HTTP mode
-        Map<String, Object> version1 = client.getVersion();
-        assertNotNull(version1);
-
-        // Switch to WebSocket mode
-        client.setUseWebSocket(true);
-        // Thread.sleep(2000); // Allow time for WebSocket connection
-
-        // Test WebSocket mode (might fail if connection isn't established)
         try {
+            assertTrue(client.startAria2cWithRpc(args));
+            Map<String, Object> version1 = client.getVersion();
+            assertNotNull(version1);
+
+            client.setUseWebSocket(true);
             Map<String, Object> version2 = client.getVersion();
             assertNotNull(version2);
             assertEquals(version1.get("version"), version2.get("version"));
-        } catch (Exception e) {
-            // WebSocket connection might not establish immediately
-            // Switch back to HTTP and verify it still works
+
+            // A recoverable socket reset preserves the client lifecycle.
+            client.closeWebSocketSocket("test transport reset");
+            assertFalse(client.isShutdownLatched());
+            client.connectWebSocket();
+            assertEquals(version1.get("version"), client.getVersion().get("version"));
+
             client.setUseWebSocket(false);
-            // Thread.sleep(1000);
-            Map<String, Object> version3 = client.getVersion();
-            assertNotNull(version3);
+            assertEquals(version1.get("version"), client.getVersion().get("version"));
+
+            // Public disconnect is permanent teardown, not a mode switch.
+            client.disconnectWebSocket();
+            assertTrue(client.isShutdownLatched());
+            assertThrows(java.io.IOException.class, client::connectWebSocket);
+        } finally {
+            assertTrue(client.stopAria2c());
         }
-
-        // Test disconnect/reconnect
-        assertDoesNotThrow(() -> client.disconnectWebSocket());
-        assertDoesNotThrow(() -> client.connectWebSocket());
-
-        assertTrue(client.stopAria2c());
     }
 
     @Test
