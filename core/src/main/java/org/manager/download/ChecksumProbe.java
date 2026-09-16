@@ -62,6 +62,11 @@ public final class ChecksumProbe {
 
     /** Probes through the supplied proxy when configured. */
     public static Optional<DetectedChecksum> probe(URI url, String proxyAddress) {
+        return probe(url, proxyAddress, true);
+    }
+
+    public static Optional<DetectedChecksum> probe(URI url, String proxyAddress,
+            boolean verifyHttpsCertificates) {
         if (url == null) {
             return Optional.empty();
         }
@@ -76,7 +81,7 @@ public final class ChecksumProbe {
         for (Map.Entry<String, String> candidate : CHECKSUM_CANDIDATES) {
             URI sibling = siblingUri(url, candidate.getValue());
             Optional<String> checksum = fetchAndParse(
-                    sibling, candidate.getKey(), expectedFilename, proxyAddress);
+                    sibling, candidate.getKey(), expectedFilename, proxyAddress, verifyHttpsCertificates);
             if (checksum.isPresent()) {
                 return Optional.of(new DetectedChecksum(
                         candidate.getKey(), checksum.get(), sibling));
@@ -99,11 +104,11 @@ public final class ChecksumProbe {
      * filename when the file lists multiple entries.
      */
     private static Optional<String> fetchAndParse(URI sibling, String algorithm,
-            String expectedFilename, String proxyAddress) {
+            String expectedFilename, String proxyAddress, boolean verifyHttpsCertificates) {
         try {
             byte[] bytes = org.manager.tools.BoundedHttpFetcher.fetch(sibling,
                     MAX_CHECKSUM_FILE_BYTES, Duration.ofSeconds(5), Duration.ofSeconds(8),
-                    proxyAddress);
+                    proxyAddress, verifyHttpsCertificates);
             String body = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
             return parse(body, algorithm, expectedFilename);
         } catch (IOException e) {

@@ -57,6 +57,7 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
     private final SubliminalSettings settings;
     private final SubliminalClient subliminalClient;
     private final YtDlpClient ytDlpClient;
+    private final java.util.function.BooleanSupplier verifyHttpsCertificates;
     private final Set<String> activeYtDlpOperations = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private volatile String actionOutput = "";
@@ -69,10 +70,18 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
     /** Dependency-injection seam for clients and focused tests. */
     public SubtitleDownloadAction(SubliminalSettings settings,
             SubliminalClient subliminalClient, YtDlpClient ytDlpClient) {
+        this(settings, subliminalClient, ytDlpClient, null);
+    }
+
+    /** Uses the current global HTTPS policy when a queued subtitle action starts. */
+    public SubtitleDownloadAction(SubliminalSettings settings,
+            SubliminalClient subliminalClient, YtDlpClient ytDlpClient,
+            java.util.function.BooleanSupplier verifyHttpsCertificates) {
         this.settings = java.util.Objects.requireNonNull(settings, "settings").copy();
         this.subliminalClient = java.util.Objects.requireNonNull(
                 subliminalClient, "subliminalClient");
         this.ytDlpClient = java.util.Objects.requireNonNull(ytDlpClient, "ytDlpClient");
+        this.verifyHttpsCertificates = verifyHttpsCertificates;
     }
 
     /**
@@ -204,6 +213,9 @@ public final class SubtitleDownloadAction implements AfterCompletionAction {
         appendLine(output, "Requested languages", String.join(", ", missing));
 
         YtDlpSettings ytSettings = subtitleSettings(download.getSettings());
+        if (verifyHttpsCertificates != null) {
+            ytSettings.setVerifyHttpsCertificates(verifyHttpsCertificates.getAsBoolean());
+        }
         ytSettings.setWriteSubtitles(true)
                 .setWriteAutoSubs(true)
                 .setEmbedSubs(false)

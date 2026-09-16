@@ -96,6 +96,10 @@ public class DownloadSettingsFactory {
         } else if (settings instanceof YtDlpSettings media) {
             media.setUseDownloadArchive(
                     getGlobalSettings().getBooleanProperty("ytdlp.skipDownloaded", true));
+            media.setVerifyHttpsCertificates(getGlobalSettings().isVerifyHttpsCertificates());
+        }
+        if (settings instanceof CurlSettings curl) {
+            curl.setInsecureMode(!getGlobalSettings().isVerifyHttpsCertificates());
         }
     }
 

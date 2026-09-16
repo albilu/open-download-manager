@@ -17,6 +17,16 @@ import org.ytdlp.YtDlpToolManager;
  */
 public class YtDlpSettings extends DownloadSettings {
 
+    private boolean verifyHttpsCertificates = true;
+
+    public boolean isVerifyHttpsCertificates() {
+        return verifyHttpsCertificates;
+    }
+
+    public void setVerifyHttpsCertificates(boolean verify) {
+        verifyHttpsCertificates = verify;
+    }
+
     /** Browser profiles supported by yt-dlp's --cookies-from-browser option. */
     public enum BrowserCookieSource {
         NONE("none", "None"),
@@ -1273,6 +1283,7 @@ public class YtDlpSettings extends DownloadSettings {
         copy.ignoreErrors = this.ignoreErrors;
         copy.noPlaylist = this.noPlaylist;
         copy.useDownloadArchive = this.useDownloadArchive;
+        copy.verifyHttpsCertificates = this.verifyHttpsCertificates;
         copy.playlistEnd = this.playlistEnd;
         copy.playlistItems = this.playlistItems;
         copy.playlistItemSpec = this.playlistItemSpec;

@@ -58,7 +58,7 @@ public class BrowserMediaProbe implements AutoCloseable {
                     var input = new MediaProbeWorker.Input(source.toString(),
                             org.manager.tools.NetworkProcessPolicy.selectedProxy(settings),
                             settings.getUserAgent(), settings.getReferer(), settings.getCookieHeader(),
-                            cookies, observationMillis);
+                            cookies, observationMillis, !settings.isVerifyHttpsCertificates());
                     var builder = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                             "-Xmx256m", "-cp", System.getProperty("java.class.path"), MediaProbeWorker.class.getName());
                     org.manager.tools.NetworkProcessPolicy.prepare(builder);

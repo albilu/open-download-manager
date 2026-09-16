@@ -122,6 +122,26 @@ class SubtitleDownloadActionTest {
     }
 
     @Test
+    void queuedSubtitlesUseTheCurrentGlobalCertificateChoice() throws Exception {
+        Path video = Files.writeString(tempDir.resolve("clip.webm"), "video");
+        Download download = completedDownload(URI.create("https://example.com/watch"),
+                video, Download.Type.YOUTUBE);
+        YtDlpSettings original = new YtDlpSettings();
+        download.setSettings(original);
+        var global = new org.manager.GlobalSettings();
+        var ytDlp = new RecordingYtDlpClient(true);
+        var action = new SubtitleDownloadAction(new SubliminalSettings(),
+                new RecordingSubliminalClient(true), ytDlp, global::isVerifyHttpsCertificates);
+        global.setVerifyHttpsCertificates(false);
+        assertTrue(action.execute(download));
+        assertFalse(ytDlp.settingsCalls.getLast().isVerifyHttpsCertificates());
+        global.setVerifyHttpsCertificates(true);
+        assertTrue(action.execute(download));
+        assertTrue(ytDlp.settingsCalls.getLast().isVerifyHttpsCertificates());
+        assertTrue(original.isVerifyHttpsCertificates(), "completed record settings must not be mutated");
+    }
+
+    @Test
     void genericSubliminalVideoExtensionIsNotSilentlyIgnored() throws Exception {
         Path video = Files.writeString(tempDir.resolve("movie.vob"), "video");
         Download download = completedDownload(

@@ -154,7 +154,8 @@ final class CompletionActionPolicy {
                         ytDlpPath == null || ytDlpPath.isBlank()
                                 ? ToolPaths.ytDlp() : ytDlpPath,
                         settings.isHonorExternalYtDlpConfiguration(),
-                        settings.isHonorExternalAria2Configuration()));
+                        settings.isHonorExternalAria2Configuration()),
+                settings::isVerifyHttpsCertificates);
     }
 
     /** Suspends the machine on download completion (systemctl suspend). */

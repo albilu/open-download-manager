@@ -43,6 +43,7 @@ class SettingsDialogSaveOutcomeTest {
             "max_connections_spin", "retry_limit_spin", "retry_after",
             "max_download_speed_spin", "max_upload_speed_spin", "referer_entry",
             "cookie_entry", "user_agent_entry", "proxy_type_combo", "proxy_host_entry",
+            "verify_https_certificates_check",
             "proxy_port_spin", "proxy_username_entry", "proxy_password_entry", "tor_switch",
             // aria2
             "aria2_path_entry", "browse_aria2_button", "min_split_size_spin1",
@@ -134,6 +135,30 @@ class SettingsDialogSaveOutcomeTest {
 
     private SettingsDialog buildDialog() {
         return new SettingsDialog(null, newStubManager(), null);
+    }
+
+    @Test
+    @Timeout(60)
+    void certificateVerificationDefaultsOnAndRoundTripsBothChoices() throws Exception {
+        Path configHome = Files.createDirectory(tempDir.resolve("tls-config"));
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings();
+            initial.setDefaultDownloadDirectory(tempDir);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null);
+            assertTrue(dialog.verifyHttpsCertificates());
+            for (boolean verify : new boolean[]{false, true}) {
+                dialog.setVerifyHttpsCertificates(verify);
+                dialog.applySettings();
+                assertEquals(verify, settings.get().isVerifyHttpsCertificates());
+                GlobalSettings loaded = new GlobalSettings();
+                loaded.load();
+                assertEquals(verify, loaded.isVerifyHttpsCertificates());
+                SettingsDialog reopened = new SettingsDialog(null,
+                        newStubManager(new AtomicReference<>(loaded)), null);
+                assertEquals(verify, reopened.verifyHttpsCertificates());
+            }
+        });
     }
 
     @Test

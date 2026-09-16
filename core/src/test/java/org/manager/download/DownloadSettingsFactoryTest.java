@@ -18,6 +18,31 @@ import org.ytdlp.YtDlpSettings;
 class DownloadSettingsFactoryTest {
 
     @Test
+    void certificatePreferenceDefaultsToVerificationAndRefreshesExistingSettings() {
+        GlobalSettings global = new GlobalSettings();
+        var factory = new DownloadSettingsFactory(global);
+        CurlSettings curl = factory.createCurlSettings();
+        YtDlpSettings media = factory.createYtDlpSettings();
+        assertTrue(global.isVerifyHttpsCertificates());
+        assertFalse(curl.isInsecureMode());
+        assertTrue(media.isVerifyHttpsCertificates());
+        for (String malformed : new String[]{"", "invalid"}) {
+            global.setProperty("network.verifyHttpsCertificates", malformed);
+            assertTrue(global.isVerifyHttpsCertificates());
+        }
+
+        for (boolean verify : new boolean[]{false, true}) {
+            global.setVerifyHttpsCertificates(verify);
+            factory.applyGlobalTransferPreferences(curl);
+            factory.applyGlobalTransferPreferences(media);
+            assertEquals(!verify, curl.isInsecureMode());
+            assertEquals(verify, media.isVerifyHttpsCertificates());
+            assertEquals(verify, ((YtDlpSettings) media.copy()).isVerifyHttpsCertificates());
+            assertEquals(verify, global.copy().isVerifyHttpsCertificates());
+        }
+    }
+
+    @Test
     @DisplayName("defaults produce permissive aria2 settings without speed caps")
     void aria2Defaults() {
         DownloadSettingsFactory factory = new DownloadSettingsFactory(new GlobalSettings());

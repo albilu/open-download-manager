@@ -14,6 +14,11 @@ class UiErrorsTest {
         assertEquals("Select at least one file", UiErrors.message(new CompletionException(
                 new IllegalArgumentException("Select at least one file"))));
         assertEquals("HTTP 403: Access denied", UiErrors.message(new IOException("HTTP 403: Access denied")));
+        String certificateError = "TLS certificate verification failed (curl 60): "
+                + "SSL certificate problem: self-signed certificate";
+        assertEquals(certificateError, UiErrors.message(new CompletionException(
+                new IllegalArgumentException("Could not fetch the remote HTML source",
+                        new IOException(certificateError)))));
     }
 
     @ParameterizedTest

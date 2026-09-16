@@ -27,7 +27,8 @@ class Aria2GlobalOptionsTest {
         assertFalse(aria2.toRpcOptions().containsKey("enable-peer-exchange"));
         assertFalse(aria2.toRpcOptions().containsKey("bt-enable-lpd"));
         assertFalse(aria2.toRpcOptions().containsKey("bt-require-crypto"));
-        assertTrue(Aria2GlobalOptions.daemonLaunchArguments(global, false).isEmpty());
+        assertEquals(List.of("--check-certificate=true"),
+                Aria2GlobalOptions.daemonLaunchArguments(global, false));
     }
 
     @Test

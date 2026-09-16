@@ -921,6 +921,16 @@ public class GlobalSettings {
         setProperty("aria2.rpcPort", String.valueOf(validPort));
     }
 
+    /** Verify HTTPS server certificates for downloads and source-page requests. */
+    public boolean isVerifyHttpsCertificates() {
+        // Missing or malformed preferences must not silently disable verification.
+        return !"false".equalsIgnoreCase(getProperty("network.verifyHttpsCertificates", "true").strip());
+    }
+
+    public void setVerifyHttpsCertificates(boolean verify) {
+        setProperty("network.verifyHttpsCertificates", String.valueOf(verify));
+    }
+
     /** Whether ODM-started aria2 processes may load aria2's external config. */
     public boolean isHonorExternalAria2Configuration() {
         return getBooleanProperty(ARIA2_HONOR_EXTERNAL_CONFIG, false);

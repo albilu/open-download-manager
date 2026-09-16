@@ -474,14 +474,17 @@ public class CurlClient {
             command.add("--fail");
         }
 
-        // Add insecure mode if enabled
-        if (settings.isInsecureMode()) {
-            command.add("--insecure");
+        // This HTTPS preference must not disable curl's SSH host-key checks.
+        String source = download.getProtocol() != null && download.getProtocol().isDirectTransfer()
+                ? download.getSourceUris().getFirst() : download.getUri().toString();
+        String scheme = java.net.URI.create(source).getScheme();
+        if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+            command.add(settings.isInsecureMode() ? "--insecure" : "--no-insecure");
         }
 
         // The aria2/proxychains SFTP fallback must retain an explicit host-key
         // pin. Curl supports MD5 pins, but has no SHA-1 pin option.
-        if (download.getProtocol() == Download.Protocol.SFTP) {
+        if ("sftp".equalsIgnoreCase(scheme)) {
             String pin = org.aria2.Aria2Settings.normalizeSshHostKeyDigest(
                     settings.getOption("ssh-host-key-md"));
             if (pin.startsWith("sha-1=")) {
@@ -530,8 +533,7 @@ public class CurlClient {
         }
 
         // Add the URL
-        command.add(download.getProtocol() != null && download.getProtocol().isDirectTransfer()
-                ? download.getSourceUris().getFirst() : download.getUri().toString());
+        command.add(source);
 
         return command;
     }

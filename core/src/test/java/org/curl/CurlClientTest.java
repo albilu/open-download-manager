@@ -80,6 +80,23 @@ class CurlClientTest {
     }
 
     @Test
+    void httpsPreferenceDoesNotDisableSftpHostKeyVerification() {
+        var global = new org.manager.GlobalSettings();
+        global.setVerifyHttpsCertificates(false);
+        for (String originalScheme : List.of("sftp", "https")) {
+            Download download = new Download(URI.create(originalScheme + "://files.invalid/file.bin"));
+            download.setFileSources("", List.of("sftp://mirror.invalid/file.bin"));
+            var settings = new org.manager.download.DownloadSettingsFactory(global).createCurlSettings();
+            settings.setOption("ssh-host-key-md", "md5=" + "a".repeat(32));
+            download.setSettings(settings);
+            var command = client.buildCurlCommand(download, tempDir.resolve("file.bin"));
+            assertFalse(command.contains("--insecure"));
+            assertTrue(command.contains("--hostpubmd5"));
+            assertEquals("sftp://mirror.invalid/file.bin", command.getLast());
+        }
+    }
+
+    @Test
     @DisplayName("Should validate curl installation on creation")
     void shouldValidateCurlInstallationOnCreation() {
         assertDoesNotThrow(() -> new CurlClient("curl"));

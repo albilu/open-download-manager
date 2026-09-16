@@ -2215,13 +2215,16 @@ public class MainWindow {
             String proxy = settings.isGlobalProxyEnabled()
                     ? settings.getGlobalProxyAddress() : null;
             ImportLimits importLimits = ImportLimits.from(settings);
+            boolean verifyHttpsCertificates = settings.isVerifyHttpsCertificates();
             importButton.setSensitive(false);
             sourceEntry.setSensitive(false);
             AccessibilitySupport.status(status, "Fetching page and importing links…");
             trackActivity(CompletableFuture.supplyAsync(() -> HtmlImportExport
-                    .fetchRemoteHtmlLinks(source, proxy, importLimits), backgroundExecutor))
+                    .fetchRemoteHtmlLinks(source, proxy, importLimits, verifyHttpsCertificates), backgroundExecutor))
                     .whenComplete((links, error) -> UiThread.marshal(() -> {
                         if (error != null) {
+                            LOGGER.warn("Remote HTML import failed: {}",
+                                    org.manager.tools.ProcessDiagnostics.sanitize(UiErrors.message(error)));
                             importButton.setSensitive(true);
                             sourceEntry.setSensitive(true);
                             AccessibilitySupport.status(status,

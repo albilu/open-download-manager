@@ -24,6 +24,7 @@ public final class SocksHttpServer implements AutoCloseable {
     private final boolean authenticate;
     private final byte[] body;
     private final InetSocketAddress upstream;
+    private final boolean tunnel;
     private final CountDownLatch responseReady;
 
     public SocksHttpServer(boolean authenticate, String body) throws Exception {
@@ -44,14 +45,25 @@ public final class SocksHttpServer implements AutoCloseable {
         this(false, null, upstream, null);
     }
 
+    /** Relays raw TCP, including TLS, without parsing or rewriting HTTP. */
+    public static SocksHttpServer tunnel(InetSocketAddress upstream) throws Exception {
+        return new SocksHttpServer(false, null, java.util.Objects.requireNonNull(upstream), null, true);
+    }
+
     private SocksHttpServer(boolean authenticate, byte[] body, InetSocketAddress upstream,
             CountDownLatch responseReady) throws Exception {
+        this(authenticate, body, upstream, responseReady, false);
+    }
+
+    private SocksHttpServer(boolean authenticate, byte[] body, InetSocketAddress upstream,
+            CountDownLatch responseReady, boolean tunnel) throws Exception {
         if (upstream != null && (upstream.isUnresolved() || !upstream.getAddress().isLoopbackAddress())) {
             throw new IllegalArgumentException("The HTTP fixture must be on loopback");
         }
         this.authenticate = authenticate;
         this.body = body;
         this.upstream = upstream;
+        this.tunnel = tunnel;
         this.responseReady = responseReady;
         server = new ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"));
         workers.submit(() -> {
@@ -99,6 +111,24 @@ public final class SocksHttpServer implements AutoCloseable {
             hosts.add(host);
             out.write(new byte[] {5, 0, 0, 1, 127, 0, 0, 1, 0, 80});
             out.flush();
+            if (tunnel) {
+                try (Socket target = new Socket()) {
+                    target.connect(upstream, 5_000);
+                    target.setSoTimeout(10_000);
+                    var upload = workers.submit(() -> {
+                        in.transferTo(target.getOutputStream());
+                        target.shutdownOutput();
+                        return null;
+                    });
+                    try {
+                        target.getInputStream().transferTo(out);
+                        out.flush();
+                    } finally {
+                        upload.cancel(true);
+                    }
+                }
+                return;
+            }
             BufferedReader request = new BufferedReader(new InputStreamReader(in, StandardCharsets.US_ASCII));
             String requestLine = request.readLine();
             if (requestLine == null) {

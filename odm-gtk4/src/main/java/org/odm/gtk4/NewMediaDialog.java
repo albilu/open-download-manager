@@ -295,7 +295,7 @@ public class NewMediaDialog {
             previewDownload.setSettings(previewSettings);
             networkOptions.applyTo(previewDownload);
             new org.manager.download.DownloadSettingsFactory(downloadManager.getGlobalSettings())
-                    .applyInheritedProxy(previewSettings);
+                    .applyGlobalTransferPreferences(previewSettings);
         } catch (Exception failure) {
             LOGGER.warn("Could not prepare media information request", failure);
             AccessibilitySupport.status(statusLabel, "Could not fetch info: " + UiErrors.message(failure));

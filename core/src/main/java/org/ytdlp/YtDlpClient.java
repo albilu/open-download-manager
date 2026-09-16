@@ -836,6 +836,7 @@ public class YtDlpClient {
     private static void addRequestOptions(List<String> command,
             YtDlpSettings settings, String proxyAddress) {
         addProxy(command, proxyAddress);
+        addCertificateOption(command, settings);
         addRetryOptions(command, settings);
         if (settings.getReferer() != null && !settings.getReferer().isBlank()) {
             command.add("--referer");
@@ -846,6 +847,13 @@ public class YtDlpClient {
             command.add(settings.getUserAgent());
         }
         addAuthenticationOptions(command, settings);
+    }
+
+    private static void addCertificateOption(List<String> command, YtDlpSettings settings) {
+        // yt-dlp verifies by default and has no inverse --check-certificates flag.
+        if (!settings.isVerifyHttpsCertificates()) {
+            command.add("--no-check-certificates");
+        }
     }
 
     private static void addAuthenticationOptions(List<String> command,
@@ -1421,6 +1429,7 @@ public class YtDlpClient {
                     ? org.manager.tools.ToolPaths.aria2c() : aria2cPath);
 
             String aria2cArgs = settings.buildAria2cArgs();
+            aria2cArgs += " --check-certificate=" + settings.isVerifyHttpsCertificates();
             if (overrideOutputs) {
                 // The saved --continue=true must not resurrect an earlier
                 // download's partial output during this initial replacement.
@@ -1440,7 +1449,8 @@ public class YtDlpClient {
         // only allowlisted keys may become yt-dlp flags (--exec & friends
         // execute commands)
         Map<String, String> nativeAdditionalOptions = settings.getAdditionalOptions();
-        nativeAdditionalOptions.keySet().removeIf(key -> key.startsWith("odm."));
+        nativeAdditionalOptions.keySet().removeIf(key -> key.startsWith("odm.")
+                || key.equals("no-check-certificate") || key.equals("no-check-certificates"));
         for (Map.Entry<String, String> entry : org.manager.tools.ToolOptionFilter
                 .filter(org.manager.tools.ToolOptionFilter.Tool.YTDLP,
                         nativeAdditionalOptions)
@@ -1461,6 +1471,9 @@ public class YtDlpClient {
             command.add("--force-overwrites");
             command.add("--no-continue");
         }
+        // Certificate flags in old record options are replaced by the global policy.
+        // Explicitly honored external yt-dlp configs retain their native behavior.
+        addCertificateOption(command, settings);
         command.add(url);
         return command;
     }
@@ -1537,17 +1550,7 @@ public class YtDlpClient {
             command.add("--output");
             command.add("subtitle:" + settings.getOutputTemplate());
         }
-        addProxy(command, configuredProxy(settings));
-        addRetryOptions(command, settings);
-        if (settings.getReferer() != null && !settings.getReferer().isBlank()) {
-            command.add("--referer");
-            command.add(settings.getReferer());
-        }
-        if (settings.getUserAgent() != null && !settings.getUserAgent().isBlank()) {
-            command.add("--user-agent");
-            command.add(settings.getUserAgent());
-        }
-        addAuthenticationOptions(command, settings);
+        addRequestOptions(command, settings, configuredProxy(settings));
         command.add(url);
         return command;
     }

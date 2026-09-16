@@ -488,6 +488,7 @@ class WindowSmokeTest {
                 "clipboard_silent_check", "system_tray_check", "start_automatically_check",
                 "override_output_path_check",
                 "uniquify_output_name_check",
+                "verify_https_certificates_check",
                 "move_torrent_check", "startup_check", "folder_monitoring_check", "folder_recursive_check",
                 "move_to_trash_check",
                 "continue_download_check", "check_integrity_check", "enable_auto_save_check",

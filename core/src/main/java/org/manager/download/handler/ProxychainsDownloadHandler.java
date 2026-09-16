@@ -117,6 +117,8 @@ public class ProxychainsDownloadHandler extends AbstractDownloadHandler {
         Map<String, String> options = getDownloadOptions(download.getId());
         options.put("aria2.remote-time", Boolean.toString(
                 globalSettings.getBooleanProperty("aria2.remoteTime", false)));
+        options.put("aria2.check-certificate",
+                Boolean.toString(globalSettings.isVerifyHttpsCertificates()));
         return options;
     }
 

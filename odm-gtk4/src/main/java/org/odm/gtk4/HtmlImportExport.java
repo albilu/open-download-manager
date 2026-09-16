@@ -290,12 +290,17 @@ final class HtmlImportExport {
     /** Fetches and validates a remote HTML source without creating records yet. */
     static List<String> fetchRemoteHtmlLinks(URI source, String proxyAddress,
             ImportLimits limits) {
+        return fetchRemoteHtmlLinks(source, proxyAddress, limits, true);
+    }
+
+    static List<String> fetchRemoteHtmlLinks(URI source, String proxyAddress,
+            ImportLimits limits, boolean verifyHttpsCertificates) {
         ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         URI normalizedSource = DownloadUrlPolicy.require(source).requireWeb().uri();
         try {
             BoundedHttpFetcher.FetchResult response = BoundedHttpFetcher.fetchResult(
                     normalizedSource, effective.maxSourceBytes(), Duration.ofSeconds(10),
-                    Duration.ofSeconds(30), proxyAddress);
+                    Duration.ofSeconds(30), proxyAddress, verifyHttpsCertificates);
             if (!isHtmlContentType(response.contentType())) {
                 throw new IllegalArgumentException("The remote source is not HTML");
             }

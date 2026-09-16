@@ -199,6 +199,8 @@
                             <child><object class="GtkEntry" id="cookie_entry"><property name="hexpand">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
                             <child><object class="GtkLabel" id="proxy_password_label1"><property name="label">User Agent:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
                             <child><object class="GtkEntry" id="user_agent_entry"><property name="hexpand">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                            <child><object class="GtkCheckButton" id="verify_https_certificates_check"><property name="label">Verify HTTPS certificates</property><property name="active">true</property><layout><property name="row">3</property><property name="column">0</property><property name="column-span">2</property></layout></object></child>
+                            <child><object class="GtkLabel" id="verify_https_certificates_note"><property name="label">Restart ODM to apply changes to normal downloads. Web Scrap does not support certificate verification.</property><property name="wrap">true</property><property name="xalign">0</property><property name="max-width-chars">44</property><style><class name="dim-label"/></style><layout><property name="row">4</property><property name="column">0</property><property name="column-span">2</property></layout></object></child>
                           </object>
                         </child>
                       </object>

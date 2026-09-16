@@ -100,6 +100,8 @@ public class SettingsDialog {
                     "HTTP Cookie header sent by new downloads when supported; leave empty to omit it."),
             Map.entry("user_agent_entry",
                     "User-Agent used by new downloads when supported; leave empty for the engine default."),
+            Map.entry("verify_https_certificates_check",
+                    "Verify the identity of HTTPS servers for downloads, media requests and remote HTML imports. Turning this off accepts invalid certificates but keeps encryption. Normal aria2 downloads require restarting ODM; HTTrack does not verify certificates. An explicitly honored external yt-dlp configuration can disable verification."),
             Map.entry("proxy_type_combo",
                     "Global proxy protocol used by new downloads; select None to disable the global proxy."),
             Map.entry("proxy_host_entry",
@@ -171,7 +173,7 @@ public class SettingsDialog {
             Map.entry("use_aria2_external_check",
                     "Let yt-dlp use aria2 for supported media fragments and direct media URLs."),
             Map.entry("honor_external_ytdlp_config_check",
-                    "Allow ODM's yt-dlp commands to load system and user yt-dlp configuration files. Disabled keeps ODM settings authoritative."),
+                    "Allow ODM's yt-dlp commands to load system and user yt-dlp configuration files, including options that disable certificate verification. Disabled keeps ODM settings authoritative."),
             Map.entry("skip_downloaded_media_check",
                     "Remember successfully downloaded videos across playlists and restarts, even after removing records. Applies when a media download starts or resumes; disable this preference to download a video again."),
 
@@ -627,6 +629,14 @@ public class SettingsDialog {
 
     void setUniquifyOutputName(boolean uniquify) {
         check("uniquify_output_name_check").setActive(uniquify);
+    }
+
+    boolean verifyHttpsCertificates() {
+        return check("verify_https_certificates_check").getActive();
+    }
+
+    void setVerifyHttpsCertificates(boolean verify) {
+        check("verify_https_certificates_check").setActive(verify);
     }
 
     boolean retainCompletedAndCanceledHistory() {
@@ -1127,6 +1137,7 @@ public class SettingsDialog {
 
     private void loadNetwork(GlobalSettings s) {
         torSwitchSet(s.getBooleanProperty("tor.enabled", false));
+        setVerifyHttpsCertificates(s.isVerifyHttpsCertificates());
         setNetworkDefaults(DownloadSettingsFactory.NetworkDefaults.from(s));
         DialogOptions.ProxyFields proxy = DialogOptions.parseProxy(
                 DialogOptions.manualProxyAddress(s));
@@ -1351,6 +1362,7 @@ public class SettingsDialog {
         boolean effectiveFolderMonitoring = folderMonitoring && hasMonitoredDir;
         // Network
         networkDefaultsFromControls().saveTo(s);
+        s.setVerifyHttpsCertificates(verifyHttpsCertificates());
         boolean torEnabled = torSwitchGet();
         String manualProxyAddress = DialogOptions.buildProxyAddress(
                 (int) Widgets.require(builder, "proxy_type_combo", DropDown.class).getSelected(),

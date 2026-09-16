@@ -27,7 +27,7 @@ import org.manager.url.DownloadUrlPolicy;
 public final class MediaProbeWorker {
     static final String OUTPUT_PREFIX = "ODM_MEDIA_PROBE:";
     record Input(String url, String proxy, String userAgent, String referer,
-            String cookieHeader, String cookies, int timeoutMillis) { }
+            String cookieHeader, String cookies, int timeoutMillis, boolean ignoreHttpsErrors) { }
     record Output(List<MediaCandidate> candidates, String error) { }
 
     private MediaProbeWorker() { }
@@ -83,7 +83,8 @@ public final class MediaProbeWorker {
             if (proxy != null) { launch.setProxy(proxy); }
             try (Browser browser = playwright.chromium().launch(launch)) {
                 if (cancelled.get()) { throw new CancellationException(); }
-                var options = new Browser.NewContextOptions().setAcceptDownloads(false);
+                var options = new Browser.NewContextOptions().setAcceptDownloads(false)
+                        .setIgnoreHTTPSErrors(input.ignoreHttpsErrors());
                 if (input.userAgent() != null && !input.userAgent().isBlank()) {
                     options.setUserAgent(input.userAgent());
                 }

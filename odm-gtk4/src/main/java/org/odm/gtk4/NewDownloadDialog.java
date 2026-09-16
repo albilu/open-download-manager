@@ -305,6 +305,7 @@ public class NewDownloadDialog {
         detectedChecksum = null;
         long generation = ++checksumProbeGeneration;
         boolean torSelected = networkOptions.isTorSelected();
+        boolean verifyHttpsCertificates = downloadManager.getGlobalSettings().isVerifyHttpsCertificates();
         java.util.concurrent.CompletableFuture<Void> probe = java.util.concurrent.CompletableFuture
                 .runAsync(() -> { }, CompletableFuture.delayedExecutor(300, java.util.concurrent.TimeUnit.MILLISECONDS))
                 .thenCompose(ignored -> generation == checksumProbeGeneration
@@ -312,7 +313,8 @@ public class NewDownloadDialog {
                         : CompletableFuture.completedFuture(null))
                 .thenCompose(ignored -> java.util.concurrent.CompletableFuture.supplyAsync(() ->
                         generation == checksumProbeGeneration
-                                ? org.manager.download.ChecksumProbe.probe(uri, proxy).orElse(null) : null))
+                                ? org.manager.download.ChecksumProbe.probe(uri, proxy,
+                                        verifyHttpsCertificates).orElse(null) : null))
                 .thenAccept(found -> UiThread.marshal(() -> {
                     if (generation != checksumProbeGeneration
                             || !java.util.Objects.equals(uri, safeCurrentUri())) {

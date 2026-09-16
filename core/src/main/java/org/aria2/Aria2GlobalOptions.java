@@ -177,6 +177,8 @@ public final class Aria2GlobalOptions {
     public static List<String> daemonLaunchArguments(GlobalSettings settings,
             boolean strictProxyRouting) {
         List<String> arguments = new ArrayList<>();
+        // Certificate verification is startup-only in aria2, not an RPC/GID option.
+        arguments.add("--check-certificate=" + settings.isVerifyHttpsCertificates());
         String listenPorts = configuredListenPorts(settings);
         if (!listenPorts.isEmpty()) {
             arguments.add("--listen-port=" + listenPorts);

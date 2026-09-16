@@ -1978,7 +1978,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
 
     /**
      * Fetches a small remote descriptor (a .torrent or Metalink file) into
-     * memory using the JDK built-in HTTP client, following redirects.
+     * memory using the bounded HTTP transport, following redirects.
      *
      * @param uri the http/https URI to fetch
      * @return the file content
@@ -1990,7 +1990,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         String proxy = download.getSettings() != null && download.getSettings().isUseProxy()
                 ? download.getSettings().getProxyAddress() : null;
         byte[] data = org.manager.tools.BoundedHttpFetcher.fetch(uri,
-                MAX_REMOTE_DESCRIPTOR_BYTES, Duration.ofSeconds(30), Duration.ofSeconds(60), proxy);
+                MAX_REMOTE_DESCRIPTOR_BYTES, Duration.ofSeconds(30), Duration.ofSeconds(60), proxy,
+                globalSettings.isVerifyHttpsCertificates());
         if (data.length == 0) {
             throw new IOException("Remote descriptor is empty");
         }
@@ -2289,7 +2290,8 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
             return org.manager.tools.BoundedHttpFetcher.fetch(source,
                     DescriptorFileInspector.MAX_DESCRIPTOR_BYTES,
-                    Duration.ofSeconds(30), Duration.ofSeconds(60), proxyAddress);
+                    Duration.ofSeconds(30), Duration.ofSeconds(60), proxyAddress,
+                    globalSettings.isVerifyHttpsCertificates());
         }
         throw new IOException("Unsupported descriptor source URI: " + source);
     }

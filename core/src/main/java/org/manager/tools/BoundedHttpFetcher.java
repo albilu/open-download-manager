@@ -31,10 +31,23 @@ public final class BoundedHttpFetcher {
         return fetchResult(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress).body();
     }
 
+    public static byte[] fetch(URI uri, long maximumBytes, Duration connectTimeout,
+            Duration readTimeout, String proxyAddress, boolean verifyHttpsCertificates) throws IOException {
+        return fetchResult(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress,
+                verifyHttpsCertificates).body();
+    }
+
     public static FetchResult fetchResult(URI uri, long maximumBytes, Duration connectTimeout,
             Duration readTimeout, String proxyAddress) throws IOException {
+        return fetchResult(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress, true);
+    }
+
+    /** The caller must explicitly select relaxed verification for this request. */
+    public static FetchResult fetchResult(URI uri, long maximumBytes, Duration connectTimeout,
+            Duration readTimeout, String proxyAddress, boolean verifyHttpsCertificates) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        Metadata metadata = transfer(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress, output);
+        Metadata metadata = transfer(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress,
+                verifyHttpsCertificates, output);
         return new FetchResult(output.toByteArray(), metadata.finalUri(), metadata.contentType());
     }
 
@@ -42,7 +55,7 @@ public final class BoundedHttpFetcher {
     public static void fetchTo(URI uri, Path destination, long maximumBytes,
             Duration connectTimeout, Duration readTimeout, String proxyAddress) throws IOException {
         try (OutputStream output = Files.newOutputStream(destination)) {
-            transfer(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress, output);
+            transfer(uri, maximumBytes, connectTimeout, readTimeout, proxyAddress, true, output);
         } catch (IOException | RuntimeException failure) {
             Files.deleteIfExists(destination);
             throw failure;
@@ -50,7 +63,8 @@ public final class BoundedHttpFetcher {
     }
 
     private static Metadata transfer(URI uri, long maximumBytes, Duration connectTimeout,
-            Duration readTimeout, String proxyAddress, OutputStream output) throws IOException {
+            Duration readTimeout, String proxyAddress, boolean verifyHttpsCertificates,
+            OutputStream output) throws IOException {
         if (uri == null || maximumBytes < 1 || connectTimeout == null || readTimeout == null
                 || connectTimeout.isNegative() || connectTimeout.isZero()
                 || readTimeout.isNegative() || readTimeout.isZero()) {
@@ -69,7 +83,8 @@ public final class BoundedHttpFetcher {
         String marker = "ODM_HTTP_" + UUID.randomUUID();
         // A total deadline bounds stalled redirects and body reads as well.
         long deadlineMs = Math.addExact(connectTimeout.toMillis(), readTimeout.toMillis());
-        List<String> command = List.of(ToolPaths.curl(), "-q", "--silent", "--fail",
+        List<String> command = List.of(ToolPaths.curl(), "-q", "--silent", "--show-error", "--fail",
+                verifyHttpsCertificates ? "--no-insecure" : "--insecure",
                 "--location", "--max-redirs", "10", "--proto", "=http,https",
                 "--proto-redir", scheme.equals("https") ? "=https" : "=http,https",
                 "--proxy", proxy, "--noproxy", "",
@@ -116,14 +131,18 @@ public final class BoundedHttpFetcher {
                 if (process.exitValue() == 63) {
                     throw new IOException("Remote resource exceeds the configured byte limit");
                 }
+                // A TLS failure after a redirect can leave the previous HTTP status
+                // in curl's metadata. Report the transfer failure before that status.
+                if (process.exitValue() != 0 && process.exitValue() != 22) {
+                    throw requestFailure(process.exitValue(), fields[0]);
+                }
                 if (metadata.length < 3) { throw new IOException("HTTP request failed"); }
                 int status = Integer.parseInt(metadata[0]);
                 if (status != 0 && (status < 200 || status >= 300)) {
                     throw new IOException("HTTP request failed with status " + status);
                 }
                 if (process.exitValue() != 0 || status == 0) {
-                    throw new IOException("HTTP request failed through the selected route (curl "
-                            + process.exitValue() + ")");
+                    throw requestFailure(process.exitValue(), fields[0]);
                 }
                 return new Metadata(URI.create(metadata[1]), metadata[2].isEmpty() ? null : metadata[2]);
             } catch (InterruptedException interrupted) {
@@ -136,6 +155,21 @@ public final class BoundedHttpFetcher {
                 process.destroyForcibly();
             }
         }
+    }
+
+    private static IOException requestFailure(int exitCode, String stderr) {
+        String summary = switch (exitCode) {
+            case 60 -> "TLS certificate verification failed (curl 60)";
+            case 77 -> "Could not read the trusted CA certificates (curl 77)";
+            default -> "HTTP request failed through the selected route (curl " + exitCode + ")";
+        };
+        // Keep the actionable line on the first line for UI summaries. Never expose
+        // curl's final-URL metadata or echo credentials from its error output.
+        String detail = ProcessDiagnostics.sanitize(stderr).lines()
+                .filter(line -> line.startsWith("curl:"))
+                .findFirst().orElse("")
+                .replaceFirst("^curl: \\(\\d+\\)\\s*", "").strip();
+        return new IOException(detail.isEmpty() ? summary : summary + ": " + detail);
     }
 
     private static String seconds(long milliseconds) {
