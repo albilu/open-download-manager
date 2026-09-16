@@ -43,6 +43,11 @@ final class DownloadProgressGraph {
         totalBytes = download == null ? 0 : download.getSize();
         boolean complete = download != null && (download.getStatus() == Download.Status.COMPLETED
                 || download.getStatus() == Download.Status.SEEDING);
+        if (complete && totalBytes > 0 && !history.samples().isEmpty()) {
+            // Processing may shrink the output; retain the full transfer span
+            // instead of clipping the final speed samples at the right edge.
+            totalBytes = Math.max(totalBytes, history.samples().getLast().downloadedBytes());
+        }
         fraction = complete ? 1 : download == null ? 0
                 : ProgressPresentation.fraction(download.getProgress());
         String progress = download == null ? "—" : totalBytes > 0 || complete

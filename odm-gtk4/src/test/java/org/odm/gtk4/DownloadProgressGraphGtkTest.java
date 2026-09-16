@@ -31,7 +31,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class DownloadProgressGraphGtkTest {
 
     @BeforeAll
-    static void initGtk() {
+    static void initGtk() throws ClassNotFoundException {
+        Class.forName("org.gnome.glib.GLib");
+        Class.forName("org.gnome.glib.MainContext");
         Gtk.init();
     }
 
@@ -93,6 +95,7 @@ class DownloadProgressGraphGtkTest {
         original.setSpeedHistoryState(new DownloadSpeedHistory.State(1, List.of(
                 new DownloadSpeedHistory.Sample(1000, 1000, 1024),
                 new DownloadSpeedHistory.Sample(2000, 4267, 2048)), 1000, 1_536_000, 8192));
+        original.setFinalOutputSize(3000);
         Path database = directory.resolve("history.db");
         Path legacy = directory.resolve("history.json");
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
@@ -104,6 +107,7 @@ class DownloadProgressGraphGtkTest {
         try (var store = new SqliteDownloadStateStore(database, legacy, mapper)) {
             Download restored = store.load().downloads().getFirst();
             graph.update(restored);
+            assertEquals(3000, restored.getDownloaded());
             assertEquals(original.getSpeedHistory(), restored.getSpeedHistory());
             assertEquals("100.00%", label(builder, "info_progress_value"));
             assertEquals("Max speed: 8 KB/s", label(builder, "info_speed_value"));
@@ -111,6 +115,51 @@ class DownloadProgressGraphGtkTest {
         } finally {
             graph.dispose();
         }
+    }
+
+    @Test
+    @Timeout(20)
+    void smallerFinalFileDoesNotClipTheRenderedTransferCurve(@TempDir Path directory) throws Exception {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        var graph = new DownloadProgressGraph(builder);
+        Window window = Widgets.require(builder, "main_window", ApplicationWindow.class);
+        DrawingArea area = Widgets.require(builder, "info_progress_bar", DrawingArea.class);
+        try {
+            Download download = download();
+            download.setSize(9000);
+            download.setDownloaded(9000);
+            download.setStatus(Download.Status.COMPLETED);
+            download.setSpeedHistoryState(new DownloadSpeedHistory.State(1, List.of(
+                    new DownloadSpeedHistory.Sample(0, 0, 1024),
+                    new DownloadSpeedHistory.Sample(1000, 3000, 4096),
+                    new DownloadSpeedHistory.Sample(2000, 6000, 2048),
+                    new DownloadSpeedHistory.Sample(3000, 9000, 3072)), 3000, 8_192_000));
+            graph.update(download);
+            window.setDefaultSize(1100, 800);
+            window.present();
+            settleGtk();
+            byte[] before = captureGraph(window, area, directory.resolve("before.png"));
+            download.setFinalOutputSize(4000);
+            graph.update(download);
+            settleGtk();
+            assertArrayEquals(before, captureGraph(window, area, directory.resolve("after.png")),
+                    "correcting output size must preserve the full curve, including its final samples");
+            assertEquals("100.00%", label(builder, "info_progress_value"));
+            assertEquals("Max speed: 4 KB/s", label(builder, "info_speed_value"));
+        } finally {
+            graph.dispose();
+            window.destroy();
+        }
+    }
+
+    private static byte[] captureGraph(Window window, DrawingArea area, Path output) throws Exception {
+        var snapshot = new org.gnome.gtk.Snapshot();
+        new WidgetPaintable(area).snapshot(snapshot, area.getWidth(), area.getHeight());
+        var node = snapshot.toNode();
+        assertNotNull(node, "the graph must produce a native render node");
+        var texture = window.getRenderer().renderTexture(node, null);
+        assertTrue(texture.saveToPng(output.toString()));
+        return java.nio.file.Files.readAllBytes(output);
     }
 
     @Test

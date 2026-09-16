@@ -57,8 +57,9 @@ class YtDlpCompletionProgressTest {
             assertEquals(100, task.getProgress());
             assertEquals(0, task.getSpeed());
             var ordered = inOrder(listener);
-            ordered.verify(listener).onProgress(100, actualSize, actualSize, 0);
+            ordered.verify(listener).onFinalSize(actualSize);
             ordered.verify(listener).onComplete(filename);
+            verify(listener, never()).onProgress(100, actualSize, actualSize, 0);
         } finally {
             client.shutdown();
         }
@@ -86,7 +87,41 @@ class YtDlpCompletionProgressTest {
                     tempDir, listener).get(10, TimeUnit.SECONDS);
             long actualSize = Files.size(tempDir.resolve("first.webm"))
                     + Files.size(tempDir.resolve("second.webm"));
-            verify(listener).onProgress(100, actualSize, actualSize, 0);
+            verify(listener).onFinalSize(actualSize);
+            verify(listener, never()).onProgress(100, actualSize, actualSize, 0);
+        } finally {
+            client.shutdown();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void finalSizeAccountingDistinguishesEmptyAndMissingOutputs(boolean outputExists) throws Exception {
+        Path tool = tempDir.resolve("yt-dlp-fixture");
+        Files.writeString(tool, """
+                #!/bin/sh
+                echo '[download] 100.0%% of N/A at 2.00MiB/s |odmbytes|5000|5000'
+                %s
+                echo '|odmfile|final.webm'
+                """.formatted(outputExists ? "touch final.webm" : ""));
+        assertTrue(tool.toFile().setExecutable(true));
+        YtDlpClient client = new YtDlpClient(tool.toString());
+        try {
+            var task = new YtDlpDownloadTask("final-size-unavailable", "https://example.test/watch",
+                    new YtDlpSettings().setUseDownloadArchive(false), tempDir, client);
+            var listener = mock(YtDlpClient.ProgressCallback.class);
+            task.setProgressListener(listener);
+            task.start().get(10, TimeUnit.SECONDS);
+            if (outputExists) {
+                verify(listener).onFinalSize(0);
+            } else {
+                verify(listener, never()).onFinalSize(anyLong());
+            }
+            assertEquals(outputExists ? 0 : 5000, task.getDownloadedBytes());
+            assertEquals(outputExists ? 0 : 5000, task.getTotalBytes());
+            assertEquals(100, task.getProgress());
+            assertEquals(0, task.getSpeed());
+            verify(listener, times(1)).onProgress(anyFloat(), anyLong(), anyLong(), anyFloat());
         } finally {
             client.shutdown();
         }
@@ -141,8 +176,8 @@ class YtDlpCompletionProgressTest {
                 assertEquals(actualSize, result.getDownloaded());
                 assertEquals(100, result.getProgress());
                 assertEquals(0, result.getSpeed());
-                assertTrue(knownTotalUpdates.get() >= 2,
-                        "yt-dlp must report a known stream total as well as the final file snapshot");
+                assertTrue(knownTotalUpdates.get() > 0,
+                        "yt-dlp must report transfer progress independently of final file accounting");
 
                 YtDlpFactory factory = YtDlpFactory.getInstance(globals, tools);
                 long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);

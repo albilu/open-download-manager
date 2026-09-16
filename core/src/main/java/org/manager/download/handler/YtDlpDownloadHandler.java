@@ -477,6 +477,13 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             }
 
             @Override
+            public void onFinalSize(long completedBytes) {
+                if (!task.isCancelled()) {
+                    download.setFinalOutputSize(completedBytes);
+                }
+            }
+
+            @Override
             public void onStart(String filename) {
                 if (task.isCancelled()) {
                     return; // invalidated by cancellation
@@ -520,9 +527,6 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     } catch (IllegalArgumentException invalidPath) {
                         LOGGER.warn("Ignoring invalid yt-dlp output path", invalidPath);
                     }
-                }
-                if (download.getSize() > 0) {
-                    download.setDownloaded(download.getSize());
                 }
                 download.setSpeed(0);
                 // watchRun owns the terminal event after the process and its

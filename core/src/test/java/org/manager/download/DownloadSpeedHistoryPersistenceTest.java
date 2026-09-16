@@ -67,6 +67,30 @@ class DownloadSpeedHistoryPersistenceTest {
     }
 
     @Test
+    void smallerFinalOutputKeepsItsFullTransferHistoryAfterReopening() {
+        Download original = downloadWithHistory("processed", Download.Status.DOWNLOADING);
+        var history = original.getSpeedHistory();
+        var state = original.getSpeedHistoryState();
+        original.setFinalOutputSize(5_000_000);
+        original.setStatus(Download.Status.COMPLETED);
+        try (var store = store()) {
+            store.save(List.of(original), Set.of());
+        }
+        try (var reopened = store()) {
+            Download restored = reopened.load().downloads().getFirst();
+            assertEquals(Download.Status.COMPLETED, restored.getStatus());
+            assertEquals(5_000_000, restored.getSize());
+            assertEquals(5_000_000, restored.getDownloaded());
+            assertEquals(100, restored.getProgress());
+            assertEquals(history, restored.getSpeedHistory());
+            assertEquals(state, restored.getSpeedHistoryState());
+            restored.setDownloaded(0);
+            assertTrue(restored.getSpeedHistory().samples().isEmpty(),
+                    "restarting a restored record must still clear its previous attempt");
+        }
+    }
+
+    @Test
     void historiesSavedWithoutAPeakUseTheHighestRetainedSample() throws Exception {
         Download original = downloadWithHistory("legacy-peak", Download.Status.COMPLETED);
         var legacyHistory = mapper.valueToTree(original.getSpeedHistoryState());

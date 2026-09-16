@@ -552,7 +552,7 @@ class YtDlpClientTest {
             assertEquals(tempOutputDir.resolve("final.mp4").toString(), result);
             var ordered = inOrder(callback);
             ordered.verify(callback).onStart(result);
-            ordered.verify(callback).onProgress(100.0f, 7L, 7L, 0.0f);
+            ordered.verify(callback).onFinalSize(7L);
             ordered.verify(callback).onComplete(result);
         } finally {
             fastClient.shutdown();

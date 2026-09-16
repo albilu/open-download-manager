@@ -197,6 +197,16 @@ public class YtDlpDownloadTask {
                 }
 
                 @Override
+                public void onFinalSize(long completedBytes) {
+                    settings.setMediaProbeOnFailure(false);
+                    if (cancelled.get() || !isCurrentGeneration(generation)) {
+                        return;
+                    }
+                    updateProgress(100.0f, completedBytes, completedBytes, 0.0f);
+                    forwardToListener(l -> l.onFinalSize(completedBytes));
+                }
+
+                @Override
                 public void onStart(String filename) {
                     // Record before anything else: even a late destination
                     // line is a fact about this run, and file cleanup after

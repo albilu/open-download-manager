@@ -68,6 +68,10 @@ final class YtDlpLocalMediaServer implements AutoCloseable {
     }
 
     static YtDlpLocalMediaServer startHls(Path directory) throws Exception {
+        return startHls(directory, 0);
+    }
+
+    static YtDlpLocalMediaServer startHls(Path directory, long bytesPerSecond) throws Exception {
         Files.createDirectories(directory);
         Path input = Files.write(directory.resolve("input.mp4"), loadFixture());
         Path log = directory.resolve("ffmpeg.log");
@@ -91,9 +95,13 @@ final class YtDlpLocalMediaServer implements AutoCloseable {
                     if (!Files.isRegularFile(file)) {
                         return new MockResponse().setResponseCode(404);
                     }
-                    return new MockResponse().setHeader("Content-Type", name.endsWith(".m3u8")
+                    var response = new MockResponse().setHeader("Content-Type", name.endsWith(".m3u8")
                             ? "application/vnd.apple.mpegurl" : "video/mp2t")
                             .setBody(new Buffer().write(Files.readAllBytes(file)));
+                    if (bytesPerSecond > 0 && name.endsWith(".ts")) {
+                        response.throttleBody(bytesPerSecond, 1, TimeUnit.SECONDS);
+                    }
+                    return response;
                 } catch (IOException e) {
                     return new MockResponse().setResponseCode(500);
                 }

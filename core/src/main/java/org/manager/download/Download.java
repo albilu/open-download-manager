@@ -834,6 +834,23 @@ public class Download {
         }
     }
 
+    /**
+     * Records the final output size after processing has finished. Its byte
+     * count can differ from the transferred streams without starting a new
+     * attempt, so preserve transfer history and leave completion to the handler.
+     */
+    public void setFinalOutputSize(long completedBytes) {
+        if (completedBytes < 0) {
+            throw new IllegalArgumentException("Final output size must not be negative");
+        }
+        synchronized (lock) {
+            size = completedBytes;
+            downloaded = completedBytes;
+            progress = 100.0f;
+            speed = 0.0f;
+        }
+    }
+
     private void updateProgress() {
         // This method is called from synchronized blocks, so no additional sync needed
         if (size > 0) {

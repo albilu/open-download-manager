@@ -66,7 +66,7 @@ class YtDlpPauseGenerationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"destination", "progress", "completion"})
+    @ValueSource(strings = {"destination", "progress", "final-size", "completion"})
     void lateTransferEvidenceDisablesStartupRecoveryWithoutChangingPausedState(String event) throws Exception {
         PerRunClient client = new PerRunClient();
         try {
@@ -84,6 +84,7 @@ class YtDlpPauseGenerationTest {
             switch (event) {
                 case "destination" -> firstRun.onStart("partial.mp4");
                 case "progress" -> firstRun.onProgress(50, 32, 64, 16);
+                case "final-size" -> firstRun.onFinalSize(64);
                 case "completion" -> firstRun.onComplete("finished.mp4");
                 default -> throw new AssertionError(event);
             }
@@ -150,12 +151,17 @@ class YtDlpPauseGenerationTest {
         assertNotEquals(firstRun, secondRun);
         secondRun.onStart("new.mkv");
         secondRun.onProgress(10f, 100L, 1000L, 10f);
+        firstRun.onFinalSize(50);
         client.runs.get(0).completeExceptionally(new RuntimeException("killed late, exit 137"));
 
         assertEquals(YtDlpDownloadTask.Status.DOWNLOADING, task.getStatus(),
                 "the retired run's late completion must not error the resumed run");
         assertEquals("new.mkv", task.getFilename(),
                 "the resumed run's reports must win over the retired run's");
+        assertEquals(100, task.getDownloadedBytes());
+        assertEquals(1000, task.getTotalBytes());
+        assertEquals(10, task.getProgress());
+        assertEquals(10, task.getSpeed());
         assertFalse(resumed.isCompletedExceptionally(),
                 "the resumed run must not fail because its predecessor settled late");
     }
@@ -174,6 +180,7 @@ class YtDlpPauseGenerationTest {
         CompletableFuture<String> resumed = task.resume();
         YtDlpClient.ProgressCallback secondRun = awaitCallback(client);
 
+        secondRun.onFinalSize(350);
         secondRun.onComplete("new.mkv");
         client.runs.get(1).complete("new.mkv");
         client.runs.get(0).completeExceptionally(new RuntimeException("killed late"));
@@ -182,5 +189,31 @@ class YtDlpPauseGenerationTest {
                 "the resumed run's result must surface, not the old failure");
         assertEquals(YtDlpDownloadTask.Status.COMPLETED, task.getStatus(),
                 "the retired run's late failure must not convert COMPLETED into ERROR");
+        assertEquals(350, task.getDownloadedBytes());
+        assertEquals(350, task.getTotalBytes());
+        assertEquals(100, task.getProgress());
+    }
+
+    @Test
+    void canceledTaskIgnoresFinalOutputAccounting() throws Exception {
+        var client = new PerRunClient();
+        try {
+            var task = new YtDlpDownloadTask("canceled-final-size", "http://example.test/v",
+                    new YtDlpSettings(), tempDir, client);
+            var listener = org.mockito.Mockito.mock(YtDlpClient.ProgressCallback.class);
+            task.setProgressListener(listener);
+            task.start();
+            var callback = awaitCallback(client);
+            callback.onProgress(50, 500, 1000, 100);
+            assertTrue(task.cancel());
+            callback.onFinalSize(350);
+            assertEquals(YtDlpDownloadTask.Status.CANCELED, task.getStatus());
+            assertEquals(500, task.getDownloadedBytes());
+            assertEquals(1000, task.getTotalBytes());
+            org.mockito.Mockito.verify(listener, org.mockito.Mockito.never())
+                    .onFinalSize(org.mockito.ArgumentMatchers.anyLong());
+        } finally {
+            client.shutdown();
+        }
     }
 }

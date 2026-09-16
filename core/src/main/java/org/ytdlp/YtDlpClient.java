@@ -452,6 +452,9 @@ public class YtDlpClient {
 
         void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed);
 
+        /** Final output accounting after processing; this is not a transfer speed sample. */
+        default void onFinalSize(long completedBytes) { }
+
         void onStart(String filename);
 
         void onComplete(String filename);
@@ -1123,15 +1126,17 @@ public class YtDlpClient {
                     }
                     if (callback != null) {
                         // Stream counters reset between video/audio and do
-                        // not include merging or conversion. Always publish
-                        // the size of the final outputs, including every
-                        // playlist entry, before announcing completion.
+                        // not include merging or conversion. Publish the size
+                        // of the final outputs, including every playlist entry,
+                        // when it can be inspected before announcing completion.
                         if (filename != null) {
                             if (completedFilenames.isEmpty()) {
                                 completedFilenames.add(filename);
                             }
                             long completedBytes = completedFileSize(completedFilenames, outputPath);
-                            callback.onProgress(100.0f, completedBytes, completedBytes, 0.0f);
+                            if (completedBytes >= 0) {
+                                callback.onFinalSize(completedBytes);
+                            }
                         }
                         callback.onComplete(filename);
                     }
@@ -1746,6 +1751,7 @@ public class YtDlpClient {
         parseProgress(line, callback);
     }
 
+    /** Returns -1 when final output accounting is unavailable, including missing files. */
     private long completedFileSize(Iterable<String> filenames, Path outputPath) {
         try {
             var completedPaths = new LinkedHashSet<Path>();
@@ -1759,14 +1765,14 @@ public class YtDlpClient {
             long size = 0;
             for (Path completedPath : completedPaths) {
                 if (!Files.isRegularFile(completedPath)) {
-                    return 0;
+                    return -1;
                 }
                 size = Math.addExact(size, Files.size(completedPath));
             }
             return size;
         } catch (IOException | IllegalArgumentException | SecurityException | ArithmeticException e) {
             LOGGER.debug("Unable to inspect completed yt-dlp output size", e);
-            return 0L;
+            return -1L;
         }
     }
 

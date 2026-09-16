@@ -2,6 +2,8 @@ package org.manager.download;
 
 import java.net.URI;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DownloadSpeedHistoryTest {
@@ -93,6 +95,39 @@ class DownloadSpeedHistoryTest {
         assertTrue(download.getSpeedHistory().samples().isEmpty());
         assertEquals(0, download.getSpeedHistory().maxBytesPerSecond());
         assertNull(download.getSpeedHistoryState());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, 3000, 9000, 12_000})
+    void finalOutputAccountingPreservesTransferHistoryButANewAttemptStillResetsIt(long finalBytes) {
+        Download download = download("processed");
+        download.setStatus(Download.Status.DOWNLOADING);
+        download.setSize(9000);
+        download.setDownloaded(5000);
+        download.recordSpeedSample(5000, 5000);
+        download.setActiveElapsedMillis(1000);
+        download.setDownloaded(9000);
+        download.setSpeed(4000);
+        download.recordSpeedSample(9000, 4000);
+        var history = download.getSpeedHistory();
+        var state = download.getSpeedHistoryState();
+
+        download.setFinalOutputSize(finalBytes);
+        assertEquals(finalBytes, download.getSize());
+        assertEquals(finalBytes, download.getDownloaded());
+        assertEquals(100, download.getProgress());
+        assertEquals(0, download.getSpeed());
+        assertEquals(Download.Status.DOWNLOADING, download.getStatus(),
+                "only the handler may publish terminal completion");
+        download.setStatus(Download.Status.COMPLETED);
+        assertEquals(history, download.getSpeedHistory());
+        assertEquals(state, download.getSpeedHistoryState());
+
+        download.setStatus(Download.Status.DOWNLOADING);
+        download.setDownloaded(0);
+        download.recordSpeedSample(100, 100);
+        assertEquals(1, download.getSpeedHistory().samples().size());
+        assertEquals(100, download.getSpeedHistory().maxBytesPerSecond());
     }
 
     @Test
