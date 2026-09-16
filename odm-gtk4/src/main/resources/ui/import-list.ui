@@ -61,7 +61,7 @@
                     <property name="spacing">8</property>
                     <child><object class="GtkLabel" id="filter_label"><property name="label">Filtrer par extension:</property></object></child>
                     <child>
-                      <object class="GtkDropDown" id="extension_filter_combo">
+                      <object class="GtkMenuButton" id="extension_filter_combo">
                         <property name="hexpand">false</property>
                       </object>
                     </child>

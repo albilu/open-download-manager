@@ -5,8 +5,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
@@ -14,7 +17,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.gnome.gio.File;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.Box;
 import org.gnome.gtk.CellRendererToggle;
+import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.FileDialog;
@@ -22,6 +27,10 @@ import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
 import org.gnome.gtk.ListStore;
 import org.gnome.gtk.MenuButton;
+import org.gnome.gtk.Orientation;
+import org.gnome.gtk.PolicyType;
+import org.gnome.gtk.Popover;
+import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.SpinButton;
 import org.gnome.gtk.StringList;
 import org.gnome.gtk.Switch;
@@ -29,6 +38,7 @@ import org.gnome.gtk.TreeIter;
 import org.gnome.gtk.TreePath;
 import org.gnome.gtk.Window;
 import org.gnome.gobject.Value;
+import org.gnome.pango.EllipsizeMode;
 import org.javagi.gobject.types.Types;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
@@ -51,8 +61,11 @@ public class ImportListDialog {
     private final org.tor.TorService torService;
 
     private final ListStore urlStore;
-    private final ListStore extensionFilterStore;
-    private final DropDown extensionFilterCombo;
+    private final MenuButton extensionFilterCombo;
+    private final Label extensionFilterLabel;
+    private final Map<String, CheckButton> extensionChecks = new LinkedHashMap<>();
+    private CheckButton allExtensionsCheck;
+    private boolean updatingExtensionFilter;
     private final DropDown engineCombo;
     private final Label diskSpaceLabel;
     private final Label itemCountLabel;
@@ -77,8 +90,13 @@ public class ImportListDialog {
         this.builder = UiLoader.load("/ui/import-list.ui");
         this.dialog = Widgets.require(builder, "import_dialog", Window.class);
         this.urlStore = Widgets.require(builder, "url_liststore", ListStore.class);
-        this.extensionFilterStore = Widgets.require(builder, "extension_filter_store", ListStore.class);
-        this.extensionFilterCombo = Widgets.require(builder, "extension_filter_combo", DropDown.class);
+        this.extensionFilterCombo = Widgets.require(builder, "extension_filter_combo", MenuButton.class);
+        this.extensionFilterLabel = new Label("(all)");
+        extensionFilterLabel.setEllipsize(EllipsizeMode.END);
+        extensionFilterLabel.setMaxWidthChars(24);
+        extensionFilterCombo.setChild(extensionFilterLabel);
+        extensionFilterCombo.setAlwaysShowArrow(true);
+        extensionFilterCombo.setCanShrink(true);
         this.engineCombo = Widgets.require(builder, "engine_combo", DropDown.class);
         this.engineCombo.setModel(new StringList(java.util.Arrays.stream(ImportEngine.values())
                 .map(ImportEngine::label).toArray(String[]::new)));
@@ -150,9 +168,6 @@ public class ImportListDialog {
                 });
         updateDiskSpace(defaultDestination.toString());
 
-        // Extension filter model (rebuilt when URLs are loaded)
-        rebuildExtensionFilter(List.of());
-        extensionFilterCombo.onNotify("selected", pspec -> applyExtensionFilter());
         engineCombo.onNotify("selected", pspec -> refreshSelection());
 
         // Mark toggle renderer: flip the row's mark column
@@ -308,7 +323,7 @@ public class ImportListDialog {
             setBool(urlStore, iter, 0, true);
             setStr(urlStore, iter, 1, line);
             setStr(urlStore, iter, 2, ext);
-            if (!ext.isEmpty() && !extensions.contains(ext)) {
+            if (!extensions.contains(ext)) {
                 extensions.add(ext);
             }
         }
@@ -319,30 +334,85 @@ public class ImportListDialog {
     }
 
     private void rebuildExtensionFilter(List<String> extensions) {
-        StringList list = new StringList(new String[0]);
-        list.append("(all)");
+        extensionChecks.clear();
+        Box choices = new Box(Orientation.VERTICAL, 6);
+        choices.setMarginStart(8);
+        choices.setMarginEnd(8);
+        choices.setMarginTop(8);
+        choices.setMarginBottom(8);
+        allExtensionsCheck = CheckButton.withLabel("All");
+        allExtensionsCheck.setActive(true);
+        choices.append(allExtensionsCheck);
         for (String ext : extensions) {
-            list.append(ext);
+            CheckButton check = CheckButton.withLabel(extensionLabel(ext));
+            check.setActive(true);
+            extensionChecks.put(ext, check);
+            choices.append(check);
+            check.onToggled(this::onExtensionFilterChanged);
         }
-        extensionFilterCombo.setModel(list);
+        allExtensionsCheck.onToggled(() -> {
+            if (updatingExtensionFilter) {
+                return;
+            }
+            updatingExtensionFilter = true;
+            try {
+                boolean selected = allExtensionsCheck.getActive();
+                extensionChecks.values().forEach(check -> check.setActive(selected));
+            } finally {
+                updatingExtensionFilter = false;
+            }
+            onExtensionFilterChanged();
+        });
+        allExtensionsCheck.setSensitive(!extensions.isEmpty());
+        ScrolledWindow scroller = new ScrolledWindow();
+        scroller.setPolicy(PolicyType.NEVER, PolicyType.AUTOMATIC);
+        scroller.setMaxContentHeight(360);
+        scroller.setPropagateNaturalHeight(true);
+        scroller.setChild(choices);
+        Popover popover = new Popover();
+        popover.setHasArrow(false);
+        popover.setChild(scroller);
+        extensionFilterCombo.setPopover(popover);
+        onExtensionFilterChanged();
     }
 
-    private void applyExtensionFilter() {
-        // The treeview shows all rows; the filter only toggles which rows are marked.
-        long selected = extensionFilterCombo.getSelected();
-        String filterExt = selected == 0 ? null
-                : extensionFilterCombo.getSelectedItem() instanceof org.gnome.gtk.StringObject so
-                ? so.getString()
-                : null;
-        if (selected != 0 && filterExt == null) {
+    private static String extensionLabel(String extension) {
+        return extension.isEmpty() ? "No extension" : extension;
+    }
+
+    private void onExtensionFilterChanged() {
+        if (updatingExtensionFilter) {
             return;
         }
+        Set<String> selected = new LinkedHashSet<>();
+        extensionChecks.forEach((extension, check) -> {
+            if (check.getActive()) {
+                selected.add(extension);
+            }
+        });
+        boolean all = selected.size() == extensionChecks.size();
+        updatingExtensionFilter = true;
+        try {
+            allExtensionsCheck.setActive(all);
+            allExtensionsCheck.setInconsistent(!all && !selected.isEmpty());
+        } finally {
+            updatingExtensionFilter = false;
+        }
+        String summary = all ? "(all)" : selected.isEmpty() ? "(none)"
+                : String.join(", ", selected.stream().map(ImportListDialog::extensionLabel).toList());
+        extensionFilterLabel.setLabel(summary);
+        extensionFilterCombo.setTooltipText(summary);
+        applyExtensionFilter(selected);
+    }
+
+    private void applyExtensionFilter(Set<String> selected) {
+        // All rows remain visible; checked extensions determine the marked rows.
         TreeIter iter = new TreeIter();
         if (urlStore.getIterFirst(iter)) {
             do {
                 String ext = ListStoreCells.getString(urlStore, iter, 2);
                 Value nv = new Value().init(Types.BOOLEAN);
-                nv.setBoolean(selected == 0 || filterExt.equals(ext));
+                nv.setBoolean(selected.contains(ext));
                 urlStore.setValue(iter, 0, nv);
                 nv.unset();
             } while (urlStore.iterNext(iter));
@@ -483,11 +553,13 @@ public class ImportListDialog {
     }
 
     private static String extensionOf(String url) {
-        int q = url.indexOf('?');
-        String path = q >= 0 ? url.substring(0, q) : url;
+        String path = URI.create(url).getPath();
+        if (path == null) {
+            return "";
+        }
         int dot = path.lastIndexOf('.');
         int slash = path.lastIndexOf('/');
-        return (dot > slash && dot >= 0) ? path.substring(dot + 1) : "";
+        return dot > slash ? path.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
     }
 
     private String currentDefaultDirectory() {

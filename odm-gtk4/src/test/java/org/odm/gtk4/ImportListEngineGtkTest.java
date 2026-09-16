@@ -25,12 +25,18 @@ import java.util.stream.Stream;
 
 import org.gnome.glib.MainContext;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.Box;
 import org.gnome.gtk.CellRendererToggle;
+import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Gtk;
 import org.gnome.gtk.GtkBuilder;
 import org.gnome.gtk.Label;
+import org.gnome.gtk.MenuButton;
+import org.gnome.gtk.ScrolledWindow;
 import org.gnome.gtk.StringList;
+import org.gnome.gtk.Viewport;
+import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -39,6 +45,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadManager;
@@ -118,6 +125,96 @@ class ImportListEngineGtkTest {
         } finally {
             window.destroy();
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"text", "html", "remote"})
+    void multipleExtensionsSubmitTheirCombinedSelection(String route) throws Exception {
+        List<String> urls = List.of("https://files.test/a.MP4?download=1#part",
+                "https://files.test/b.mp4", "https://files.test/c.jpg#image",
+                "https://files.test/skip.zip", "https://files.test",
+                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567");
+        String html = String.join("", urls.stream().map(url -> "<a href='" + url + "'>link</a>").toList());
+        if (route.equals("text")) {
+            Path file = directory.resolve("links.txt");
+            Files.write(file, urls);
+            urls = ImportListDialog.readImportLines(file, ImportLimits.defaults());
+        } else if (route.equals("html")) {
+            Path file = directory.resolve("links.html");
+            Files.writeString(file, html);
+            urls = HtmlImportExport.readHtmlLinks(file, ImportLimits.defaults());
+        } else {
+            var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/links", exchange -> {
+                byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (var out = exchange.getResponseBody()) { out.write(bytes); }
+            });
+            server.start();
+            try {
+                urls = HtmlImportExport.fetchRemoteHtmlLinks(URI.create("http://127.0.0.1:"
+                        + server.getAddress().getPort() + "/links"), null, ImportLimits.defaults());
+            } finally {
+                server.stop(0);
+            }
+        }
+        var queued = new CopyOnWriteArrayList<Download>();
+        var done = new AtomicBoolean();
+        var manager = manager(queued, CompletableFuture.completedFuture(null));
+        var imported = route.equals("text") ? dialog(manager, urls, done)
+                : ImportListDialog.presentHtmlUrls(null, manager, () -> done.set(true),
+                        urls, ImportLimits.defaults(), null);
+        GtkBuilder builder = builder(imported);
+        Window window = Widgets.require(builder, "import_dialog", Window.class);
+        try {
+            imported.present();
+            MenuButton filter = Widgets.require(builder, "extension_filter_combo", MenuButton.class);
+            Label count = Widgets.require(builder, "item_count_label", Label.class);
+            CheckButton all = extensionChoice(filter, "All");
+            assertEquals("6 of 6 items selected", count.getLabel());
+            assertTrue(all.getActive());
+            filter.popup();
+            all.setActive(false);
+            assertEquals("0 of 6 items selected", count.getLabel());
+            assertEquals("(none)", filter.getTooltipText());
+            extensionChoice(filter, "mp4").setActive(true);
+            assertEquals("2 of 6 items selected", count.getLabel());
+            extensionChoice(filter, "jpg").setActive(true);
+            assertEquals("3 of 6 items selected", count.getLabel());
+            assertTrue(all.getInconsistent());
+            assertEquals("mp4, jpg", filter.getTooltipText());
+            assertTrue(filter.getPopover().getVisible(), "multiple checks keep the popup open");
+            extensionChoice(filter, "No extension").setActive(true);
+            assertEquals("5 of 6 items selected", count.getLabel());
+            extensionChoice(filter, "mp4").setActive(false);
+            assertEquals("3 of 6 items selected", count.getLabel());
+            extensionChoice(filter, "mp4").setActive(true);
+            filter.popdown();
+            // An individual row can still be excluded after selecting several extensions.
+            Widgets.require(builder, "mark_renderer", CellRendererToggle.class).emitToggled("1");
+            assertEquals("4 of 6 items selected", count.getLabel());
+            Widgets.require(builder, "validate_button", Button.class).emitClicked();
+            awaitGtk(done::get);
+            assertEquals(List.of(URI.create(urls.get(0)), URI.create(urls.get(2)),
+                            URI.create(urls.get(4)), URI.create(urls.get(5))),
+                    queued.stream().map(Download::getUri).toList());
+        } finally {
+            window.destroy();
+        }
+    }
+
+    private static CheckButton extensionChoice(MenuButton button, String label) {
+        ScrolledWindow scroller = assertInstanceOf(ScrolledWindow.class, button.getPopover().getChild());
+        Viewport viewport = assertInstanceOf(Viewport.class, scroller.getChild());
+        Box choices = assertInstanceOf(Box.class, viewport.getChild());
+        for (Widget child = choices.getFirstChild(); child != null; child = child.getNextSibling()) {
+            CheckButton check = assertInstanceOf(CheckButton.class, child);
+            if (label.equals(check.getLabel())) {
+                return check;
+            }
+        }
+        throw new AssertionError("Missing extension choice: " + label);
     }
 
     static Stream<Arguments> htmlEngines() {

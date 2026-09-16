@@ -9,7 +9,6 @@ import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.gnome.gio.File;
-import org.gnome.glib.GLib;
 import org.gnome.gtk.Align;
 import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
@@ -64,13 +63,14 @@ final class PathChooserButton {
     private final SelectionKind kind;
     private final Consumer<Path> selectionHandler;
     private final Supplier<List<FolderPlaces.Place>> folderPlacesSupplier;
+    private final LastChosenFolder lastChosenFolder;
     private final Label pathLabel;
     private Path path;
 
     static PathChooserButton forFile(Button button, Window parent, String title,
             Path initialPath, Consumer<Path> selectionHandler) {
         return new PathChooserButton(button, null, parent, title, initialPath,
-                SelectionKind.FILE, selectionHandler, List::of);
+                SelectionKind.FILE, selectionHandler, List::of, null);
     }
 
     static PathChooserButton forFolder(MenuButton button, Window parent, String title,
@@ -82,14 +82,22 @@ final class PathChooserButton {
     static PathChooserButton forFolder(MenuButton button, Window parent, String title,
             Path initialPath, Consumer<Path> selectionHandler,
             Supplier<List<FolderPlaces.Place>> folderPlacesSupplier) {
+        return forFolder(button, parent, title, initialPath, selectionHandler,
+                folderPlacesSupplier, new LastChosenFolder());
+    }
+
+    static PathChooserButton forFolder(MenuButton button, Window parent, String title,
+            Path initialPath, Consumer<Path> selectionHandler,
+            Supplier<List<FolderPlaces.Place>> folderPlacesSupplier, LastChosenFolder lastChosenFolder) {
         return new PathChooserButton(null, button, parent, title, initialPath,
-                SelectionKind.FOLDER, selectionHandler, folderPlacesSupplier);
+                SelectionKind.FOLDER, selectionHandler, folderPlacesSupplier,
+                Objects.requireNonNull(lastChosenFolder, "lastChosenFolder"));
     }
 
     private PathChooserButton(Button fileButton, MenuButton folderButton, Window parent,
             String title, Path initialPath, SelectionKind kind,
             Consumer<Path> selectionHandler,
-            Supplier<List<FolderPlaces.Place>> folderPlacesSupplier) {
+            Supplier<List<FolderPlaces.Place>> folderPlacesSupplier, LastChosenFolder lastChosenFolder) {
         this.fileButton = fileButton;
         this.folderButton = folderButton;
         this.control = kind == SelectionKind.FILE
@@ -101,6 +109,7 @@ final class PathChooserButton {
         this.selectionHandler = Objects.requireNonNull(selectionHandler, "selectionHandler");
         this.folderPlacesSupplier = Objects.requireNonNull(folderPlacesSupplier,
                 "folderPlacesSupplier");
+        this.lastChosenFolder = lastChosenFolder;
         String currentLabel = fileButton == null ? folderButton.getLabel() : fileButton.getLabel();
         this.placeholder = currentLabel == null || currentLabel.isBlank()
                 ? kind.defaultPlaceholder : currentLabel;
@@ -185,9 +194,7 @@ final class PathChooserButton {
             int index = row.getIndex();
             folderButton.popdown();
             if (index >= 0 && index < places.size()) {
-                Path selectedPath = places.get(index).path();
-                setPath(selectedPath);
-                selectionHandler.accept(selectedPath);
+                selectPath(places.get(index).path());
             } else if (index == places.size()) {
                 openDialog();
             }
@@ -208,9 +215,18 @@ final class PathChooserButton {
         int buttonWidth = folderButton.getWidth();
         if (buttonWidth > 0) {
             popover.setSizeRequest(buttonWidth, -1);
-            // Popover themes can add horizontal chrome only once mapped. Correct the
-            // rendered allocation on the next GTK turn so its outer edges match the button.
-            popover.onMap(() -> GLib.idleAddOnce(() -> correctMappedPopoverWidth(popover)));
+            // Mapping can precede allocation, even when an idle callback runs.
+            // Wait for a frame with a real width before subtracting theme chrome.
+            popover.onMap(() -> popover.addTickCallback((widget, frameClock) -> {
+                if (!widget.getMapped()) {
+                    return false;
+                }
+                if (widget.getWidth() <= 0) {
+                    return true;
+                }
+                correctMappedPopoverWidth(popover);
+                return false;
+            }));
         }
         folderButton.setPopover(popover);
     }
@@ -240,6 +256,14 @@ final class PathChooserButton {
         } catch (RuntimeException e) {
             LOGGER.debug("Folder-place discovery failed", e);
             places = new ArrayList<>();
+        }
+        Path lastFolder = lastChosenFolder.load();
+        if (lastFolder != null) {
+            places.removeIf(place -> samePath(lastFolder, place.path()));
+            Path filename = lastFolder.getFileName();
+            places.add(0, new FolderPlaces.Place(
+                    "Last used: " + (filename == null ? lastFolder : filename),
+                    "document-open-recent-symbolic", lastFolder));
         }
         if (path != null && places.stream().noneMatch(place -> samePath(path, place.path()))) {
             Path filename = path.getFileName();
@@ -286,8 +310,10 @@ final class PathChooserButton {
         FileDialog fileDialog = new FileDialog();
         DialogSupport.configureIndependent(fileDialog);
         fileDialog.setTitle(title);
-        if (path != null) {
-            File initial = File.forPath(path.toString());
+        Path initialPath = path != null ? path
+                : kind == SelectionKind.FOLDER ? lastChosenFolder.load() : null;
+        if (initialPath != null) {
+            File initial = File.forPath(initialPath.toString());
             if (kind == SelectionKind.FOLDER) {
                 fileDialog.setInitialFolder(initial);
             } else {
@@ -317,7 +343,13 @@ final class PathChooserButton {
         if (selected == null || selected.getPath() == null) {
             return;
         }
-        Path selectedPath = Path.of(selected.getPath().toString());
+        selectPath(Path.of(selected.getPath().toString()));
+    }
+
+    private void selectPath(Path selectedPath) {
+        if (kind == SelectionKind.FOLDER) {
+            lastChosenFolder.remember(selectedPath);
+        }
         setPath(selectedPath);
         selectionHandler.accept(selectedPath);
     }

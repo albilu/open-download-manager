@@ -1116,7 +1116,7 @@ class WindowSmokeTest {
         Box clipboardPage = Widgets.require(builder, "clipboard_page", Box.class);
         assertListTabMargins(clipboardPage);
         Widgets.require(builder, "filter_label", Label.class);
-        Widgets.require(builder, "extension_filter_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "extension_filter_combo", MenuButton.class);
         Widgets.require(builder, "engine_label", Label.class);
         Widgets.require(builder, "engine_combo", DropDown.class);
         Widgets.require(builder, "url_treeview", TreeView.class);
@@ -1216,7 +1216,13 @@ class WindowSmokeTest {
         Window dialog = Widgets.require(builder, "import_dialog", Window.class);
         Label count = Widgets.require(builder, "item_count_label", Label.class);
         var mark = Widgets.require(builder, "mark_renderer", org.gnome.gtk.CellRendererToggle.class);
-        DropDown filter = Widgets.require(builder, "extension_filter_combo", DropDown.class);
+        MenuButton filter = Widgets.require(builder, "extension_filter_combo", MenuButton.class);
+        ScrolledWindow filterScroller = assertInstanceOf(ScrolledWindow.class, filter.getPopover().getChild());
+        var filterViewport = assertInstanceOf(org.gnome.gtk.Viewport.class, filterScroller.getChild());
+        Box choices = assertInstanceOf(Box.class, filterViewport.getChild());
+        CheckButton all = assertInstanceOf(CheckButton.class, choices.getFirstChild());
+        CheckButton zip = assertInstanceOf(CheckButton.class, all.getNextSibling());
+        CheckButton txt = assertInstanceOf(CheckButton.class, zip.getNextSibling());
         DropDown engine = Widgets.require(builder, "engine_combo", DropDown.class);
         try {
             imported.present();
@@ -1238,12 +1244,20 @@ class WindowSmokeTest {
             mark.emitToggled("0");
             assertEquals("2 of 3 items selected", count.getLabel());
 
-            filter.setSelected(1); // .zip marks the first and third rows.
+            all.setActive(false);
+            assertEquals("0 of 3 items selected", count.getLabel());
+            zip.setActive(true); // .zip marks the first and third rows.
             assertEquals("2 of 3 items selected", count.getLabel());
+            assertTrue(all.getInconsistent());
+            txt.setActive(true);
+            assertTrue(all.getActive());
+            assertFalse(all.getInconsistent());
+            assertEquals("3 of 3 items selected", count.getLabel());
+            txt.setActive(false);
             mark.emitToggled("0");
             mark.emitToggled("2");
             assertEquals("0 of 3 items selected", count.getLabel());
-            filter.setSelected(0);
+            all.setActive(true);
             assertEquals("3 of 3 items selected", count.getLabel());
 
             Widgets.require(builder, "options_notebook", Notebook.class).setCurrentPage(1);
