@@ -1,6 +1,16 @@
 package org.odm.gtk4;
 
-import com.sun.net.httpserver.HttpServer;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -12,6 +22,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
+
 import org.gnome.glib.MainContext;
 import org.gnome.gtk.Button;
 import org.gnome.gtk.CellRendererToggle;
@@ -33,8 +44,8 @@ import org.manager.download.Download;
 import org.manager.download.DownloadManager;
 import org.manager.download.DownloadSettingsFactory;
 import org.ytdlp.YtDlpSettings;
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+
+import com.sun.net.httpserver.HttpServer;
 
 @Timeout(30)
 class ImportListEngineGtkTest {
@@ -92,7 +103,7 @@ class ImportListEngineGtkTest {
             Button submit = Widgets.require(builder, "validate_button", Button.class);
             submit.emitClicked();
             awaitGtk(() -> submit.getSensitive()
-                    && Widgets.require(builder, "disk_space_label", Label.class).getLabel().contains("yt-dlp:"));
+                    && Widgets.require(builder, "disk_space_label", Label.class).getLabel().contains("Media:"));
             assertTrue(window.getVisible());
             assertFalse(done.get());
             verify(manager, never()).createDownload(any(), any());
@@ -155,7 +166,7 @@ class ImportListEngineGtkTest {
             assertEquals("Import Links from HTML", window.getTitle());
             DropDown engine = Widgets.require(builder, "engine_combo", DropDown.class);
             StringList choices = (StringList) engine.getModel();
-            assertEquals(List.of("Auto", "aria2", "yt-dlp", "HTTrack"),
+            assertEquals(List.of("Auto", "HTTP/Torrent", "Media", "Web Scrap"),
                     java.util.stream.IntStream.range(0, choices.getNItems())
                             .mapToObj(choices::getString).toList());
             assertEquals(ImportEngine.AUTO.ordinal(), engine.getSelected());

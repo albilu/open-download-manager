@@ -7,9 +7,9 @@ import org.manager.url.DownloadUrlPolicy;
 /** Optional engine override for a batch of newly imported records. */
 enum ImportEngine {
     AUTO("Auto", null),
-    ARIA2("aria2", Download.Type.ARIA2),
-    YT_DLP("yt-dlp", Download.Type.YOUTUBE),
-    HTTRACK("HTTrack", Download.Type.WEBSITE_SCRAPING);
+    ARIA2("HTTP/Torrent", Download.Type.ARIA2),
+    YT_DLP("Media", Download.Type.YOUTUBE),
+    HTTRACK("Web Scrap", Download.Type.WEBSITE_SCRAPING);
 
     private final String label;
     private final Download.Type type;

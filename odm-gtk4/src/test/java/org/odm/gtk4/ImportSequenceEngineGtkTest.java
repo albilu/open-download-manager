@@ -60,7 +60,7 @@ class ImportSequenceEngineGtkTest {
             imported.present();
             DropDown engine = Widgets.require(builder, "engine_combo", DropDown.class);
             StringList choices = (StringList) engine.getModel();
-            assertEquals(List.of("Auto", "aria2", "yt-dlp", "HTTrack"),
+            assertEquals(List.of("Auto", "HTTP/Torrent", "Media", "Web Scrap"),
                     java.util.stream.IntStream.range(0, choices.getNItems())
                             .mapToObj(choices::getString).toList());
             assertEquals(ImportEngine.AUTO.ordinal(), engine.getSelected());
