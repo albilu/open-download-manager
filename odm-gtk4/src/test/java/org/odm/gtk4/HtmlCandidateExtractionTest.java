@@ -23,7 +23,7 @@ class HtmlCandidateExtractionTest {
     @MethodSource("anchorCases")
     void extractsOnlyActualAnchorAttributes(String html, String expected) {
         assertEquals(expected == null ? List.of() : List.of(URI.create(expected)),
-                HtmlImportExport.extractHttpLinks(html));
+                HtmlImportExport.extractLinks(html));
     }
 
     static Stream<Arguments> anchorCases() {
@@ -65,7 +65,7 @@ class HtmlCandidateExtractionTest {
     @ParameterizedTest(name = "{index}: ignore {0}")
     @MethodSource("nonLinkMarkup")
     void ignoresCommentsAttributeTextAndInertContent(String html) {
-        assertEquals(List.of(), HtmlImportExport.extractHttpLinks(html, DOCUMENT));
+        assertEquals(List.of(), HtmlImportExport.extractLinks(html, DOCUMENT));
     }
 
     static Stream<String> nonLinkMarkup() {
@@ -88,7 +88,7 @@ class HtmlCandidateExtractionTest {
     @NullAndEmptySource
     @ValueSource(strings = {" ", "ordinary text", "README.md", "<!-- no links -->"})
     void missingMarkupHasNoCandidates(String html) {
-        assertEquals(List.of(), HtmlImportExport.extractHttpLinks(html, DOCUMENT));
+        assertEquals(List.of(), HtmlImportExport.extractLinks(html, DOCUMENT));
     }
 
     @ParameterizedTest(name = "{index}: reject href {0}")
@@ -96,7 +96,7 @@ class HtmlCandidateExtractionTest {
             "", " ", "#", "#chapter", "javascript:alert(1)", "java&#115;cript:alert(1)",
             "data:text/plain,hello", "mailto:user@example.com", "ftp://example.com/file.zip",
             "ftps://example.com/file.zip", "sftp://example.com/file.zip", "file:///tmp/file.torrent",
-            "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+            "magnet:?xt=urn:btih:short", "magnet:?dn=missing-hash",
             "https://", "https:///missing.zip", "https://exa_mple.com/file.zip",
             "https://example.com:0/file.zip", "https://example.com:65536/file.zip",
             "https://example.com:abc/file.zip", "https://example.com/%zz",
@@ -104,13 +104,13 @@ class HtmlCandidateExtractionTest {
             "https://[2001:db8:::1]/file.zip", "http://999.999.999.999/file.zip"
     })
     void rejectsInvalidAndNonDownloadReferencesEvenWithADocumentBase(String href) {
-        assertEquals(List.of(), HtmlImportExport.extractHttpLinks("<a href='" + href + "'>file</a>", DOCUMENT));
+        assertEquals(List.of(), HtmlImportExport.extractLinks("<a href='" + href + "'>file</a>", DOCUMENT));
     }
 
     @ParameterizedTest(name = "{index}: base markup {0}")
     @MethodSource("baseCases")
     void onlyTheFirstRealBaseHrefControlsResolution(String prefix, String href, String expected) {
-        assertEquals(List.of(URI.create(expected)), HtmlImportExport.extractHttpLinks(
+        assertEquals(List.of(URI.create(expected)), HtmlImportExport.extractLinks(
                 prefix + "<a href='" + href + "'>file</a>", DOCUMENT));
     }
 
@@ -143,8 +143,8 @@ class HtmlCandidateExtractionTest {
     void invalidDocumentBaseDoesNotTurnRelativeTextIntoCandidates() {
         for (URI document : List.of(URI.create("file:///tmp/page.html"),
                 URI.create("ftp://example.com/page.html"), URI.create("https://example.com:70000/page.html"))) {
-            assertEquals(List.of(), HtmlImportExport.extractHttpLinks("<a href='file.zip'>file</a>", document));
-            assertEquals(List.of(URI.create(URL)), HtmlImportExport.extractHttpLinks(ANCHOR, document));
+            assertEquals(List.of(), HtmlImportExport.extractLinks("<a href='file.zip'>file</a>", document));
+            assertEquals(List.of(URI.create(URL)), HtmlImportExport.extractLinks(ANCHOR, document));
         }
     }
 
@@ -157,7 +157,7 @@ class HtmlCandidateExtractionTest {
                 + "<a title=\"href='https://wrong.example/'\">ignored</a>"
                 + ANCHOR + "<a href='https://example.com/last.zip'>last</a>";
         assertEquals(List.of(URI.create("https://example.com/first.zip"), URI.create(URL)),
-                HtmlImportExport.extractHttpLinks(html, null, new ImportLimits(2, 1)));
+                HtmlImportExport.extractLinks(html, null, new ImportLimits(2, 1)));
     }
 
     @Test
@@ -165,6 +165,6 @@ class HtmlCandidateExtractionTest {
         String html = "<!-- " + ANCHOR.repeat(5_000) + " -->"
                 + "<div title=\"" + ANCHOR.repeat(5_000) + "\"></div>" + ANCHOR;
         assertTimeoutPreemptively(Duration.ofSeconds(5), () ->
-                assertEquals(List.of(URI.create(URL)), HtmlImportExport.extractHttpLinks(html)));
+                assertEquals(List.of(URI.create(URL)), HtmlImportExport.extractLinks(html)));
     }
 }

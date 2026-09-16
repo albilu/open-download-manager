@@ -79,7 +79,8 @@ class CandidateExtractionPathsTest {
             html.append("<a title=\"href='https://wrong.example/attribute'\" href=\"")
                     .append(href.replace("&", "&amp;")).append("\">download</a>");
         }
-        assertClassified(web ? expected : List.of(), HtmlImportExport.extractHttpLinks(html.toString())
+        boolean htmlSupported = web || candidate.protocol() == Download.Protocol.MAGNET;
+        assertClassified(htmlSupported ? expected : List.of(), HtmlImportExport.extractLinks(html.toString())
                 .stream().map(URI::toString).toList(), candidate);
     }
 

@@ -93,8 +93,9 @@ class ImportListEngineGtkTest {
         var queued = new CopyOnWriteArrayList<Download>();
         var manager = manager(queued, CompletableFuture.completedFuture(null));
         var done = new AtomicBoolean();
-        var imported = dialog(manager, List.of("https://files.test/page",
-                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"), done);
+        var urls = HtmlImportExport.extractLinks("<a href='https://files.test/page'>page</a>"
+                + "<a href='magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567'>torrent</a>");
+        var imported = dialog(manager, urls.stream().map(URI::toString).toList(), done);
         GtkBuilder builder = builder(imported);
         Window window = Widgets.require(builder, "import_dialog", Window.class);
         try {
@@ -130,9 +131,13 @@ class ImportListEngineGtkTest {
             throws Exception {
         String page = "https://files.test/page";
         String media = "https://www.youtube.com/watch?v=12345678901";
+        String magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567";
         String html = "<base href='https://files.test/'><a href='page'>Page</a>"
                 + "<a href='" + media + "'>Media</a><a href='skip.zip'>Skip</a>"
-                + "<a href='page'>Duplicate</a><a href='javascript:alert(1)'>Invalid</a>";
+                + "<a href='page'>Duplicate</a><a href='javascript:alert(1)'>Invalid</a>"
+                + "<video src='clip.mp4'><source src='live.m3u8'></video>"
+                + "<audio src='audio.mp3'></audio><img src='small.jpg' srcset='small.jpg 1x, large.jpg 2x'>"
+                + "<a href='" + magnet + "'>Torrent</a>";
         List<String> urls;
         if (route.equals("file")) {
             Path file = directory.resolve("links.html");
@@ -154,7 +159,9 @@ class ImportListEngineGtkTest {
                 server.stop(0);
             }
         }
-        assertEquals(List.of(page, media, "https://files.test/skip.zip"), urls);
+        assertEquals(List.of(page, media, "https://files.test/skip.zip", "https://files.test/clip.mp4",
+                "https://files.test/live.m3u8", "https://files.test/audio.mp3", "https://files.test/small.jpg",
+                "https://files.test/large.jpg", magnet), urls);
         var queued = new CopyOnWriteArrayList<Download>();
         var done = new AtomicBoolean();
         var imported = ImportListDialog.presentHtmlUrls(null,
@@ -170,16 +177,24 @@ class ImportListEngineGtkTest {
                     java.util.stream.IntStream.range(0, choices.getNItems())
                             .mapToObj(choices::getString).toList());
             assertEquals(ImportEngine.AUTO.ordinal(), engine.getSelected());
+            assertEquals("9 of 9 items selected", Widgets.require(builder, "item_count_label", Label.class).getLabel());
             engine.setSelected(selection.ordinal());
             Widgets.require(builder, "mark_renderer", CellRendererToggle.class).emitToggled("2");
+            boolean webOnly = selection == ImportEngine.YT_DLP || selection == ImportEngine.HTTRACK;
+            if (webOnly) {
+                Widgets.require(builder, "mark_renderer", CellRendererToggle.class).emitToggled("8");
+            }
             Widgets.require(builder, "validate_button", Button.class).emitClicked();
             awaitGtk(done::get);
             assertFalse(window.getVisible());
-            assertEquals(List.of(URI.create(page), URI.create(media)),
+            assertEquals(urls.stream().filter(url -> !url.endsWith("skip.zip") && (!webOnly || !url.equals(magnet)))
+                    .map(URI::create).toList(),
                     queued.stream().map(Download::getUri).toList());
             for (Download download : queued) {
+                boolean autoMedia = download.getUri().toString().equals(media)
+                        || download.getUri().toString().equals("https://files.test/live.m3u8");
                 Download.Type expected = selection == ImportEngine.AUTO
-                        ? download.getUri().toString().equals(media) ? Download.Type.YOUTUBE : Download.Type.ARIA2
+                        ? autoMedia ? Download.Type.YOUTUBE : Download.Type.ARIA2
                         : selection.type();
                 assertEquals(expected, download.getType());
                 assertEquals(directory, download.getDestination());

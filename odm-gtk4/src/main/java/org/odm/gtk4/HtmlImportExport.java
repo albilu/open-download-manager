@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -23,7 +24,7 @@ import org.manager.tools.BoundedHttpFetcher;
 import org.manager.url.DownloadUrlPolicy;
 
 /**
- * HTML import / export list logic: href extraction from arbitrary
+ * HTML import / export list logic: link and media source extraction from
  * documents, queueing the extracted links, and building/writing the
  * plain-text export. File I/O and parsing large documents are meant to
  * run off the GTK main loop — the dialog only orchestrates.
@@ -31,25 +32,27 @@ import org.manager.url.DownloadUrlPolicy;
 final class HtmlImportExport {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(HtmlImportExport.class);
+    private static final Pattern SRCSET_DENSITY = Pattern.compile(
+            "-?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?x");
 
     private HtmlImportExport() {
     }
 
     /**
-     * Extracts http(s) links from an HTML document's anchor href attributes.
+     * Extracts HTTP(S) anchor and media URLs, plus valid magnet anchor links.
      * Quoted and unquoted values are supported; relative values are resolved
      * against a valid http(s) base element. Comments, raw text, inert template
      * contents, empty hrefs and same-document fragments are not candidates.
      */
-    static List<URI> extractHttpLinks(String html) {
-        return extractHttpLinks(html, null, ImportLimits.defaults());
+    static List<URI> extractLinks(String html) {
+        return extractLinks(html, null, ImportLimits.defaults());
     }
 
-    static List<URI> extractHttpLinks(String html, URI documentUri) {
-        return extractHttpLinks(html, documentUri, ImportLimits.defaults());
+    static List<URI> extractLinks(String html, URI documentUri) {
+        return extractLinks(html, documentUri, ImportLimits.defaults());
     }
 
-    static List<URI> extractHttpLinks(String html, URI documentUri,
+    static List<URI> extractLinks(String html, URI documentUri,
             ImportLimits limits) {
         ImportLimits effective = limits != null ? limits : ImportLimits.defaults();
         LinkedHashSet<URI> urls = new LinkedHashSet<>();
@@ -59,22 +62,132 @@ final class HtmlImportExport {
         Document document = Jsoup.parse(html);
         document.select("template").remove();
         URI base = extractBaseUri(document, documentUri);
-        for (Element anchor : document.select("a[href]")) {
-            String raw = anchor.attr("href").strip();
-            if (raw.isEmpty() || raw.startsWith("#")) {
-                continue;
+        for (Element element : document.select(
+                "a[href], video[src], audio[src], source[src], source[srcset], img[src], img[srcset]")) {
+            boolean anchor = element.normalName().equals("a");
+            addLink(element.attr(anchor ? "href" : "src"), base, anchor, urls, effective.maxUrls());
+            if (element.normalName().equals("img") || element.normalName().equals("source")) {
+                addSrcsetLinks(element.attr("srcset"), base, urls, effective.maxUrls());
             }
-            try {
-                URI candidate = resolveReference(raw, base);
-                urls.add(DownloadUrlPolicy.require(candidate).requireWeb().uri());
-                if (urls.size() == effective.maxUrls()) {
-                    break;
-                }
-            } catch (IllegalArgumentException | URISyntaxException ignored) {
-                // An HTML href is a reference; only valid web sources are admitted.
+            if (urls.size() == effective.maxUrls()) {
+                break;
             }
         }
         return new ArrayList<>(urls);
+    }
+
+    private static void addLink(String raw, URI base, boolean allowMagnet,
+            LinkedHashSet<URI> urls, int maximumUrls) {
+        raw = raw.strip();
+        if (urls.size() >= maximumUrls || raw.isEmpty() || raw.startsWith("#")) {
+            return;
+        }
+        try {
+            var source = DownloadUrlPolicy.require(resolveReference(raw, base));
+            if (source.isWeb() || allowMagnet && source.protocol() == Download.Protocol.MAGNET) {
+                urls.add(source.uri());
+            }
+        } catch (IllegalArgumentException | URISyntaxException ignored) {
+            // Validate complete references through the shared source policy.
+        }
+    }
+
+    /**
+     * Tokenizes srcset URLs and descriptors without splitting commas inside URLs
+     * (including rejected data URLs). All valid candidates are offered for import.
+     * See https://html.spec.whatwg.org/multipage/images.html#parsing-a-srcset-attribute.
+     */
+    private static void addSrcsetLinks(String srcset, URI base, LinkedHashSet<URI> urls, int maximumUrls) {
+        int position = 0;
+        while (position < srcset.length() && urls.size() < maximumUrls) {
+            while (position < srcset.length()
+                    && (isHtmlSpace(srcset.charAt(position)) || srcset.charAt(position) == ',')) {
+                position++;
+            }
+            int start = position;
+            while (position < srcset.length() && !isHtmlSpace(srcset.charAt(position))) {
+                position++;
+            }
+            if (start == position) {
+                break;
+            }
+            int end = position;
+            if (srcset.charAt(end - 1) == ',') {
+                while (end > start && srcset.charAt(end - 1) == ',') {
+                    end--;
+                }
+                addLink(srcset.substring(start, end), base, false, urls, maximumUrls);
+                continue;
+            }
+            int descriptorStart = position;
+            boolean inParens = false;
+            while (position < srcset.length()) {
+                char value = srcset.charAt(position);
+                if (value == ',' && !inParens) {
+                    break;
+                }
+                if (value == '(') {
+                    inParens = true;
+                } else if (value == ')') {
+                    inParens = false;
+                }
+                position++;
+            }
+            if (validSrcsetDescriptors(srcset.substring(descriptorStart, position))) {
+                addLink(srcset.substring(start, end), base, false, urls, maximumUrls);
+            }
+            // Consume the candidate separator; the next iteration skips whitespace.
+            if (position < srcset.length()) {
+                position++;
+            }
+        }
+    }
+
+    private static boolean validSrcsetDescriptors(String raw) {
+        int start = 0, end = raw.length();
+        while (start < end && isHtmlSpace(raw.charAt(start))) { start++; }
+        while (end > start && isHtmlSpace(raw.charAt(end - 1))) { end--; }
+        if (start == end) {
+            return true;
+        }
+        boolean width = false, height = false, density = false;
+        // At most width and height are valid together. Bound token allocation
+        // even when a malformed attribute contains thousands of descriptors.
+        String[] descriptors = raw.substring(start, end).split("[\\t\\n\\f\\r ]+", 3);
+        for (String descriptor : descriptors) {
+            char kind = descriptor.charAt(descriptor.length() - 1);
+            if (kind == 'w' && !width && !density && positiveIntegerDescriptor(descriptor)) {
+                width = true;
+            } else if (kind == 'h' && !height && !density && positiveIntegerDescriptor(descriptor)) {
+                height = true;
+            } else if (kind == 'x' && !density && !width && !height
+                    && SRCSET_DENSITY.matcher(descriptor).matches()) {
+                double value = Double.parseDouble(descriptor.substring(0, descriptor.length() - 1));
+                if (!Double.isFinite(value) || value < 0) {
+                    return false;
+                }
+                density = true;
+            } else {
+                return false;
+            }
+        }
+        return !height || width;
+    }
+
+    private static boolean positiveIntegerDescriptor(String descriptor) {
+        boolean positive = false;
+        for (int i = 0; i < descriptor.length() - 1; i++) {
+            char value = descriptor.charAt(i);
+            if (value < '0' || value > '9') {
+                return false;
+            }
+            positive |= value != '0';
+        }
+        return positive;
+    }
+
+    private static boolean isHtmlSpace(char value) {
+        return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\f';
     }
 
     private static URI extractBaseUri(Document document, URI documentUri) {
@@ -145,7 +258,7 @@ final class HtmlImportExport {
                 throw new IllegalArgumentException("HTML source exceeds the "
                         + effective.maxSourceSizeMiB() + " MiB import limit");
             }
-            return extractHttpLinks(new String(bytes, StandardCharsets.UTF_8), null, effective)
+            return extractLinks(new String(bytes, StandardCharsets.UTF_8), null, effective)
                     .stream().map(URI::toString).toList();
         } catch (java.io.IOException error) {
             throw new IllegalArgumentException("Could not read the selected HTML file", error);
@@ -188,7 +301,7 @@ final class HtmlImportExport {
             }
             Charset charset = responseCharset(response.contentType());
             String html = new String(response.body(), charset);
-            return extractHttpLinks(html, response.finalUri(), effective)
+            return extractLinks(html, response.finalUri(), effective)
                     .stream().map(URI::toString).toList();
         } catch (IllegalArgumentException error) {
             throw error;

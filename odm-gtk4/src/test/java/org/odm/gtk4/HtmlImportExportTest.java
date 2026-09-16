@@ -45,7 +45,7 @@ class HtmlImportExportTest {
                 <a HREF="https://example.com/three">3</a>
                 """;
 
-        List<URI> urls = HtmlImportExport.extractHttpLinks(html);
+        List<URI> urls = HtmlImportExport.extractLinks(html);
 
         assertEquals(List.of(
                 URI.create("https://example.com/one"),
@@ -69,7 +69,7 @@ class HtmlImportExportTest {
                 URI.create("https://example.com/releases/app.zip?one=1&two=2"),
                 URI.create("https://example.com/manual.pdf"),
                 URI.create("https://cdn.example.com/file.iso")),
-                HtmlImportExport.extractHttpLinks(html));
+                HtmlImportExport.extractLinks(html));
     }
 
     @Test
@@ -77,7 +77,7 @@ class HtmlImportExportTest {
         String html = "<a href='../files/archive.zip'>archive</a>";
 
         assertEquals(List.of(URI.create("https://example.com/files/archive.zip")),
-                HtmlImportExport.extractHttpLinks(
+                HtmlImportExport.extractLinks(
                         html, URI.create("https://example.com/pages/index.html")));
     }
 
@@ -92,7 +92,7 @@ class HtmlImportExportTest {
         assertEquals(List.of(
                 URI.create("https://example.com/1"),
                 URI.create("https://example.com/2")),
-                HtmlImportExport.extractHttpLinks(
+                HtmlImportExport.extractLinks(
                         html, null, new ImportLimits(2, 1)));
     }
 
@@ -106,12 +106,18 @@ class HtmlImportExportTest {
         });
         server.createContext("/pages/index.html", exchange -> respond(exchange, 200,
                 "text/html; charset=UTF-8",
-                "<a href='../files/archive.zip'>archive</a>"));
+                "<a href='../files/archive.zip'>archive</a>"
+                + "<video src='movie.mp4'><source src='../media/live.m3u8'></video>"
+                + "<audio src='/audio.mp3'></audio><img src='small.jpg' srcset='small.jpg 1x, large.jpg 2x'>"
+                + "<a href='magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567'>torrent</a>"));
         server.start();
         try {
             int port = server.getAddress().getPort();
             URI source = URI.create("http://127.0.0.1:" + port + "/start");
-            URI expected = URI.create("http://127.0.0.1:" + port + "/files/archive.zip");
+            URI base = URI.create("http://127.0.0.1:" + port + "/pages/index.html");
+            List<URI> expected = List.of(base.resolve("../files/archive.zip"), base.resolve("movie.mp4"),
+                    base.resolve("../media/live.m3u8"), base.resolve("/audio.mp3"), base.resolve("small.jpg"),
+                    base.resolve("large.jpg"), URI.create("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"));
             DownloadOperations operations = mock(DownloadOperations.class);
             when(operations.createDownload(any(), isNull()))
                     .thenAnswer(inv -> new Download(inv.getArgument(0)));
@@ -120,9 +126,11 @@ class HtmlImportExportTest {
 
             int queued = HtmlImportExport.importRemoteHtml(source, operations, null);
 
-            assertEquals(1, queued);
-            verify(operations).createDownload(eq(expected), isNull());
-            verify(operations).queueDownload(any(Download.class));
+            assertEquals(expected.size(), queued);
+            for (URI uri : expected) {
+                verify(operations).createDownload(eq(uri), isNull());
+            }
+            verify(operations, times(expected.size())).queueDownload(any(Download.class));
         } finally {
             server.stop(0);
         }

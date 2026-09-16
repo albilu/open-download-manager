@@ -88,7 +88,8 @@ class UrlAdmissionPathsTest {
                     Files.writeString(html, "<!-- <a href='https://wrong.example/comment'>ignored</a> -->"
                             + "<a title=\"href='https://wrong.example/attribute'\">ignored</a>"
                             + "<a href=\"" + href.replace("&", "&amp;") + "\">file</a>");
-                    assertEquals(web ? 1 : 0, HtmlImportExport.importHtmlFile(html, manager), input);
+                    boolean htmlSupported = web || expected != null && expected.getScheme().equals("magnet");
+                    assertEquals(htmlSupported ? 1 : 0, HtmlImportExport.importHtmlFile(html, manager), input);
                     if (expected != null) {
                         Download draft = DownloadSubmission.draft(manager, expected, directory, null);
                         assertEquals(expected, draft.getUri());
