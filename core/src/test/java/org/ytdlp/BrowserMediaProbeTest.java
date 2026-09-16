@@ -206,12 +206,13 @@ class BrowserMediaProbeTest {
         }
     }
 
-    private static final class Fixture implements AutoCloseable {
+    static final class Fixture implements AutoCloseable {
         final HttpServer server;
         final java.util.concurrent.ExecutorService executor = Executors.newCachedThreadPool();
         final byte[] media;
         final List<String> authorizedMediaRequests = new CopyOnWriteArrayList<>();
         volatile int pageLoads;
+        volatile Runnable onBrowserPage = () -> { };
 
         Fixture() throws Exception {
             try (var input = getClass().getResourceAsStream("/media/ytdlp-test-video.mp4")) {
@@ -227,6 +228,9 @@ class BrowserMediaProbeTest {
                 switch (path) {
                     case "/page" -> {
                         pageLoads++;
+                        if ("navigate".equals(exchange.getRequestHeaders().getFirst("Sec-Fetch-Mode"))) {
+                            onBrowserPage.run();
+                        }
                         exchange.getResponseHeaders().add("Set-Cookie", "session=allowed; Path=/media; HttpOnly; SameSite=Lax");
                         body = script("/media/movie.mp4?token=a%2Fb");
                     }

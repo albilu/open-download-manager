@@ -1,6 +1,5 @@
 package org.odm.gtk4;
 
-import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,6 +51,7 @@ public class ImportSequenceDialog {
     private final Entry charVersEntry;
     private final DropDown numModeCombo;
     private final DropDown charModeCombo;
+    private final DropDown engineCombo;
     private final ListStore previewStore;
     private final Label diskSpaceLabel;
     private final Label itemCountLabel;
@@ -88,6 +88,10 @@ public class ImportSequenceDialog {
         this.charVersEntry = Widgets.require(builder, "char_vers_entry", Entry.class);
         this.numModeCombo = Widgets.require(builder, "num_combo", DropDown.class);
         this.charModeCombo = Widgets.require(builder, "char_combo", DropDown.class);
+        this.engineCombo = Widgets.require(builder, "engine_combo", DropDown.class);
+        this.engineCombo.setModel(new StringList(java.util.Arrays.stream(ImportEngine.values())
+                .map(ImportEngine::label).toArray(String[]::new)));
+        this.engineCombo.setSelected(ImportEngine.AUTO.ordinal());
         this.previewStore = Widgets.require(builder, "preview_liststore", ListStore.class);
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
         this.itemCountLabel = Widgets.require(builder, "item_count_label", Label.class);
@@ -101,6 +105,7 @@ public class ImportSequenceDialog {
         AccessibilitySupport.label(numCountSpin, "Maximum generated URLs");
         AccessibilitySupport.label(charEntry, "Sequence start character");
         AccessibilitySupport.label(charVersEntry, "Sequence end character");
+        AccessibilitySupport.label(engineCombo, "Import download engine");
 
         DialogSupport.configureIndependent(dialog, parent);
 
@@ -156,6 +161,7 @@ public class ImportSequenceDialog {
         charVersEntry.onChanged(() -> regen.run());
         numModeCombo.onNotify("selected", pspec -> syncRangeMode(numModeCombo, charModeCombo));
         charModeCombo.onNotify("selected", pspec -> syncRangeMode(charModeCombo, numModeCombo));
+        engineCombo.onNotify("selected", pspec -> refreshCapabilities());
 
         Widgets.require(builder, "cancel_button", Button.class).onClicked(this::close);
         validateButton.onClicked(this::onImport);
@@ -277,11 +283,20 @@ public class ImportSequenceDialog {
                     currentPreviewUrls = List.copyOf(urls);
                     appendPreview(urls);
                     itemCountLabel.setLabel(urls.size() + (urls.size() == 1 ? " item" : " items"));
-                    networkControls.applyCapabilities(
-                            NetworkOptionControls.commonCapabilities(
-                                    downloadManager.getGlobalSettings(), urls));
+                    refreshCapabilities();
                     validateButton.setSensitive(!urls.isEmpty());
                 }));
+    }
+
+    private ImportEngine selectedEngine() {
+        long selected = engineCombo.getSelected();
+        ImportEngine[] engines = ImportEngine.values();
+        return selected >= 0 && selected < engines.length ? engines[(int) selected] : ImportEngine.AUTO;
+    }
+
+    private void refreshCapabilities() {
+        networkControls.applyCapabilities(NetworkOptionControls.commonCapabilities(
+                downloadManager.getGlobalSettings(), currentPreviewUrls, selectedEngine().type()));
     }
 
     private void appendPreview(List<String> urls) {
@@ -303,16 +318,18 @@ public class ImportSequenceDialog {
         Path destination = destinationFolder != null ? destinationFolder
                 : Path.of(currentDefaultDirectory());
         ImportOptions options = captureOptions();
+        ImportEngine engine = selectedEngine();
         validateButton.setSensitive(false);
         AccessibilitySupport.status(diskSpaceLabel, "Adding URL sequence to queue…");
         activity.track(DialogOptions.ensureTorAvailable(options.tor(), torService)
                 .thenCompose(ignored -> CompletableFuture.supplyAsync(
-                        () -> queueUrls(urls, destination, options))))
+                        () -> DownloadSubmission.queueUrls(downloadManager, urls, destination,
+                                engine, options::apply, importLimits.maxUrls()))))
                 .whenComplete((queued, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         LOGGER.warn("URL sequence import failed", error);
                         AccessibilitySupport.status(diskSpaceLabel,
-                                "Could not import this URL sequence",
+                                "Could not import this URL sequence: " + UiErrors.message(error),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         validateButton.setSensitive(!currentPreviewUrls.isEmpty());
                         return;
@@ -342,11 +359,6 @@ public class ImportSequenceDialog {
                 Widgets.require(builder, "referrer_entry", Entry.class).getText(),
                 Widgets.require(builder, "user_agent_entry", Entry.class).getText(),
                 Widgets.require(builder, "cookie_entry", Entry.class).getText());
-    }
-
-    private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
-        return DownloadSubmission.queueUrls(downloadManager, urls, destination,
-                options::apply, importLimits.maxUrls());
     }
 
     void close() {

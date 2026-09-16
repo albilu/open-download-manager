@@ -32,6 +32,20 @@ final class DownloadSubmission {
                 .map(source -> source.uri().toString()).distinct().toList();
     }
 
+    /** Apply an optional engine selection consistently across import dialogs. */
+    static int queueUrls(DownloadManager manager, List<String> urls, Path destination,
+            ImportEngine engine, Consumer<Download> configure, int maximumUrls) {
+        List<String> admitted = validUrls(urls, maximumUrls);
+        // Validate the whole selection before creating any history records.
+        // An incompatible URL keeps the dialog open without a partial import.
+        admitted.forEach(url -> engine.validate(DownloadUrlPolicy.require(url)));
+        var settingsFactory = new DownloadSettingsFactory(manager.getGlobalSettings());
+        return queueUrls(manager, admitted, destination, download -> {
+            engine.apply(download, settingsFactory);
+            configure.accept(download);
+        }, maximumUrls);
+    }
+
     /** Shared admission for list, sequence and HTML imports; count accepted queue submissions. */
     static int queueUrls(DownloadOperations operations, List<String> urls, Path destination,
             Consumer<Download> configure, int maximumUrls) {
@@ -48,6 +62,10 @@ final class DownloadSubmission {
                 }
                 Download download = operations.createDownload(source.uri(), destination);
                 configure.accept(download);
+                if (download.getType() == Download.Type.YOUTUBE
+                        && download.getSettings() instanceof org.ytdlp.YtDlpSettings media) {
+                    media.setMediaProbeOnFailure(true);
+                }
                 admissions.add(operations.queueDownload(download).handle((ignored, error) -> {
                     if (error != null) {
                         LOGGER.debug("Import queue admission failed", error);

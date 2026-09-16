@@ -53,6 +53,7 @@ public class ImportListDialog {
     private final ListStore urlStore;
     private final ListStore extensionFilterStore;
     private final DropDown extensionFilterCombo;
+    private final DropDown engineCombo;
     private final Label diskSpaceLabel;
     private final Label itemCountLabel;
     private final PathChooserButton destinationChooser;
@@ -78,10 +79,15 @@ public class ImportListDialog {
         this.urlStore = Widgets.require(builder, "url_liststore", ListStore.class);
         this.extensionFilterStore = Widgets.require(builder, "extension_filter_store", ListStore.class);
         this.extensionFilterCombo = Widgets.require(builder, "extension_filter_combo", DropDown.class);
+        this.engineCombo = Widgets.require(builder, "engine_combo", DropDown.class);
+        this.engineCombo.setModel(new StringList(java.util.Arrays.stream(ImportEngine.values())
+                .map(ImportEngine::label).toArray(String[]::new)));
+        this.engineCombo.setSelected(ImportEngine.AUTO.ordinal());
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
         this.itemCountLabel = Widgets.require(builder, "item_count_label", Label.class);
 
         AccessibilitySupport.label(extensionFilterCombo, "Imported URL extension filter");
+        AccessibilitySupport.label(engineCombo, "Import download engine");
         AccessibilitySupport.label(Widgets.require(builder, "url_treeview",
                 org.gnome.gtk.TreeView.class), "URLs to import");
         AccessibilitySupport.label(Widgets.require(builder, "folder_destination", MenuButton.class),
@@ -147,6 +153,7 @@ public class ImportListDialog {
         // Extension filter model (rebuilt when URLs are loaded)
         rebuildExtensionFilter(List.of());
         extensionFilterCombo.onNotify("selected", pspec -> applyExtensionFilter());
+        engineCombo.onNotify("selected", pspec -> refreshSelection());
 
         // Mark toggle renderer: flip the row's mark column
         CellRendererToggle markRenderer = Widgets.require(builder, "mark_renderer", CellRendererToggle.class);
@@ -205,11 +212,14 @@ public class ImportListDialog {
     }
 
     /** Presents the same selectable list and Options tab for extracted HTML links. */
-    static void presentUrls(Window parent, DownloadManager downloadManager,
+    static ImportListDialog presentHtmlUrls(Window parent, DownloadManager downloadManager,
             Runnable onImportDone, List<String> urls, ImportLimits limits,
             org.tor.TorService torService) {
-        new ImportListDialog(parent, downloadManager, onImportDone,
-                urls != null ? urls : List.of(), limits, torService).present();
+        var imported = new ImportListDialog(parent, downloadManager, onImportDone,
+                urls != null ? urls : List.of(), limits, torService);
+        imported.dialog.setTitle("Import Links from HTML");
+        imported.present();
+        return imported;
     }
 
     /**
@@ -345,10 +355,12 @@ public class ImportListDialog {
                 : Path.of(currentDefaultDirectory());
         List<String> urls = markedUrls();
         ImportOptions options = captureOptions();
+        ImportEngine engine = selectedEngine();
         Widgets.require(builder, "validate_button", Button.class).setSensitive(false);
         DialogOptions.ensureTorAvailable(options.tor(), torService)
                 .thenCompose(ignored -> CompletableFuture.supplyAsync(
-                        () -> queueUrls(urls, destination, options)))
+                        () -> DownloadSubmission.queueUrls(downloadManager, urls, destination,
+                                engine, options::apply, importLimits.maxUrls())))
                 .whenComplete((queued, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         LOGGER.warn("List import failed", error);
@@ -389,7 +401,13 @@ public class ImportListDialog {
         itemCountLabel.setLabel(selected.size() + " of " + total
                 + (total == 1 ? " item selected" : " items selected"));
         networkControls.applyCapabilities(NetworkOptionControls.commonCapabilities(
-                downloadManager.getGlobalSettings(), selected));
+                downloadManager.getGlobalSettings(), selected, selectedEngine().type()));
+    }
+
+    private ImportEngine selectedEngine() {
+        long selected = engineCombo.getSelected();
+        ImportEngine[] engines = ImportEngine.values();
+        return selected >= 0 && selected < engines.length ? engines[(int) selected] : ImportEngine.AUTO;
     }
 
     private ImportOptions captureOptions() {
@@ -409,11 +427,6 @@ public class ImportListDialog {
                 Widgets.require(builder, "referrer", Entry.class).getText(),
                 Widgets.require(builder, "user_agent", Entry.class).getText(),
                 Widgets.require(builder, "cookie", Entry.class).getText());
-    }
-
-    private int queueUrls(List<String> urls, Path destination, ImportOptions options) {
-        return DownloadSubmission.queueUrls(downloadManager, urls, destination,
-                options::apply, importLimits.maxUrls());
     }
 
     record ImportOptions(boolean tor, int torSocksPort, int proxyType,

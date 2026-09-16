@@ -93,6 +93,18 @@
                   </object>
                 </child>
                 <child>
+                  <object class="GtkBox">
+                    <property name="orientation">horizontal</property><property name="spacing">8</property>
+                    <property name="halign">end</property>
+                    <child><object class="GtkLabel" id="engine_label"><property name="label">Engine:</property></object></child>
+                    <child>
+                      <object class="GtkDropDown" id="engine_combo">
+                        <property name="tooltip-text">Auto selects an engine for each URL. Choose an engine to use it for the entire sequence.</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
                   <object class="GtkScrolledWindow">
                     <property name="vexpand">true</property>
                     <child>

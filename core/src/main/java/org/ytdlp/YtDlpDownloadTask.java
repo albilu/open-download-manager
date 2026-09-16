@@ -34,7 +34,7 @@ public class YtDlpDownloadTask {
     }
 
     private final String taskId;
-    private final String url;
+    private volatile String url;
     private final YtDlpSettings settings;
     /** Destination directory; mutable only while the task is not running. */
     private volatile Path outputPath;
@@ -78,6 +78,9 @@ public class YtDlpDownloadTask {
     private volatile CompletableFuture<String> downloadFuture;
     private volatile CompletableFuture<String> runFuture;
     private volatile CompletableFuture<YtDlpClient.VideoInfo> infoFuture;
+    private volatile CompletableFuture<MediaInfoResolver.Result> recoveryFuture;
+    private java.util.function.Supplier<MediaInfoResolver> mediaResolverFactory;
+    private Consumer<MediaInfoResolver.Result> mediaResolved;
 
     // Process ID for cancellation
     private volatile String processId;
@@ -94,6 +97,13 @@ public class YtDlpDownloadTask {
     /** First-run naming hook; install before starting the task. */
     public synchronized void setOutputNamePreparation(Consumer<List<String>> preparation) {
         outputNamePreparation = preparation;
+    }
+
+    /** Install before start; discovery only handles an opted-in import's startup failure. */
+    public synchronized void setMediaRecovery(java.util.function.Supplier<MediaInfoResolver> factory,
+            Consumer<MediaInfoResolver.Result> resolved) {
+        mediaResolverFactory = factory;
+        mediaResolved = resolved;
     }
 
     /**
@@ -176,6 +186,9 @@ public class YtDlpDownloadTask {
 
                 @Override
                 public void onProgress(float percentage, long downloadedBytes, long totalBytes, float speed) {
+                    // Even a retired run's transfer evidence ends startup recovery.
+                    // Keep this on the settings so resume/reopening cannot re-enable it.
+                    settings.setMediaProbeOnFailure(false);
                     if (cancelled.get() || !isCurrentGeneration(generation)) {
                         return; // progress events are invalidated by cancellation or retirement
                     }
@@ -189,6 +202,7 @@ public class YtDlpDownloadTask {
                     // line is a fact about this run, and file cleanup after
                     // cancellation needs it
                     recordOutputPath(filename);
+                    settings.setMediaProbeOnFailure(false);
                     if (cancelled.get() || !isCurrentGeneration(generation)) {
                         return; // invalidated by cancellation or retirement
                     }
@@ -201,6 +215,7 @@ public class YtDlpDownloadTask {
                 @Override
                 public void onComplete(String filename) {
                     recordOutputPath(filename);
+                    settings.setMediaProbeOnFailure(false);
                     if (cancelled.get() || !isCurrentGeneration(generation)) {
                         return; // a late completion must not replace CANCELED or a newer run
                     }
@@ -232,30 +247,117 @@ public class YtDlpDownloadTask {
             // collected); the derived downloadFuture below is completed
             // eagerly by cancel(), so awaiting the run future is the only
             // confirmed-completion signal.
-            CompletableFuture<String> run = outputNamePreparation != null
-                    ? client.download(url, settings, outputPath, callback, processId, overrideOutputs, names -> {
-                        synchronized (YtDlpDownloadTask.this) {
-                            if (cancelled.get() || !isCurrentGeneration(generation)) {
-                                throw new CancellationException();
-                            }
-                            outputNamePreparation.accept(names);
-                            outputNamePreparation = null;
-                        }
-                    })
-                    : overrideOutputs
-                    ? client.download(url, settings, outputPath, callback, processId, true)
-                    : client.download(url, settings, outputPath, callback, processId);
+            CompletableFuture<String> run = launchDownload(callback, generation, overrideOutputs);
+            if (mediaResolverFactory != null && settings.isMediaProbeOnFailure()) {
+                run = run.exceptionallyComposeAsync(failure ->
+                        recoverMedia(failure, callback, generation, overrideOutputs));
+            }
             runFuture = run;
             downloadFuture = run.whenComplete((result, throwable) -> {
                 if (throwable != null && !cancelled.get() && isCurrentGeneration(generation)
                         && status.get() != Status.PAUSED) {
                     errorMessage.set(org.manager.tools.ProcessDiagnostics.failureMessage(throwable));
                     status.set(Status.ERROR);
+                } else if (throwable == null && isCurrentGeneration(generation)) {
+                    settings.setMediaProbeOnFailure(false);
                 }
             });
 
             return downloadFuture;
         }
+    }
+
+    /** Caller holds the task monitor so pause/cancel cannot miss a new process reservation. */
+    private CompletableFuture<String> launchDownload(ProgressCallback callback, long generation,
+            boolean overrideOutputs) {
+        if (cancelled.get() || !isCurrentGeneration(generation)) {
+            return CompletableFuture.failedFuture(new CancellationException());
+        }
+        return outputNamePreparation != null
+                ? client.download(url, settings, outputPath, callback, processId, overrideOutputs, names -> {
+                    synchronized (YtDlpDownloadTask.this) {
+                        if (cancelled.get() || !isCurrentGeneration(generation)) {
+                            throw new CancellationException();
+                        }
+                        outputNamePreparation.accept(names);
+                        outputNamePreparation = null;
+                    }
+                })
+                : overrideOutputs
+                ? client.download(url, settings, outputPath, callback, processId, true)
+                : client.download(url, settings, outputPath, callback, processId);
+    }
+
+    private synchronized CompletableFuture<String> recoverMedia(Throwable originalFailure,
+            ProgressCallback callback, long generation, boolean overrideOutputs) {
+        if (cancelled.get() || !isCurrentGeneration(generation)
+                || !settings.isMediaProbeOnFailure() || !canProbeAfter(originalFailure)) {
+            return CompletableFuture.failedFuture(originalFailure);
+        }
+        java.net.URI page = org.manager.url.DownloadUrlPolicy.require(url).requireWeb().uri();
+        status.set(Status.STARTING);
+        speed.set(0.0f);
+        LOGGER.info("Probing imported media download {} after yt-dlp failure", taskId);
+        final MediaInfoResolver resolver;
+        try {
+            resolver = mediaResolverFactory.get();
+        } catch (Exception failure) {
+            settings.setMediaProbeOnFailure(false);
+            return CompletableFuture.failedFuture(recoveryFailure(originalFailure, failure));
+        }
+        final CompletableFuture<MediaInfoResolver.Result> pending;
+        try {
+            pending = resolver.probe(page, settings,
+                    message -> LOGGER.debug("Media discovery for {}: {}", taskId, message));
+        } catch (Exception failure) {
+            CompletableFuture.runAsync(resolver::close);
+            settings.setMediaProbeOnFailure(false);
+            return CompletableFuture.failedFuture(recoveryFailure(originalFailure, failure));
+        }
+        recoveryFuture = pending;
+        return pending.handle((resolved, failure) -> {
+            CompletableFuture.runAsync(resolver::close);
+            synchronized (YtDlpDownloadTask.this) {
+                if (recoveryFuture == pending) { recoveryFuture = null; }
+                if (cancelled.get() || !isCurrentGeneration(generation)) {
+                    return CompletableFuture.<String>failedFuture(new CancellationException());
+                }
+                // Pause/cancel leave discovery pending for a later explicit resume.
+                // A settled attempt is consumed, even if the replacement also fails.
+                settings.setMediaProbeOnFailure(false);
+                if (failure != null) {
+                    return CompletableFuture.<String>failedFuture(recoveryFailure(originalFailure, failure));
+                }
+                if (resolved.context() == null) {
+                    return CompletableFuture.<String>failedFuture(recoveryFailure(originalFailure,
+                            new IllegalStateException("No replacement media source found")));
+                }
+                org.manager.url.DownloadUrlPolicy.require(resolved.downloadUrl()).requireWeb();
+                resolved.context().applyTo(settings);
+                url = resolved.downloadUrl().toString();
+                errorMessage.set(null);
+                if (mediaResolved != null) { mediaResolved.accept(resolved); }
+                processId = "ytdlp-" + taskId + "-" + java.util.UUID.randomUUID();
+                LOGGER.info("Retrying imported media download {} with discovered media", taskId);
+                return launchDownload(callback, generation, overrideOutputs);
+            }
+        }).thenCompose(retry -> retry);
+    }
+
+    private static boolean canProbeAfter(Throwable failure) {
+        boolean mediaFailure = false;
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof CancellationException || cause instanceof InterruptedException) { return false; }
+            if (cause instanceof YtDlpClient.MediaExtractionException
+                    || cause instanceof YtDlpClient.MediaDownloadException) { mediaFailure = true; }
+        }
+        return mediaFailure;
+    }
+
+    private static RuntimeException recoveryFailure(Throwable original, Throwable recovery) {
+        return new IllegalStateException(org.manager.tools.ProcessDiagnostics.failureMessage(original)
+                + "; browser media recovery failed: "
+                + org.manager.tools.ProcessDiagnostics.failureMessage(recovery), recovery);
     }
 
     /** The generation of the most recent started or retired run. */
@@ -293,7 +395,7 @@ public class YtDlpDownloadTask {
      *
      * @return true if the task was successfully cancelled, false otherwise
      */
-    public boolean cancel() {
+    public synchronized boolean cancel() {
         if (cancelled.getAndSet(true)) {
             return false; // Already cancelled
         }
@@ -306,6 +408,8 @@ public class YtDlpDownloadTask {
         // Retire the current run before signalling its process: callbacks
         // racing the kill are inert instead of rewriting CANCELED
         runGeneration.incrementAndGet();
+
+        if (recoveryFuture != null) { recoveryFuture.cancel(true); }
 
         // Cancel the download process
         boolean processCancelled = false;
@@ -336,7 +440,9 @@ public class YtDlpDownloadTask {
     public synchronized boolean pause() {
         // start() must publish its cancellation key and launch reservation first.
         Status currentStatus = status.get();
-        if (currentStatus != Status.DOWNLOADING && currentStatus != Status.STARTING) {
+        boolean awaitingRecovery = currentStatus == Status.ERROR && mediaResolverFactory != null
+                && settings.isMediaProbeOnFailure() && downloadFuture != null && !downloadFuture.isDone();
+        if (currentStatus != Status.DOWNLOADING && currentStatus != Status.STARTING && !awaitingRecovery) {
             return false;
         }
 
@@ -344,6 +450,7 @@ public class YtDlpDownloadTask {
         // pause/resume. Retire the run BEFORE killing it so the dying process's
         // asynchronous callbacks cannot convert PAUSED into ERROR.
         runGeneration.incrementAndGet();
+        if (recoveryFuture != null) { recoveryFuture.cancel(true); }
         if (processId != null) {
             client.cancelDownload(processId);
         }

@@ -18,6 +18,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.manager.GlobalSettings;
 import org.manager.download.Download;
 import org.manager.download.DownloadSettingsFactory;
@@ -56,6 +58,7 @@ class YtDlpPauseLifecycleTest {
                 + "  while [[ -e \"$0.block-probe\" ]]; do sleep 0.1; done\n"
                 + "  printf '|odmname|\"video.mp4\"\\n'; exit 0;; esac\n"
                 + "printf '%s\\n' \"$@\" > \"$0.args\"\n"
+                + "if [[ -e \"$0.fail-before-start\" ]]; then echo 'ERROR: Unsupported URL'; exit 1; fi\n"
                 + "echo \"[download] Destination: video.mp4\"\n"
                 + "sleep 300\n");
         Files.setPosixFilePermissions(fakeTool, PosixFilePermissions.fromString("rwxr-xr-x"));
@@ -122,6 +125,42 @@ class YtDlpPauseLifecycleTest {
         handler.resumeDownload(download).get(15, TimeUnit.SECONDS);
         awaitRunning(task);
         assertFalse(download.isUniquifiedOutputPreparationPending());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"bytes", "output"})
+    @Timeout(60)
+    void previousTransferEvidencePreventsRecoveryOnRestart(String evidence) throws Exception {
+        when(settings.isUniquifyOutputName()).thenReturn(true);
+        Path gate = Files.createFile(tempDir.resolve("fake-yt-dlp.block-probe"));
+        Files.createFile(tempDir.resolve("fake-yt-dlp.fail-before-start"));
+        Download download = newDownload("previous-transfer");
+        var mediaSettings = new org.ytdlp.YtDlpSettings();
+        mediaSettings.setMediaProbeOnFailure(true);
+        download.setSettings(mediaSettings);
+        if (evidence.equals("bytes")) {
+            download.setDownloaded(32);
+        } else {
+            download.recordOutputPath(download.getDestination().resolve("partial.mp4"));
+        }
+        handler.startDownload(download).get(15, TimeUnit.SECONDS);
+        org.awaitility.Awaitility.await().atMost(15, TimeUnit.SECONDS)
+                .until(() -> Files.exists(tempDir.resolve("fake-yt-dlp.probing")));
+        var task = factory.getDownloadTask(download.getId());
+        assertEquals(YtDlpDownloadTask.Status.STARTING, task.getStatus());
+        var discoveries = new java.util.concurrent.atomic.AtomicInteger();
+        task.setMediaRecovery(() -> {
+            discoveries.incrementAndGet();
+            throw new IllegalStateException("Previous transfers must not probe");
+        }, ignored -> { });
+
+        Files.delete(gate);
+        org.awaitility.Awaitility.await().atMost(15, TimeUnit.SECONDS)
+                .until(() -> download.getStatus() == Download.Status.ERROR);
+        assertTrue(download.getErrorMessage().contains("Unsupported URL"), download.getErrorMessage());
+        assertFalse(mediaSettings.isMediaProbeOnFailure());
+        assertEquals(0, discoveries.get());
+        assertTrue(task.getRecordedOutputPaths().isEmpty(), "this run failed before reporting any output");
     }
 
     @Test

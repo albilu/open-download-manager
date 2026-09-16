@@ -27,6 +27,18 @@ class MediaInfoResolverTest {
         }
     }
 
+    @Test void failedDownloadProbesWithoutRepeatingTheOriginalMetadataRequest() throws Exception {
+        when(probe.probe(eq(page), any(), isNull())).thenReturn(CompletableFuture.completedFuture(
+                List.of(new MediaCandidate(media, 90, 1234, context))));
+        when(client.previewMedia(eq(media), any())).thenReturn(CompletableFuture.completedFuture(info));
+        try (var resolver = new MediaInfoResolver(client, probe)) {
+            var result = resolver.probe(page, new YtDlpSettings(), ignored -> { }).get(5, TimeUnit.SECONDS);
+            assertEquals(URI.create(media), result.downloadUrl());
+            verify(client, never()).previewMedia(eq(page.toString()), any());
+            verify(client).previewMedia(eq(media), any());
+        }
+    }
+
     @Test void failedPageResolvesDirectMediaAndCarriesContext() throws Exception {
         when(client.previewMedia(eq(page.toString()), any())).thenReturn(failure());
         when(probe.probe(eq(page), any(), isNull())).thenReturn(CompletableFuture.completedFuture(

@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Pause/resume run generations: pausing retires the current run, so the
@@ -61,6 +63,44 @@ class YtDlpPauseGenerationTest {
             cb = client.callback;
         }
         return cb;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"destination", "progress", "completion"})
+    void lateTransferEvidenceDisablesStartupRecoveryWithoutChangingPausedState(String event) throws Exception {
+        PerRunClient client = new PerRunClient();
+        try {
+            var settings = new YtDlpSettings();
+            settings.setMediaProbeOnFailure(true);
+            var task = new YtDlpDownloadTask("late-transfer", "http://example.test/v", settings, tempDir, client);
+            var discoveries = new AtomicInteger();
+            task.setMediaRecovery(() -> {
+                discoveries.incrementAndGet();
+                throw new IllegalStateException("A previous transfer must not probe");
+            }, ignored -> { });
+            task.start();
+            var firstRun = awaitCallback(client);
+            assertTrue(task.pause());
+            switch (event) {
+                case "destination" -> firstRun.onStart("partial.mp4");
+                case "progress" -> firstRun.onProgress(50, 32, 64, 16);
+                case "completion" -> firstRun.onComplete("finished.mp4");
+                default -> throw new AssertionError(event);
+            }
+            client.runs.getFirst().completeExceptionally(new java.util.concurrent.CancellationException());
+            assertTrue(task.awaitRunCompletion(java.time.Duration.ofSeconds(5)));
+            assertEquals(YtDlpDownloadTask.Status.PAUSED, task.getStatus());
+            assertFalse(settings.isMediaProbeOnFailure());
+
+            var resumed = task.resume();
+            client.runs.get(1).completeExceptionally(new YtDlpClient.MediaDownloadException("Unsupported URL"));
+            org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> resumed.get(5, TimeUnit.SECONDS));
+            assertEquals(YtDlpDownloadTask.Status.ERROR, task.getStatus());
+            assertEquals(0, discoveries.get());
+        } finally {
+            client.shutdown();
+        }
     }
 
     @Test

@@ -65,6 +65,19 @@
                         <property name="hexpand">false</property>
                       </object>
                     </child>
+                    <child>
+                      <object class="GtkLabel" id="engine_label">
+                        <property name="label">Engine:</property>
+                        <property name="hexpand">true</property>
+                        <property name="halign">end</property>
+                        <property name="margin-start">16</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkDropDown" id="engine_combo">
+                        <property name="tooltip-text">Auto selects an engine for each URL. Choose an engine to use it for all marked URLs.</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <child>

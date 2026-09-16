@@ -130,6 +130,11 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         yield defaultSettings;
                     }
                 };
+                // Restored or replacement tasks with prior transfer evidence are
+                // beyond startup, even if older saved settings still opted in.
+                if (download.getDownloaded() > 0 || !download.getOutputPaths().isEmpty()) {
+                    settings.setMediaProbeOnFailure(false);
+                }
                 settingsFactory.applyGlobalTransferPreferences(settings);
                 if (download.isUniquifiedOutputPreparationPending()) {
                     settings.setOutputNameCounter(0);
@@ -151,6 +156,13 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                         download.getUri().toString(),
                         settings,
                         destinationDir);
+
+                if (settings.isMediaProbeOnFailure()) {
+                    task.setMediaRecovery(ytDlpFactory::createMediaInfoResolver, resolved -> {
+                        download.setUri(resolved.downloadUrl());
+                        download.setErrorMessage(null);
+                    });
+                }
 
                 if (globalSettings.isUniquifyOutputName() && download.isUniquifiedOutputPreparationPending()) {
                     task.setOutputNamePreparation(names -> download.prepareUniquifiedOutput(() -> {

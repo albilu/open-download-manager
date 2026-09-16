@@ -134,6 +134,14 @@ public class YtDlpFactory {
         return configuredClient(ytDlpPath);
     }
 
+    /** Caller owns the resolver and its independent metadata client. */
+    public MediaInfoResolver createMediaInfoResolver() {
+        if (shutdown) {
+            throw new IllegalStateException("YtDlpFactory has been shut down");
+        }
+        return new MediaInfoResolver(newUnregisteredClient());
+    }
+
     /**
      * Creates a new YtDlpClient with a specific path.
      *

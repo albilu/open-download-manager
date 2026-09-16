@@ -1117,6 +1117,8 @@ class WindowSmokeTest {
         assertListTabMargins(clipboardPage);
         Widgets.require(builder, "filter_label", Label.class);
         Widgets.require(builder, "extension_filter_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "engine_label", Label.class);
+        Widgets.require(builder, "engine_combo", DropDown.class);
         Widgets.require(builder, "url_treeview", TreeView.class);
         Widgets.require(builder, "url_liststore", ListStore.class);
         Widgets.require(builder, "mark_renderer", org.gnome.gtk.CellRendererToggle.class);
@@ -1156,6 +1158,8 @@ class WindowSmokeTest {
         Widgets.require(builder, "char_vers_entry", Entry.class);
         Widgets.require(builder, "num_combo", org.gnome.gtk.DropDown.class);
         Widgets.require(builder, "char_combo", org.gnome.gtk.DropDown.class);
+        Widgets.require(builder, "engine_label", Label.class);
+        Widgets.require(builder, "engine_combo", DropDown.class);
         Widgets.require(builder, "preview_treeview", TreeView.class);
         Widgets.require(builder, "item_count_label", Label.class);
         Widgets.require(builder, "preview_liststore", ListStore.class);
@@ -1213,9 +1217,22 @@ class WindowSmokeTest {
         Label count = Widgets.require(builder, "item_count_label", Label.class);
         var mark = Widgets.require(builder, "mark_renderer", org.gnome.gtk.CellRendererToggle.class);
         DropDown filter = Widgets.require(builder, "extension_filter_combo", DropDown.class);
+        DropDown engine = Widgets.require(builder, "engine_combo", DropDown.class);
         try {
             imported.present();
             drainGtkEvents();
+            assertTrue(engine.getMapped());
+            assertEquals(0, engine.getSelected());
+            assertEquals("Auto", ((org.gnome.gtk.StringObject) engine.getSelectedItem()).getString());
+            assertEquals(4, engine.getModel().getNItems());
+            SpinButton connections = Widgets.require(builder, "max_connections_spin", SpinButton.class);
+            engine.setSelected(ImportEngine.YT_DLP.ordinal());
+            assertEquals(64, connections.getAdjustment().getUpper());
+            engine.setSelected(ImportEngine.HTTRACK.ordinal());
+            assertEquals(8, connections.getAdjustment().getUpper());
+            engine.setSelected(ImportEngine.AUTO.ordinal());
+            assertTrue(connections.getSensitive());
+            assertEquals(16, connections.getAdjustment().getUpper());
             assertTrue(count.getMapped());
             assertEquals("3 of 3 items selected", count.getLabel());
             mark.emitToggled("0");
@@ -1264,6 +1281,19 @@ class WindowSmokeTest {
             pattern.setText("https://files.test/{}.zip");
             awaitGtk(() -> count.getLabel().equals("3 items"), "Limited preview was not counted");
             assertEquals(3, preview.iterNChildren(null));
+
+            DropDown engine = Widgets.require(builder, "engine_combo", DropDown.class);
+            assertTrue(engine.getMapped());
+            assertEquals(4, engine.getModel().getNItems());
+            assertEquals("Auto", ((org.gnome.gtk.StringObject) engine.getSelectedItem()).getString());
+            SpinButton connections = Widgets.require(builder, "max_connections_spin", SpinButton.class);
+            engine.setSelected(ImportEngine.YT_DLP.ordinal());
+            assertEquals(64, connections.getAdjustment().getUpper());
+            engine.setSelected(ImportEngine.HTTRACK.ordinal());
+            assertEquals(8, connections.getAdjustment().getUpper());
+            engine.setSelected(ImportEngine.AUTO.ordinal());
+            assertEquals(16, connections.getAdjustment().getUpper());
+            assertEquals("3 items", count.getLabel(), "engine selection keeps the current preview");
 
             end.setValue(1);
             assertEquals("0 items", count.getLabel(), "an obsolete preview clears immediately");

@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-/** Fetch-info fallback used explicitly by the New Media dialog only. */
+/** Shared media discovery for New Media previews and failed imported media downloads. */
 public class MediaInfoResolver implements AutoCloseable {
     public record Result(URI enteredUrl, URI downloadUrl, YtDlpClient.VideoInfo info,
             MediaRequestContext context) { }
@@ -33,6 +33,16 @@ public class MediaInfoResolver implements AutoCloseable {
 
     public CompletableFuture<Result> fetch(URI source, YtDlpSettings settings,
             CompletableFuture<?> prerequisite, Consumer<String> status) {
+        return resolve(source, settings, prerequisite, status, false);
+    }
+
+    /** A download already failed: discover a replacement without retrying the page extractor. */
+    public CompletableFuture<Result> probe(URI source, YtDlpSettings settings, Consumer<String> status) {
+        return resolve(source, settings, CompletableFuture.completedFuture(null), status, true);
+    }
+
+    private CompletableFuture<Result> resolve(URI source, YtDlpSettings settings,
+            CompletableFuture<?> prerequisite, Consumer<String> status, boolean probeOnly) {
         var operation = new Operation();
         operations.add(operation);
         YtDlpSettings snapshot = (YtDlpSettings) settings.copy();
@@ -41,12 +51,14 @@ public class MediaInfoResolver implements AutoCloseable {
                 try {
                     operation.await(() -> prerequisite);
                     YtDlpClient.VideoInfo info;
-                    try {
-                        info = operation.await(() -> client.previewMedia(source.toString(), snapshot));
-                        operation.result.complete(new Result(source, source, info, null));
-                        return;
-                    } catch (Exception failure) {
-                        if (!extractionFailed(failure)) { throw failure; }
+                    if (!probeOnly) {
+                        try {
+                            info = operation.await(() -> client.previewMedia(source.toString(), snapshot));
+                            operation.result.complete(new Result(source, source, info, null));
+                            return;
+                        } catch (Exception failure) {
+                            if (!extractionFailed(failure)) { throw failure; }
+                        }
                     }
                     operation.checkCancelled();
                     status.accept("Probing media…");

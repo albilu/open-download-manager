@@ -2162,7 +2162,7 @@ public class MainWindow {
                                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                                         return;
                                     }
-                                    ImportListDialog.presentUrls(window, downloadManager,
+                                    ImportListDialog.presentHtmlUrls(window, downloadManager,
                                             () -> UiThread.marshal(this::refresh), links,
                                             importLimits, torService);
                                 }));
@@ -2231,7 +2231,7 @@ public class MainWindow {
                             return;
                         }
                         prompt.close();
-                        ImportListDialog.presentUrls(window, downloadManager,
+                        ImportListDialog.presentHtmlUrls(window, downloadManager,
                                 () -> UiThread.marshal(this::refresh), links,
                                 importLimits, torService);
                     }));

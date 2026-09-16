@@ -690,6 +690,11 @@ public class YtDlpClient {
         MediaExtractionException(String message) { super(message); }
     }
 
+    /** Native media failure, distinct from cancellation or inability to launch the tool. */
+    public static final class MediaDownloadException extends RuntimeException {
+        MediaDownloadException(String message) { super(message); }
+    }
+
     /** Exports the selected browser's cookies using yt-dlp's existing profile support. */
     CompletableFuture<String> exportBrowserCookies(String url, YtDlpSettings settings) {
         String processId = "browser-cookies-" + UUID.randomUUID();
@@ -1113,7 +1118,7 @@ public class YtDlpClient {
                     throw new CancellationException("yt-dlp download was cancelled");
                 } else if (exitCode == 0) {
                     if ((filename == null || filename.isBlank()) && skipped == 0) {
-                        throw new IllegalStateException(
+                        throw new MediaDownloadException(
                                 "yt-dlp exited successfully without reporting an output file");
                     }
                     if (callback != null) {
@@ -1133,7 +1138,7 @@ public class YtDlpClient {
                     LOGGER.info("yt-dlp download completed successfully");
                     return filename;
                 } else {
-                    throw new RuntimeException(diagnostics.message("yt-dlp failed with exit code: " + exitCode));
+                    throw new MediaDownloadException(diagnostics.message("yt-dlp failed with exit code: " + exitCode));
                 }
 
             } catch (CancellationException e) {

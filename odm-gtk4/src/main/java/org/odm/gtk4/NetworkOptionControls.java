@@ -244,6 +244,11 @@ final class NetworkOptionControls {
      */
     static Capabilities commonCapabilities(
             GlobalSettings globalSettings, List<String> sources) {
+        return commonCapabilities(globalSettings, sources, null);
+    }
+
+    static Capabilities commonCapabilities(GlobalSettings globalSettings,
+            List<String> sources, Download.Type selectedType) {
         EnumSet<ExternalToolSettings.Capability> common =
                 EnumSet.allOf(ExternalToolSettings.Capability.class);
         GlobalSettings global = globalSettings != null ? globalSettings : new GlobalSettings();
@@ -257,7 +262,8 @@ final class NetworkOptionControls {
             for (String source : sources) {
                 try {
                     URI uri = DownloadUrlPolicy.require(source).uri();
-                    Download.Type type = org.manager.download.MediaUrlDetector.isMediaUrl(uri)
+                    Download.Type type = selectedType != null ? selectedType
+                            : org.manager.download.MediaUrlDetector.isMediaUrl(uri)
                             ? Download.Type.YOUTUBE : Download.Type.ARIA2;
                     Route route = new Route(type, Download.Protocol.fromUri(uri));
                     Capabilities capabilities = routeCapabilities.computeIfAbsent(route, key -> {

@@ -177,6 +177,8 @@ public class YtDlpSettings extends DownloadSettings {
     private boolean geoBypass = true;
     private String cookieFile = null;
     private MediaRequestContext mediaRequestContext;
+    /** One startup recovery for an imported media record; cleared once native transfer starts. */
+    private volatile boolean mediaProbeOnFailure;
     private BrowserCookieSource browserCookieSource = BrowserCookieSource.NONE;
     private String browserCookieProfile = null;
     private ContainerProfile containerProfile = ContainerProfile.AUTOMATIC;
@@ -784,6 +786,14 @@ public class YtDlpSettings extends DownloadSettings {
         mediaRequestContext = context;
     }
 
+    public boolean isMediaProbeOnFailure() {
+        return mediaProbeOnFailure;
+    }
+
+    public void setMediaProbeOnFailure(boolean enabled) {
+        mediaProbeOnFailure = enabled;
+    }
+
     /**
      * Sets the cookie file path.
      *
@@ -1269,6 +1279,7 @@ public class YtDlpSettings extends DownloadSettings {
         copy.geoBypass = this.geoBypass;
         copy.cookieFile = this.cookieFile;
         copy.mediaRequestContext = this.mediaRequestContext;
+        copy.mediaProbeOnFailure = this.mediaProbeOnFailure;
         copy.browserCookieSource = this.browserCookieSource;
         copy.browserCookieProfile = this.browserCookieProfile;
         copy.containerProfile = this.containerProfile;
