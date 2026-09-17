@@ -102,6 +102,26 @@
                             <shadedClassifierName>jar-with-dependencies</shadedClassifierName>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <filters>
+                                <!-- Installers target Linux amd64. The shared Playwright
+                                     JavaScript comes from the separate driver artifact. -->
+                                <filter>
+                                    <artifact>com.microsoft.playwright:driver-bundle</artifact>
+                                    <includes>
+                                        <include>driver/linux/**</include>
+                                        <include>META-INF/**</include>
+                                    </includes>
+                                </filter>
+                                <!-- Retain JDBC classes, configuration, services and licenses,
+                                     with only the native library used by our amd64 installers. -->
+                                <filter>
+                                    <artifact>org.xerial:sqlite-jdbc</artifact>
+                                    <includes>
+                                        <include>**/*.class</include>
+                                        <include>sqlite-jdbc.properties</include>
+                                        <include>META-INF/**</include>
+                                        <include>org/sqlite/native/Linux/x86_64/**</include>
+                                    </includes>
+                                </filter>
                                 <filter>
                                     <artifact>*:*</artifact>
                                     <excludes>

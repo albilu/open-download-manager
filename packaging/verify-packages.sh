@@ -11,7 +11,9 @@ RPM="$PACKAGE_ROOT/open-download-manager-${VERSION}-1.x86_64.rpm"
 ARCH="$PACKAGE_ROOT/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
 for artifact in "$DEB" "$RPM" "$ARCH"; do test -s "$artifact"; done
 [[ "$(dpkg-deb -f "$DEB" Version)" == "$VERSION" ]]
+[[ "$(dpkg-deb -f "$DEB" Architecture)" == amd64 ]]
 [[ "$(rpm --dbpath "$CHECK_ROOT/rpmdb" -qp --qf '%{VERSION}-%{RELEASE}' "$RPM")" == "$VERSION-1" ]]
+[[ "$(rpm --dbpath "$CHECK_ROOT/rpmdb" -qp --qf '%{ARCH}' "$RPM")" == x86_64 ]]
 rpm --dbpath "$CHECK_ROOT/rpmdb" -K --nosignature "$RPM"
 rpm --dbpath "$CHECK_ROOT/rpmdb" -qp --qf '[%{FILEUSERNAME}:%{FILEGROUPNAME}\n]' "$RPM" > "$CHECK_ROOT/rpm-owners"
 if grep -vqx 'root:root' "$CHECK_ROOT/rpm-owners"; then
@@ -30,6 +32,7 @@ tar -xf "$CHECK_ROOT/deb.tar" -C "$CHECK_ROOT/deb"
 rpm2cpio "$RPM" | bsdtar -xf - -C "$CHECK_ROOT/rpm"
 tar -xf "$CHECK_ROOT/arch.tar" -C "$CHECK_ROOT/arch"
 grep -qx "pkgver = ${VERSION}-1" "$CHECK_ROOT/arch/.PKGINFO"
+grep -qx 'arch = x86_64' "$CHECK_ROOT/arch/.PKGINFO"
 test -s "$CHECK_ROOT/arch/.MTREE"
 test -s "$CHECK_ROOT/arch/.BUILDINFO"
 python3 - "$CHECK_ROOT/arch" <<'PYMTREE'
@@ -71,26 +74,107 @@ done
 diff -u "$CHECK_ROOT/deb.sha256" "$CHECK_ROOT/rpm.sha256"
 diff -u "$CHECK_ROOT/deb.sha256" "$CHECK_ROOT/arch.sha256"
 APP_ROOT="$CHECK_ROOT/deb/opt/open-download-manager"
+python3 - "$APP_ROOT/odm.jar" <<'PYNATIVES'
+import sys, zipfile
+def require_amd64_elf(jar, resource):
+    with jar.open(resource) as binary:
+        header = binary.read(20)
+    assert header[:6] == b'\x7fELF\x02\x01' and int.from_bytes(header[18:20], 'little') == 62, \
+        f'Packaged native resource must be Linux x86-64 ELF: {resource}'
+
+with zipfile.ZipFile(sys.argv[1]) as jar:
+    names = set(jar.namelist())
+    for required in ('driver/linux/node', 'driver/linux/LICENSE', 'driver/package/cli.js'):
+        assert required in names, f'Missing packaged Playwright resource: {required}'
+    unexpected = sorted(name for name in names if name.startswith('driver/')
+                        and not name.endswith('/')
+                        and not name.startswith(('driver/linux/', 'driver/package/')))
+    assert not unexpected, f'Unexpected Playwright platform resources: {unexpected}'
+    require_amd64_elf(jar, 'driver/linux/node')
+    sqlite_library = 'org/sqlite/native/Linux/x86_64/libsqlitejdbc.so'
+    sqlite_natives = {name for name in names if name.startswith('org/sqlite/native/')
+                      and not name.endswith('/')}
+    assert sqlite_natives == {sqlite_library}, \
+        f'SQLite must contain only the Linux amd64 native library: {sorted(sqlite_natives)}'
+    require_amd64_elf(jar, sqlite_library)
+    for resource in ('sqlite-jdbc.properties', 'META-INF/services/java.sql.Driver',
+                     'META-INF/maven/org.xerial/sqlite-jdbc/LICENSE',
+                     'META-INF/maven/org.xerial/sqlite-jdbc/LICENSE.zentus'):
+        assert resource in names, f'Missing SQLite configuration or license: {resource}'
+print('Playwright and SQLite contain only Linux amd64 native libraries')
+PYNATIVES
 "$APP_ROOT/runtime/bin/java" --list-modules > "$CHECK_ROOT/modules"
 grep -q '^java.net.http@' "$CHECK_ROOT/modules"
 # Exercise native GTK resource loading, HTTP and SQLite with the actual bundled JVM/JAR.
 cat > "$CHECK_ROOT/PackageRuntimeCheck.java" <<'JAVA'
 import java.sql.DriverManager;
 import java.net.http.HttpClient;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import com.sun.net.httpserver.HttpServer;
 import org.gnome.gtk.Gtk;
 import org.odm.gtk4.UiLoader;
+import org.ytdlp.BrowserMediaProbe;
+import org.ytdlp.YtDlpSettings;
 public class PackageRuntimeCheck {
     public static void main(String[] args) throws Exception {
+        if (!"amd64".equals(System.getProperty("os.arch"))) {
+            throw new AssertionError("Bundled JVM must target amd64");
+        }
         try (var http = HttpClient.newHttpClient()) { }
-        Class.forName("org.sqlite.JDBC");
+        // Exercise JDBC service discovery and native SQL execution from the shaded JAR.
         try (var database = DriverManager.getConnection("jdbc:sqlite::memory:")) {
-            if (!database.isValid(1)) throw new AssertionError("SQLite runtime unavailable");
+            try (var statement = database.createStatement()) {
+                statement.executeUpdate("CREATE TABLE package_check (value TEXT NOT NULL)");
+                statement.executeUpdate("INSERT INTO package_check VALUES ('amd64')");
+                try (var rows = statement.executeQuery("SELECT value FROM package_check")) {
+                    if (!rows.next() || !"amd64".equals(rows.getString(1))) {
+                        throw new AssertionError("Packaged SQLite read/write check failed");
+                    }
+                }
+            }
         }
         Gtk.init();
         for (String ui : new String[]{"main-window", "new-download", "new-media", "new-website", "settings"}) {
             UiLoader.load("/ui/" + ui + ".ui");
         }
         System.out.println("Packaged runtime, GTK resources, HTTP and SQLite passed");
+        verifyMediaProbe();
+    }
+
+    private static void verifyMediaProbe() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var mediaRequested = new AtomicBoolean();
+        server.createContext("/page", exchange -> {
+            byte[] page = ("<video id='player'></video><script>"
+                    + "document.getElementById('player').src='/movie.mp4';</script>")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html");
+            exchange.sendResponseHeaders(200, page.length);
+            try (var body = exchange.getResponseBody()) { body.write(page); }
+        });
+        server.createContext("/movie.mp4", exchange -> {
+            mediaRequested.set(true);
+            byte[] media = new byte[32];
+            exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+            exchange.sendResponseHeaders(200, media.length);
+            try (var body = exchange.getResponseBody()) { body.write(media); }
+        });
+        server.start();
+        try (var probe = new BrowserMediaProbe()) {
+            URI page = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/page");
+            var candidates = probe.probe(page, new YtDlpSettings(), null).get(35, TimeUnit.SECONDS);
+            if (!mediaRequested.get() || candidates.stream()
+                    .noneMatch(candidate -> candidate.url().equals(page.resolve("/movie.mp4").toString()))) {
+                throw new AssertionError("Packaged browser probe did not discover the scripted media URL");
+            }
+        } finally {
+            server.stop(0);
+        }
+        System.out.println("Packaged Playwright driver and browser media probing passed");
     }
 }
 JAVA

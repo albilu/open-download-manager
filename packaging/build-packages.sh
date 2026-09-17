@@ -5,6 +5,12 @@
 # image (or any Linux with JDK 25, maven, dpkg-deb, rpmbuild, makepkg).
 set -euo pipefail
 
+# Package metadata and the shaded native libraries target Linux amd64.
+if [[ "$(uname -s):$(uname -m)" != "Linux:x86_64" ]]; then
+    echo "Packaging requires Linux amd64 (x86_64); use an amd64 Docker environment." >&2
+    exit 2
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 PROJECT_VERSION="$(mvn -q -N help:evaluate -Dexpression=project.version -DforceStdout)"
