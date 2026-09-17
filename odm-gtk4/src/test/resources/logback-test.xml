@@ -1,10 +1,16 @@
 <configuration>
+    <!-- Quiet by default: test console shows WARN+ERROR only so `mvn test`
+         stays readable. INFO/DEBUG from ODM and third-party libs is suppressed. -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>[%d{yyyy-MM-dd HH:mm:ss}] [%-7level] %logger: %msg%n</pattern>
         </encoder>
     </appender>
-    <root level="INFO">
+    <!-- Belt and braces: keep known-noisy libraries at ERROR even if the
+         root level is overridden via system properties. -->
+    <logger name="org.java-gi" level="ERROR"/>
+    <logger name="org.mockito" level="ERROR"/>
+    <root level="WARN">
         <appender-ref ref="CONSOLE"/>
     </root>
 </configuration>

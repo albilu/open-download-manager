@@ -101,13 +101,10 @@ class ClipboardPipelineTest {
         monitor.addClipboardListener(new ClipboardListener() {
             @Override public void onUrlsDetected(java.util.List<URI> urls, String clipboardContent) {
                 monitorCallbacks.incrementAndGet();
-                System.out.println("DIAG monitor onUrlsDetected: " + urls);
             }
             @Override public void onClipboardChanged(String clipboardContent) {
-                System.out.println("DIAG monitor onClipboardChanged: " + clipboardContent);
             }
             @Override public void onClipboardError(Exception error) {
-                System.out.println("DIAG monitor onClipboardError: " + error);
             }
         });
 

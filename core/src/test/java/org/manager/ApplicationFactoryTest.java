@@ -224,6 +224,7 @@ class ApplicationFactoryTest {
         // Arrays to collect results from each thread
         final GlobalSettings[] settingsResults = new GlobalSettings[threadCount];
         final ToolManagerFactory[] toolFactoryResults = new ToolManagerFactory[threadCount];
+        final Throwable[] failures = new Throwable[threadCount];
 
         // Submit tasks
         for (int i = 0; i < threadCount; i++) {
@@ -237,7 +238,7 @@ class ApplicationFactoryTest {
                     toolFactoryResults[threadIndex] = factory.getToolManagerFactory();
 
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    failures[threadIndex] = e;
                 } finally {
                     finishLatch.countDown();
                 }
@@ -249,6 +250,10 @@ class ApplicationFactoryTest {
 
         // Wait for all threads to complete
         assertTrue(finishLatch.await(5, TimeUnit.SECONDS), "All threads should complete within timeout");
+
+        for (int i = 0; i < threadCount; i++) {
+            assertNull(failures[i], "Worker thread " + i + " must not fail");
+        }
 
         // Verify all threads got the same instances
         GlobalSettings firstSettings = settingsResults[0];
