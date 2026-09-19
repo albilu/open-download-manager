@@ -58,6 +58,14 @@ class CompletionActionPolicyTest {
     }
 
     @Test
+    void subtitleActionUsesSharedGlobalLanguages() {
+        GlobalSettings settings = new GlobalSettings();
+        settings.setSubtitleLanguages(java.util.List.of("fr", "en"));
+        SubtitleDownloadAction subtitles = CompletionActionPolicy.buildSubtitleAction(settings);
+        assertEquals(java.util.List.of("fr", "en"), subtitles.getLanguages());
+    }
+
+    @Test
     void multipleChoicesAreBuiltInActionTypePriorityOrder() {
         GlobalSettings settings = new GlobalSettings();
         settings.setProperty("ui.completionCommand", "echo {file_path}");

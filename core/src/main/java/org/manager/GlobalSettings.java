@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.manager.clipboard.ClipboardSettings;
 import org.manager.util.OdmPaths;
+import org.subliminal.SubliminalSettings;
 
 /**
  * Global settings that apply to the entire download manager. These settings are
@@ -37,6 +39,7 @@ public class GlobalSettings {
             "aria2.honorExternalConfiguration";
     private static final String YTDLP_HONOR_EXTERNAL_CONFIG =
             "ytdlp.honorExternalConfiguration";
+    private static final String SUBTITLE_LANGUAGES = "subtitles.languages";
 
     /**
      * Resolves the settings file path: ${XDG_CONFIG_HOME:-~/.config}/odm/settings.json.
@@ -512,6 +515,22 @@ public class GlobalSettings {
      */
     public GlobalSettings setSubliminalPath(String subliminalPath) {
         toolPaths.setSubliminalPath(subliminalPath);
+        return this;
+    }
+
+    /** Shared subtitle language defaults for Subliminal and new media downloads. */
+    public List<String> getSubtitleLanguages() {
+        try {
+            return SubliminalSettings.parseLanguages(getProperty(SUBTITLE_LANGUAGES, "en"));
+        } catch (IllegalArgumentException invalid) {
+            LOGGER.warn("Invalid global subtitle languages; using English", invalid);
+            return List.of("en");
+        }
+    }
+
+    public GlobalSettings setSubtitleLanguages(List<String> languages) {
+        custom.set(SUBTITLE_LANGUAGES, String.join(",",
+                new SubliminalSettings().setLanguages(languages).getLanguages()));
         return this;
     }
 

@@ -141,9 +141,10 @@ final class CompletionActionPolicy {
         return null;
     }
 
-    /** Subtitle action defaults to English; media records carry their own languages. */
+    /** Shared subtitle defaults; explicit media-record language choices take precedence. */
     static SubtitleDownloadAction buildSubtitleAction(GlobalSettings settings) {
-        SubliminalSettings subtitleSettings = new SubliminalSettings();
+        SubliminalSettings subtitleSettings = new SubliminalSettings()
+                .setLanguages(settings.getSubtitleLanguages());
         int timeoutSeconds = Math.max(1,
                 settings.getIntProperty("subtitles.timeoutSeconds", 300));
         subtitleSettings.setTimeout(java.time.Duration.ofSeconds(timeoutSeconds));

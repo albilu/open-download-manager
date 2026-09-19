@@ -3,6 +3,7 @@ package org.manager;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -52,6 +53,26 @@ class GlobalSettingsJsonRoundTripTest {
             Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         }
         return target;
+    }
+
+    @Test
+    void sharedSubtitleLanguagesAreNormalizedCopiedAndPersisted() throws Exception {
+        Path target = tempDir.resolve("subtitle-settings.json");
+        GlobalSettings settings = new GlobalSettings();
+        assertEquals(java.util.List.of("en"), settings.getSubtitleLanguages());
+        settings.setSubtitleLanguages(java.util.List.of(" FR ", "en", "fr", "pt-br"));
+        var expected = java.util.List.of("fr", "en", "pt-BR");
+        assertEquals(expected, settings.copy().getSubtitleLanguages());
+        assertTrue(settings.save(target));
+        assertEquals("fr,en,pt-BR", readJson(target).get("subtitles.languages"));
+        GlobalSettings restored = new GlobalSettings();
+        restored.load(target);
+        assertEquals(expected, restored.getSubtitleLanguages());
+        assertThrows(IllegalArgumentException.class,
+                () -> restored.setSubtitleLanguages(java.util.List.of("invalid!")));
+        assertEquals(expected, restored.getSubtitleLanguages());
+        restored.setProperty("subtitles.languages", "invalid!");
+        assertEquals(java.util.List.of("en"), restored.getSubtitleLanguages());
     }
 
     @Test

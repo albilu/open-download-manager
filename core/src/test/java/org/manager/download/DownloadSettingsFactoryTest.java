@@ -193,6 +193,19 @@ class DownloadSettingsFactoryTest {
     }
 
     @Test
+    void newMediaSettingsInheritSharedSubtitleLanguagesWithoutEnablingSubtitles() {
+        GlobalSettings global = new GlobalSettings();
+        global.setSubtitleLanguages(java.util.List.of("fr", "en"));
+        var factory = new DownloadSettingsFactory(global);
+        YtDlpSettings first = factory.createYtDlpSettings();
+        assertEquals(java.util.List.of("fr", "en"), first.getSubtitleLanguages());
+        assertFalse(first.isWriteSubtitles());
+        first.setSubtitleLanguages(java.util.List.of("de"));
+        assertEquals(java.util.List.of("fr", "en"), factory.createYtDlpSettings().getSubtitleLanguages());
+        assertEquals(java.util.List.of("fr", "en"), global.getSubtitleLanguages());
+    }
+
+    @Test
     @DisplayName("Network defaults reach every engine that advertises support")
     void networkDefaultsFollowEngineCapabilities() {
         GlobalSettings global = new GlobalSettings();

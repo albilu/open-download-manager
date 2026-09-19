@@ -368,7 +368,7 @@ public class DownloadSettingsFactory {
         settings.setExtractAudio(false);
         settings.setBrowserCookieSource(YtDlpSettings.BrowserCookieSource.NONE);
         settings.setBrowserCookieProfile(null);
-        settings.setSubtitleLanguages(java.util.List.of("en"));
+        settings.setSubtitleLanguages(g.getSubtitleLanguages());
         settings.setWriteThumbnail(g.getBooleanProperty("ytdlp.writeThumbnail", false));
         settings.setEmbedThumbnail(g.getBooleanProperty("ytdlp.embedThumbnail", false));
         settings.setEmbedMetadata(g.getBooleanProperty("ytdlp.embedMetadata", false));

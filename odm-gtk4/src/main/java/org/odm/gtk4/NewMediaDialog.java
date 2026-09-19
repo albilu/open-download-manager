@@ -182,7 +182,7 @@ public class NewMediaDialog {
                         .map(MediaPresentation::browser).toList()));
         browserCookieDrop.setSelected(YtDlpSettings.BrowserCookieSource.NONE.ordinal());
         browserProfileEntry.setText("");
-        subtitleLangEntry.setText("en");
+        subtitleLangEntry.setText(String.join(",", downloadManager.getGlobalSettings().getSubtitleLanguages()));
         sponsorBlockDrop.setModel(enumModel(
                 java.util.Arrays.stream(YtDlpSettings.SponsorBlockMode.values())
                         .map(MediaPresentation::sponsorBlock).toList()));
@@ -439,7 +439,8 @@ public class NewMediaDialog {
         }
         settings.setWriteSubtitles(downloadSubtitles);
         settings.setEmbedSubs(downloadSubtitles);
-        settings.setSubtitleLanguages(langs.isEmpty() ? List.of("en") : langs);
+        settings.setSubtitleLanguages(langs.isEmpty()
+                ? downloadManager.getGlobalSettings().getSubtitleLanguages() : langs);
         applyAuthenticationOptions(settings);
         YtDlpSettings.SponsorBlockMode sponsorBlockMode = selectedEnum(sponsorBlockDrop,
                 YtDlpSettings.SponsorBlockMode.values(),

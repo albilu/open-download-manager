@@ -1,14 +1,21 @@
 package org.odm.gtk4;
 
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import org.gnome.gdk.Texture;
 import org.gnome.gdk.Toplevel;
+import org.gnome.gio.BytesIcon;
+import org.gnome.gio.ListModel;
 import org.gnome.glib.List;
 import org.gnome.gobject.GObject;
+import org.gnome.gtk.Image;
+import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
+import org.gnome.gtk.WindowControls;
 import org.javagi.base.TransferOwnership;
 import org.javagi.gobject.InstanceCache;
+import org.javagi.gobject.SignalConnection;
 
 /** Shared app artwork for desktop integration and uninstalled IDE launches. */
 final class ApplicationIcons {
@@ -33,8 +40,13 @@ final class ApplicationIcons {
     /** Called on the GTK thread before the window is first presented. */
     static void configure(Window window) {
         window.setIconName(ICON_NAME);
+        var windowReference = new WeakReference<>(window);
+        var titleBarIcons = new TitleBarIcons();
         window.onRealize(() -> {
-            var surface = window.getSurface();
+            Window realized = windowReference.get();
+            if (realized == null) { return; }
+            titleBarIcons.bind(realized);
+            var surface = realized.getSurface();
             if (surface != null) {
                 // GtkWindow always owns a GdkToplevel. The Java binding may
                 // expose its backend-specific type as a generic Surface.
@@ -44,6 +56,66 @@ final class ApplicationIcons {
                 toplevel.setIconList(Textures.ICONS);
             }
         });
+        window.onUnrealize(titleBarIcons::clear);
+    }
+
+    private static final class TitleBarIcons {
+        private final java.util.List<ControlBinding> bindings = new ArrayList<>();
+
+        void bind(Widget window) {
+            clear();
+            observeControls(window);
+        }
+
+        private void observeControls(Widget widget) {
+            if (widget instanceof WindowControls) {
+                ListModel<?> children = widget.observeChildren();
+                var reference = new WeakReference<>(children);
+                var changes = children.onItemsChanged((position, removed, added) -> {
+                    ListModel<?> current = reference.get();
+                    if (current != null) { updateIcons(current); }
+                });
+                bindings.add(new ControlBinding(children, changes));
+                updateIcons(children);
+                return;
+            }
+            for (Widget child = widget.getFirstChild(); child != null; child = child.getNextSibling()) {
+                observeControls(child);
+            }
+        }
+
+        private static void updateIcons(ListModel<?> children) {
+            for (int i = 0; i < children.getNItems(); i++) {
+                if (children.getItem(i) instanceof Image image && image.hasCssClass("icon")) {
+                    // GtkWindowControls supplies a 16px paintable regardless of
+                    // the theme's icon size. A GIcon lets GtkImage load the SVG
+                    // for its actual CSS size and display scale instead.
+                    image.setFromGicon(ScalableIcon.VALUE);
+                }
+            }
+        }
+
+        void clear() {
+            for (ControlBinding binding : bindings) { binding.changes().disconnect(); }
+            bindings.clear();
+        }
+
+        // Keep each observed model alive until the window is unrealized. GTK
+        // rebuilds these children when the window state or button layout changes.
+        private record ControlBinding(ListModel<?> children, SignalConnection<?> changes) { }
+    }
+
+    private static final class ScalableIcon {
+        static final BytesIcon VALUE = load();
+
+        private static BytesIcon load() {
+            try (var input = ApplicationIcons.class.getResourceAsStream(SVG_RESOURCE)) {
+                if (input == null) { throw new IOException("Missing ODM icon: " + SVG_RESOURCE); }
+                return new BytesIcon(input.readAllBytes());
+            } catch (IOException error) {
+                throw new IllegalStateException("Cannot load ODM title-bar icon", error);
+            }
+        }
     }
 
     private static final class Textures {

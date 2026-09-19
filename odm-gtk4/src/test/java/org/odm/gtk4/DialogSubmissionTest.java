@@ -176,6 +176,29 @@ class DialogSubmissionTest {
         } finally { window.close(); }
     }
 
+    @ParameterizedTest @ValueSource(booleans = {false, true})
+    void mediaSubtitleLanguagesInheritGlobalDefaultsAndAllowPerDownloadOverrides(boolean override) throws Exception {
+        var global = actual.getGlobalSettings();
+        var previous = global.getSubtitleLanguages();
+        global.setSubtitleLanguages(List.of("fr", "en"));
+        var dialog = new NewMediaDialog(null, manager, () -> { });
+        Window window = field(dialog, "dialog", Window.class);
+        try {
+            Entry languages = field(dialog, "subtitleLangEntry", Entry.class);
+            assertEquals("fr,en", languages.getText());
+            field(dialog, "subtitlesCheck", CheckButton.class).setActive(true);
+            if (override) { languages.setText("de,it"); }
+            field(dialog, "urlEntry", Entry.class).setText("https://example.test/movie.mp4");
+            invoke(dialog, "onStart");
+            pump(() -> !actual.getAllDownloads().isEmpty());
+            var media = (org.ytdlp.YtDlpSettings) actual.getAllDownloads().iterator().next().getSettings();
+            assertEquals(override ? List.of("de", "it") : List.of("fr", "en"), media.getSubtitleLanguages());
+            assertTrue(media.isWriteSubtitles());
+            assertTrue(media.isEmbedSubs());
+            assertEquals(List.of("fr", "en"), global.getSubtitleLanguages());
+        } finally { window.close(); global.setSubtitleLanguages(previous); }
+    }
+
     @Test void invalidAndSupersededMetadataRequestsRestoreControlsWithoutStaleCallbacks() throws Exception {
         var resolver = mock(org.ytdlp.MediaInfoResolver.class);
         NewMediaDialog dialog = new NewMediaDialog(null, manager, () -> { }, null, resolver);

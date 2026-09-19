@@ -242,6 +242,8 @@ public class SettingsDialog {
                     I18n.tr("Path to the Subliminal executable used by the Download Subtitles completion action; leave empty to discover it automatically.")),
             Map.entry("browse_subliminal_button",
                     I18n.tr("Choose the Subliminal executable used by completion actions.")),
+            Map.entry("subtitle_languages_entry",
+                    I18n.tr("Comma-separated language codes, for example en,fr. Used by Subliminal and as the default for yt-dlp subtitle downloads. Leave empty for English.")),
             Map.entry("antivirus_type_combo",
                     I18n.tr("Scanner used by Antivirus Scan completion actions; Automatic chooses the first validated installed scanner.")),
             Map.entry("antivirus_command_entry",
@@ -356,6 +358,8 @@ public class SettingsDialog {
         this.availableSpaceLabel = Widgets.require(builder, "available_space_label", Label.class);
         this.antivirusDetectionLabel = Widgets.require(
                 builder, "antivirus_detection_label", Label.class);
+
+        AccessibilitySupport.label(entry("subtitle_languages_entry"), I18n.tr("Subtitle languages"));
 
         AccessibilitySupport.label(spin("max_concurrent_downloads_spin"),
                 I18n.tr("Maximum concurrent downloads"));
@@ -1260,6 +1264,7 @@ public class SettingsDialog {
         entry("curl_path_entry").setText(s.getCurlPath() != null ? s.getCurlPath() : "");
         entry("subliminal_path_entry").setText(
                 s.getSubliminalPath() != null ? s.getSubliminalPath() : "");
+        entry("subtitle_languages_entry").setText(String.join(",", s.getSubtitleLanguages()));
         entry("antivirus_command_entry").setText(
                 s.getProperty("antivirus.command", ""));
         spin("antivirus_timeout_spin").setValue(
@@ -1470,6 +1475,13 @@ public class SettingsDialog {
         s.setTorCheckIntervalMinutes((int) spin("tor_check_interval_spin").getValue());
         s.setCurlPath(entry("curl_path_entry").getText().trim());
         s.setSubliminalPath(entry("subliminal_path_entry").getText().trim());
+        try {
+            s.setSubtitleLanguages(org.subliminal.SubliminalSettings.parseLanguages(
+                    entry("subtitle_languages_entry").getText()));
+        } catch (IllegalArgumentException invalid) {
+            throw new IllegalArgumentException(I18n.tr(
+                    "Enter subtitle language codes separated by commas (for example, en,fr)."), invalid);
+        }
         long antivirusIndex = Widgets.require(builder, "antivirus_type_combo", DropDown.class)
                 .getSelected();
         if (antivirusIndex >= 0 && antivirusIndex < antivirusChoices.size()) {

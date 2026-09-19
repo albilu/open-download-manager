@@ -21,7 +21,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.aria2.Aria2Settings;
 import org.gnome.gtk.Box;
 import org.gnome.gtk.Button;
+import org.gnome.gtk.CellRendererCombo;
 import org.gnome.gtk.CellRendererToggle;
+import org.gnome.gtk.CheckButton;
 import org.gnome.gtk.DropDown;
 import org.gnome.gtk.Entry;
 import org.gnome.gtk.GtkBuilder;
@@ -68,6 +70,7 @@ public final class SearchTorrentsDialog {
     private final Set<JackettClient.TorrentResult> submitted = new HashSet<>();
     private final Label status;
     private final Label filesStatus;
+    private final CheckButton selectAllFilesCheck;
     private final Notebook notebook;
     private final NetworkOptionsPane options;
     private final SpinnerActivity activity;
@@ -79,11 +82,13 @@ public final class SearchTorrentsDialog {
     private Path destination;
     private boolean searching;
     private boolean submitting;
+    private boolean updatingSelectAll;
 
     private static final class TorrentSelection {
         final int id;
         final JackettClient.TorrentResult row;
         final Set<Integer> excluded = new HashSet<>();
+        final Map<Integer, String> priorities = new HashMap<>();
         boolean checked;
         boolean loading;
         JackettClient.TorrentSource source;
@@ -108,6 +113,7 @@ public final class SearchTorrentsDialog {
         filesView = Widgets.require(builder, "torrent_files_view", TreeView.class);
         status = Widgets.require(builder, "torrent_status_label", Label.class);
         filesStatus = Widgets.require(builder, "torrent_files_status", Label.class);
+        selectAllFilesCheck = Widgets.require(builder, "torrent_select_all_files_check", CheckButton.class);
         notebook = Widgets.require(builder, "torrent_notebook", Notebook.class);
         activity = new SpinnerActivity(Widgets.require(builder, "torrent_spinner", Spinner.class));
         options = new NetworkOptionsPane(manager.getGlobalSettings(), Download.Type.ARIA2, Download.Protocol.TORRENT);
@@ -135,6 +141,23 @@ public final class SearchTorrentsDialog {
             if (!submitting && FileTreeSupport.toggleSelection(filesStore, path)) {
                 captureFileSelection(); updateControls();
             }
+        });
+        ListStore priorityStore = Widgets.require(builder, "torrent_file_priority_store", ListStore.class);
+        for (String priority : new String[]{FileTreeSupport.PRIORITY_HIGH,
+                FileTreeSupport.PRIORITY_NORMAL, FileTreeSupport.PRIORITY_LOW}) {
+            TreeIter iter = new TreeIter(); priorityStore.append(iter);
+            ListStoreCells.setString(priorityStore, iter, 0, FileTreeSupport.displayPriority(priority));
+        }
+        Widgets.require(builder, "torrent_file_priority", CellRendererCombo.class).onChanged((path, iter) -> {
+            if (!submitting && FileTreeSupport.setPriority(filesStore, path,
+                    ListStoreCells.getString(priorityStore, iter, 0))) {
+                captureFileSelection();
+            }
+        });
+        selectAllFilesCheck.onToggled(() -> {
+            if (updatingSelectAll || submitting || checkedTorrents().stream().anyMatch(item -> item.loading)) { return; }
+            FileTreeSupport.selectAll(filesStore, selectAllFilesCheck.getActive());
+            captureFileSelection(); updateControls();
         });
         notebook.onSwitchPage((page, number) -> { if (number == 1) { loadFiles(); } });
         button("search").onClicked(this::search);
@@ -229,6 +252,7 @@ public final class SearchTorrentsDialog {
             TreeIter root = groupIter(item);
             if (root == null || item.files.isEmpty()) { continue; }
             Set<Integer> selected = new HashSet<>(FileTreeSupport.selectedIndexes(filesStore, root));
+            item.priorities.putAll(FileTreeSupport.priorities(filesStore, root));
             item.excluded.clear();
             item.files.stream().map(DownloadFileInfo::index).filter(index -> !selected.contains(index)).forEach(item.excluded::add);
         }
@@ -249,7 +273,7 @@ public final class SearchTorrentsDialog {
         List<FileTreeSupport.Group> groups = checked.stream().map(item -> new FileTreeSupport.Group(
                 Integer.toString(item.id), item.row.title(), item.files.stream().map(file -> new FileTreeSupport.Entry(
                         !item.excluded.contains(file.index()), file.path(), file.length(), 0, file.index(),
-                        FileTreeSupport.PRIORITY_NORMAL)).toList())).toList();
+                        item.priorities.getOrDefault(file.index(), FileTreeSupport.PRIORITY_NORMAL))).toList())).toList();
         if (FileTreeSupport.reconcileGroups(filesStore, fileRows, groups)) { FileTreeSupport.expandTopLevel(filesView, filesStore); }
         for (TorrentSelection item : checked) {
             TreeIter root = groupIter(item);
@@ -310,7 +334,8 @@ public final class SearchTorrentsDialog {
         rebuildFiles(); updateControls();
     }
 
-    private record Submission(TorrentSelection item, JackettClient.TorrentSource source, List<Integer> files, boolean inspected) { }
+    private record Submission(TorrentSelection item, JackettClient.TorrentSource source,
+            List<Integer> files, Map<Integer, String> priorities, boolean inspected) { }
     private record Admission(TorrentSelection item, boolean accepted, boolean retained) { }
 
     private void download() {
@@ -320,7 +345,8 @@ public final class SearchTorrentsDialog {
         try { options.selectedProxyAddress(); values = options.values(); }
         catch (IllegalArgumentException invalid) { status.setLabel(brief(invalid)); return; }
         List<Submission> batch = checkedTorrents().stream().filter(TorrentSelection::hasFilesToDownload)
-                .map(item -> new Submission(item, item.source, item.selectedFiles(), !item.files.isEmpty())).toList();
+                .map(item -> new Submission(item, item.source, item.selectedFiles(),
+                        Map.copyOf(item.priorities), !item.files.isEmpty())).toList();
         if (batch.isEmpty()) { status.setLabel(I18n.tr("Check torrents and select at least one file.")); return; }
         Path folder = destination;
         submitting = true; updateControls(); status.setLabel(I18n.tr("Adding torrents to queue…"));
@@ -340,6 +366,7 @@ public final class SearchTorrentsDialog {
                     values.applyTo(draft);
                     if (submission.inspected() && draft.getSettings() instanceof Aria2Settings aria2) {
                         aria2.setSelectedFiles(NewDownloadDialog.encodeFileSelection(submission.files()));
+                        aria2.setFilePriorities(submission.priorities());
                     }
                     DownloadSubmission.submit(manager, draft,
                             DialogOptions.ensureTorAvailable(values.torActive(), tor), closed, null).join();
@@ -398,6 +425,15 @@ public final class SearchTorrentsDialog {
         button("download").setSensitive(count > 0 && !submitting && checked.stream().noneMatch(item -> item.loading));
         resultsView.setSensitive(!submitting);
         filesView.setSensitive(!submitting);
+        int total = FileTreeSupport.allIndexes(filesStore).size();
+        int selected = FileTreeSupport.selectedIndexes(filesStore).size();
+        updatingSelectAll = true;
+        try {
+            selectAllFilesCheck.setActive(total > 0 && selected == total);
+            selectAllFilesCheck.setInconsistent(selected > 0 && selected < total);
+            selectAllFilesCheck.setSensitive(total > 0 && !submitting
+                    && checked.stream().noneMatch(item -> item.loading));
+        } finally { updatingSelectAll = false; }
     }
 
     private static String brief(Throwable error) {

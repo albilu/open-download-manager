@@ -262,6 +262,14 @@ final class FileTreeSupport {
         return result;
     }
 
+    static Map<Integer, String> priorities(TreeStore store, TreeIter group) {
+        Map<Integer, String> result = new LinkedHashMap<>();
+        visitLeaves(store, group, iter -> result.put(
+                TreeStoreCells.getInt(store, iter, INDEX_COLUMN),
+                normalizePriority(TreeStoreCells.getString(store, iter, PRIORITY_TEXT_COLUMN))));
+        return result;
+    }
+
     static String normalizePriority(String priority) {
         if (priority == null) {
             return PRIORITY_NORMAL;

@@ -19,6 +19,9 @@
       <column type="gchararray"/>
     </columns>
   </object>
+  <object class="GtkListStore" id="torrent_file_priority_store">
+    <columns><column type="gchararray"/></columns>
+  </object>
   <object class="GtkWindow" id="search_torrents_dialog">
     <property name="title" translatable="yes">Search Torrents</property>
     <property name="default-width">940</property><property name="default-height">650</property>
@@ -78,7 +81,10 @@
           <property name="orientation">vertical</property><property name="spacing">8</property>
           <property name="margin-start">8</property><property name="margin-end">8</property>
           <property name="margin-top">8</property><property name="margin-bottom">8</property>
-          <child><object class="GtkLabel" id="torrent_files_status"><property name="label" translatable="yes">Check torrents in Search to see their files.</property><property name="xalign">0</property><property name="ellipsize">end</property></object></child>
+          <child><object class="GtkBox"><property name="spacing">8</property>
+            <child><object class="GtkLabel" id="torrent_files_status"><property name="label" translatable="yes">Check torrents in Search to see their files.</property><property name="hexpand">true</property><property name="xalign">0</property><property name="ellipsize">end</property></object></child>
+            <child><object class="GtkCheckButton" id="torrent_select_all_files_check"><property name="label" translatable="yes">Select all</property><property name="sensitive">false</property></object></child>
+          </object></child>
           <child><object class="GtkScrolledWindow"><property name="vexpand">true</property>
             <child><object class="GtkTreeView" id="torrent_files_view"><property name="model">torrent_files_store</property><property name="enable-tree-lines">true</property>
               <child><object class="GtkTreeViewColumn">
@@ -92,6 +98,13 @@
               <child><object class="GtkTreeViewColumn">
                 <property name="title" translatable="yes">Size</property><property name="sort-column-id">7</property>
                 <child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child>
+              </object></child>
+              <child><object class="GtkTreeViewColumn">
+                <property name="title" translatable="yes">Priority</property><property name="sort-column-id">12</property>
+                <child><object class="GtkCellRendererCombo" id="torrent_file_priority">
+                  <property name="model">torrent_file_priority_store</property><property name="text-column">0</property>
+                  <property name="has-entry">false</property><property name="editable">true</property>
+                </object><attributes><attribute name="text">4</attribute></attributes></child>
               </object></child>
               <child><object class="GtkTreeViewColumn">
                 <property name="title" translatable="yes">Status</property>

@@ -4,15 +4,28 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import javax.imageio.ImageIO;
+import org.gnome.gdk.Display;
+import org.gnome.gio.BytesIcon;
 import org.gnome.glib.GLib;
 import org.gnome.glib.MainContext;
+import org.gnome.gtk.CssProvider;
 import org.gnome.gtk.Gtk;
+import org.gnome.gtk.HeaderBar;
+import org.gnome.gtk.IconTheme;
+import org.gnome.gtk.Image;
+import org.gnome.gtk.Widget;
 import org.gnome.gtk.Window;
+import org.javagi.base.Filename;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
 @Timeout(15)
 class ApplicationIconsTest {
@@ -38,6 +51,94 @@ class ApplicationIconsTest {
             assertTrue(((bar >> 16) & 255) > ((bar >> 8) & 255) * 2,
                     "the red bar must remain visible at every exported size");
         }
+    }
+
+    @Test void titleBarUsesSvgAtTheThemeSizeAfterControlsAreRebuilt(@TempDir Path directory) throws Exception {
+        Path themeRoot = directory.resolve("hicolor");
+        for (int size : new int[]{16, 32}) {
+            Path icons = Files.createDirectories(themeRoot.resolve(size + "x" + size + "/apps"));
+            Files.write(icons.resolve(ApplicationIcons.ICON_NAME + ".png"), ApplicationIcons.pngBytes(size));
+        }
+        Files.writeString(themeRoot.resolve("index.theme"), """
+                [Icon Theme]
+                Name=Hicolor
+                Directories=16x16/apps,32x32/apps
+                [16x16/apps]
+                Size=16
+                Type=Fixed
+                Context=Applications
+                [32x32/apps]
+                Size=32
+                Type=Fixed
+                Context=Applications
+                """);
+        IconTheme theme = IconTheme.getForDisplay(Display.getDefault());
+        String[] originalPaths = Filename.convertArray(theme.getSearchPath());
+        var paths = new ArrayList<>(Arrays.asList(originalPaths));
+        paths.addFirst(directory.toString());
+        theme.setSearchPath(paths.toArray(String[]::new));
+
+        // Reproduce themes that display GTK's hard-coded 16px title icon at 20px.
+        CssProvider themeCss = new CssProvider();
+        themeCss.loadFromString("windowcontrols image.icon { -gtk-icon-size: 20px; }");
+        Gtk.styleContextAddProviderForDisplay(Display.getDefault(), themeCss,
+                Gtk.STYLE_PROVIDER_PRIORITY_THEME + 1);
+        Window window = new Window();
+        try {
+            ApplicationIcons.configure(window);
+            HeaderBar header = new HeaderBar();
+            header.setDecorationLayout("icon:");
+            window.setTitlebar(header);
+            window.present();
+            Image original = assertSvgTitleBarIcon(header);
+
+            // GTK replaces the controls for state and decoration-layout changes.
+            window.setResizable(false);
+            assertNotSame(original, assertSvgTitleBarIcon(header));
+            header.setDecorationLayout(":close");
+            assertNull(titleBarIcon(header));
+            header.setDecorationLayout("icon:close");
+            assertSvgTitleBarIcon(header);
+
+            window.setVisible(false);
+            window.unrealize();
+            window.present();
+            assertSvgTitleBarIcon(header);
+        } finally {
+            window.destroy();
+            Gtk.styleContextRemoveProviderForDisplay(Display.getDefault(), themeCss);
+            theme.setSearchPath(originalPaths);
+        }
+    }
+
+    private static Image assertSvgTitleBarIcon(Widget header) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        Image icon;
+        do {
+            while (MainContext.default_().iteration(false)) { }
+            icon = titleBarIcon(header);
+            if (icon != null && icon.getWidth() > 0) { break; }
+            Thread.sleep(5);
+        } while (System.nanoTime() < deadline);
+        assertNotNull(icon, "the real GTK title-bar icon must be present");
+        assertEquals(20, icon.getWidth(), "keep the theme's full title-bar icon size");
+        assertEquals(20, icon.getHeight());
+        BytesIcon source = assertInstanceOf(BytesIcon.class, icon.getGicon(),
+                "load the SVG at the display size instead of enlarging GTK's 16px paintable");
+        try (var svg = ApplicationIcons.class.getResourceAsStream(ApplicationIcons.SVG_RESOURCE)) {
+            assertNotNull(svg);
+            assertArrayEquals(svg.readAllBytes(), source.getBytes());
+        }
+        return icon;
+    }
+
+    private static Image titleBarIcon(Widget parent) {
+        for (Widget child = parent.getFirstChild(); child != null; child = child.getNextSibling()) {
+            if (child instanceof Image image && image.hasCssClass("icon")) { return image; }
+            Image nested = titleBarIcon(child);
+            if (nested != null) { return nested; }
+        }
+        return null;
     }
 
     @Test void mainWindowExportsOdmIdentityAndActualIconPixelsToX11WithoutAnInstallation() throws Exception {

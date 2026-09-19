@@ -114,12 +114,31 @@ class SearchTorrentsDialogTest {
         Window window = field(dialog, "dialog", Window.class); window.present();
         try {
             dialog.showResults(List.of(first, second)); toggle(dialog, "0"); toggle(dialog, "1");
+            GtkBuilder builder = field(dialog, "builder", GtkBuilder.class);
+            CheckButton selectAll = Widgets.require(builder, "torrent_select_all_files_check", CheckButton.class);
+            assertFalse(selectAll.getSensitive());
             field(dialog, "notebook", Notebook.class).setCurrentPage(1);
             TreeStore files = field(dialog, "filesStore", TreeStore.class);
             pump(() -> FileTreeSupport.allIndexes(files).size() == 4);
             assertEquals(2, files.iterNChildren(null));
             assertTrue(TreeStoreCells.getBoolean(files, iter(files, "0"), FileTreeSupport.FOLDER_COLUMN));
             assertEquals("linux", TreeStoreCells.getString(files, iter(files, "0:0"), 1));
+            assertTrue(selectAll.getSensitive());
+            assertTrue(selectAll.getActive());
+            filePriority(dialog, "0", 0); // High for the first torrent's entire tree.
+            filePriority(dialog, "0:0:0", 2); // Low only for its README.
+            filePriority(dialog, "1:0:0", 0); // The other README has the same aria2 index.
+            assertEquals("Mixed", TreeStoreCells.getString(files, iter(files, "0"), 4));
+            fileToggle(dialog, "0:0:0");
+            fileToggle(dialog, "1:0:1");
+            assertTrue(selectAll.getInconsistent());
+            selectAll.setActive(true);
+            assertEquals(4, FileTreeSupport.selectedIndexes(files).size());
+            assertFalse(selectAll.getInconsistent());
+            selectAll.setActive(false);
+            assertTrue(FileTreeSupport.selectedIndexes(files).isEmpty());
+            assertFalse(button(dialog, "download").getSensitive());
+            selectAll.setActive(true);
             fileToggle(dialog, "0:0:0");
             fileToggle(dialog, "1:0:1");
             assertEquals(List.of(2), FileTreeSupport.selectedIndexes(files, iter(files, "0")));
@@ -128,13 +147,18 @@ class SearchTorrentsDialogTest {
             toggle(dialog, "0");
             assertEquals(List.of(2), FileTreeSupport.selectedIndexes(files, iter(files, "0")), "rechecking must preserve file exclusions");
             assertEquals(List.of(1), FileTreeSupport.selectedIndexes(files, iter(files, "1")));
+            assertEquals(Map.of(1, "Low", 2, "High"), FileTreeSupport.priorities(files, iter(files, "0")));
+            assertEquals(Map.of(1, "High", 2, "Normal"), FileTreeSupport.priorities(files, iter(files, "1")));
             verify(manager, times(1)).previewDownloadFiles(eq(MAGNET), nullable(String.class));
+            ((TreeSortable) files).setSortColumnId(FileTreeSupport.PRIORITY_SORT_COLUMN, SortType.DESCENDING);
             button(dialog, "download").emitClicked();
             pump(() -> queued.get() == 1);
             assertEquals(2, actual.getAllDownloads().size());
             for (Download accepted : actual.getAllDownloads()) {
                 assertEquals(directory, accepted.getDestination());
                 assertEquals(accepted.getUri().equals(MAGNET) ? "2" : "1", accepted.getSettings().toMap().get("select-file"));
+                assertEquals(accepted.getUri().equals(MAGNET) ? Map.of(1, "Low", 2, "High")
+                        : Map.of(1, "High", 2, "Normal"), ((org.aria2.Aria2Settings) accepted.getSettings()).getFilePriorities());
                 actual.cancelDownload(accepted, false).join();
             }
             assertFalse(button(dialog, "download").getSensitive());
@@ -627,6 +651,12 @@ class SearchTorrentsDialogTest {
     }
     private static void fileToggle(SearchTorrentsDialog dialog, String path) throws Exception {
         Widgets.require(field(dialog, "builder", GtkBuilder.class), "torrent_file_toggle", CellRendererToggle.class).emitToggled(path);
+    }
+    private static void filePriority(SearchTorrentsDialog dialog, String path, int choice) throws Exception {
+        GtkBuilder builder = field(dialog, "builder", GtkBuilder.class);
+        ListStore choices = Widgets.require(builder, "torrent_file_priority_store", ListStore.class);
+        TreeIter iter = new TreeIter(); assertTrue(choices.iterNthChild(iter, null, choice));
+        Widgets.require(builder, "torrent_file_priority", CellRendererCombo.class).emitChanged(path, iter);
     }
     private static void toggleIndexer(JackettSettingsPane pane, ListStore store, String id) throws Exception {
         TreeIter row = indexerIter(store, id); assertNotNull(row);

@@ -71,7 +71,7 @@ class SettingsDialogSaveOutcomeTest {
             "browse_proxychains_button", "tor_path_entry", "browse_tor_button",
             "tor_circuit_monitor_switch", "tor_check_interval_spin",
             "curl_path_entry", "browse_curl_button", "subliminal_path_entry",
-            "browse_subliminal_button", "antivirus_type_combo",
+            "browse_subliminal_button", "subtitle_languages_entry", "antivirus_type_combo",
             "antivirus_command_entry", "antivirus_timeout_spin");
 
     private static MainLoop loop;
@@ -135,6 +135,41 @@ class SettingsDialogSaveOutcomeTest {
 
     private SettingsDialog buildDialog() {
         return new SettingsDialog(null, newStubManager(), null);
+    }
+
+    @Test
+    @Timeout(60)
+    void subtitleLanguagesLoadValidateSaveAndResetInAdvancedOnly() throws Exception {
+        Path configHome = Files.createDirectory(tempDir.resolve("subtitle-config"));
+        SystemLambda.withEnvironmentVariable("XDG_CONFIG_HOME", configHome.toString()).execute(() -> {
+            GlobalSettings initial = new GlobalSettings().setSubtitleLanguages(java.util.List.of("fr", "en"));
+            initial.setDefaultDownloadDirectory(tempDir);
+            AtomicReference<GlobalSettings> settings = new AtomicReference<>(initial);
+            SettingsDialog dialog = new SettingsDialog(null, newStubManager(settings), null);
+            var field = SettingsDialog.class.getDeclaredField("builder");
+            field.setAccessible(true);
+            var builder = (org.gnome.gtk.GtkBuilder) field.get(dialog);
+            var languages = Widgets.require(builder, "subtitle_languages_entry", org.gnome.gtk.Entry.class);
+            try {
+                assertEquals("fr,en", languages.getText());
+                languages.setText("FR, it, fr,pt-br");
+                dialog.applySettings();
+                GlobalSettings loaded = new GlobalSettings(); loaded.load();
+                assertEquals(java.util.List.of("fr", "it", "pt-BR"), loaded.getSubtitleLanguages());
+                assertEquals(loaded.getSubtitleLanguages(), settings.get().getSubtitleLanguages());
+                languages.setText("fr;bad");
+                org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, dialog::applySettings);
+                assertEquals(loaded.getSubtitleLanguages(), settings.get().getSubtitleLanguages());
+                languages.setText("de");
+                dialog.resetTabToDefaults(3);
+                assertEquals("de", languages.getText(), "yt-dlp reset must preserve the shared Advanced setting");
+                dialog.resetTabToDefaults(6);
+                assertEquals("en", languages.getText());
+                languages.setText("");
+                dialog.applySettings();
+                assertEquals(java.util.List.of("en"), settings.get().getSubtitleLanguages());
+            } finally { Widgets.require(builder, "settings_dialog", org.gnome.gtk.Window.class).destroy(); }
+        });
     }
 
     @Test
