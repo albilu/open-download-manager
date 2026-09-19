@@ -136,6 +136,14 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     settings.setMediaProbeOnFailure(false);
                 }
                 settingsFactory.applyGlobalTransferPreferences(settings);
+                // Older failed starts may have persisted a name that cannot
+                // even accommodate .part. Re-reserve only those never-started
+                // outputs; a real transfer keeps its original resume identity.
+                boolean repairOversizedReservation = download.getDownloaded() == 0
+                        && download.getOutputPaths().isEmpty()
+                        && settings.getReservedOutputNames().stream().anyMatch(name ->
+                        name.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 250);
+                if (repairOversizedReservation) { settings.setOutputNameCounter(0); }
                 if (download.isUniquifiedOutputPreparationPending()) {
                     settings.setOutputNameCounter(0);
                     settings.setReservedOutputNames(List.of());
@@ -164,12 +172,18 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
                     });
                 }
 
-                if (globalSettings.isUniquifyOutputName() && download.isUniquifiedOutputPreparationPending()) {
-                    task.setOutputNamePreparation(names -> download.prepareUniquifiedOutput(() -> {
-                        Collection<Download> claimants = new ArrayList<>(downloads.get());
-                        claimants.addAll(knownDownloads.values());
-                        OutputNameUniquifier.applyToMedia(download, claimants, names);
-                    }));
+                if (globalSettings.isUniquifyOutputName()
+                        && (download.isUniquifiedOutputPreparationPending() || repairOversizedReservation)) {
+                    task.setOutputNamePreparation(names -> {
+                        Runnable reserve = () -> {
+                            Collection<Download> claimants = new ArrayList<>(downloads.get());
+                            claimants.addAll(knownDownloads.values());
+                            OutputNameUniquifier.applyToMedia(download, claimants, names);
+                        };
+                        if (download.isUniquifiedOutputPreparationPending()) {
+                            download.prepareUniquifiedOutput(reserve);
+                        } else { reserve.run(); }
+                    });
                 } else {
                     download.prepareUniquifiedOutput(() -> { });
                 }
@@ -405,8 +419,14 @@ public class YtDlpDownloadHandler extends AbstractDownloadHandler {
             recorded.addAll(task.getRecordedOutputPaths());
         }
         if (recorded.isEmpty()) {
-            DELETE_LOGGER.warn("No yt-dlp output paths recorded for " + download.getId()
-                    + "; refusing deletion (display names are not deletion authority)");
+            if (download.getDownloaded() > 0
+                    || (download.getCompletedAt() != null && !download.isArchiveOnlyCompletion())) {
+                DELETE_LOGGER.warn("No yt-dlp output paths recorded for " + download.getId()
+                        + "; refusing deletion (display names are not deletion authority)");
+            } else {
+                DELETE_LOGGER.debug("No yt-dlp output to delete for {}: no recorded transfer or output path",
+                        download.getId());
+            }
             return;
         }
         for (String candidate : recorded) {

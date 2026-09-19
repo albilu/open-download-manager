@@ -944,8 +944,21 @@ public class MainWindow {
     }
 
     private void onDeleteClicked() {
-        runSelectedDownloads(download -> true,
-                download -> downloadManager.cancelDownload(download, false), I18n.mark("Could not delete all selected downloads: %s"));
+        onDownloadSelectionChanged();
+        removeDownloads(List.copyOf(selectedDownloads), false,
+                I18n.mark("Could not delete all selected downloads: %s"));
+    }
+
+    private void removeDownloads(List<Download> targets, boolean deleteFiles, String failureMessage) {
+        if (targets.isEmpty()) { return; }
+        trackActivity(downloadManager.cancelDownloads(targets, deleteFiles))
+                .whenComplete((ignored, error) -> UiThread.marshal(() -> {
+                    if (error != null) {
+                        AccessibilitySupport.status(infoLabel, I18n.format(failureMessage, UiErrors.message(error)),
+                                org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
+                    }
+                    refresh();
+                }));
     }
 
     private void startSelectedDownloads() {
@@ -1116,17 +1129,8 @@ public class MainWindow {
             if (response != acceptResponse) {
                 return;
             }
-            trackActivity(allOf(capturedTargets.stream()
-                    .map(target -> downloadManager.cancelDownload(target, true))
-                    .toList())).whenComplete((ignored, error) ->
-                    UiThread.marshal(() -> {
-                        if (error != null) {
-                            AccessibilitySupport.status(infoLabel,
-                                    I18n.format("Could not delete all selected download files: %s", UiErrors.message(error)),
-                                    org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
-                        }
-                        refresh();
-                    }));
+            removeDownloads(capturedTargets, true,
+                    I18n.mark("Could not delete all selected download files: %s"));
         });
         confirmation.present();
     }

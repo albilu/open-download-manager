@@ -768,9 +768,14 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     + ": destination unknown");
             return;
         }
-        if (reportedPaths == null || reportedPaths.isEmpty()) {
-            DELETE_LOGGER.warn("No aria2 file paths reported for " + download.getId()
-                    + "; refusing deletion (display names are not deletion authority)");
+        if (reportedPaths == null || reportedPaths.stream().allMatch(path -> path == null || path.isBlank())) {
+            if (download.getDownloaded() > 0 || download.getCompletedAt() != null) {
+                DELETE_LOGGER.warn("No aria2 file paths reported for " + download.getId()
+                        + "; refusing deletion (display names are not deletion authority)");
+            } else {
+                DELETE_LOGGER.debug("No aria2 output to delete for {}: no recorded transfer or output path",
+                        download.getId());
+            }
             return;
         }
         Path normalizedDestination = destination.toAbsolutePath().normalize();
@@ -781,6 +786,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             realDestination = normalizedDestination;
         }
         for (String candidate : reportedPaths) {
+            // Before a destination is known, aria2 reports an empty path.
+            // This is not a containment violation and authorizes no deletion.
+            if (candidate == null || candidate.isBlank()) { continue; }
             java.util.Optional<Path> eligible = eligibleAria2Path(normalizedDestination, candidate);
             if (eligible.isEmpty()) {
                 DELETE_LOGGER.warn("Refusing to delete aria2 output outside the destination for "

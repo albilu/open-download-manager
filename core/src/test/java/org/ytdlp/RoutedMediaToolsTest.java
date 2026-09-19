@@ -33,12 +33,14 @@ class RoutedMediaToolsTest {
         String proxy = scheme + "://127.0.0.1:" + port;
         String url = "http://127.0.0.1:" + origin.getAddress().getPort() + "/live.m3u8";
         var client = new YtDlpClient();
-        try (var tools = RoutedMediaTools.prepare(proxy)) {
-            var settings = new YtDlpSettings();
-            settings.setUseProxy(true).setProxyAddress(proxy);
-            settings.setUseAria2c(true);
-            settings.setMaxRetries(0);
+        var settings = new YtDlpSettings();
+        settings.setUseProxy(true).setProxyAddress(proxy);
+        settings.setUseAria2c(true);
+        settings.setMaxRetries(0);
+        try (var tools = RoutedMediaTools.prepare(proxy);
+                var outputNames = MediaOutputNames.prepare(settings, directory, true)) {
             var command = client.buildDownloadCommand(url, settings, directory);
+            outputNames.applyTo(command);
             command.removeLast();
             Path info = Files.writeString(directory.resolve("live.json"),
                     "{\"id\":\"live\",\"title\":\"live\",\"url\":\"" + url

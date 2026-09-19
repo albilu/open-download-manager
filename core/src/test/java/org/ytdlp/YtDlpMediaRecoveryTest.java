@@ -205,6 +205,28 @@ class YtDlpMediaRecoveryTest {
         assertFalse(new YtDlpSettings().isMediaProbeOnFailure());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"[Errno 36] File name too long", "[Errno 13] Permission denied",
+            "[Errno 28] No space left on device", "[Errno 30] Read-only file system",
+            "aria2c exited with code 16"})
+    void localOutputFailuresNeverProbeBeforeTransfer(String diagnostic) throws Exception {
+        for (boolean prepareName : new boolean[]{false, true}) {
+            Path executable = directory.resolve("local-error");
+            Files.writeString(executable, "#!/bin/sh\nprintf '%s\\n' 'ERROR: " + diagnostic + "'\nexit 1\n");
+            assertTrue(executable.toFile().setExecutable(true));
+            try (var client = new ClosingClient(executable.toString())) {
+                var discoveries = new AtomicInteger();
+                var task = new YtDlpDownloadTask("local", page.toString(), settings(true), directory, client);
+                if (prepareName) { task.setOutputNamePreparation(names -> {}); }
+                task.setMediaRecovery(() -> { discoveries.incrementAndGet(); return null; }, ignored -> {});
+                var failure = assertThrows(Exception.class, () -> task.start().get(5, TimeUnit.SECONDS));
+                assertTrue(failure.getMessage().contains(diagnostic), failure.toString());
+                assertEquals(0, discoveries.get(), "a browser cannot repair local output errors");
+                assertEquals(YtDlpDownloadTask.Status.ERROR, task.getStatus());
+            }
+        }
+    }
+
     private YtDlpSettings reopenSettings(YtDlpSettings settings) throws Exception {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
                 .disable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);

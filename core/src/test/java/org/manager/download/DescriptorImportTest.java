@@ -58,6 +58,11 @@ class DescriptorImportTest {
             return CompletableFuture.completedFuture(null);
         }
 
+        @Override public CompletableFuture<Void> cancelDownloads(List<Download> downloads, boolean deleteFiles) {
+            return CompletableFuture.allOf(downloads.stream().map(d -> cancelDownload(d, deleteFiles))
+                    .toArray(CompletableFuture[]::new));
+        }
+
         @Override public Download createDownload(URI uri, Path destination) { throw unsupported(); }
         @Override public Download createMagnetDownload(URI uri, Path destination) { throw unsupported(); }
         @Override public Download createYoutubeDownload(URI uri, Path destination,

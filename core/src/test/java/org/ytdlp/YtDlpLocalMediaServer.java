@@ -124,15 +124,15 @@ final class YtDlpLocalMediaServer implements AutoCloseable {
     }
 
     String mediaUrl() {
-        return server.url(MEDIA_PATH).toString();
+        return server.url(MEDIA_PATH).newBuilder().host("127.0.0.1").build().toString();
     }
 
     String hlsUrl() {
-        return server.url("/master.m3u8").toString();
+        return server.url("/master.m3u8").newBuilder().host("127.0.0.1").build().toString();
     }
 
     String playlistUrl() {
-        return server.url("/playlist.html").toString();
+        return server.url("/playlist.html").newBuilder().host("127.0.0.1").build().toString();
     }
 
     int requestCount() {

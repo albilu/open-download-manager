@@ -194,6 +194,9 @@ public interface DownloadOperations {
      */
     CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles);
 
+    /** Removes a selection as one queue operation: none of its waiting records may start. */
+    CompletableFuture<Void> cancelDownloads(List<Download> downloads, boolean deleteFiles);
+
     /**
      * Fetches the current peer list for a BitTorrent download (aria2.getPeers).
      *

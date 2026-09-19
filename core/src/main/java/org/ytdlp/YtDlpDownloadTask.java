@@ -357,7 +357,8 @@ public class YtDlpDownloadTask {
     private static boolean canProbeAfter(Throwable failure) {
         boolean mediaFailure = false;
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-            if (cause instanceof CancellationException || cause instanceof InterruptedException) { return false; }
+            if (cause instanceof CancellationException || cause instanceof InterruptedException
+                    || cause instanceof YtDlpClient.LocalOutputException) { return false; }
             if (cause instanceof YtDlpClient.MediaExtractionException
                     || cause instanceof YtDlpClient.MediaDownloadException) { mediaFailure = true; }
         }

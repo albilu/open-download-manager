@@ -36,11 +36,12 @@ class YtDlpSocksRoutingTest {
         String payload = "ODM media payload through SOCKS";
         try (SocksHttpServer proxy = new SocksHttpServer(true, payload)) {
             YtDlpClient client = new YtDlpClient(org.manager.tools.ToolPaths.ytDlp(), true, true);
-            try {
-                String url = "http://media.odm.invalid/clip.mp4";
-                YtDlpSettings settings = settings("socks5h://user:secret@127.0.0.1:" + proxy.port());
-                settings.setOutputTemplate("clip.mp4");
+            String url = "http://media.odm.invalid/clip.mp4";
+            YtDlpSettings settings = settings("socks5h://user:secret@127.0.0.1:" + proxy.port());
+            settings.setOutputTemplate("clip.mp4");
+            try (var outputNames = MediaOutputNames.prepare(settings, directory, true)) {
                 var command = client.buildDownloadCommand(url, settings, directory);
+                outputNames.applyTo(command);
                 command.removeLast();
                 Path info = Files.writeString(directory.resolve("info.json"),
                         "{\"id\":\"clip\",\"title\":\"clip\",\"url\":\"" + url

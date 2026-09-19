@@ -218,7 +218,9 @@ public final class OutputNameUniquifier {
                 }
                 settings.setReservedOutputNames(candidates);
                 if (settings.getOutputTemplate() != null) {
-                    String literal = numberedName(settings.getOutputTemplate(), counter);
+                    // The native naming policy may have shortened an explicit
+                    // filename. Reserve and persist the exact previewed name.
+                    String literal = numberedName(resolvedNames.getFirst(), counter);
                     settings.setOutputTemplate(literal);
                     if (download.getRequestedFileName() != null) {
                         download.setRequestedFileName(literal);

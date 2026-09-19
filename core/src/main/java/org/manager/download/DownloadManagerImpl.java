@@ -95,13 +95,16 @@ public class DownloadManagerImpl implements DownloadManager {
     private final Object generationLock = new Object();
     /** Serializes the check-and-add concurrency-slot claim (the admission decision). */
     private final Object admissionLock = new Object();
+    private final Map<String, Integer> pendingRemovals = new java.util.HashMap<>();
+    private final AtomicInteger bulkRemovalOperations = new AtomicInteger();
     private final Object networkSettingsLock = new Object();
     private volatile boolean networkRestartInProgress;
 
     private enum AdmissionResult {
         CLAIMED,
         DUPLICATE,
-        FULL
+        FULL,
+        INELIGIBLE
     }
     private final AtomicBoolean isShuttingDown;
     private final DependencyContainer container;
@@ -508,6 +511,10 @@ public class DownloadManagerImpl implements DownloadManager {
      * invoked.
      */
     private void startDownloadInternal(Download download, boolean admissionAlreadyClaimed) {
+        startDownloadInternal(download, admissionAlreadyClaimed, false);
+    }
+
+    private void startDownloadInternal(Download download, boolean admissionAlreadyClaimed, boolean fromQueue) {
         long generation = 0;
         try {
             if (download == null) {
@@ -533,7 +540,8 @@ public class DownloadManagerImpl implements DownloadManager {
             // start submission, so concurrent starts and direct
             // startDownload calls can never overshoot the limit
             if (!admissionAlreadyClaimed) {
-                AdmissionResult admission = claimRunningSlot(download.getId());
+                AdmissionResult admission = claimRunningSlot(download, fromQueue);
+                if (admission == AdmissionResult.INELIGIBLE) { return; }
                 if (admission == AdmissionResult.DUPLICATE) {
                     LOGGER.warn("Ignoring duplicate start for active download "
                             + download.getId() + " (status " + download.getStatus() + ")");
@@ -732,8 +740,15 @@ public class DownloadManagerImpl implements DownloadManager {
      * current slot holder is DUPLICATE: one logical download is strictly
      * single-flight.
      */
-    private AdmissionResult claimRunningSlot(String downloadId) {
+    private AdmissionResult claimRunningSlot(Download download, boolean fromQueue) {
         synchronized (admissionLock) {
+            String downloadId = download.getId();
+            if (pendingRemovals.containsKey(downloadId)
+                    || (fromQueue && (bulkRemovalOperations.get() > 0
+                    || download.getStatus() != Download.Status.QUEUED
+                    || downloadRepository.getDownload(downloadId) != download))) {
+                return AdmissionResult.INELIGIBLE;
+            }
             if (runningDownloadIds.contains(downloadId)) {
                 return AdmissionResult.DUPLICATE;
             }
@@ -1140,6 +1155,10 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private void resumeDownloadInternal(Download download) {
+        resumeDownloadInternal(download, false);
+    }
+
+    private void resumeDownloadInternal(Download download, boolean fromQueue) {
         if (download == null) {
             throw new IllegalArgumentException("Download cannot be null");
         }
@@ -1162,7 +1181,8 @@ public class DownloadManagerImpl implements DownloadManager {
             requeueAfterDeniedAdmission(download);
             return;
         }
-        AdmissionResult admission = claimRunningSlot(download.getId());
+        AdmissionResult admission = claimRunningSlot(download, fromQueue);
+        if (admission == AdmissionResult.INELIGIBLE) { return; }
         if (admission == AdmissionResult.DUPLICATE) {
             LOGGER.warn("Ignoring duplicate resume for active download " + download.getId());
             return;
@@ -1474,6 +1494,34 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     @Override
+    public CompletableFuture<Void> cancelDownloads(List<Download> downloads, boolean deleteFiles) {
+        List<Download> targets = List.copyOf(downloads).stream().distinct().toList();
+        if (targets.isEmpty()) { return CompletableFuture.completedFuture(null); }
+        // Register the entire selection synchronously, before any cancellation
+        // can release a slot or another queue worker can claim a selected ID.
+        synchronized (admissionLock) {
+            bulkRemovalOperations.incrementAndGet();
+            targets.forEach(download -> pendingRemovals.merge(download.getId(), 1, Integer::sum));
+        }
+        List<CompletableFuture<Void>> operations = new java.util.ArrayList<>();
+        for (Download download : targets) {
+            try { operations.add(cancelDownload(download, deleteFiles)); }
+            catch (RuntimeException failure) { operations.add(CompletableFuture.failedFuture(failure)); }
+        }
+        CompletableFuture<Void> settled = CompletableFuture.allOf(operations.toArray(CompletableFuture[]::new))
+                .whenComplete((ignored, failure) -> {
+                    synchronized (admissionLock) {
+                        targets.forEach(download -> pendingRemovals.computeIfPresent(download.getId(),
+                                (id, count) -> count == 1 ? null : count - 1));
+                        bulkRemovalOperations.decrementAndGet();
+                    }
+                    startNextQueuedDownload();
+                });
+        // Cancelling a caller's observation must not discard the cleanup stage.
+        return settled.copy();
+    }
+
+    @Override
     public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
         return CompletableFuture.runAsync(() -> {
             try {
@@ -1717,7 +1765,7 @@ public class DownloadManagerImpl implements DownloadManager {
     }
 
     private void startNextQueuedDownload() {
-        if (isShuttingDown.get() || bulkPauseOperations.get() > 0) {
+        if (isShuttingDown.get() || bulkPauseOperations.get() > 0 || bulkRemovalOperations.get() > 0) {
             return;
         }
 
@@ -1768,7 +1816,7 @@ public class DownloadManagerImpl implements DownloadManager {
             // Check if this download is already running with a different GID
             // This helps prevent starting the same download multiple times
             if (download.getStatus() == Download.Status.DOWNLOADING && download.getGid() != null) {
-                LOGGER.warn("Attempted to start download that's already DOWNLOADING: " + download.getName()
+                LOGGER.debug("Attempted to start download that's already DOWNLOADING: " + download.getName()
                         + " (GID: " + download.getGid() + ") - skipping to prevent duplicate start");
                 continue;
             }
@@ -1776,9 +1824,9 @@ public class DownloadManagerImpl implements DownloadManager {
             LOGGER.info("Starting next queued download: " + download.getName()
                     + " (current status: " + download.getStatus() + ", GID: " + download.getGid() + ")");
             if (activeHandlers.containsKey(download.getId())) {
-                resumeDownloadInternal(download);
+                resumeDownloadInternal(download, true);
             } else {
-                startDownloadInternal(download);
+                startDownloadInternal(download, false, true);
             }
             }
         } else {

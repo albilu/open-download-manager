@@ -29,6 +29,9 @@ class ManagerAdmissionControlTest {
 
         private final AtomicInteger attempts = new AtomicInteger();
         private final AtomicInteger gidSeq = new AtomicInteger();
+        private volatile CompletableFuture<Void> cancellation = CompletableFuture.completedFuture(null);
+        private final AtomicInteger cancellationNotifications = new AtomicInteger();
+        private volatile boolean deletedFiles;
 
         CountingHandler() {
             super(null, null, null);
@@ -74,8 +77,10 @@ class ManagerAdmissionControlTest {
 
         @Override
         public CompletableFuture<Void> cancelDownload(Download download, boolean deleteFiles) {
+            deletedFiles = deleteFiles;
             notifyDownloadCanceled(download);
-            return CompletableFuture.completedFuture(null);
+            cancellationNotifications.incrementAndGet();
+            return cancellation;
         }
 
         void fireComplete(Download download) {
@@ -140,6 +145,47 @@ class ManagerAdmissionControlTest {
                 "the running count must equal the limit");
         assertEquals(7, manager.getDownloadsByStatus(Download.Status.QUEUED).size(),
                 "the non-admitted downloads must be queued");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,false,false", "true,false,false",
+            "true,true,false", "false,false,true"})
+    void removalHoldsQueueUntilAllTargetsSettle(boolean deleteFiles, boolean failRemoval,
+            boolean cancelObserver) throws Exception {
+        setUp(1);
+        Download active = newDownload("removal-active");
+        Download selected = newDownload("removal-queued");
+        Download remaining = newDownload("removal-remaining");
+        for (Download download : List.of(active, selected, remaining)) {
+            manager.queueDownload(download).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
+        assertEquals(1, handler.attempts());
+        handler.cancellation = new CompletableFuture<>();
+        try {
+            var removal = manager.cancelDownloads(List.of(active, selected), deleteFiles);
+            if (cancelObserver) { removal.cancel(false); }
+            assertTrue(awaitTrue(() -> handler.cancellationNotifications.get() == 1));
+            // Admission is also guarded against explicit or stale concurrent starts.
+            manager.startDownload(selected).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            manager.reconsiderQueuedDownloads().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            assertEquals(1, handler.attempts(), "removal must never start the selected waiting item");
+            assertEquals(Download.Status.QUEUED, remaining.getStatus());
+            assertEquals(deleteFiles, handler.deletedFiles);
+            if (failRemoval) {
+                handler.cancellation.completeExceptionally(new IllegalStateException("fixture cancellation failed"));
+                org.junit.jupiter.api.Assertions.assertThrows(Exception.class,
+                        () -> removal.get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+            } else {
+                handler.cancellation.complete(null);
+                if (!cancelObserver) { removal.get(TIMEOUT_SECONDS, TimeUnit.SECONDS); }
+            }
+            assertTrue(awaitTrue(() -> handler.attempts() == 2), "remaining queue must resume even after failure");
+            assertEquals(1, manager.getRunningDownloadCount());
+            assertEquals(null, manager.getDownload(selected.getId()));
+        } finally {
+            handler.cancellation.complete(null);
+            handler.cancellation = CompletableFuture.completedFuture(null);
+        }
     }
 
     @Test

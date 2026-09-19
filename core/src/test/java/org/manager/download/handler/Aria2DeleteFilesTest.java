@@ -197,7 +197,7 @@ class Aria2DeleteFilesTest {
                     new DownloadSettingsFactory(settings), executor, ApplicationContext.getToolManagerFactory());
             try {
                 handler.initialize().get(20, TimeUnit.SECONDS);
-                Download download = new Download(server.url("/completed.bin").uri());
+                Download download = new Download(server.url("/completed.bin").newBuilder().host("127.0.0.1").build().uri());
                 download.setDestination(tempDir);
                 String gid = handler.startDownload(download).get(20, TimeUnit.SECONDS);
                 await().atMost(Duration.ofSeconds(20)).until(() -> download.getStatus() == Download.Status.COMPLETED);
@@ -263,7 +263,7 @@ class Aria2DeleteFilesTest {
             try {
                 handler.initialize().get(30, TimeUnit.SECONDS);
 
-                Download download = new Download(new java.net.URI(server.url("/payload.bin").toString()));
+                Download download = new Download(server.url("/payload.bin").newBuilder().host("127.0.0.1").build().uri());
                 download.setDestination(downloadDir);
                 String gid = handler.startDownload(download).get(30, TimeUnit.SECONDS);
                 assertNotNull(gid);

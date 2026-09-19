@@ -73,6 +73,15 @@ public final class ExternalProcessRegistry {
             }
         }
 
+        /** Stops a failed child without classifying the failure as user cancellation.
+         * The owner still unregisters this reservation in its finally block. */
+        public void stopForFailure(int graceSeconds) {
+            Process child = process();
+            if (child != null) {
+                terminateProcess(registry.ownerName, key, child, graceSeconds);
+            }
+        }
+
         /**
          * Removes this registration unless a newer generation has already
          * replaced it. Bookkeeping only: the process is never signalled.

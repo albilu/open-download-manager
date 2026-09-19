@@ -38,7 +38,7 @@ public class YtDlpClient {
     private static final Logger LOGGER = LoggerFactory.getLogger(YtDlpClient.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int MAX_METADATA_OUTPUT_BYTES = 4 * 1024 * 1024;
-    private static final long METADATA_TIMEOUT_SECONDS = 60;
+    private final java.time.Duration metadataTimeout;
 
     // Progress patterns for parsing yt-dlp output
     private static final Pattern PROGRESS_PATTERN = Pattern.compile(
@@ -99,6 +99,13 @@ public class YtDlpClient {
 
     YtDlpClient(String ytDlpPath, boolean honorExternalConfiguration,
             boolean honorExternalAria2Configuration, Path archiveDatabase) {
+        this(ytDlpPath, honorExternalConfiguration, honorExternalAria2Configuration,
+                archiveDatabase, java.time.Duration.ofSeconds(60));
+    }
+
+    YtDlpClient(String ytDlpPath, boolean honorExternalConfiguration,
+            boolean honorExternalAria2Configuration, Path archiveDatabase, java.time.Duration metadataTimeout) {
+        this.metadataTimeout = metadataTimeout;
         this.ytDlpPath = ytDlpPath;
         this.archiveDatabase = archiveDatabase;
         this.honorExternalConfiguration = honorExternalConfiguration;
@@ -698,6 +705,24 @@ public class YtDlpClient {
         MediaDownloadException(String message) { super(message); }
     }
 
+    /** A local output failure cannot be repaired by discovering another media URL. */
+    public static final class LocalOutputException extends RuntimeException {
+        LocalOutputException(String message) { super(message); }
+    }
+
+    private static RuntimeException mediaFailure(String message, boolean extraction) {
+        // Python OSError diagnostics are stable even when the UI is localized.
+        // Match local file errors, not HTTP errors or remote access restrictions.
+        if (Pattern.compile("\\[Errno (?:1|2|5|13|17|20|21|27|28|30|36|122)\\]").matcher(message).find()
+                || Pattern.compile("aria2c exited with code (?:9|1[3-8])(?:\\D|$)").matcher(message).find()
+                || Pattern.compile("(?i)ERROR:.*(?:unable to open for writing|unable to create directory|"
+                        + "no space left on device|read-only file system|file name too long|disk quota exceeded)")
+                        .matcher(message).find()) {
+            return new LocalOutputException(message);
+        }
+        return extraction ? new MediaExtractionException(message) : new MediaDownloadException(message);
+    }
+
     /** Exports the selected browser's cookies using yt-dlp's existing profile support. */
     CompletableFuture<String> exportBrowserCookies(String url, YtDlpSettings settings) {
         String processId = "browser-cookies-" + UUID.randomUUID();
@@ -919,6 +944,7 @@ public class YtDlpClient {
         try {
             registration = launch.start(pb);
             Process process = registration.process();
+            var metadataProcess = registration;
             StringBuilder output = new StringBuilder();
             java.util.concurrent.atomic.AtomicReference<Throwable> readFailure =
                     new java.util.concurrent.atomic.AtomicReference<>();
@@ -936,15 +962,17 @@ public class YtDlpClient {
                     }
                 } catch (Throwable e) {
                     readFailure.set(e);
-                    activeProcesses.terminate(processId, 1);
+                    metadataProcess.stopForFailure(1);
                 }
             }, "yt-dlp-metadata-reader");
             reader.setDaemon(true);
             reader.start();
 
-            if (!process.waitFor(METADATA_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                activeProcesses.terminate(processId, 1);
-                throw new MediaExtractionException("yt-dlp metadata request timed out after 60 seconds");
+            if (!process.waitFor(metadataTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                metadataProcess.stopForFailure(1);
+                if (launch.isCancelled()) { throw new CancellationException(); }
+                throw new MediaExtractionException("yt-dlp metadata request timed out after "
+                        + metadataTimeout.toSeconds() + " seconds");
             }
             reader.join(TimeUnit.SECONDS.toMillis(5));
             Throwable readerError = readFailure.get();
@@ -955,8 +983,8 @@ public class YtDlpClient {
             if (process.exitValue() != 0) {
                 var diagnostics = new org.manager.tools.ProcessDiagnostics();
                 output.toString().lines().forEach(diagnostics::addLine);
-                throw new MediaExtractionException(diagnostics.message(
-                        "yt-dlp metadata command failed with exit code " + process.exitValue()));
+                throw mediaFailure(diagnostics.message(
+                        "yt-dlp metadata command failed with exit code " + process.exitValue()), true);
             }
             return output.toString();
         } finally {
@@ -1020,9 +1048,12 @@ public class YtDlpClient {
             org.manager.tools.ExternalProcessRegistry.Registration registration = null;
             MediaDownloadArchive archive = null;
             try (var prepared = MediaRequestContext.prepare(settings);
-                    var network = RoutedMediaTools.prepare(configuredProxy(prepared.settings()))) {
+                    var network = RoutedMediaTools.prepare(configuredProxy(prepared.settings()));
+                    var outputNames = MediaOutputNames.prepare(prepared.settings(), outputPath,
+                            outputNamePreparation == null && !overrideOutputs)) {
                 // Build command
                 List<String> command = buildDownloadCommand(url, prepared.settings(), outputPath, overrideOutputs);
+                outputNames.applyTo(command);
                 if (settings.isUseDownloadArchive()) {
                     archive = new MediaDownloadArchive(archiveDatabase);
                     command.addAll(command.size() - 1, List.of("--download-archive", archive.path().toString(),
@@ -1057,6 +1088,8 @@ public class YtDlpClient {
                     outputNamePreparation.accept(List.copyOf(names));
                     prepared.settings().setOutputTemplate(settings.getOutputTemplate());
                     prepared.settings().setOutputNameCounter(settings.getOutputNameCounter());
+                    prepared.settings().setReservedOutputNames(settings.getReservedOutputNames());
+                    outputNames.update(prepared.settings(), outputPath);
                     command.set(command.indexOf("-o") + 1, outputTemplate(prepared.settings()));
                     command.add(command.size() - 1, "--no-overwrites");
                 }
@@ -1115,7 +1148,9 @@ public class YtDlpClient {
                         }
 
                         // Check for errors
-                        if (line.contains("ERROR:") || line.startsWith("yt-dlp: error:")) {
+                        if (line.contains("ERROR:") || line.contains("[ERROR]")
+                                || line.startsWith("Exception:") || line.contains("errorCode=")
+                                || line.startsWith("yt-dlp: error:")) {
                             // A playlist or fragment worker can keep going
                             // after an error. Terminal callbacks wait for exit.
                             diagnostics.addLine(line);
@@ -1151,7 +1186,7 @@ public class YtDlpClient {
                     LOGGER.info("yt-dlp download completed successfully");
                     return filename;
                 } else {
-                    throw new MediaDownloadException(diagnostics.message("yt-dlp failed with exit code: " + exitCode));
+                    throw mediaFailure(diagnostics.message("yt-dlp failed with exit code: " + exitCode), false);
                 }
 
             } catch (CancellationException e) {
@@ -1288,6 +1323,7 @@ public class YtDlpClient {
         catch (Exception error) { LOGGER.warn("Could not checkpoint media archive; will retry at process exit", error); }
     }
 
+    /** Base arguments; callers launching a process must also apply a live {@link MediaOutputNames} context. */
     List<String> buildDownloadCommand(String url, YtDlpSettings settings, Path outputPath) {
         return buildDownloadCommand(url, settings, outputPath, false);
     }
@@ -1480,11 +1516,9 @@ public class YtDlpClient {
 
     private static String outputTemplate(YtDlpSettings settings) {
         if (settings.getOutputTemplate() != null) {
-            return settings.getOutputTemplate().replace("%", "%%");
+            return "%(odm_filename)s";
         }
-        return "%(title)s-%(id)s"
-                + (settings.getOutputNameCounter() == 0 ? "" : "_" + settings.getOutputNameCounter())
-                + ".%(ext)s";
+        return "%(odm_stem)s.%(ext)s";
     }
 
     private static void addContainerProfileOptions(List<String> command,

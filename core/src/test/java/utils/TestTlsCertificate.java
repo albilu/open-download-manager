@@ -14,6 +14,11 @@ import static org.junit.jupiter.api.Assertions.*;
 /** A real, locally generated HTTPS identity that no system trust store accepts. */
 public record TestTlsCertificate(SSLContext context, Path pem) {
     public static TestTlsCertificate create(Path directory) throws Exception {
+        // Keep IP addresses absent by default for hostname-mismatch tests.
+        return create(directory, false);
+    }
+
+    public static TestTlsCertificate create(Path directory, boolean includeLoopbackIp) throws Exception {
         Files.createDirectories(directory);
         Path keyStore = directory.resolve("server.p12");
         Path output = directory.resolve("keytool.log");
@@ -21,7 +26,8 @@ public record TestTlsCertificate(SSLContext context, Path pem) {
                 "-genkeypair", "-alias", "server", "-keyalg", "RSA", "-keysize", "2048",
                 "-storetype", "PKCS12", "-keystore", keyStore.toString(),
                 "-storepass", "fixture-password", "-dname", "CN=localhost",
-                "-ext", "SAN=dns:localhost", "-validity", "1", "-noprompt")
+                "-ext", includeLoopbackIp ? "SAN=dns:localhost,ip:127.0.0.1" : "SAN=dns:localhost",
+                "-validity", "1", "-noprompt")
                 .redirectErrorStream(true).redirectOutput(output.toFile()).start();
         try {
             assertTrue(keytool.waitFor(15, TimeUnit.SECONDS), "keytool timed out");

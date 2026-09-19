@@ -413,7 +413,7 @@ class YtDlpClientTest {
 
         List<String> command = client.buildDownloadCommand(TEST_URL, settings, tempOutputDir);
 
-        assertCommandValue(command, "-o", "100%% complete.mp4");
+        assertCommandValue(command, "-o", "%(odm_filename)s");
         assertCommandValue(command, "--limit-rate", "320K");
         assertCommandValue(command, "--retries", "8");
         assertCommandValue(command, "--retry-sleep", "http:4");

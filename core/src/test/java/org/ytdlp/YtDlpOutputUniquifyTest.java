@@ -75,6 +75,33 @@ class YtDlpOutputUniquifyTest {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"long-ascii-title-", "é漢😀"})
+    void longNamesKeepDistinctIdentitiesAndUniquifyTheBoundedName(String prefix) throws Exception {
+        try (var server = YtDlpLocalMediaServer.start(); var fixture = new HandlerFixture()) {
+            String base = server.mediaUrl() + "/" + prefix.repeat(40);
+            Download first = fixture.download(base + "-a.mp4", new YtDlpSettings().setFormat("best"));
+            Download copy = fixture.download(base + "-a.mp4", new YtDlpSettings().setFormat("best"));
+            Download different = fixture.download(base + "-b.mp4", new YtDlpSettings().setFormat("best"));
+            fixture.start(first).get(30, TimeUnit.SECONDS);
+            fixture.start(copy).get(30, TimeUnit.SECONDS);
+            fixture.start(different).get(30, TimeUnit.SECONDS);
+            assertEquals(3, Set.of(first.getPrimaryOutputPath(), copy.getPrimaryOutputPath(),
+                    different.getPrimaryOutputPath()).size());
+            for (Download download : java.util.List.of(first, copy, different)) {
+                Path output = download.getPrimaryOutputPath();
+                assertTrue(Files.size(output) > 1_000);
+                assertTrue((output.getFileName() + ".part-Frag999999999").getBytes(
+                        java.nio.charset.StandardCharsets.UTF_8).length <= 255);
+                var settings = (YtDlpSettings) download.getSettings();
+                assertEquals(java.util.List.of(output.getFileName().toString()), settings.getReservedOutputNames());
+            }
+            assertEquals(1, ((YtDlpSettings) copy.getSettings()).getOutputNameCounter());
+            assertEquals(0, ((YtDlpSettings) different.getSettings()).getOutputNameCounter(),
+                    "different long IDs retain different hashes despite identical prefixes");
+        }
+    }
+
     @Test
     void audioExtractionPreservesExistingConvertedFile() throws Exception {
         Path original = Files.writeString(directory.resolve("video-video.mp3"), "original audio");
@@ -263,6 +290,91 @@ class YtDlpOutputUniquifyTest {
             assertTrue(Files.size(second.getPrimaryOutputPath()) > 1_000);
             assertNull(first.getRequestedFileName());
             assertNull(second.getRequestedFileName());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "false,true", "true,true"})
+    void boundsLongNamesWithOrWithoutUniquifyAndWithExplicitNames(boolean uniquify, boolean literal)
+            throws Exception {
+        try (var server = YtDlpLocalMediaServer.start(); var fixture = new HandlerFixture(uniquify, true, false)) {
+            Download download = fixture.download(server.mediaUrl() + "/" + "video".repeat(60) + ".mp4",
+                    new YtDlpSettings().setFormat("best"));
+            if (literal) { download.setRequestedFileName("100% é漢".repeat(50) + ".mp4"); }
+            fixture.start(download).get(30, TimeUnit.SECONDS);
+            Path output = download.getPrimaryOutputPath();
+            assertTrue(Files.size(output) > 1_000);
+            assertTrue(output.getFileName().toString().endsWith(".mp4"));
+            assertTrue(output.getFileName().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 220);
+            if (literal) { assertTrue(output.getFileName().toString().startsWith("100% é漢")); }
+        }
+    }
+
+    @Test
+    void shortenedNameAndPartialFileSurviveSessionRestore() throws Exception {
+        try (var server = YtDlpLocalMediaServer.start(); var fixture = new HandlerFixture()) {
+            Download download = fixture.download(server.mediaUrl() + "/" + "é漢".repeat(100) + ".mp4",
+                    new YtDlpSettings().setFormat("best").setLimitRate(true).setRateLimit(16));
+            fixture.start(download);
+            org.awaitility.Awaitility.await().atMost(25, TimeUnit.SECONDS).until(() ->
+                    download.getPrimaryOutputPath() != null
+                    && Files.exists(Path.of(download.getPrimaryOutputPath() + ".part")));
+            Path output = download.getPrimaryOutputPath();
+            Path partial = Path.of(output + ".part");
+            fixture.handler.pauseDownload(download).get(15, TimeUnit.SECONDS);
+            assertTrue(Files.exists(partial));
+            var mapperFactory = DownloadManagerImpl.class.getDeclaredMethod("createStateObjectMapper");
+            mapperFactory.setAccessible(true);
+            var mapper = (com.fasterxml.jackson.databind.ObjectMapper) mapperFactory.invoke(null);
+            Download restored = mapper.readValue(mapper.writeValueAsString(download), Download.class);
+            fixture.handler.cancelDownload(download, false).get(15, TimeUnit.SECONDS);
+            Download completed = fixture.start(restored).get(45, TimeUnit.SECONDS);
+            assertEquals(output, completed.getPrimaryOutputPath());
+            assertTrue(Files.size(output) > 1_000);
+            assertFalse(Files.exists(partial));
+            assertEquals(0, ((YtDlpSettings) completed.getSettings()).getOutputNameCounter());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void resumesLegacyLongPartialWithoutChangingItsName(boolean literal) throws Exception {
+        try (var server = YtDlpLocalMediaServer.start(); var fixture = new HandlerFixture(false, false, false)) {
+            String id = "v".repeat(99);
+            String filename = literal ? "legacy".repeat(34) + ".mp4" : id + "-" + id + ".mp4";
+            Path partial = directory.resolve(filename + ".part");
+            try (var input = getClass().getResourceAsStream("/media/ytdlp-test-video.mp4")) {
+                Files.write(partial, input.readNBytes(1024));
+            }
+            Download download = fixture.download(literal ? server.mediaUrl() : server.mediaUrl() + "/" + id + ".mp4",
+                    new YtDlpSettings().setFormat("best"));
+            if (literal) { download.setRequestedFileName(filename); }
+            fixture.start(download).get(30, TimeUnit.SECONDS);
+            assertEquals(directory.resolve(filename), download.getPrimaryOutputPath());
+            assertTrue(Files.size(download.getPrimaryOutputPath()) > 1_000);
+            assertFalse(Files.exists(partial));
+        }
+    }
+
+    @Test
+    void retryRepairsAnImpossibleLegacyReservationWithoutReplacingAnotherOutput() throws Exception {
+        try (var server = YtDlpLocalMediaServer.start(); var fixture = new HandlerFixture()) {
+            String id = "long-title".repeat(25);
+            String url = server.mediaUrl() + "/" + id + ".mp4";
+            Download first = fixture.download(url, new YtDlpSettings().setFormat("best"));
+            fixture.start(first).get(30, TimeUnit.SECONDS);
+            byte[] existing = Files.readAllBytes(first.getPrimaryOutputPath());
+            var oldSettings = new YtDlpSettings().setFormat("best");
+            oldSettings.setReservedOutputNames(java.util.List.of(id + "-" + id + ".mp4"));
+            Download failed = fixture.download(url, oldSettings);
+            failed.prepareUniquifiedOutput(() -> {}); // persisted pre-fix reservation
+            failed.setStatus(Download.Status.ERROR);
+            fixture.start(failed).get(30, TimeUnit.SECONDS);
+            assertNotEquals(first.getPrimaryOutputPath(), failed.getPrimaryOutputPath());
+            assertEquals(1, oldSettings.getOutputNameCounter());
+            assertEquals(java.util.List.of(failed.getPrimaryOutputPath().getFileName().toString()),
+                    oldSettings.getReservedOutputNames());
+            assertArrayEquals(existing, Files.readAllBytes(first.getPrimaryOutputPath()));
         }
     }
 

@@ -31,7 +31,7 @@ class YtDlpCertificatePreferenceTest {
     private static byte[] media;
 
     @BeforeAll static void fixture() throws Exception {
-        certificate = TestTlsCertificate.create(certificates);
+        certificate = TestTlsCertificate.create(certificates, true);
         try (var input = YtDlpCertificatePreferenceTest.class.getResourceAsStream("/media/ytdlp-test-video.mp4")) {
             media = input.readAllBytes();
         }
@@ -48,8 +48,8 @@ class YtDlpCertificatePreferenceTest {
         settings.setMaxRetries(1);
         settings.setAria2cMaxTries(1);
         settings.setOption("no-check-certificate", ""); // old per-record options must not override the global choice
-        try (var server = server()) {
-            String url = server.url("/video.mp4").toString();
+        try (var server = server(); var outputNames = MediaOutputNames.prepare(settings, directory, true)) {
+            String url = server.url("/video.mp4").newBuilder().host("127.0.0.1").build().toString();
             var client = new YtDlpClient(ToolPaths.ytDlp());
             try {
                 // Skip extraction to exercise the selected downloader's TLS connection.
@@ -57,6 +57,7 @@ class YtDlpCertificatePreferenceTest {
                         "{\"id\":\"video\",\"title\":\"video\",\"url\":\"" + url
                         + "\",\"ext\":\"mp4\",\"extractor\":\"generic\",\"webpage_url\":\"" + url + "\"}");
                 var command = client.buildDownloadCommand(url, settings, directory);
+                outputNames.applyTo(command);
                 command.removeLast();
                 command.add("--load-info-json");
                 command.add(info.toString());
