@@ -87,7 +87,7 @@ final class CompletionActionPolicy {
         };
         if (type == null) {
             return AntivirusCheckAction.unavailable(
-                    "Unsupported file scanner: " + scanner + ". Select ClamAV or a custom file scanner.", timeout);
+                    I18n.format("Unsupported file scanner: %s. Select ClamAV or a custom file scanner.", scanner), timeout);
         }
         if (type == AntivirusCheckAction.AntivirusType.CUSTOM) {
             String command = settings.getProperty("antivirus.command", "");
@@ -183,7 +183,7 @@ final class CompletionActionPolicy {
 
         @Override
         public String getDescription() {
-            return "Suspend the computer when the download completes";
+            return I18n.tr("Suspend the computer when the download completes");
         }
 
         @Override

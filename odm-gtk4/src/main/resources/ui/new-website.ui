@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<interface>
+<interface domain="odm">
   <requires lib="gtk" version="4.0"/>
 
   <object class="GtkAdjustment" id="website_depth_adjustment">
@@ -16,7 +16,7 @@
   </object>
 
   <object class="GtkWindow" id="new_website_dialog">
-    <property name="title">New Website Scrape</property>
+    <property name="title" translatable="yes">New Website Scrape</property>
     <property name="default-width">760</property>
     <property name="default-height">620</property>
     <child>
@@ -46,45 +46,45 @@
                     <property name="margin-top">12</property>
                     <property name="margin-bottom">12</property>
 
-                    <child><object class="GtkLabel" id="website_url_label"><property name="label">Website URL:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_url_label"><property name="label" translatable="yes">Website URL:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                     <child><object class="GtkEntry" id="website_url_entry"><property name="hexpand">true</property><property name="placeholder-text">https://example.com/site</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkLabel" id="website_depth_label"><property name="label">Depth:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkSpinButton" id="website_depth_spin"><property name="adjustment">website_depth_adjustment</property><property name="hexpand">true</property><property name="tooltip-text">Maximum number of link levels to crawl for this website.</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_depth_label"><property name="label" translatable="yes">Depth:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="website_depth_spin"><property name="adjustment">website_depth_adjustment</property><property name="hexpand">true</property><property name="tooltip-text" translatable="yes">Maximum number of link levels to crawl for this website.</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkLabel" id="website_scope_label"><property name="label">Crawl scope:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkDropDown" id="website_scope_combo"><property name="hexpand">true</property><property name="tooltip-text">Boundary for this mirror. Nearby assets may come from other hosts.</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_scope_label"><property name="label" translatable="yes">Crawl scope:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkDropDown" id="website_scope_combo"><property name="hexpand">true</property><property name="tooltip-text" translatable="yes">Boundary for this mirror. Nearby assets may come from other hosts.</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkLabel" id="website_external_depth_label"><property name="label">External depth:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkSpinButton" id="website_external_depth_spin"><property name="adjustment">website_external_depth_adjustment</property><property name="hexpand">true</property><property name="tooltip-text">External link levels followed when Custom external depth is selected.</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_external_depth_label"><property name="label" translatable="yes">External depth:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkSpinButton" id="website_external_depth_spin"><property name="adjustment">website_external_depth_adjustment</property><property name="hexpand">true</property><property name="tooltip-text" translatable="yes">External link levels followed when Custom external depth is selected.</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkLabel" id="website_include_label"><property name="label">Include URL patterns:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkEntry" id="website_include_entry"><property name="hexpand">true</property><property name="placeholder-text">*.html *.css example.com/downloads/*</property><property name="tooltip-text">Whitespace-separated HTTrack wildcard patterns included in this mirror.</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_include_label"><property name="label" translatable="yes">Include URL patterns:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkEntry" id="website_include_entry"><property name="hexpand">true</property><property name="placeholder-text">*.html *.css example.com/downloads/*</property><property name="tooltip-text" translatable="yes">Whitespace-separated HTTrack wildcard patterns included in this mirror.</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkLabel" id="website_exclude_label"><property name="label">Exclude URL patterns:</property><property name="xalign">0</property><layout><property name="row">5</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkEntry" id="website_exclude_entry"><property name="hexpand">true</property><property name="placeholder-text">*/admin/* */logout/* *.tmp</property><property name="tooltip-text">Whitespace-separated HTTrack wildcard patterns excluded from this mirror.</property><layout><property name="row">5</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_exclude_label"><property name="label" translatable="yes">Exclude URL patterns:</property><property name="xalign">0</property><layout><property name="row">5</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkEntry" id="website_exclude_entry"><property name="hexpand">true</property><property name="placeholder-text">*/admin/* */logout/* *.tmp</property><property name="tooltip-text" translatable="yes">Whitespace-separated HTTrack wildcard patterns excluded from this mirror.</property><layout><property name="row">5</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkCheckButton" id="website_include_archives_check"><property name="label">Include archive files</property><property name="tooltip-text">Allow ZIP, RAR, TAR, and GZ files in this website mirror.</property><layout><property name="row">6</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkCheckButton" id="website_include_archives_check"><property name="label" translatable="yes">Include archive files</property><property name="tooltip-text" translatable="yes">Allow ZIP, RAR, TAR, and GZ files in this website mirror.</property><layout><property name="row">6</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkLabel" id="website_headers_label"><property name="label">Additional HTTP headers:</property><property name="xalign">0</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
-                    <child><object class="GtkEntry" id="website_headers_entry"><property name="hexpand">true</property><property name="placeholder-text">Accept-Language: en | X-Custom-Header: value</property><property name="tooltip-text">Optional Name: value headers separated with |. They apply only to this mirror; avoid storing credentials unless required.</property><layout><property name="row">7</property><property name="column">1</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_headers_label"><property name="label" translatable="yes">Additional HTTP headers:</property><property name="xalign">0</property><layout><property name="row">7</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkEntry" id="website_headers_entry"><property name="hexpand">true</property><property name="placeholder-text">Accept-Language: en | X-Custom-Header: value</property><property name="tooltip-text" translatable="yes">Optional Name: value headers separated with |. They apply only to this mirror; avoid storing credentials unless required.</property><layout><property name="row">7</property><property name="column">1</property></layout></object></child>
 
-                    <child><object class="GtkLabel" id="website_cookie_file_label"><property name="label">Netscape cookie file:</property><property name="xalign">0</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
+                    <child><object class="GtkLabel" id="website_cookie_file_label"><property name="label" translatable="yes">Netscape cookie file:</property><property name="xalign">0</property><layout><property name="row">8</property><property name="column">0</property></layout></object></child>
                     <child>
                       <object class="GtkBox" id="website_cookie_file_box">
                         <property name="orientation">horizontal</property>
                         <property name="spacing">6</property>
                         <property name="hexpand">true</property>
                         <layout><property name="row">8</property><property name="column">1</property></layout>
-                        <child><object class="GtkButton" id="website_cookie_file_button"><property name="label">None selected</property><property name="hexpand">true</property><property name="tooltip-text">Optional Netscape-format cookie file used only by this mirror.</property></object></child>
-                        <child><object class="GtkButton" id="website_clear_cookie_button"><property name="label">Clear</property><property name="sensitive">false</property><property name="tooltip-text">Do not use a cookie file for this mirror.</property></object></child>
+                        <child><object class="GtkButton" id="website_cookie_file_button"><property name="label" translatable="yes">None selected</property><property name="hexpand">true</property><property name="tooltip-text" translatable="yes">Optional Netscape-format cookie file used only by this mirror.</property></object></child>
+                        <child><object class="GtkButton" id="website_clear_cookie_button"><property name="label" translatable="yes">Clear</property><property name="sensitive">false</property><property name="tooltip-text" translatable="yes">Do not use a cookie file for this mirror.</property></object></child>
                       </object>
                     </child>
                   </object>
                 </child>
               </object>
             </child>
-            <child type="tab"><object class="GtkLabel"><property name="label">Website</property></object></child>
+            <child type="tab"><object class="GtkLabel"><property name="label" translatable="yes">Website</property></object></child>
 
             <child>
               <object class="GtkScrolledWindow" id="website_network_scroller">
@@ -93,7 +93,7 @@
                 <child><object class="GtkBox" id="website_network_options_host"><property name="orientation">vertical</property></object></child>
               </object>
             </child>
-            <child type="tab"><object class="GtkLabel"><property name="label">Options</property></object></child>
+            <child type="tab"><object class="GtkLabel"><property name="label" translatable="yes">Options</property></object></child>
           </object>
         </child>
 
@@ -105,8 +105,8 @@
             <property name="spacing">8</property>
             <property name="halign">end</property>
             <child><object class="GtkSpinner" id="new_website_spinner"><property name="valign">center</property></object></child>
-            <child><object class="GtkButton" id="website_cancel_button"><property name="label">Cancel</property></object></child>
-            <child><object class="GtkButton" id="website_start_button"><property name="label">Start Scrape</property><property name="css-classes">['suggested-action']</property></object></child>
+            <child><object class="GtkButton" id="website_cancel_button"><property name="label" translatable="yes">Cancel</property></object></child>
+            <child><object class="GtkButton" id="website_start_button"><property name="label" translatable="yes">Start Scrape</property><property name="css-classes">['suggested-action']</property></object></child>
           </object>
         </child>
       </object>

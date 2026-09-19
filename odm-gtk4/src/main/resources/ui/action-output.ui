@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<interface>
+<interface domain="odm">
   <requires lib="gtk" version="4.0"/>
 
   <object class="GtkWindow" id="action_output_dialog">
-    <property name="title">Action Output</property>
+    <property name="title" translatable="yes">Action Output</property>
     <property name="default-width">760</property>
     <property name="default-height">480</property>
     <child>
@@ -47,7 +47,7 @@
         </child>
         <child>
           <object class="GtkButton" id="action_output_close_button">
-            <property name="label">Close</property>
+            <property name="label" translatable="yes">Close</property>
             <property name="halign">end</property>
           </object>
         </child>

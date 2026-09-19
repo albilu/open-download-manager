@@ -93,13 +93,13 @@ final class CompletionActionPresentation {
         Summary summary = summarize(download);
         return switch (summary.outcome()) {
             case NONE -> null;
-            case RUNNING -> "After-completion actions running (%d/%d finished)"
+            case RUNNING -> I18n.tr("After-completion actions running (%d/%d finished)")
                     .formatted(summary.succeeded() + summary.failed(), summary.total());
-            case SUCCEEDED -> "All after-completion actions succeeded (%d/%d)"
+            case SUCCEEDED -> I18n.tr("All after-completion actions succeeded (%d/%d)")
                     .formatted(summary.succeeded(), summary.total());
-            case PARTIAL -> "After-completion actions partially succeeded (%d/%d)"
+            case PARTIAL -> I18n.tr("After-completion actions partially succeeded (%d/%d)")
                     .formatted(summary.succeeded(), summary.total());
-            case FAILED -> "All after-completion actions failed (%d/%d)"
+            case FAILED -> I18n.tr("All after-completion actions failed (%d/%d)")
                     .formatted(summary.failed(), summary.total());
         };
     }

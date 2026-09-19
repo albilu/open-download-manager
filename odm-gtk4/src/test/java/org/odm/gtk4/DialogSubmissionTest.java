@@ -23,7 +23,12 @@ class DialogSubmissionTest {
     DownloadManagerImpl actual;
     DownloadManager manager;
 
-    @BeforeAll static void gtk() {
+    @BeforeAll static void gtk() throws Exception {
+        Class.forName("org.gnome.glib.GLib");
+        Class.forName("org.gnome.glib.MainContext");
+        // Like GtkApplication.run(), this fork's GTK thread owns the context
+        // throughout its lifetime. Cleaners must queue native destruction here.
+        assertTrue(MainContext.default_().acquire());
         Gtk.init();
         // Initialize GLib types here before DownloadManager background callbacks start.
         org.gnome.glib.GLib.getMonotonicTime();

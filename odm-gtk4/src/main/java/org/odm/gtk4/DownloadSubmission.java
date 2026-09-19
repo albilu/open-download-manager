@@ -151,8 +151,7 @@ final class DownloadSubmission {
                     // transfer and tell the user the original was retained.
                     org.slf4j.LoggerFactory.getLogger(DownloadSubmission.class)
                             .warn("Could not move the original descriptor to Trash", failure);
-                    return "Download added. Could not move the original descriptor to Trash: "
-                            + UiErrors.message(failure);
+                    return I18n.format("Download added. Could not move the original descriptor to Trash: %s", UiErrors.message(failure));
                 }
             }
             return null;

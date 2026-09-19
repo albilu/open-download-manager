@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<interface>
+<interface domain="odm">
   <requires lib="gtk" version="4.0"/>
   <object class="GtkAboutDialog" id="about_dialog">
     <property name="program-name">oDM</property>
@@ -7,6 +7,6 @@
     <property name="website">https://github.com/albilu/odm</property>
     <property name="authors">albilu</property>
     <property name="license-type">gpl-3-0</property>
-    <property name="comments">A full featured native download manager for Linux, based on aria2, yt-dlp and httrack.</property>
+    <property name="comments" translatable="yes">A full featured native download manager for Linux, based on aria2, yt-dlp and httrack.</property>
   </object>
 </interface>

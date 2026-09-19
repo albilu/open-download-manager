@@ -10,6 +10,11 @@ public final class NetworkProcessPolicy {
 
     public static ProcessBuilder prepare(ProcessBuilder builder) {
         clearProxyEnvironment(builder.environment());
+        // Progress parsers consume machine output, independent of the desktop language.
+        // Keep UTF-8 filenames while fixing translated messages and decimal separators.
+        builder.environment().put("LC_ALL", "C.UTF-8");
+        builder.environment().put("LANG", "C.UTF-8");
+        builder.environment().put("LANGUAGE", "C");
         return builder;
     }
 

@@ -185,7 +185,7 @@ final class StartupGate {
         StartShutdownDialog progress;
         try {
             progress = dialogFactory.get();
-            progress.show("Starting Open Download Manager…");
+            progress.show(I18n.tr("Starting Open Download Manager…"));
         } catch (Throwable t) {
             failStartup(result, null, null, t);
             return;

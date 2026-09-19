@@ -207,9 +207,9 @@ class MainWindowSelectionCapabilitiesTest {
                 MainWindow.downloadListStatusText(1, 500, 1_200));
         assertEquals("3 downloads selected",
                 MainWindow.downloadListStatusText(3, 500, 1_200));
-        assertEquals("500 of 1200 download(s) loaded",
+        assertEquals("500 of 1200 downloads loaded",
                 MainWindow.downloadListStatusText(0, 500, 1_200));
-        assertEquals("12 download(s)",
+        assertEquals("12 downloads",
                 MainWindow.downloadListStatusText(0, 12, 12));
     }
 

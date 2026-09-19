@@ -51,9 +51,8 @@ import org.slf4j.LoggerFactory;
 /** Search, inspect and queue torrents through the existing aria2 admission path. */
 public final class SearchTorrentsDialog {
     private static final Logger LOGGER = LoggerFactory.getLogger(SearchTorrentsDialog.class);
-    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-            .withZone(ZoneId.systemDefault());
-    private static final String[] CATEGORIES = {"All categories", "Console", "Movies", "Audio", "PC", "TV", "XXX", "Books", "Other"};
+    private static final DateTimeFormatter DATE = DownloadFormats.DATE_FORMAT;
+    private static final String[] CATEGORIES = {I18n.tr("All categories"), I18n.tr("Console"), I18n.tr("Movies"), I18n.tr("Audio"), "PC", "TV", "XXX", I18n.tr("Books"), I18n.tr("Other")};
     private final GtkBuilder builder;
     private final Window dialog;
     private final DownloadManager manager;
@@ -114,7 +113,7 @@ public final class SearchTorrentsDialog {
         options = new NetworkOptionsPane(manager.getGlobalSettings(), Download.Type.ARIA2, Download.Protocol.TORRENT);
         options.bindTorService(tor);
         Widgets.require(builder, "torrent_options_host", Box.class).append(options.widget());
-        options.widget().setTooltipText("These options apply to torrent transfers. The search engine uses its own connection settings.");
+        options.widget().setTooltipText(I18n.tr("These options apply to torrent transfers. The search engine uses its own connection settings."));
         options.onProxyChanged(() -> {
             captureFileSelection();
             previewEpoch.incrementAndGet();
@@ -126,10 +125,10 @@ public final class SearchTorrentsDialog {
         });
         Widgets.require(builder, "torrent_category_combo", DropDown.class).setModel(new StringList(CATEGORIES));
         DialogSupport.configureIndependent(dialog, parent);
-        AccessibilitySupport.label(entry(), "Torrent search terms");
-        AccessibilitySupport.label(Widgets.require(builder, "torrent_category_combo", DropDown.class), "Torrent category");
-        AccessibilitySupport.label(resultsView, "Torrent search results; check torrents to download");
-        AccessibilitySupport.label(filesView, "Files grouped by checked torrent");
+        AccessibilitySupport.label(entry(), I18n.tr("Torrent search terms"));
+        AccessibilitySupport.label(Widgets.require(builder, "torrent_category_combo", DropDown.class), I18n.tr("Torrent category"));
+        AccessibilitySupport.label(resultsView, I18n.tr("Torrent search results; check torrents to download"));
+        AccessibilitySupport.label(filesView, I18n.tr("Files grouped by checked torrent"));
         Widgets.require(builder, "torrent_result_toggle", CellRendererToggle.class).onToggled(this::toggleTorrent);
         filesView.setExpanderColumn(Widgets.require(builder, "torrent_file_name_column", TreeViewColumn.class));
         Widgets.require(builder, "torrent_file_toggle", CellRendererToggle.class).onToggled(path -> {
@@ -147,7 +146,7 @@ public final class SearchTorrentsDialog {
         destination = manager.getGlobalSettings().getDefaultDownloadDirectory();
         if (destination == null) { destination = org.manager.util.OdmPaths.downloadDirectory(); }
         PathChooserButton.forFolder(Widgets.require(builder, "torrent_folder_chooser", MenuButton.class),
-                dialog, "Select download folder", destination, path -> destination = path);
+                dialog, I18n.tr("Select download folder"), destination, path -> destination = path);
         updateControls();
     }
 
@@ -157,12 +156,12 @@ public final class SearchTorrentsDialog {
 
     private void search() {
         if (closed.get() || searching || submitting) { return; }
-        if (service == null) { status.setLabel("Search engine unavailable."); return; }
+        if (service == null) { status.setLabel(I18n.tr("Search engine unavailable.")); return; }
         String query = entry().getText().strip();
-        if (query.isEmpty()) { status.setLabel("Enter a search term."); return; }
+        if (query.isEmpty()) { status.setLabel(I18n.tr("Enter a search term.")); return; }
         int category = (int) Widgets.require(builder, "torrent_category_combo", DropDown.class).getSelected() * 1000;
         searching = true; showResults(List.of());
-        status.setLabel("Searching…");
+        status.setLabel(I18n.tr("Searching…"));
         activity.track(CompletableFuture.supplyAsync(() -> {
             try {
                 JackettClient client = service.client();
@@ -174,12 +173,13 @@ public final class SearchTorrentsDialog {
             searching = false;
             if (error != null) {
                 LOGGER.warn("Torrent search failed: {}", JackettSettingsPane.message(error));
-                status.setLabel("Search failed. " + brief(error));
+                status.setLabel(I18n.format("Search failed. %s", brief(error)));
             } else {
                 showResults(found.results());
                 found.warnings().forEach(warning -> LOGGER.warn("Torrent search indexer: {}", JackettClient.safeMessage(warning)));
-                String summary = found.results().isEmpty() ? "No torrents found." : count(found.results().size(), "torrent") + " found.";
-                status.setLabel(summary + (found.warnings().isEmpty() ? "" : " " + count(found.warnings().size(), "indexer") + " failed."));
+                String summary = found.results().isEmpty() ? I18n.tr("No torrents found.")
+                        : I18n.plural("%d torrent found.", "%d torrents found.", found.results().size());
+                status.setLabel(summary + (found.warnings().isEmpty() ? "" : " " + I18n.plural("%d indexer failed.", "%d indexers failed.", found.warnings().size())));
             }
             updateControls();
         }));
@@ -254,17 +254,18 @@ public final class SearchTorrentsDialog {
         for (TorrentSelection item : checked) {
             TreeIter root = groupIter(item);
             if (root != null) {
-                TreeStoreCells.setString(filesStore, root, 14, item.loading ? "Loading…"
-                        : !item.error.isEmpty() ? "Files unavailable" : item.files.isEmpty() ? "Not loaded" : "");
+                TreeStoreCells.setString(filesStore, root, 14, item.loading ? I18n.tr("Loading…")
+                        : !item.error.isEmpty() ? I18n.tr("Files unavailable") : item.files.isEmpty() ? I18n.tr("Not loaded") : "");
             }
         }
         long loading = checked.stream().filter(item -> item.loading).count();
         long failed = checked.stream().filter(item -> !item.error.isEmpty()).count();
         long fileCount = checked.stream().mapToLong(item -> item.files.size()).sum();
-        filesStatus.setLabel(checked.isEmpty() ? "Check torrents in Search to see their files."
-                : loading > 0 ? "Loading files… " + count(loading, "torrent") + " remaining."
-                : count(fileCount, "file") + " in " + count(checked.size(), "torrent") + "."
-                        + (failed == 0 ? "" : " " + count(failed, "torrent") + " unavailable; Download includes all files."));
+        filesStatus.setLabel(checked.isEmpty() ? I18n.tr("Check torrents in Search to see their files.")
+                : loading > 0 ? I18n.plural("Loading files… %d torrent remaining.", "Loading files… %d torrents remaining.", loading)
+                : I18n.format("%s in %s.", I18n.plural("%d file", "%d files", fileCount),
+                        I18n.plural("%d torrent", "%d torrents", checked.size()))
+                        + (failed == 0 ? "" : " " + I18n.plural("%d torrent unavailable; Download includes all files.", "%d torrents unavailable; Download includes all files.", failed)));
     }
 
     private record Preview(JackettClient.TorrentSource source, List<DownloadFileInfo> files) { }
@@ -320,9 +321,9 @@ public final class SearchTorrentsDialog {
         catch (IllegalArgumentException invalid) { status.setLabel(brief(invalid)); return; }
         List<Submission> batch = checkedTorrents().stream().filter(TorrentSelection::hasFilesToDownload)
                 .map(item -> new Submission(item, item.source, item.selectedFiles(), !item.files.isEmpty())).toList();
-        if (batch.isEmpty()) { status.setLabel("Check torrents and select at least one file."); return; }
+        if (batch.isEmpty()) { status.setLabel(I18n.tr("Check torrents and select at least one file.")); return; }
         Path folder = destination;
-        submitting = true; updateControls(); status.setLabel("Adding torrents to queue…");
+        submitting = true; updateControls(); status.setLabel(I18n.tr("Adding torrents to queue…"));
         activity.track(CompletableFuture.supplyAsync(() -> {
             List<Admission> admissions = new ArrayList<>();
             for (Submission submission : batch) {
@@ -358,7 +359,7 @@ public final class SearchTorrentsDialog {
         }, io)).whenComplete((admissions, error) -> UiThread.marshal(() -> {
             if (closed.get()) { return; }
             submitting = false;
-            if (error != null) { status.setLabel("Could not queue torrents. " + brief(error)); }
+            if (error != null) { status.setLabel(I18n.format("Could not queue torrents. %s", brief(error))); }
             else {
                 long accepted = admissions.stream().filter(Admission::accepted).count();
                 long retained = admissions.stream().filter(Admission::retained).count();
@@ -368,9 +369,9 @@ public final class SearchTorrentsDialog {
                         submitted.add(admission.item().row); admission.item().checked = false;
                     }
                 }
-                status.setLabel("Queued " + count(accepted, "torrent") + "."
-                        + (failed == 0 ? "" : " " + failed + " failed; retry checked items.")
-                        + (retained == 0 ? "" : " " + retained + " need attention in Downloads."));
+                status.setLabel(I18n.plural("Queued %d torrent.", "Queued %d torrents.", accepted)
+                        + (failed == 0 ? "" : " " + I18n.plural("%d failed; retry checked items.", "%d failed; retry checked items.", failed))
+                        + (retained == 0 ? "" : " " + I18n.plural("%d needs attention in Downloads.", "%d need attention in Downloads.", retained)));
                 if ((accepted > 0 || retained > 0) && queued != null) { queued.run(); }
                 updateResultChecks(); rebuildFiles();
             }
@@ -393,13 +394,12 @@ public final class SearchTorrentsDialog {
         List<TorrentSelection> checked = checkedTorrents();
         long count = checked.stream().filter(TorrentSelection::hasFilesToDownload).count();
         button("search").setSensitive(!searching && !submitting);
-        button("download").setLabel(count == 0 ? "Download" : "Download (" + count + ")");
+        button("download").setLabel(count == 0 ? I18n.tr("Download") : I18n.format("Download (%d)", count));
         button("download").setSensitive(count > 0 && !submitting && checked.stream().noneMatch(item -> item.loading));
         resultsView.setSensitive(!submitting);
         filesView.setSensitive(!submitting);
     }
 
-    private static String count(long number, String noun) { return number + " " + noun + (number == 1 ? "" : "s"); }
     private static String brief(Throwable error) {
         String text = JackettSettingsPane.message(error).split(" --->| at ", 2)[0];
         return text.length() > 140 ? text.substring(0, 140) + "…" : text;

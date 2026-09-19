@@ -34,7 +34,7 @@ import org.manager.download.DownloadManager;
 public class ImportSequenceDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ImportSequenceDialog.class);
-    private static final String[] RANGE_MODES = {"Number", "Character"};
+    private static final String[] RANGE_MODES = {I18n.tr("Number"), I18n.tr("Character")};
 
     private final Window dialog;
     private final DownloadManager downloadManager;
@@ -99,13 +99,13 @@ public class ImportSequenceDialog {
         this.activity = new SpinnerActivity(
                 Widgets.require(builder, "import_sequence_spinner", Spinner.class));
 
-        AccessibilitySupport.label(uriEntry, "URL sequence pattern");
-        AccessibilitySupport.label(numStartSpin, "Sequence start number");
-        AccessibilitySupport.label(numVersSpin, "Sequence end number");
-        AccessibilitySupport.label(numCountSpin, "Maximum generated URLs");
-        AccessibilitySupport.label(charEntry, "Sequence start character");
-        AccessibilitySupport.label(charVersEntry, "Sequence end character");
-        AccessibilitySupport.label(engineCombo, "Import download engine");
+        AccessibilitySupport.label(uriEntry, I18n.tr("URL sequence pattern"));
+        AccessibilitySupport.label(numStartSpin, I18n.tr("Sequence start number"));
+        AccessibilitySupport.label(numVersSpin, I18n.tr("Sequence end number"));
+        AccessibilitySupport.label(numCountSpin, I18n.tr("Maximum generated URLs"));
+        AccessibilitySupport.label(charEntry, I18n.tr("Sequence start character"));
+        AccessibilitySupport.label(charVersEntry, I18n.tr("Sequence end character"));
+        AccessibilitySupport.label(engineCombo, I18n.tr("Import download engine"));
 
         DialogSupport.configureIndependent(dialog, parent);
 
@@ -141,11 +141,11 @@ public class ImportSequenceDialog {
         loadGlobalDefaults();
 
         MenuButton destinationButton = Widgets.require(builder, "destination_folder", MenuButton.class);
-        AccessibilitySupport.label(destinationButton, "Sequence destination folder");
+        AccessibilitySupport.label(destinationButton, I18n.tr("Sequence destination folder"));
         Path defaultDestination = Path.of(currentDefaultDirectory());
         this.destinationFolder = defaultDestination;
         this.destinationChooser = PathChooserButton.forFolder(destinationButton, dialog,
-                "Select destination folder", defaultDestination, path -> {
+                I18n.tr("Select destination folder"), defaultDestination, path -> {
                     destinationFolder = path;
                     updateDiskSpace(path.toString());
                 });
@@ -266,7 +266,7 @@ public class ImportSequenceDialog {
         SequenceInput input = sequenceInput();
         previewStore.clear();
         currentPreviewUrls = List.of();
-        itemCountLabel.setLabel("0 items");
+        itemCountLabel.setLabel(I18n.plural("%d item", "%d items", 0));
         validateButton.setSensitive(false);
         activity.track(CompletableFuture.supplyAsync(
                 () -> DownloadSubmission.validUrls(input.generate(importLimits.maxUrls()),
@@ -282,7 +282,7 @@ public class ImportSequenceDialog {
                     }
                     currentPreviewUrls = List.copyOf(urls);
                     appendPreview(urls);
-                    itemCountLabel.setLabel(urls.size() + (urls.size() == 1 ? " item" : " items"));
+                    itemCountLabel.setLabel(I18n.plural("%d item", "%d items", urls.size()));
                     refreshCapabilities();
                     validateButton.setSensitive(!urls.isEmpty());
                 }));
@@ -320,7 +320,7 @@ public class ImportSequenceDialog {
         ImportOptions options = captureOptions();
         ImportEngine engine = selectedEngine();
         validateButton.setSensitive(false);
-        AccessibilitySupport.status(diskSpaceLabel, "Adding URL sequence to queue…");
+        AccessibilitySupport.status(diskSpaceLabel, I18n.tr("Adding URL sequence to queue…"));
         activity.track(DialogOptions.ensureTorAvailable(options.tor(), torService)
                 .thenCompose(ignored -> CompletableFuture.supplyAsync(
                         () -> DownloadSubmission.queueUrls(downloadManager, urls, destination,
@@ -329,7 +329,7 @@ public class ImportSequenceDialog {
                     if (error != null) {
                         LOGGER.warn("URL sequence import failed", error);
                         AccessibilitySupport.status(diskSpaceLabel,
-                                "Could not import this URL sequence: " + UiErrors.message(error),
+                                I18n.format("Could not import this URL sequence: %s", UiErrors.message(error)),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         validateButton.setSensitive(!currentPreviewUrls.isEmpty());
                         return;
@@ -418,7 +418,7 @@ public class ImportSequenceDialog {
     private void updateDiskSpace(String dir) {
         try {
             long free = new java.io.File(dir).getUsableSpace();
-            diskSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
+            diskSpaceLabel.setLabel(I18n.format("%s free", DownloadFormats.size(free)));
         } catch (Exception e) {
             diskSpaceLabel.setLabel("");
         }

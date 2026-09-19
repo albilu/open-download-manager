@@ -91,7 +91,7 @@ public class ImportListDialog {
         this.dialog = Widgets.require(builder, "import_dialog", Window.class);
         this.urlStore = Widgets.require(builder, "url_liststore", ListStore.class);
         this.extensionFilterCombo = Widgets.require(builder, "extension_filter_combo", MenuButton.class);
-        this.extensionFilterLabel = new Label("(all)");
+        this.extensionFilterLabel = new Label(I18n.tr("(all)"));
         extensionFilterLabel.setEllipsize(EllipsizeMode.END);
         extensionFilterLabel.setMaxWidthChars(24);
         extensionFilterCombo.setChild(extensionFilterLabel);
@@ -104,34 +104,34 @@ public class ImportListDialog {
         this.diskSpaceLabel = Widgets.require(builder, "disk_space_label", Label.class);
         this.itemCountLabel = Widgets.require(builder, "item_count_label", Label.class);
 
-        AccessibilitySupport.label(extensionFilterCombo, "Imported URL extension filter");
-        AccessibilitySupport.label(engineCombo, "Import download engine");
+        AccessibilitySupport.label(extensionFilterCombo, I18n.tr("Imported URL extension filter"));
+        AccessibilitySupport.label(engineCombo, I18n.tr("Import download engine"));
         AccessibilitySupport.label(Widgets.require(builder, "url_treeview",
-                org.gnome.gtk.TreeView.class), "URLs to import");
+                org.gnome.gtk.TreeView.class), I18n.tr("URLs to import"));
         AccessibilitySupport.label(Widgets.require(builder, "folder_destination", MenuButton.class),
-                "Import destination folder");
+                I18n.tr("Import destination folder"));
         AccessibilitySupport.label(Widgets.require(builder, "max_connections_spin", SpinButton.class),
-                "Maximum connections");
+                I18n.tr("Maximum connections"));
         AccessibilitySupport.label(Widgets.require(builder, "retry_limit_spin", SpinButton.class),
-                "Retry limit");
+                I18n.tr("Retry limit"));
         AccessibilitySupport.label(Widgets.require(builder, "max_download_speed_spin", SpinButton.class),
-                "Maximum download speed in KB per second");
+                I18n.tr("Maximum download speed in KB per second"));
         AccessibilitySupport.label(Widgets.require(builder, "max_upload_speed_spin", SpinButton.class),
-                "Maximum upload speed in KB per second");
+                I18n.tr("Maximum upload speed in KB per second"));
         AccessibilitySupport.label(Widgets.require(builder, "retry_after", SpinButton.class),
-                "Seconds before retry");
-        AccessibilitySupport.label(Widgets.require(builder, "referrer", Entry.class), "HTTP referrer");
-        AccessibilitySupport.label(Widgets.require(builder, "cookie", Entry.class), "HTTP cookie header");
-        AccessibilitySupport.label(Widgets.require(builder, "user_agent", Entry.class), "HTTP user agent");
-        AccessibilitySupport.label(Widgets.require(builder, "proxy_type_combo", DropDown.class), "Proxy type");
-        AccessibilitySupport.label(Widgets.require(builder, "proxy_host_entry", Entry.class), "Proxy host");
-        AccessibilitySupport.label(Widgets.require(builder, "proxy_port_spin", SpinButton.class), "Proxy port");
+                I18n.tr("Seconds before retry"));
+        AccessibilitySupport.label(Widgets.require(builder, "referrer", Entry.class), I18n.tr("HTTP referrer"));
+        AccessibilitySupport.label(Widgets.require(builder, "cookie", Entry.class), I18n.tr("HTTP cookie header"));
+        AccessibilitySupport.label(Widgets.require(builder, "user_agent", Entry.class), I18n.tr("HTTP user agent"));
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_type_combo", DropDown.class), I18n.tr("Proxy type"));
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_host_entry", Entry.class), I18n.tr("Proxy host"));
+        AccessibilitySupport.label(Widgets.require(builder, "proxy_port_spin", SpinButton.class), I18n.tr("Proxy port"));
         AccessibilitySupport.label(Widgets.require(builder, "proxy_username_entry", Entry.class),
-                "Proxy username");
+                I18n.tr("Proxy username"));
         AccessibilitySupport.label(Widgets.require(builder, "proxy_password_entry", Entry.class),
-                "Proxy password");
+                I18n.tr("Proxy password"));
         AccessibilitySupport.label(Widgets.require(builder, "tor_switch", Switch.class),
-                "Route imported downloads through Tor");
+                I18n.tr("Route imported downloads through Tor"));
 
         DialogSupport.configureIndependent(dialog, parent);
 
@@ -162,7 +162,7 @@ public class ImportListDialog {
         Path defaultDestination = Path.of(currentDefaultDirectory());
         this.destinationFolder = defaultDestination;
         this.destinationChooser = PathChooserButton.forFolder(folderButton, dialog,
-                "Select destination folder", defaultDestination, path -> {
+                I18n.tr("Select destination folder"), defaultDestination, path -> {
                     destinationFolder = path;
                     updateDiskSpace(path.toString());
                 });
@@ -206,7 +206,7 @@ public class ImportListDialog {
             Runnable onImportDone, org.tor.TorService torService) {
         FileDialog fileDialog = new FileDialog();
         DialogSupport.configureIndependent(fileDialog);
-        fileDialog.setTitle("Select URL list file");
+        fileDialog.setTitle(I18n.tr("Select URL list file"));
         fileDialog.open(parent, null, result -> {
             try {
                 File file = fileDialog.openFinish(result);
@@ -232,7 +232,7 @@ public class ImportListDialog {
             org.tor.TorService torService) {
         var imported = new ImportListDialog(parent, downloadManager, onImportDone,
                 urls != null ? urls : List.of(), limits, torService);
-        imported.dialog.setTitle("Import Links from HTML");
+        imported.dialog.setTitle(I18n.tr("Import Links from HTML"));
         imported.present();
         return imported;
     }
@@ -266,7 +266,7 @@ public class ImportListDialog {
     private static void showLoadError(Window parent, Throwable error) {
         LOGGER.warn("URL list import was rejected", error);
         org.gnome.gtk.AlertDialog alert = new org.gnome.gtk.AlertDialog();
-        alert.setMessage("Could not import URL list");
+        alert.setMessage(I18n.tr("Could not import URL list"));
         alert.setDetail(UiErrors.message(error));
         DialogSupport.configureIndependent(alert);
         alert.show(parent);
@@ -292,8 +292,8 @@ public class ImportListDialog {
                 bytes = input.readNBytes(Math.toIntExact(effective.maxSourceBytes()) + 1);
             }
             if (bytes.length > effective.maxSourceBytes()) {
-                throw new IllegalArgumentException("URL list exceeds the configured "
-                        + effective.maxSourceSizeMiB() + " MiB limit");
+                throw new IllegalArgumentException(I18n.format("URL list exceeds the configured %d MiB limit",
+                        effective.maxSourceSizeMiB()));
             }
             try (java.util.stream.Stream<String> stream = new String(bytes,
                     java.nio.charset.StandardCharsets.UTF_8).lines()) {
@@ -302,8 +302,8 @@ public class ImportListDialog {
                         .limit(effective.maxUrls() + 1L)
                         .toList();
                 if (lines.size() > effective.maxUrls()) {
-                    throw new IllegalArgumentException("URL list exceeds the configured "
-                            + effective.maxUrls() + " URL limit");
+                    throw new IllegalArgumentException(I18n.format("URL list exceeds the configured %d URL limit",
+                            effective.maxUrls()));
                 }
                 return lines;
             }
@@ -340,7 +340,7 @@ public class ImportListDialog {
         choices.setMarginEnd(8);
         choices.setMarginTop(8);
         choices.setMarginBottom(8);
-        allExtensionsCheck = CheckButton.withLabel("All");
+        allExtensionsCheck = CheckButton.withLabel(I18n.tr("All"));
         allExtensionsCheck.setActive(true);
         choices.append(allExtensionsCheck);
         for (String ext : extensions) {
@@ -377,7 +377,7 @@ public class ImportListDialog {
     }
 
     private static String extensionLabel(String extension) {
-        return extension.isEmpty() ? "No extension" : extension;
+        return extension.isEmpty() ? I18n.tr("No extension") : extension;
     }
 
     private void onExtensionFilterChanged() {
@@ -398,7 +398,7 @@ public class ImportListDialog {
         } finally {
             updatingExtensionFilter = false;
         }
-        String summary = all ? "(all)" : selected.isEmpty() ? "(none)"
+        String summary = all ? I18n.tr("(all)") : selected.isEmpty() ? I18n.tr("(none)")
                 : String.join(", ", selected.stream().map(ImportListDialog::extensionLabel).toList());
         extensionFilterLabel.setLabel(summary);
         extensionFilterCombo.setTooltipText(summary);
@@ -437,7 +437,7 @@ public class ImportListDialog {
                         Widgets.require(builder, "validate_button", Button.class)
                                 .setSensitive(true);
                         AccessibilitySupport.status(diskSpaceLabel,
-                                "Could not import this list: " + UiErrors.message(error),
+                                I18n.format("Could not import this list: %s", UiErrors.message(error)),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         return;
                     }
@@ -468,8 +468,8 @@ public class ImportListDialog {
     private void refreshSelection() {
         List<String> selected = markedUrls();
         int total = urlStore.iterNChildren(null);
-        itemCountLabel.setLabel(selected.size() + " of " + total
-                + (total == 1 ? " item selected" : " items selected"));
+        itemCountLabel.setLabel(I18n.plural("%2$d of %1$d item selected", "%2$d of %1$d items selected",
+                total, selected.size()));
         networkControls.applyCapabilities(NetworkOptionControls.commonCapabilities(
                 downloadManager.getGlobalSettings(), selected, selectedEngine().type()));
     }
@@ -546,7 +546,7 @@ public class ImportListDialog {
     private void updateDiskSpace(String dir) {
         try {
             long free = new java.io.File(dir).getUsableSpace();
-            diskSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
+            diskSpaceLabel.setLabel(I18n.format("%s free", DownloadFormats.size(free)));
         } catch (Exception e) {
             diskSpaceLabel.setLabel("");
         }

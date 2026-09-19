@@ -9,7 +9,7 @@ final class ProgressPresentation {
     }
 
     static String percentage(double value) {
-        return String.format(Locale.ROOT, "%.2f%%", clamp(value));
+        return String.format(Locale.getDefault(Locale.Category.FORMAT), "%.2f%%", clamp(value));
     }
 
     static int wholePercentage(double value) {

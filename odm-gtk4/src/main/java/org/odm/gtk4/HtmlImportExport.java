@@ -255,13 +255,13 @@ final class HtmlImportExport {
                 bytes = input.readNBytes(Math.toIntExact(effective.maxSourceBytes()) + 1);
             }
             if (bytes.length > effective.maxSourceBytes()) {
-                throw new IllegalArgumentException("HTML source exceeds the "
-                        + effective.maxSourceSizeMiB() + " MiB import limit");
+                throw new IllegalArgumentException(I18n.format("HTML source exceeds the %d MiB import limit",
+                        effective.maxSourceSizeMiB()));
             }
             return extractLinks(new String(bytes, StandardCharsets.UTF_8), null, effective)
                     .stream().map(URI::toString).toList();
         } catch (java.io.IOException error) {
-            throw new IllegalArgumentException("Could not read the selected HTML file", error);
+            throw new IllegalArgumentException(I18n.tr("Could not read the selected HTML file"), error);
         }
     }
 
@@ -302,7 +302,7 @@ final class HtmlImportExport {
                     normalizedSource, effective.maxSourceBytes(), Duration.ofSeconds(10),
                     Duration.ofSeconds(30), proxyAddress, verifyHttpsCertificates);
             if (!isHtmlContentType(response.contentType())) {
-                throw new IllegalArgumentException("The remote source is not HTML");
+                throw new IllegalArgumentException(I18n.tr("The remote source is not HTML"));
             }
             Charset charset = responseCharset(response.contentType());
             String html = new String(response.body(), charset);
@@ -311,7 +311,7 @@ final class HtmlImportExport {
         } catch (IllegalArgumentException error) {
             throw error;
         } catch (Exception error) {
-            throw new IllegalArgumentException("Could not fetch the remote HTML source", error);
+            throw new IllegalArgumentException(I18n.tr("Could not fetch the remote HTML source"), error);
         }
     }
 

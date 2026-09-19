@@ -112,22 +112,22 @@ final class NetworkOptionsPane {
         proxyPassword = Widgets.require(builder, "network_proxy_password_entry", Entry.class);
         tor = Widgets.require(builder, "network_tor_switch", Switch.class);
 
-        AccessibilitySupport.label(connections, "Maximum connections");
-        AccessibilitySupport.label(retries, "Retry limit");
-        AccessibilitySupport.label(retryDelay, "Seconds before retry");
+        AccessibilitySupport.label(connections, I18n.tr("Maximum connections"));
+        AccessibilitySupport.label(retries, I18n.tr("Retry limit"));
+        AccessibilitySupport.label(retryDelay, I18n.tr("Seconds before retry"));
         AccessibilitySupport.label(downloadLimit,
-                "Maximum download speed in KiB per second");
+                I18n.tr("Maximum download speed in KiB per second"));
         AccessibilitySupport.label(uploadLimit,
-                "Maximum upload speed in KiB per second");
-        AccessibilitySupport.label(referer, "HTTP referer");
-        AccessibilitySupport.label(cookie, "HTTP cookie header");
-        AccessibilitySupport.label(userAgent, "HTTP user agent");
-        AccessibilitySupport.label(proxyType, "Proxy type");
-        AccessibilitySupport.label(proxyHost, "Proxy host");
-        AccessibilitySupport.label(proxyPort, "Proxy port");
-        AccessibilitySupport.label(proxyUsername, "Proxy username");
-        AccessibilitySupport.label(proxyPassword, "Proxy password");
-        AccessibilitySupport.label(tor, "Route this download through Tor");
+                I18n.tr("Maximum upload speed in KiB per second"));
+        AccessibilitySupport.label(referer, I18n.tr("HTTP referer"));
+        AccessibilitySupport.label(cookie, I18n.tr("HTTP cookie header"));
+        AccessibilitySupport.label(userAgent, I18n.tr("HTTP user agent"));
+        AccessibilitySupport.label(proxyType, I18n.tr("Proxy type"));
+        AccessibilitySupport.label(proxyHost, I18n.tr("Proxy host"));
+        AccessibilitySupport.label(proxyPort, I18n.tr("Proxy port"));
+        AccessibilitySupport.label(proxyUsername, I18n.tr("Proxy username"));
+        AccessibilitySupport.label(proxyPassword, I18n.tr("Proxy password"));
+        AccessibilitySupport.label(tor, I18n.tr("Route this download through Tor"));
 
         controls = new NetworkOptionControls(connections, downloadLimit, uploadLimit,
                 retries, retryDelay, referer, userAgent, cookie, proxyType,
@@ -160,7 +160,7 @@ final class NetworkOptionsPane {
                 (int) proxyPort.getValue(), proxyUsername.getText(),
                 proxyPassword.getText(), DialogOptions.torSocksPort(torService));
         if (!isTorSelected() && proxyType.getSelected() > 0 && address == null) {
-            throw new IllegalArgumentException("Complete the selected proxy address");
+            throw new IllegalArgumentException(I18n.tr("Complete the selected proxy address"));
         }
         return address;
     }
@@ -305,23 +305,23 @@ final class NetworkOptionsPane {
             return false;
         }
         boolean anyMixed = false;
-        anyMixed |= markMixed(downloads, connections, "connection counts",
+        anyMixed |= markMixed(downloads, connections, I18n.tr("connection counts"),
                 d -> d.getSettings().getMaxConnections());
-        anyMixed |= markMixed(downloads, downloadLimit, "download limits",
+        anyMixed |= markMixed(downloads, downloadLimit, I18n.tr("download limits"),
                 d -> d.getSettings().getDownloadLimitKB());
-        anyMixed |= markMixed(downloads, uploadLimit, "upload limits",
+        anyMixed |= markMixed(downloads, uploadLimit, I18n.tr("upload limits"),
                 d -> d.getSettings().getUploadLimitKB());
-        anyMixed |= markMixed(downloads, retries, "retry limits",
+        anyMixed |= markMixed(downloads, retries, I18n.tr("retry limits"),
                 d -> d.getSettings().getMaxRetries());
-        anyMixed |= markMixed(downloads, retryDelay, "retry delays",
+        anyMixed |= markMixed(downloads, retryDelay, I18n.tr("retry delays"),
                 d -> d.getSettings().getRetryDelaySeconds());
-        anyMixed |= markMixed(downloads, referer, "Referer values",
+        anyMixed |= markMixed(downloads, referer, I18n.tr("Referer values"),
                 d -> normalized(d.getSettings().getReferer()));
-        anyMixed |= markMixed(downloads, userAgent, "User-Agent values",
+        anyMixed |= markMixed(downloads, userAgent, I18n.tr("User-Agent values"),
                 d -> normalized(d.getSettings().getUserAgent()));
-        anyMixed |= markMixed(downloads, cookie, "cookie values",
+        anyMixed |= markMixed(downloads, cookie, I18n.tr("cookie values"),
                 d -> normalized(d.getSettings().getCookieHeader()));
-        anyMixed |= markMixed(downloads, proxyType, "proxy routes",
+        anyMixed |= markMixed(downloads, proxyType, I18n.tr("proxy routes"),
                 d -> d.isUseProxy() ? normalized(d.getProxyAddress()) : "");
         return anyMixed;
     }
@@ -332,8 +332,8 @@ final class NetworkOptionsPane {
         boolean mixed = downloads.stream().skip(1)
                 .map(value).anyMatch(other -> !Objects.equals(first, other));
         if (mixed && widget.getSensitive()) {
-            widget.setTooltipText("Selected downloads have different " + description
-                    + "; leave this unchanged to preserve each value.");
+            widget.setTooltipText(I18n.format("Selected downloads have different %s; leave this unchanged to preserve each value.",
+                    description));
         }
         return mixed;
     }

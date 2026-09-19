@@ -14,8 +14,10 @@ import org.manager.util.SizeUnits;
  */
 final class DownloadFormats {
 
-    /** Date format used in the list and info panel (original UI format). */
-    static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    /** System date/time format used in the list and info panel. */
+    static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofLocalizedDateTime(
+            java.time.format.FormatStyle.SHORT)
+            .withLocale(java.util.Locale.getDefault(java.util.Locale.Category.FORMAT))
             .withZone(ZoneId.systemDefault());
 
     private DownloadFormats() {

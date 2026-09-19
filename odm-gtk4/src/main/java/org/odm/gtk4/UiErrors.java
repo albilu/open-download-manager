@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 /** User-facing failure text. Callers log the original failure, not this summary. */
 final class UiErrors {
     private static final String UNEXPECTED =
-            "An unexpected error occurred. See the application log for details.";
+            I18n.tr("An unexpected error occurred. See the application log for details.");
     private static final Pattern EXCEPTION = Pattern.compile(
             "\\b(?:[\\w$]+\\.)*(?:[A-Z][\\w$]*(?:Exception|Error)|Exception|Throwable)\\b:?[ \\t]*");
     private static final Pattern STACK_FRAME = Pattern.compile(
@@ -71,17 +71,17 @@ final class UiErrors {
     private static String knownFailure(String name) {
         return switch (name) {
             case "UnknownHostException", "UnresolvedAddressException" ->
-                    "The server address could not be found. Check the address and network settings.";
+                    I18n.tr("The server address could not be found. Check the address and network settings.");
             case "ConnectException" ->
-                    "Could not connect to the server. Check your network and proxy settings.";
+                    I18n.tr("Could not connect to the server. Check your network and proxy settings.");
             case "SocketTimeoutException", "HttpTimeoutException", "HttpConnectTimeoutException", "TimeoutException" ->
-                    "The request timed out. Please try again.";
+                    I18n.tr("The request timed out. Please try again.");
             case "SSLException", "SSLHandshakeException", "SSLPeerUnverifiedException" ->
-                    "Could not establish a secure connection. Check your network settings.";
-            case "AccessDeniedException" -> "Permission denied. Check access to the selected file or folder.";
-            case "NoSuchFileException", "FileNotFoundException" -> "The file or folder could not be found.";
-            case "FileAlreadyExistsException" -> "A file already exists at the destination.";
-            case "CancellationException", "InterruptedException" -> "The operation was canceled.";
+                    I18n.tr("Could not establish a secure connection. Check your network settings.");
+            case "AccessDeniedException" -> I18n.tr("Permission denied. Check access to the selected file or folder.");
+            case "NoSuchFileException", "FileNotFoundException" -> I18n.tr("The file or folder could not be found.");
+            case "FileAlreadyExistsException" -> I18n.tr("A file already exists at the destination.");
+            case "CancellationException", "InterruptedException" -> I18n.tr("The operation was canceled.");
             case "NullPointerException", "ClassCastException", "IndexOutOfBoundsException",
                     "ArrayIndexOutOfBoundsException", "StringIndexOutOfBoundsException",
                     "NoSuchMethodError", "NoClassDefFoundError", "ExceptionInInitializerError",

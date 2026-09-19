@@ -200,7 +200,7 @@ final class DetailTabsPresenter {
             int position = 0;
             for (String url : urls) {
                 trackers.put(tier + ":" + position++ + ":" + url,
-                        new TrackerRow(url, "tier " + tier));
+                        new TrackerRow(url, I18n.format("tier %d", tier)));
             }
             tier++;
         }
@@ -219,8 +219,8 @@ final class DetailTabsPresenter {
                     + ":" + peer.getOrDefault("port", "");
             String peerId = displayPeerId(peer.get("peerId"));
             String state = Boolean.parseBoolean(String.valueOf(peer.getOrDefault("seeder", false)))
-                    ? "Seeder" : (Boolean.parseBoolean(String.valueOf(peer.getOrDefault("peerChoking", false)))
-                            ? "Choking" : "Transferring");
+                    ? I18n.tr("Seeder") : (Boolean.parseBoolean(String.valueOf(peer.getOrDefault("peerChoking", false)))
+                            ? I18n.tr("Choking") : I18n.tr("Transferring"));
             String key = uniqueKey(peers, address + "\u0000" + peerId);
             peers.put(key, new PeerRow(address, peerId,
                     DownloadFormats.size(parseLong(peer.get("downloadSpeed"), 0)) + "/s",
@@ -322,19 +322,28 @@ final class DetailTabsPresenter {
 
     private static String completionStatus(CompletionActionResult result) {
         return switch (result.status()) {
-            case RUNNING -> "Running";
-            case SUCCEEDED -> "Succeeded";
-            case FAILED -> "Failed (" + result.severity().name().toLowerCase() + ")";
-            case INTERRUPTED -> "Interrupted";
+            case RUNNING -> I18n.tr("Running");
+            case SUCCEEDED -> I18n.tr("Succeeded");
+            case FAILED -> I18n.format("Failed (%s)", severity(result.severity()));
+            case INTERRUPTED -> I18n.tr("Interrupted");
+        };
+    }
+
+    private static String severity(org.manager.download.action.AfterCompletionAction.Severity severity) {
+        return switch (severity) {
+            case LOW -> I18n.tr("low");
+            case MEDIUM -> I18n.tr("medium");
+            case HIGH -> I18n.tr("high");
+            case CRITICAL -> I18n.tr("critical");
         };
     }
 
     private static String operationStatus(DownloadOperationResult result) {
         return switch (result.status()) {
-            case RUNNING -> "Running";
-            case ACCEPTED -> "Accepted";
-            case FAILED -> "Failed";
-            case INTERRUPTED -> "Interrupted";
+            case RUNNING -> I18n.tr("Running");
+            case ACCEPTED -> I18n.tr("Accepted");
+            case FAILED -> I18n.tr("Failed");
+            case INTERRUPTED -> I18n.tr("Interrupted");
         };
     }
 

@@ -105,6 +105,7 @@ print('Playwright and SQLite contain only Linux amd64 native libraries')
 PYNATIVES
 "$APP_ROOT/runtime/bin/java" --list-modules > "$CHECK_ROOT/modules"
 grep -q '^java.net.http@' "$CHECK_ROOT/modules"
+grep -q '^jdk.localedata@' "$CHECK_ROOT/modules"
 # Exercise native GTK resource loading, HTTP and SQLite with the actual bundled JVM/JAR.
 cat > "$CHECK_ROOT/PackageRuntimeCheck.java" <<'JAVA'
 import java.sql.DriverManager;
@@ -117,10 +118,33 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.sun.net.httpserver.HttpServer;
 import org.gnome.gtk.Gtk;
 import org.odm.gtk4.UiLoader;
+import org.odm.gtk4.I18n;
 import org.ytdlp.BrowserMediaProbe;
 import org.ytdlp.YtDlpSettings;
 public class PackageRuntimeCheck {
     public static void main(String[] args) throws Exception {
+        I18n.initialize();
+        Class.forName("org.gnome.glib.GLib");
+        Class.forName("org.gnome.glib.MainContext");
+        if (!org.gnome.glib.MainContext.default_().acquire()) {
+            throw new AssertionError("Could not own the GTK context for this runtime probe");
+        }
+        if (args.length > 0 && args[0].equals("fr")) {
+            if (!"Préférences".equals(I18n.tr("Preferences"))
+                    || !"2 éléments".equals(I18n.plural("%d item", "%d items", 2))
+                    || !"1,5".equals(java.text.NumberFormat.getNumberInstance(java.util.Locale.FRANCE).format(1.5))) {
+                throw new AssertionError("Packaged French catalog or Java locale data is missing");
+            }
+            Gtk.init();
+            var builder = UiLoader.load("/ui/settings.ui");
+            var window = (org.gnome.gtk.Window) builder.getObject("settings_dialog");
+            if (!"Open Download Manager - Paramètres".equals(window.getTitle())) {
+                throw new AssertionError("Packaged GtkBuilder did not translate the settings window");
+            }
+            window.destroy();
+            System.out.println("Packaged French GTK, plurals and number formatting passed");
+            System.exit(0);
+        }
         if (!"amd64".equals(System.getProperty("os.arch"))) {
             throw new AssertionError("Bundled JVM must target amd64");
         }
@@ -181,8 +205,11 @@ JAVA
 javac --release 25 -cp "$APP_ROOT/odm.jar" "$CHECK_ROOT/PackageRuntimeCheck.java"
 xvfb-run -a "$APP_ROOT/runtime/bin/java" --enable-native-access=ALL-UNNAMED \
     -cp "$CHECK_ROOT:$APP_ROOT/odm.jar" PackageRuntimeCheck
+LC_ALL=fr_FR.UTF-8 LANGUAGE=fr xvfb-run -a "$APP_ROOT/runtime/bin/java" --enable-native-access=ALL-UNNAMED \
+    -cp "$CHECK_ROOT:$APP_ROOT/odm.jar" PackageRuntimeCheck fr
 # Bound the real application's startup; its GTK entry point has no dedicated smoke switch.
 set +e
+LC_ALL=fr_FR.UTF-8 LANGUAGE=fr \
 XDG_CONFIG_HOME="$CHECK_ROOT/config" XDG_DATA_HOME="$CHECK_ROOT/data" XDG_STATE_HOME="$CHECK_ROOT/state" \
     xvfb-run -a timeout -k 10s 25s "$APP_ROOT/runtime/bin/java" --enable-native-access=ALL-UNNAMED \
     -jar "$APP_ROOT/odm.jar" > "$CHECK_ROOT/launcher.log" 2>&1

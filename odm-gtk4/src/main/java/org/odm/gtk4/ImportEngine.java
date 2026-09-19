@@ -6,10 +6,10 @@ import org.manager.url.DownloadUrlPolicy;
 
 /** Optional engine override for a batch of newly imported records. */
 enum ImportEngine {
-    AUTO("Auto", null),
-    ARIA2("HTTP/Torrent", Download.Type.ARIA2),
-    YT_DLP("Media", Download.Type.YOUTUBE),
-    HTTRACK("Web Scrap", Download.Type.WEBSITE_SCRAPING);
+    AUTO(I18n.mark("Auto"), null),
+    ARIA2(I18n.mark("HTTP/Torrent"), Download.Type.ARIA2),
+    YT_DLP(I18n.mark("Media"), Download.Type.YOUTUBE),
+    HTTRACK(I18n.mark("Web Scrap"), Download.Type.WEBSITE_SCRAPING);
 
     private final String label;
     private final Download.Type type;
@@ -19,7 +19,7 @@ enum ImportEngine {
         this.type = type;
     }
 
-    String label() { return label; }
+    String label() { return I18n.tr(label); }
 
     Download.Type type() { return type; }
 
@@ -30,7 +30,7 @@ enum ImportEngine {
                 case AUTO, ARIA2 -> { }
             }
         } catch (IllegalArgumentException incompatible) {
-            throw new IllegalArgumentException(label + ": " + incompatible.getMessage());
+            throw new IllegalArgumentException(label() + ": " + UiErrors.message(incompatible));
         }
     }
 

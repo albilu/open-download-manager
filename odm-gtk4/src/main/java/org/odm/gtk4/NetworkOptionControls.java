@@ -36,7 +36,7 @@ final class NetworkOptionControls {
     }
 
     private static final String UNSUPPORTED =
-            "Not supported by the selected download engine or protocol.";
+            I18n.tr("Not supported by the selected download engine or protocol.");
 
     private final SpinButton connections;
     private final SpinButton downloadLimit;
@@ -112,9 +112,9 @@ final class NetworkOptionControls {
                 ExternalToolSettings.Capability.CONNECTIONS));
         if (connections.getSensitive()) {
             connections.setTooltipText(capabilities.maxConnections() == Integer.MAX_VALUE
-                    ? "Maximum simultaneous media fragments (1–64)."
-                    : "Maximum simultaneous connections supported by this engine: "
-                            + capabilities.maxConnections() + ".");
+                    ? I18n.tr("Maximum simultaneous media fragments (1–64).")
+                    : I18n.format("Maximum simultaneous connections supported by this engine: %d.",
+                            capabilities.maxConnections()));
         }
         setSupported(downloadLimit, supported.contains(
                 ExternalToolSettings.Capability.DOWNLOAD_LIMIT));
@@ -162,7 +162,7 @@ final class NetworkOptionControls {
     private void refreshTorSensitivity() {
         tor.setSensitive(socksProxySupported && torAvailable);
         tor.setTooltipText(!socksProxySupported ? UNSUPPORTED
-                : !torAvailable ? "Start Tor from Edit → Tor to change this option."
+                : !torAvailable ? I18n.tr("Start Tor from Edit → Tor to change this option.")
                 : originalTooltips.get(tor));
     }
 
@@ -191,10 +191,10 @@ final class NetworkOptionControls {
             return originalTooltips.get(proxyType);
         }
         if (plainProxySupported) {
-            return "This engine supports HTTP/HTTPS proxies; SOCKS and Tor are unavailable.";
+            return I18n.tr("This engine supports HTTP/HTTPS proxies; SOCKS and Tor are unavailable.");
         }
         if (socksProxySupported) {
-            return "This protocol supports SOCKS proxies; HTTP/HTTPS proxying is unavailable.";
+            return I18n.tr("This protocol supports SOCKS proxies; HTTP/HTTPS proxying is unavailable.");
         }
         return UNSUPPORTED;
     }
@@ -223,7 +223,7 @@ final class NetworkOptionControls {
             field.setSensitive(fieldsEnabled);
             field.setTooltipText(fieldsEnabled
                     ? originalTooltips.get(field)
-                    : proxyType.getSensitive() ? "Select a supported proxy type to edit this field."
+                    : proxyType.getSensitive() ? I18n.tr("Select a supported proxy type to edit this field.")
                             : UNSUPPORTED);
         }
     }

@@ -50,12 +50,19 @@ record DownloadLinkCopy(List<String> links) {
     }
 
     String label() {
-        return "Copy " + noun() + (links.size() > 1 ? "s" : "");
+        return switch (noun()) {
+            case "URL" -> I18n.plural("Copy URL", "Copy URLs", Math.max(1, links.size()));
+            case "Magnet URI" -> I18n.plural("Copy Magnet URI", "Copy Magnet URIs", Math.max(1, links.size()));
+            default -> I18n.plural("Copy Link", "Copy Links", Math.max(1, links.size()));
+        };
     }
 
     String confirmation() {
-        return links.size() == 1 ? noun() + " copied"
-                : links.size() + " " + noun() + "s copied";
+        return switch (noun()) {
+            case "URL" -> I18n.plural("URL copied", "%d URLs copied", links.size());
+            case "Magnet URI" -> I18n.plural("Magnet URI copied", "%d Magnet URIs copied", links.size());
+            default -> I18n.plural("Link copied", "%d Links copied", links.size());
+        };
     }
 
     private String noun() {

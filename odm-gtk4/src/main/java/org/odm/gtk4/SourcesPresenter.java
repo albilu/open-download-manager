@@ -59,8 +59,8 @@ final class SourcesPresenter {
         add.onClicked(() -> change(null, entry.getText().strip(), false));
         remove.onClicked(() -> change(selectedUri(), null, false));
         prefer.onClicked(() -> change(selectedUri(), selectedUri(), true));
-        AccessibilitySupport.label(filesDrop, "Source file");
-        AccessibilitySupport.label(entry, "Mirror URL");
+        AccessibilitySupport.label(filesDrop, I18n.tr("Source file"));
+        AccessibilitySupport.label(entry, I18n.tr("Mirror URL"));
         updateButtons();
     }
 
@@ -104,10 +104,10 @@ final class SourcesPresenter {
                     }
                     populate();
                     showStatus(operationMessage != null ? operationMessage : files.isEmpty()
-                            ? "Live mirrors are available for HTTP, FTP, SFTP and Metalink downloads using aria2."
+                            ? I18n.tr("Live mirrors are available for HTTP, FTP, SFTP and Metalink downloads using aria2.")
                             : files.getFirst().gid().isEmpty()
-                                    ? "Start or resume the download to edit its mirrors."
-                                    : "Mirrors must provide the same file. Hover over a source to see its current URL.");
+                                    ? I18n.tr("Start or resume the download to edit its mirrors.")
+                                    : I18n.tr("Mirrors must provide the same file. Hover over a source to see its current URL."));
                 }));
     }
 
@@ -132,10 +132,16 @@ final class SourcesPresenter {
                 TreeIter iter = new TreeIter();
                 store.append(iter);
                 ListStoreCells.setString(store, iter, 0, source.uri());
-                ListStoreCells.setString(store, iter, 1, source.state());
+                ListStoreCells.setString(store, iter, 1, switch (source.state()) {
+                    case "Active" -> I18n.context("mirror-state", "Active");
+                    case "Used" -> I18n.tr("Used");
+                    case "Waiting" -> I18n.tr("Waiting");
+                    case "Configured" -> I18n.tr("Configured");
+                    default -> source.state();
+                });
                 ListStoreCells.setString(store, iter, 2, DownloadFormats.size(source.bytesPerSecond()) + "/s");
                 ListStoreCells.setString(store, iter, 3, source.uri()
-                        + (source.currentUri().isBlank() ? "" : "\nCurrent URL: " + source.currentUri()));
+                        + (source.currentUri().isBlank() ? "" : "\n" + I18n.format("Current URL: %s", source.currentUri())));
                 if (Objects.equals(selected, source.uri())) { view.getSelection().selectIter(iter); }
             }
         }
@@ -158,14 +164,14 @@ final class SourcesPresenter {
         editing = true;
         operationMessage = null;
         updateButtons();
-        showStatus("Updating mirrors…");
+        showStatus(I18n.tr("Updating mirrors…"));
         manager.changeDownloadSource(target, file, removeUri, addUri, first)
                 .whenComplete((unused, error) -> UiThread.marshal(() -> {
                     editing = false;
                     if (closed) { return; }
                     if (selection.get() == target) {
                         if (error == null) { entry.setText(""); }
-                        operationMessage = error == null ? "Mirrors updated." : message(error);
+                        operationMessage = error == null ? I18n.tr("Mirrors updated.") : message(error);
                         showStatus(operationMessage);
                     }
                     updateButtons();
@@ -179,7 +185,7 @@ final class SourcesPresenter {
     }
 
     private static String message(Throwable error) {
-        org.slf4j.LoggerFactory.getLogger(SourcesPresenter.class).warn("Could not update mirrors", error);
+        org.slf4j.LoggerFactory.getLogger(SourcesPresenter.class).warn(I18n.tr("Could not update mirrors"), error);
         return UiErrors.message(error);
     }
 

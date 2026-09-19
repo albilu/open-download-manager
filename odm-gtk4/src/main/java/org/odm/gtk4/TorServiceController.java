@@ -43,7 +43,7 @@ final class TorServiceController {
                     .setTorServiceAvailable(false, service.getSocksPort())
                     .handleAsync((unused, failure) -> {
                         if (!service.stop()) {
-                            throw new IllegalStateException("Tor service could not be stopped");
+                            throw new IllegalStateException(I18n.tr("Tor service could not be stopped"));
                         }
                         return false;
                     });

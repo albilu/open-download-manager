@@ -25,17 +25,17 @@ final class TrayMenu {
     record ActionState(boolean enabled, boolean checked) { }
     record Entry(int id, String label, String action, boolean checkable) { }
     static final List<Entry> ENTRIES = List.of(
-            new Entry(1, "Open", "open", false),
-            new Entry(2, "New Download", "new-download", false),
+            new Entry(1, I18n.tr("Open"), "open", false),
+            new Entry(2, I18n.tr("New Download"), "new-download", false),
             new Entry(3, "", null, false),
-            new Entry(4, "Pause All", "pause-all", false),
-            new Entry(5, "Resume All", "resume-all", false),
+            new Entry(4, I18n.tr("Pause All"), "pause-all", false),
+            new Entry(5, I18n.tr("Resume All"), "resume-all", false),
             new Entry(6, "", null, false),
-            new Entry(7, "Clipboard", "clipboard-monitoring", true),
-            new Entry(8, "Silent Mode", "clipboard-silent", true),
-            new Entry(9, "Offline Mode", "offline", true),
+            new Entry(7, I18n.tr("Clipboard"), "clipboard-monitoring", true),
+            new Entry(8, I18n.tr("Silent Mode"), "clipboard-silent", true),
+            new Entry(9, I18n.tr("Offline Mode"), "offline", true),
             new Entry(10, "", null, false),
-            new Entry(11, "Exit", "quit", false));
+            new Entry(11, I18n.tr("Exit"), "quit", false));
 
     // DBusMenu v3, also used by XFCE's StatusNotifier panel plugin.
     private static final String XML = """

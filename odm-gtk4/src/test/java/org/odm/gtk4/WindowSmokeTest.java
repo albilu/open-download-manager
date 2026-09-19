@@ -1603,7 +1603,7 @@ class WindowSmokeTest {
                 assertTrue(button.getVisible());
                 assertTrue(button.getSensitive());
                 assertFalse(ipLabel.getVisible());
-                awaitGtk(() -> "0 download(s)".equals(window.statusMessage()),
+                awaitGtk(() -> "0 downloads".equals(window.statusMessage()),
                         "the initial download status was not displayed");
                 for (int click = 0; click < 2; click++) {
                     button.emitClicked();
@@ -1622,9 +1622,9 @@ class WindowSmokeTest {
                             "the new verification result was not displayed beside the Tor icon");
                     assertTrue(ipLabel.getVisible());
                     assertFalse(window.activitySpinning());
-                    assertEquals("0 download(s)", window.statusMessage());
+                    assertEquals("0 downloads", window.statusMessage());
                     assertTrue(nativeWindow.activateActionVariant("win.select-all", null));
-                    assertEquals("0 download(s)", window.statusMessage(),
+                    assertEquals("0 downloads", window.statusMessage(),
                             "verification must not hold the main status label during selection changes");
                 }
                 button.emitClicked();
@@ -1639,12 +1639,12 @@ class WindowSmokeTest {
                 assertFalse(stub.getGlobalSettings().getBooleanProperty("ui.offline", false));
                 notifications.verifyNoInteractions();
                 assertTrue(nativeWindow.activateActionVariant("win.select-all", null));
-                assertEquals("0 download(s)", window.statusMessage());
+                assertEquals("0 downloads", window.statusMessage());
                 button.emitClicked();
                 awaitGtk(() -> "Verifying Tor connection…".equals(window.statusMessage()),
                         "verification progress was not displayed");
                 checks.getLast().complete(null);
-                awaitGtk(() -> "0 download(s)".equals(window.statusMessage()),
+                awaitGtk(() -> "0 downloads".equals(window.statusMessage()),
                         "a canceled check must release the status label");
                 org.mockito.Mockito.verify(monitors.constructed().getFirst(), org.mockito.Mockito.times(4))
                         .checkNow();
@@ -1734,7 +1734,7 @@ class WindowSmokeTest {
                 awaitGtk(() -> "🇳🇱 192.0.2.1".equals(ipLabel.getLabel()),
                         "verification did not refresh the flag and IP beside the Tor icon");
                 assertTrue(ipLabel.getVisible());
-                assertEquals("0 download(s)", window.statusMessage());
+                assertEquals("0 downloads", window.statusMessage());
                 assertFalse(window.activitySpinning());
 
                 org.mockito.Mockito.when(controller.changeIp())

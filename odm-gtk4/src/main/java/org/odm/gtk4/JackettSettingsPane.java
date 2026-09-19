@@ -82,14 +82,14 @@ final class JackettSettingsPane {
         status = Widgets.require(builder, "jackett_status_label", Label.class);
         actionStatus = Widgets.require(builder, "jackett_action_status", Label.class);
         autostart = Widgets.require(builder, "jackett_autostart_check", CheckButton.class);
-        AccessibilitySupport.label(tree, "Public torrent indexers");
+        AccessibilitySupport.label(tree, I18n.tr("Public torrent indexers"));
         load(settings);
-        button("install").onClicked(() -> run("Installing Jackett…", () -> { service.install(); return null; }, ignored -> { }));
-        button("start").onClicked(() -> run("Starting Jackett…", () -> { service.start(); return null; }, ignored -> refreshIndexers()));
+        button("install").onClicked(() -> run(I18n.tr("Installing Jackett…"), () -> { service.install(); return null; }, ignored -> { }));
+        button("start").onClicked(() -> run(I18n.tr("Starting Jackett…"), () -> { service.start(); return null; }, ignored -> refreshIndexers()));
         button("stop").onClicked(() -> {
             operationEpoch++; busy = false; stopping = true;
             cancelChecks();
-            run("Stopping Jackett…", () -> { service.stop(); return null; }, ignored -> { });
+            run(I18n.tr("Stopping Jackett…"), () -> { service.stop(); return null; }, ignored -> { });
         });
         button("refresh").onClicked(this::refreshIndexers);
         button("test").onClicked(this::testIndexers);
@@ -140,10 +140,22 @@ final class JackettSettingsPane {
     private void updateStatus() {
         if (closed) { return; }
         if (service == null) {
-            status.setLabel("Search engine unavailable"); updateControls(); return;
+            status.setLabel(I18n.tr("Search engine unavailable")); updateControls(); return;
         }
         JackettService.Status current = service.status();
-        status.setLabel(UiErrors.message(current.message()));
+        status.setLabel(switch (current.state()) {
+            case NOT_INSTALLED -> I18n.tr("Jackett is not installed");
+            case STOPPED -> I18n.tr("Stopped");
+            case STARTING -> I18n.tr("Starting Jackett…");
+            case RUNNING -> current.message().endsWith(" — Running")
+                    ? I18n.format("%s — Running", current.message().substring(
+                            0, current.message().length() - " — Running".length()))
+                    : I18n.tr("Running");
+            case STOPPING -> I18n.tr("Stopping Jackett…");
+            case INSTALLING -> I18n.tr("Installing Jackett…");
+            case FAILED -> I18n.format("Failed: %s", UiErrors.message(current.message()));
+        });
+        status.setTooltipText(UiErrors.message(current.message()));
         boolean becameRunning = current.state() == JackettService.State.RUNNING && previousState != current.state();
         if (current.state() != JackettService.State.RUNNING && previousState == JackettService.State.RUNNING) {
             cancelChecks();
@@ -182,7 +194,7 @@ final class JackettSettingsPane {
     private void refreshIndexers() {
         if (busy || closed || service == null) { return; }
         cancelChecks();
-        run("Loading indexers…", () -> service.client().publicIndexers(), rows -> {
+        run(I18n.tr("Loading indexers…"), () -> service.client().publicIndexers(), rows -> {
             indexers = rows;
             configured.clear();
             rows.stream().filter(JackettClient.Indexer::configured).map(JackettClient.Indexer::id).forEach(configured::add);
@@ -231,7 +243,7 @@ final class JackettSettingsPane {
         String detail = result == null || result.detail().isBlank() ? null
                 : org.gnome.glib.GLib.markupEscapeText(result.detail(), -1);
         ListStoreCells.setString(store, iter, 3, detail);
-        ListStoreCells.setString(store, iter, 4, result == null ? "Not tested" : result.status());
+        ListStoreCells.setString(store, iter, 4, result == null ? I18n.tr("Not tested") : I18n.tr(result.status()));
         ListStoreCells.setBoolean(store, iter, 5, !configuring.contains(id));
     }
 
@@ -240,9 +252,9 @@ final class JackettSettingsPane {
         boolean alreadyConfigured = configured.contains(row.id());
         if (action != IndexerAction.PROBE) { configuring.add(row.id()); }
         String progress = switch (action) {
-            case PROBE -> "Testing…";
-            case CONFIGURE -> "Configuring…";
-            case REMOVE -> "Removing…";
+            case PROBE -> I18n.mark("Testing…");
+            case CONFIGURE -> I18n.mark("Configuring…");
+            case REMOVE -> I18n.mark("Removing…");
         };
         tests.put(row.id(), new CheckResult(alreadyConfigured, progress, ""));
         updateRow(row.id());
@@ -257,21 +269,21 @@ final class JackettSettingsPane {
                 JackettClient client = service.client();
                 if (action == IndexerAction.REMOVE) {
                     client.unconfigure(row.id());
-                    return new CheckResult(false, "Not tested", "");
+                    return new CheckResult(false, I18n.mark("Not tested"), "");
                 }
                 if (action == IndexerAction.CONFIGURE && !saved) {
                     client.configure(row.id(), client.configuration(row.id()));
                     saved = true;
                 }
-                if (action == IndexerAction.CONFIGURE) { return new CheckResult(saved, "Not tested", ""); }
+                if (action == IndexerAction.CONFIGURE) { return new CheckResult(saved, I18n.mark("Not tested"), ""); }
                 if (closed || checkEpoch.get() != epoch) { throw new java.util.concurrent.CancellationException(); }
                 client.test(row.id());
-                return new CheckResult(saved, "Passed", "");
+                return new CheckResult(saved, I18n.mark("Passed"), "");
             } catch (Exception error) {
                 String detail = message(error);
                 LOGGER.debug("Indexer {}: {}", row.name(), detail);
-                return new CheckResult(saved, action == IndexerAction.REMOVE ? "Removal failed"
-                        : action == IndexerAction.CONFIGURE && !saved ? "Setup failed" : "Failed", detail);
+                return new CheckResult(saved, action == IndexerAction.REMOVE ? I18n.mark("Removal failed")
+                        : action == IndexerAction.CONFIGURE && !saved ? I18n.mark("Setup failed") : I18n.mark("Failed"), detail);
             }
         }, action == IndexerAction.PROBE ? probes : configurationChanges);
         checks.put(row.id(), check);
@@ -279,7 +291,7 @@ final class JackettSettingsPane {
         check.whenComplete((result, error) -> UiThread.marshal(() -> {
             if (closed || checkEpoch.get() != epoch || checks.get(row.id()) != check) { return; }
             checks.remove(row.id()); configuring.remove(row.id());
-            CheckResult outcome = error == null ? result : new CheckResult(alreadyConfigured, "Failed", message(error));
+            CheckResult outcome = error == null ? result : new CheckResult(alreadyConfigured, I18n.mark("Failed"), message(error));
             if (action == IndexerAction.PROBE) { sessionTests.put(row.id(), outcome); }
             else {
                 // A selection change may have waited for an in-flight probe.
@@ -288,7 +300,7 @@ final class JackettSettingsPane {
                 CheckResult completedProbe = ready.getNow(null);
                 if (completedProbe != null) { sessionTests.put(row.id(), completedProbe); }
                 CheckResult lastTest = sessionTests.get(row.id());
-                if (outcome.status().equals("Not tested") && lastTest != null) {
+                if (outcome.status().equals(I18n.mark("Not tested")) && lastTest != null) {
                     outcome = new CheckResult(outcome.configured(), lastTest.status(), lastTest.detail());
                 }
             }
@@ -323,13 +335,13 @@ final class JackettSettingsPane {
     }
 
     private void updateCheckSummary() {
-        long passed = tests.values().stream().filter(result -> result.status().equals("Passed")).count();
-        long tested = tests.values().stream().filter(result -> result.status().equals("Passed")
-                || result.status().equals("Failed")).count();
-        boolean testing = tests.values().stream().anyMatch(result -> result.status().equals("Testing…"));
-        actionStatus.setLabel(testing ? "Testing indexers… " + tested + "/" + indexers.size()
-                : !checks.isEmpty() ? "Updating indexers…"
-                : tested > 0 ? passed + " of " + tested + " indexers passed." : "");
+        long passed = tests.values().stream().filter(result -> result.status().equals(I18n.mark("Passed"))).count();
+        long tested = tests.values().stream().filter(result -> result.status().equals(I18n.mark("Passed"))
+                || result.status().equals(I18n.mark("Failed"))).count();
+        boolean testing = tests.values().stream().anyMatch(result -> result.status().equals(I18n.mark("Testing…")));
+        actionStatus.setLabel(testing ? I18n.format("Testing indexers… %d/%d", tested, indexers.size())
+                : !checks.isEmpty() ? I18n.tr("Updating indexers…")
+                : tested > 0 ? I18n.plural("%2$d of %1$d indexer passed.", "%2$d of %1$d indexers passed.", tested, passed) : "");
         updateControls();
     }
 

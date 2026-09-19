@@ -42,8 +42,8 @@ final class PathChooserButton {
     private static final Logger LOGGER = LoggerFactory.getLogger(PathChooserButton.class);
 
     private enum SelectionKind {
-        FILE("document-open-symbolic", "Select file…"),
-        FOLDER("folder-symbolic", "Select folder…");
+        FILE("document-open-symbolic", I18n.tr("Select file…")),
+        FOLDER("folder-symbolic", I18n.tr("Select folder…"));
 
         private final String iconName;
         private final String defaultPlaceholder;
@@ -188,7 +188,7 @@ final class PathChooserButton {
         }
 
         ListBoxRow other = new ListBoxRow();
-        other.setChild(placeRow("Other…", "document-open-symbolic", null, false));
+        other.setChild(placeRow(I18n.tr("Other…"), "document-open-symbolic", null, false));
         list.append(other);
         list.onRowActivated(row -> {
             int index = row.getIndex();
@@ -262,7 +262,7 @@ final class PathChooserButton {
             places.removeIf(place -> samePath(lastFolder, place.path()));
             Path filename = lastFolder.getFileName();
             places.add(0, new FolderPlaces.Place(
-                    "Last used: " + (filename == null ? lastFolder : filename),
+                    I18n.format("Last used: %s", filename == null ? lastFolder : filename),
                     "document-open-recent-symbolic", lastFolder));
         }
         if (path != null && places.stream().noneMatch(place -> samePath(path, place.path()))) {

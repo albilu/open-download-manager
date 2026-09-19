@@ -120,17 +120,17 @@ public class NewDownloadDialog {
             }
         });
 
-        AccessibilitySupport.label(urlEntry, "Download URL");
-        AccessibilitySupport.label(torrentFileButton, "Choose torrent or Metalink descriptor");
-        AccessibilitySupport.label(saveFolderButton, "Download destination folder");
-        AccessibilitySupport.label(filenameEntry, "Output filename");
-        AccessibilitySupport.label(filesTreeview, "Files in the torrent or Metalink");
-        AccessibilitySupport.label(selectAllFilesCheck, "Select every descriptor file");
-        AccessibilitySupport.label(sftpHostKeyEntry, "Expected SFTP host key digest");
+        AccessibilitySupport.label(urlEntry, I18n.tr("Download URL"));
+        AccessibilitySupport.label(torrentFileButton, I18n.tr("Choose torrent or Metalink descriptor"));
+        AccessibilitySupport.label(saveFolderButton, I18n.tr("Download destination folder"));
+        AccessibilitySupport.label(filenameEntry, I18n.tr("Output filename"));
+        AccessibilitySupport.label(filesTreeview, I18n.tr("Files in the torrent or Metalink"));
+        AccessibilitySupport.label(selectAllFilesCheck, I18n.tr("Select every descriptor file"));
+        AccessibilitySupport.label(sftpHostKeyEntry, I18n.tr("Expected SFTP host key digest"));
         sftpHostKeyEntry.setTooltipText(
-                "Expected server public-key digest: sha-1=<40 hex digits> or md5=<32 hex digits>. "
-                + "Leaving it blank disables aria2 host-key verification.");
-        AccessibilitySupport.label(verifyChecksumCheck, "Verify checksum at completion");
+                I18n.tr("Expected server public-key digest: sha-1=<40 hex digits> or md5=<32 hex digits>. "
+                + "Leaving it blank disables aria2 host-key verification."));
+        AccessibilitySupport.label(verifyChecksumCheck, I18n.tr("Verify checksum at completion"));
 
         DialogSupport.configureIndependent(dialog, parent);
 
@@ -139,7 +139,7 @@ public class NewDownloadDialog {
                 FileTreeSupport.PRIORITY_NORMAL, FileTreeSupport.PRIORITY_LOW}) {
             TreeIter iter = new TreeIter();
             priorityStore.append(iter);
-            ListStoreCells.setString(priorityStore, iter, 0, priority);
+            ListStoreCells.setString(priorityStore, iter, 0, FileTreeSupport.displayPriority(priority));
         }
         filesTreeview.setExpanderColumn(Widgets.require(builder,
                 "new_files_name_column", org.gnome.gtk.TreeViewColumn.class));
@@ -159,7 +159,7 @@ public class NewDownloadDialog {
 
         Path defaultDestination = Path.of(currentDefaultDirectory());
         this.torrentFileChooser = PathChooserButton.forFile(torrentFileButton, dialog,
-                "Select torrent or metalink file", null, path -> {
+                I18n.tr("Select torrent or metalink file"), null, path -> {
                     selectedTorrentFile = path;
                     if (!urlEntry.getText().isBlank()) {
                         urlEntry.setText("");
@@ -169,7 +169,7 @@ public class NewDownloadDialog {
                     analyzeTorrentFile();
                 });
         this.saveFolderChooser = PathChooserButton.forFolder(saveFolderButton, dialog,
-                "Select destination folder", defaultDestination, path -> {
+                I18n.tr("Select destination folder"), defaultDestination, path -> {
                     destinationFolder = path;
                     updateDiskSpace(path.toString());
                 });
@@ -233,7 +233,7 @@ public class NewDownloadDialog {
             updateNetworkCapabilities(Download.Type.ARIA2, Download.Protocol.HTTPS);
             setSftpHostKeyVisible(false);
             filesStatusLabel.setLabel(
-                    "Enter a torrent, magnet, or Metalink source to inspect its files.");
+                    I18n.tr("Enter a torrent, magnet, or Metalink source to inspect its files."));
             return;
         }
         try {
@@ -259,8 +259,8 @@ public class NewDownloadDialog {
                     || protocol == Download.Protocol.MAGNET
                     || protocol == Download.Protocol.METALINK) {
                 filesStatusLabel.setLabel(optionsNotebook.getCurrentPage() == 1
-                        ? "Loading file metadata…"
-                        : "Open the Files tab to load selectable file metadata.");
+                        ? I18n.tr("Loading file metadata…")
+                        : I18n.tr("Open the Files tab to load selectable file metadata."));
                 if (optionsNotebook.getCurrentPage() == 1) {
                     requestCurrentFilePreview();
                 }
@@ -271,7 +271,7 @@ public class NewDownloadDialog {
         } catch (Exception e) {
             updateNetworkCapabilities(Download.Type.ARIA2, Download.Protocol.HTTPS);
             setSftpHostKeyVisible(false);
-            filesStatusLabel.setLabel("Enter a valid download URL or magnet link.");
+            filesStatusLabel.setLabel(I18n.tr("Enter a valid download URL or magnet link."));
         }
     }
 
@@ -375,7 +375,7 @@ public class NewDownloadDialog {
         if (selectedTorrentFile == null) {
             return;
         }
-        filesStatusLabel.setLabel("Loading file metadata…");
+        filesStatusLabel.setLabel(I18n.tr("Loading file metadata…"));
         requestCurrentFilePreview();
     }
 
@@ -414,8 +414,8 @@ public class NewDownloadDialog {
         FileTreeSupport.clear(filesListstore, fileRows);
         updateSelectAll(false, false, false);
         filesStatusLabel.setLabel(protocol == Download.Protocol.MAGNET
-                ? "Retrieving magnet metadata from peers…"
-                : "Reading descriptor files…");
+                ? I18n.tr("Retrieving magnet metadata from peers…")
+                : I18n.tr("Reading descriptor files…"));
         previewLoading = true;
         refreshStartSensitivity();
         CompletableFuture<java.util.List<org.manager.download.DownloadFileInfo>> preview =
@@ -429,8 +429,7 @@ public class NewDownloadDialog {
             }
             previewLoading = false;
             if (error != null) {
-                filesStatusLabel.setLabel("Could not load file metadata: " + UiErrors.message(error)
-                        + ". Starting the download will include all files.");
+                filesStatusLabel.setLabel(I18n.format("Could not load file metadata: %s. Starting the download will include all files.", UiErrors.message(error)));
                 LOGGER.warn("File metadata preview failed for " + source, error);
                 refreshStartSensitivity();
                 return;
@@ -467,9 +466,9 @@ public class NewDownloadDialog {
         boolean available = !rows.isEmpty();
         updateSelectAll(available, available, false);
         filesStatusLabel.setLabel(available
-                ? rows.size() + " file(s), " + DownloadFormats.size(totalSize)
-                        + " — uncheck files you do not want."
-                : "No selectable files were found in this source.");
+                ? I18n.plural("%d file, %s — uncheck files you do not want.", "%d files, %s — uncheck files you do not want.",
+                        rows.size(), DownloadFormats.size(totalSize))
+                : I18n.tr("No selectable files were found in this source."));
         refreshStartSensitivity();
     }
 
@@ -480,7 +479,7 @@ public class NewDownloadDialog {
         showPreviewFiles(uri, java.util.List.of(
                 new org.manager.download.DownloadFileInfo(1, name, 0)));
         selectAllFilesCheck.setSensitive(false);
-        filesStatusLabel.setLabel("Single-file download");
+        filesStatusLabel.setLabel(I18n.tr("Single-file download"));
     }
 
     private void onFileSelectionToggled(String path) {
@@ -504,8 +503,8 @@ public class NewDownloadDialog {
         updateSelectAll(total > 0 && selected == total, total > 0,
                 selected > 0 && selected < total);
         filesStatusLabel.setLabel(selected == 0 && total > 0
-                ? "Select at least one file to start the download."
-                : selected + " of " + total + " file(s) selected");
+                ? I18n.tr("Select at least one file to start the download.")
+                : I18n.plural("%2$d of %1$d file selected", "%2$d of %1$d files selected", total, selected));
         refreshStartSensitivity();
     }
 
@@ -555,7 +554,7 @@ public class NewDownloadDialog {
     private void updateDiskSpace(String dir) {
         try {
             long free = new java.io.File(dir).getUsableSpace();
-            diskSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
+            diskSpaceLabel.setLabel(I18n.format("%s free", DownloadFormats.size(free)));
         } catch (Exception e) {
             diskSpaceLabel.setLabel("");
         }
@@ -572,7 +571,7 @@ public class NewDownloadDialog {
             registerChecksumVerification(download);
             submissionInFlight = true;
             refreshStartSensitivity();
-            AccessibilitySupport.status(diskSpaceLabel, "Adding download to queue…");
+            AccessibilitySupport.status(diskSpaceLabel, I18n.tr("Adding download to queue…"));
             Path originalToTrash = selectedTorrentFile != null && downloadManager.getGlobalSettings()
                     .getBooleanProperty("ui.moveTorrent", false) ? selectedTorrentFile : null;
             activity.track(DownloadSubmission.submit(downloadManager, download,
@@ -590,9 +589,8 @@ public class NewDownloadDialog {
                     submissionInFlight = downloadManager.getDownload(download.getId()) != null;
                     refreshStartSensitivity();
                     AccessibilitySupport.status(diskSpaceLabel,
-                            "Could not add to queue: " + UiErrors.message(error)
-                                    + (submissionInFlight ? ". This download remains in Downloads; manage it there."
-                                            : ". Press Start to retry."),
+                            submissionInFlight ? I18n.format("Could not add to queue: %s. This download remains in Downloads; manage it there.", UiErrors.message(error))
+                                            : I18n.format("Could not add to queue: %s. Press Start to retry.", UiErrors.message(error)),
                             org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                     LOGGER.warn("Queue rejected new download", error);
                 }
@@ -604,7 +602,7 @@ public class NewDownloadDialog {
             if (!sftpHostKeyEntry.hasCssClass("error")) {
                 urlEntry.getStyleContext().addClass("error");
             }
-            AccessibilitySupport.status(diskSpaceLabel, "Cannot add download: " + UiErrors.message(e),
+            AccessibilitySupport.status(diskSpaceLabel, I18n.format("Cannot add download: %s", UiErrors.message(e)),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
@@ -660,7 +658,7 @@ public class NewDownloadDialog {
 
         String url = urlEntry.getText().trim();
         if (url.isEmpty()) {
-            throw new IllegalArgumentException("Enter a URL or choose a torrent/metalink file.");
+            throw new IllegalArgumentException(I18n.tr("Enter a URL or choose a torrent/metalink file."));
         }
         return DownloadSubmission.draft(downloadManager,
                 DownloadUrlPolicy.require(url).uri(), destination, null);
@@ -700,7 +698,7 @@ public class NewDownloadDialog {
             return;
         }
         if (selected.isEmpty()) {
-            throw new IllegalArgumentException("Select at least one file to download.");
+            throw new IllegalArgumentException(I18n.tr("Select at least one file to download."));
         }
         if (selected.size() == all.size()) {
             aria2Settings.setSelectedFiles(null);

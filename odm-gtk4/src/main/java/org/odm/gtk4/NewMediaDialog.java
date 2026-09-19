@@ -153,46 +153,46 @@ public class NewMediaDialog {
         Widgets.require(builder, "media_network_options_host", Box.class)
                 .append(networkOptions.widget());
 
-        AccessibilitySupport.label(urlEntry, "Media URL");
-        AccessibilitySupport.label(formatDrop, "Media format");
-        AccessibilitySupport.label(containerProfileDrop, "Media container profile");
+        AccessibilitySupport.label(urlEntry, I18n.tr("Media URL"));
+        AccessibilitySupport.label(formatDrop, I18n.tr("Media format"));
+        AccessibilitySupport.label(containerProfileDrop, I18n.tr("Media container profile"));
         AccessibilitySupport.label(playlistItemsEntry,
-                "Playlist item numbers or ranges");
-        AccessibilitySupport.label(playlistTreeview, "Playlist preview items");
-        AccessibilitySupport.label(subtitleLangEntry, "Subtitle languages");
-        AccessibilitySupport.label(browserCookieDrop, "Browser cookie source");
-        AccessibilitySupport.label(browserProfileEntry, "Optional browser profile");
-        AccessibilitySupport.label(sponsorBlockDrop, "SponsorBlock action");
+                I18n.tr("Playlist item numbers or ranges"));
+        AccessibilitySupport.label(playlistTreeview, I18n.tr("Playlist preview items"));
+        AccessibilitySupport.label(subtitleLangEntry, I18n.tr("Subtitle languages"));
+        AccessibilitySupport.label(browserCookieDrop, I18n.tr("Browser cookie source"));
+        AccessibilitySupport.label(browserProfileEntry, I18n.tr("Optional browser profile"));
+        AccessibilitySupport.label(sponsorBlockDrop, I18n.tr("SponsorBlock action"));
         AccessibilitySupport.label(sponsorBlockCategoriesEntry,
-                "SponsorBlock segment categories");
-        AccessibilitySupport.label(cookieFileButton, "Browser cookie file");
-        AccessibilitySupport.label(folderButton, "Media destination folder");
+                I18n.tr("SponsorBlock segment categories"));
+        AccessibilitySupport.label(cookieFileButton, I18n.tr("Browser cookie file"));
+        AccessibilitySupport.label(folderButton, I18n.tr("Media destination folder"));
 
         DialogSupport.configureIndependent(dialog, parent);
 
         StringList placeholder = new StringList(new String[0]);
-        placeholder.append("Automatic (fetch info to choose a format)");
+        placeholder.append(I18n.tr("Automatic (fetch info to choose a format)"));
         formatDrop.setModel(placeholder);
         containerProfileDrop.setModel(enumModel(
                 java.util.Arrays.stream(YtDlpSettings.ContainerProfile.values())
-                        .map(YtDlpSettings.ContainerProfile::displayName).toList()));
+                        .map(MediaPresentation::container).toList()));
         containerProfileDrop.setSelected(YtDlpSettings.ContainerProfile.AUTOMATIC.ordinal());
         browserCookieDrop.setModel(enumModel(
                 java.util.Arrays.stream(YtDlpSettings.BrowserCookieSource.values())
-                        .map(YtDlpSettings.BrowserCookieSource::displayName).toList()));
+                        .map(MediaPresentation::browser).toList()));
         browserCookieDrop.setSelected(YtDlpSettings.BrowserCookieSource.NONE.ordinal());
         browserProfileEntry.setText("");
         subtitleLangEntry.setText("en");
         sponsorBlockDrop.setModel(enumModel(
                 java.util.Arrays.stream(YtDlpSettings.SponsorBlockMode.values())
-                        .map(YtDlpSettings.SponsorBlockMode::displayName).toList()));
+                        .map(MediaPresentation::sponsorBlock).toList()));
         sponsorBlockDrop.setSelected(YtDlpSettings.SponsorBlockMode.OFF.ordinal());
 
         destinationFolder = Path.of(currentDefaultDirectory());
         this.cookieFileChooser = PathChooserButton.forFile(cookieFileButton, dialog,
-                "Select cookies file", null, path -> { cookieFile = path; invalidateMetadata(); });
+                I18n.tr("Select cookies file"), null, path -> { cookieFile = path; invalidateMetadata(); });
         this.folderChooser = PathChooserButton.forFolder(folderButton, dialog,
-                "Select destination folder", destinationFolder,
+                I18n.tr("Select destination folder"), destinationFolder,
                 path -> {
                     destinationFolder = path;
                     updateDiskSpace(path);
@@ -298,12 +298,12 @@ public class NewMediaDialog {
                     .applyGlobalTransferPreferences(previewSettings);
         } catch (Exception failure) {
             LOGGER.warn("Could not prepare media information request", failure);
-            AccessibilitySupport.status(statusLabel, "Could not fetch info: " + UiErrors.message(failure));
+            AccessibilitySupport.status(statusLabel, I18n.format("Could not fetch info: %s", UiErrors.message(failure)));
             refreshButtons();
             return;
         }
         long generation = metadataGeneration;
-        AccessibilitySupport.status(statusLabel, "Fetching media info…");
+        AccessibilitySupport.status(statusLabel, I18n.tr("Fetching media info…"));
         metadataFuture = mediaInfoResolver.fetch(source, previewSettings,
                 DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService),
                 message -> UiThread.marshal(() -> {
@@ -321,7 +321,7 @@ public class NewMediaDialog {
                 onInfoFetched(url, info.info());
             } else {
                 LOGGER.warn("Could not fetch media information", failure);
-                AccessibilitySupport.status(statusLabel, "Could not fetch info: " + UiErrors.message(failure),
+                AccessibilitySupport.status(statusLabel, I18n.format("Could not fetch info: %s", UiErrors.message(failure)),
                         org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             }
         }));
@@ -332,18 +332,18 @@ public class NewMediaDialog {
         refreshButtons();
         int playlistSize = info.getEntries() == null ? 0 : info.getEntries().size();
         AccessibilitySupport.status(statusLabel, playlistSize > 0
-                ? "Playlist preview fetched — " + playlistSize + " item(s)"
-                : "Formats fetched");
+                ? I18n.plural("Playlist preview fetched — %d item", "Playlist preview fetched — %d items", playlistSize)
+                : I18n.tr("Formats fetched"));
 
         infoLabel.setVisible(true);
         infoLabel.setLabel(String.format("%s — %s, %s",
-                info.getTitle() != null ? info.getTitle() : "(untitled)",
-                info.getUploader() != null ? info.getUploader() : "unknown uploader",
+                info.getTitle() != null ? info.getTitle() : I18n.tr("(untitled)"),
+                info.getUploader() != null ? info.getUploader() : I18n.tr("unknown uploader"),
                 formatDuration(info.getDuration())));
 
         formats.clear();
         StringList list = new StringList(new String[0]);
-        list.append("Automatic (yt-dlp default)");
+        list.append(I18n.tr("Automatic (yt-dlp default)"));
         if (info.getFormats() != null) {
             for (YtDlpClient.VideoFormat format : info.getFormats()) {
                 formats.add(format);
@@ -372,7 +372,7 @@ public class NewMediaDialog {
             submissionInFlight = true;
             metadataGeneration++;
             refreshButtons();
-            AccessibilitySupport.status(statusLabel, "Adding media download to queue…");
+            AccessibilitySupport.status(statusLabel, I18n.tr("Adding media download to queue…"));
             Download submitted = download;
             DownloadSubmission.submit(downloadManager, submitted,
                     DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService), closed, null)
@@ -391,9 +391,8 @@ public class NewMediaDialog {
                             submissionInFlight = downloadManager.getDownload(submitted.getId()) != null;
                             refreshButtons();
                             AccessibilitySupport.status(statusLabel,
-                                    "Could not add to queue: " + UiErrors.message(error)
-                                            + (submissionInFlight ? ". This download remains in Downloads; manage it there."
-                                                    : ". Press Download to retry."),
+                                    submissionInFlight ? I18n.format("Could not add to queue: %s. This download remains in Downloads; manage it there.", UiErrors.message(error))
+                                            : I18n.format("Could not add to queue: %s. Press Download to retry.", UiErrors.message(error)),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             LOGGER.warn("Queue rejected media download", error);
                         }
@@ -402,7 +401,7 @@ public class NewMediaDialog {
             LOGGER.warn("Media download rejected: " + e.getMessage(), e);
             submissionInFlight = false;
             refreshButtons();
-            AccessibilitySupport.status(statusLabel, "Cannot start: " + UiErrors.message(e),
+            AccessibilitySupport.status(statusLabel, I18n.format("Cannot start: %s", UiErrors.message(e)),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
@@ -436,7 +435,7 @@ public class NewMediaDialog {
             }
         }
         if (downloadSubtitles && langs.isEmpty()) {
-            throw new IllegalArgumentException("Enter at least one subtitle language");
+            throw new IllegalArgumentException(I18n.tr("Enter at least one subtitle language"));
         }
         settings.setWriteSubtitles(downloadSubtitles);
         settings.setEmbedSubs(downloadSubtitles);
@@ -471,7 +470,7 @@ public class NewMediaDialog {
                 ListStoreCells.setInt(playlistStore, iter, 1, entry.getIndex());
                 ListStoreCells.setString(playlistStore, iter, 2,
                         entry.getTitle() == null || entry.getTitle().isBlank()
-                                ? "(unavailable item)" : entry.getTitle());
+                                ? I18n.tr("(unavailable item)") : entry.getTitle());
                 ListStoreCells.setString(playlistStore, iter, 3,
                         entry.getDuration() > 0 ? formatDuration(entry.getDuration()) : "—");
             }
@@ -495,7 +494,7 @@ public class NewMediaDialog {
         previewUrl = null;
         formats.clear();
         StringList placeholder = new StringList(new String[0]);
-        placeholder.append("Automatic (fetch info to choose a format)");
+        placeholder.append(I18n.tr("Automatic (fetch info to choose a format)"));
         formatDrop.setModel(placeholder);
         formatDrop.setSensitive(false);
         infoLabel.setVisible(false);
@@ -618,7 +617,7 @@ public class NewMediaDialog {
         }
         List<Integer> selected = selectedPlaylistIndexes();
         if (selected.isEmpty()) {
-            throw new IllegalArgumentException("Select at least one playlist item");
+            throw new IllegalArgumentException(I18n.tr("Select at least one playlist item"));
         }
         if (selected.size() == playlistEntries.size()) {
             return null;
@@ -720,7 +719,7 @@ public class NewMediaDialog {
 
     private static String formatDuration(long seconds) {
         if (seconds <= 0) {
-            return "unknown length";
+            return I18n.tr("unknown length");
         }
         long h = seconds / 3600;
         long m = (seconds % 3600) / 60;
@@ -738,7 +737,7 @@ public class NewMediaDialog {
     private void updateDiskSpace(Path directory) {
         try {
             long free = directory.toFile().getUsableSpace();
-            diskSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
+            diskSpaceLabel.setLabel(I18n.format("%s free", DownloadFormats.size(free)));
         } catch (Exception e) {
             diskSpaceLabel.setLabel("");
         }

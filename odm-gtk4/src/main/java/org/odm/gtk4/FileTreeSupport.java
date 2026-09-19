@@ -266,6 +266,8 @@ final class FileTreeSupport {
         if (priority == null) {
             return PRIORITY_NORMAL;
         }
+        if (priority.equals(I18n.tr("Low"))) { return PRIORITY_LOW; }
+        if (priority.equals(I18n.tr("High"))) { return PRIORITY_HIGH; }
         return switch (priority.strip().toLowerCase(java.util.Locale.ROOT)) {
             case "low" -> PRIORITY_LOW;
             case "high" -> PRIORITY_HIGH;
@@ -380,7 +382,7 @@ final class FileTreeSupport {
                 DownloadFormats.size(node.length));
         TreeStoreCells.setInt(store, iter, PROGRESS_COLUMN,
                 ProgressPresentation.wholePercentage(progress));
-        TreeStoreCells.setString(store, iter, PRIORITY_TEXT_COLUMN, priority);
+        TreeStoreCells.setString(store, iter, PRIORITY_TEXT_COLUMN, displayPriority(priority));
         TreeStoreCells.setInt(store, iter, INDEX_COLUMN,
                 node.folder() ? -1 : node.entry.index());
         TreeStoreCells.setString(store, iter, PROGRESS_TEXT_COLUMN,
@@ -411,7 +413,7 @@ final class FileTreeSupport {
 
     private static void setPriorityRecursively(TreeStore store, TreeIter iter,
             String priority) {
-        TreeStoreCells.setString(store, iter, PRIORITY_TEXT_COLUMN, priority);
+        TreeStoreCells.setString(store, iter, PRIORITY_TEXT_COLUMN, displayPriority(priority));
         TreeStoreCells.setInt(store, iter, PRIORITY_SORT_COLUMN, prioritySortKey(priority));
         TreeIter child = new TreeIter();
         if (store.iterChildren(child, iter)) {
@@ -465,9 +467,19 @@ final class FileTreeSupport {
         TreeStoreCells.setBoolean(store, folder, SELECTED_COLUMN, all);
         TreeStoreCells.setBoolean(store, folder, INCONSISTENT_COLUMN, mixedSelection);
         String displayPriority = priority != null ? priority : PRIORITY_NORMAL;
-        TreeStoreCells.setString(store, folder, PRIORITY_TEXT_COLUMN, displayPriority);
+        TreeStoreCells.setString(store, folder, PRIORITY_TEXT_COLUMN, displayPriority(displayPriority));
         TreeStoreCells.setInt(store, folder, PRIORITY_SORT_COLUMN,
-                "Mixed".equals(displayPriority) ? 0 : prioritySortKey(displayPriority));
+                ("Mixed".equals(displayPriority) || I18n.tr("Mixed").equals(displayPriority)) ? 0 : prioritySortKey(displayPriority));
+    }
+
+    static String displayPriority(String priority) {
+        if ("Mixed".equals(priority) || I18n.tr("Mixed").equals(priority)) { return I18n.tr("Mixed"); }
+        if ("—".equals(priority)) { return priority; }
+        return switch (normalizePriority(priority)) {
+            case PRIORITY_LOW -> I18n.tr("Low");
+            case PRIORITY_HIGH -> I18n.tr("High");
+            default -> I18n.tr("Normal");
+        };
     }
 
     private static void visitLeaves(TreeStore store, LeafVisitor visitor) {

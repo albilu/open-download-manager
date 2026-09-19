@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<interface>
+<interface domain="odm">
   <requires lib="gtk" version="4.0"/>
   <object class="GtkWindow" id="startup_shutdown_dialog">
     <property name="modal">true</property>
@@ -21,7 +21,7 @@
         </child>
         <child>
           <object class="GtkLabel" id="status_message_label">
-            <property name="label">Starting...</property>
+            <property name="label" translatable="yes">Starting...</property>
           </object>
         </child>
         <child>

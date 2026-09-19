@@ -31,9 +31,9 @@ final class DesktopNotifications {
     static CompletableFuture<Void> downloadCompleted(Download download) {
         String name = download.getName();
         String message = name == null || name.isBlank()
-                ? "Your download has completed." : name + " has completed.";
+                ? I18n.tr("Your download has completed.") : I18n.format("%s has completed.", name);
         return send(null, "download-completed-" + download.getId(),
-                "Download completed", message, NotificationPriority.NORMAL);
+                I18n.tr("Download completed"), message, NotificationPriority.NORMAL);
     }
 
     /** Safe for completion workers as well as callers already on the GTK thread. */

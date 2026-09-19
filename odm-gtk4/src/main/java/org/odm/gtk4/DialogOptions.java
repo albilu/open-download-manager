@@ -20,7 +20,7 @@ final class DialogOptions {
 
     static final int DEFAULT_TOR_SOCKS_PORT = 9050;
     /** Proxy type labels, index-aligned with the proxy_type_combo rows. */
-    static final String[] PROXY_TYPES = {"None", "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
+    static final String[] PROXY_TYPES = {I18n.tr("None"), "HTTP", "HTTPS", "SOCKS4", "SOCKS5"};
     /** The user's non-Tor proxy, retained while the active route is Tor. */
     static final String MANUAL_PROXY_ADDRESS_KEY = "network.manualProxyAddress";
 
@@ -239,8 +239,8 @@ final class DialogOptions {
         if (proxy != null) {
             if (!DownloadNetworkCapabilities.supportsProxy(download, proxy)) {
                 throw new IllegalArgumentException(torActive
-                        ? "Tor/SOCKS proxying is not supported for this download"
-                        : "This proxy type is not supported for this download");
+                        ? I18n.tr("Tor/SOCKS proxying is not supported for this download")
+                        : I18n.tr("This proxy type is not supported for this download"));
             }
             download.setUseProxy(true);
             download.setProxyAddress(proxy);
@@ -256,7 +256,7 @@ final class DialogOptions {
             return CompletableFuture.completedFuture(null);
         }
         return CompletableFuture.failedFuture(new IllegalStateException(
-                "Tor is selected. Start the Tor service from Edit → Tor first."));
+                I18n.tr("Tor is selected. Start the Tor service from Edit → Tor first.")));
     }
 
     /**

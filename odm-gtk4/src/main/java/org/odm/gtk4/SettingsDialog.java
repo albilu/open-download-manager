@@ -46,213 +46,213 @@ public class SettingsDialog {
     private static final Logger LOGGER = LoggerFactory.getLogger(SettingsDialog.class);
     private static final String[] FILE_ALLOCATIONS = {"none", "prealloc", "falloc"};
     private static final String[] SEEDING_POLICIES = {
-        "Disabled", "Ratio limit", "Time limit", "Ratio or time", "Unlimited"
+        I18n.tr("Disabled"), I18n.tr("Ratio limit"), I18n.tr("Time limit"), I18n.tr("Ratio or time"), I18n.tr("Unlimited")
     };
     private static final String[] NATIVE_TOGGLE_OVERRIDES = {
-        "Engine default", "Enabled", "Disabled"
+        I18n.tr("Engine default"), I18n.tr("Enabled"), I18n.tr("Disabled")
     };
     private static final String[] TORRENT_ENCRYPTION_POLICIES = {
-        "Engine default", "Require obfuscated handshake", "Require encrypted payload"
+        I18n.tr("Engine default"), I18n.tr("Require obfuscated handshake"), I18n.tr("Require encrypted payload")
     };
     private static final Map<String, String> SETTING_TOOLTIPS = Map.ofEntries(
             // General
             Map.entry("default_download_folder_chooser",
-                    "Folder used for new downloads unless another destination is chosen in a download dialog."),
+                    I18n.tr("Folder used for new downloads unless another destination is chosen in a download dialog.")),
             Map.entry("max_concurrent_downloads_spin",
-                    "Maximum downloads ODM may run at once; additional downloads remain queued."),
+                    I18n.tr("Maximum downloads ODM may run at once; additional downloads remain queued.")),
             Map.entry("monitored_folder_chooser",
-                    "Folder watched for new .torrent, .metalink, and .meta4 descriptor files when folder monitoring is enabled."),
+                    I18n.tr("Folder watched for new .torrent, .metalink, and .meta4 descriptor files when folder monitoring is enabled.")),
             Map.entry("folder_monitoring_check",
-                    "Automatically create downloads from supported descriptor files placed in the monitored folder."),
+                    I18n.tr("Automatically create downloads from supported descriptor files placed in the monitored folder.")),
             Map.entry("folder_recursive_check",
-                    "Also watch subfolders inside the monitored folder."),
+                    I18n.tr("Also watch subfolders inside the monitored folder.")),
             Map.entry("move_to_trash_check",
-                    "After creating the download, move the original watched descriptor to the Linux/XDG Trash."),
+                    I18n.tr("After creating the download, move the original watched descriptor to the Linux/XDG Trash.")),
             Map.entry("clipboard_monitor_check",
-                    "Detect supported download URLs copied by other applications."),
+                    I18n.tr("Detect supported download URLs copied by other applications.")),
             Map.entry("clipboard_silent_check",
-                    "Add detected clipboard URLs without opening a confirmation dialog."),
+                    I18n.tr("Add detected clipboard URLs without opening a confirmation dialog.")),
             Map.entry("system_tray_check",
-                    "Show the ODM status icon in the desktop system tray when supported."),
+                    I18n.tr("Show the ODM status icon in the desktop system tray when supported.")),
             Map.entry("startup_check",
-                    "Start ODM automatically when the desktop session begins."),
+                    I18n.tr("Start ODM automatically when the desktop session begins.")),
             Map.entry("start_automatically_check",
-                    "Automatically start downloads admitted by clipboard and folder monitoring; user-triggered dialogs and imports are unaffected."),
+                    I18n.tr("Automatically start downloads admitted by clipboard and folder monitoring; user-triggered dialogs and imports are unaffected.")),
             Map.entry("move_torrent_check",
-                    "After creating a download from a selected descriptor, move the original .torrent, .metalink, or .meta4 file to the Linux/XDG Trash."),
+                    I18n.tr("After creating a download from a selected descriptor, move the original .torrent, .metalink, or .meta4 file to the Linux/XDG Trash.")),
             Map.entry("enable_auto_save_check",
-                    "Periodically save ODM download and session state so it can be recovered after a crash."),
+                    I18n.tr("Periodically save ODM download and session state so it can be recovered after a crash.")),
 
             // Network
             Map.entry("max_connections_spin",
-                    "Default maximum connections for new downloads, capped to each engine's supported limit: aria2 16, HTTrack 8; yt-dlp fragments can exceed 16."),
+                    I18n.tr("Default maximum connections for new downloads, capped to each engine's supported limit: aria2 16, HTTrack 8; yt-dlp fragments can exceed 16.")),
             Map.entry("retry_limit_spin",
-                    "Maximum attempts for new downloads when supported; 0 uses the selected engine's default."),
+                    I18n.tr("Maximum attempts for new downloads when supported; 0 uses the selected engine's default.")),
             Map.entry("retry_after",
-                    "Seconds between retry attempts when supported; 0 uses the selected engine's default."),
+                    I18n.tr("Seconds between retry attempts when supported; 0 uses the selected engine's default.")),
             Map.entry("max_download_speed_spin",
-                    "Default download speed limit for supporting engines; 0 means unlimited."),
+                    I18n.tr("Default download speed limit for supporting engines; 0 means unlimited.")),
             Map.entry("max_upload_speed_spin",
-                    "Default upload speed limit for supporting bidirectional engines; 0 means unlimited."),
+                    I18n.tr("Default upload speed limit for supporting bidirectional engines; 0 means unlimited.")),
             Map.entry("referer_entry",
-                    "HTTP Referer header sent by new downloads when supported; leave empty to use the engine default."),
+                    I18n.tr("HTTP Referer header sent by new downloads when supported; leave empty to use the engine default.")),
             Map.entry("cookie_entry",
-                    "HTTP Cookie header sent by new downloads when supported; leave empty to omit it."),
+                    I18n.tr("HTTP Cookie header sent by new downloads when supported; leave empty to omit it.")),
             Map.entry("user_agent_entry",
-                    "User-Agent used by new downloads when supported; leave empty for the engine default."),
+                    I18n.tr("User-Agent used by new downloads when supported; leave empty for the engine default.")),
             Map.entry("verify_https_certificates_check",
-                    "Verify the identity of HTTPS servers for downloads, media requests and remote HTML imports. Turning this off accepts invalid certificates but keeps encryption. Normal aria2 downloads require restarting ODM; HTTrack does not verify certificates. An explicitly honored external yt-dlp configuration can disable verification."),
+                    I18n.tr("Verify the identity of HTTPS servers for downloads, media requests and remote HTML imports. Turning this off accepts invalid certificates but keeps encryption. Normal aria2 downloads require restarting ODM; HTTrack does not verify certificates. An explicitly honored external yt-dlp configuration can disable verification.")),
             Map.entry("proxy_type_combo",
-                    "Global proxy protocol used by new downloads; select None to disable the global proxy."),
+                    I18n.tr("Global proxy protocol used by new downloads; select None to disable the global proxy.")),
             Map.entry("proxy_host_entry",
-                    "Host name or IP address of the global proxy server."),
+                    I18n.tr("Host name or IP address of the global proxy server.")),
             Map.entry("proxy_port_spin",
-                    "TCP port of the global proxy server."),
+                    I18n.tr("TCP port of the global proxy server.")),
             Map.entry("proxy_username_entry",
-                    "Optional username used to authenticate with the global proxy."),
+                    I18n.tr("Optional username used to authenticate with the global proxy.")),
             Map.entry("proxy_password_entry",
-                    "Optional password used to authenticate with the global proxy."),
+                    I18n.tr("Optional password used to authenticate with the global proxy.")),
             Map.entry("tor_switch",
-                    "Route new downloads through the Tor service managed by ODM."),
+                    I18n.tr("Route new downloads through the Tor service managed by ODM.")),
 
             // aria2
             Map.entry("aria2_path_entry",
-                    "Path to the aria2c executable; leave empty to discover it automatically. A running ODM aria2 daemon changes on restart."),
+                    I18n.tr("Path to the aria2c executable; leave empty to discover it automatically. A running ODM aria2 daemon changes on restart.")),
             Map.entry("browse_aria2_button",
-                    "Choose the aria2c executable used when ODM next starts its aria2 daemon."),
+                    I18n.tr("Choose the aria2c executable used when ODM next starts its aria2 daemon.")),
             Map.entry("min_split_size_spin1",
-                    "Smallest file segment aria2 creates when splitting a download across connections."),
+                    I18n.tr("Smallest file segment aria2 creates when splitting a download across connections.")),
             Map.entry("file_allocation_combo",
-                    "How aria2 reserves disk space before downloading: none, prealloc, or Linux falloc."),
+                    I18n.tr("How aria2 reserves disk space before downloading: none, prealloc, or Linux falloc.")),
             Map.entry("max_peers_spin",
-                    "Maximum peers per BitTorrent download; 0 means unlimited."),
+                    I18n.tr("Maximum peers per BitTorrent download; 0 means unlimited.")),
             Map.entry("peer_speed_limit_spin",
-                    "Preferred BitTorrent speed threshold. When every torrent is slower, aria2 may temporarily request more peers; 0 disables the threshold."),
+                    I18n.tr("Preferred BitTorrent speed threshold. When every torrent is slower, aria2 may temporarily request more peers; 0 disables the threshold.")),
             Map.entry("seeding_policy_combo",
-                    "Choose whether completed torrents stop immediately, at a ratio, after a time, when either limit is reached, or never."),
+                    I18n.tr("Choose whether completed torrents stop immediately, at a ratio, after a time, when either limit is reached, or never.")),
             Map.entry("seed_ratio_spin",
-                    "Upload-to-download share ratio at which aria2 stops seeding; used by ratio-based policies."),
+                    I18n.tr("Upload-to-download share ratio at which aria2 stops seeding; used by ratio-based policies.")),
             Map.entry("seed_time_spin",
-                    "Minutes to seed after completion; used by time-based policies."),
+                    I18n.tr("Minutes to seed after completion; used by time-based policies.")),
             Map.entry("torrent_listen_ports_entry",
-                    "TCP peer and UDP DHT listen port or range, such as 6881-6999. Blank keeps aria2's native setting; changes require restarting ODM."),
+                    I18n.tr("TCP peer and UDP DHT listen port or range, such as 6881-6999. Blank keeps aria2's native setting; changes require restarting ODM.")),
             Map.entry("ipv6_dht_combo",
-                    "Override aria2's IPv6 DHT discovery policy. Engine default emits no ODM option; changes require restarting ODM."),
+                    I18n.tr("Override aria2's IPv6 DHT discovery policy. Engine default emits no ODM option; changes require restarting ODM.")),
             Map.entry("peer_exchange_combo",
-                    "Override BitTorrent Peer Exchange for new downloads. Private torrents still disable peer exchange."),
+                    I18n.tr("Override BitTorrent Peer Exchange for new downloads. Private torrents still disable peer exchange.")),
             Map.entry("local_peer_discovery_combo",
-                    "Override local-network peer discovery for new torrents. aria2's native default is disabled."),
+                    I18n.tr("Override local-network peer discovery for new torrents. aria2's native default is disabled.")),
             Map.entry("torrent_encryption_combo",
-                    "Keep aria2's native encryption policy, require an obfuscated handshake, or require ARC4 payload encryption."),
+                    I18n.tr("Keep aria2's native encryption policy, require an obfuscated handshake, or require ARC4 payload encryption.")),
             Map.entry("tracker_refresh_spin",
-                    "How often ODM reapplies the extra tracker list to active torrents; 0 disables periodic refresh."),
+                    I18n.tr("How often ODM reapplies the extra tracker list to active torrents; 0 disables periodic refresh.")),
             Map.entry("tracker_list_entry",
-                    "Comma-, space-, or line-separated tracker announce URLs added to BitTorrent downloads."),
+                    I18n.tr("Comma-, space-, or line-separated tracker announce URLs added to BitTorrent downloads.")),
             Map.entry("continue_download_check",
-                    "Resume partial files instead of restarting them when a download is retried or resumed."),
+                    I18n.tr("Resume partial files instead of restarting them when a download is retried or resumed.")),
             Map.entry("check_integrity_check",
-                    "Ask aria2 to verify available checksums before accepting downloaded data."),
+                    I18n.tr("Ask aria2 to verify available checksums before accepting downloaded data.")),
             Map.entry("aria2_rpc_port_spin",
-                    "Local RPC port used by ODM's aria2 daemon. The default 6801 avoids aria2's conventional port 6800; changes apply after restarting ODM."),
+                    I18n.tr("Local RPC port used by ODM's aria2 daemon. The default 6801 avoids aria2's conventional port 6800; changes apply after restarting ODM.")),
             Map.entry("honor_external_aria2_config_check",
-                    "Allow an aria2 daemon started by ODM to load the user's normal aria2 configuration file. Disabled keeps ODM settings authoritative."),
+                    I18n.tr("Allow an aria2 daemon started by ODM to load the user's normal aria2 configuration file. Disabled keeps ODM settings authoritative.")),
             Map.entry("remote_time_check",
-                    "Use the server's last-modified time for supported file downloads. Applies when a download starts or resumes."),
+                    I18n.tr("Use the server's last-modified time for supported file downloads. Applies when a download starts or resumes.")),
 
             // yt-dlp
             Map.entry("ytdlp_path_entry",
-                    "Path to the yt-dlp executable; leave empty to discover it automatically."),
+                    I18n.tr("Path to the yt-dlp executable; leave empty to discover it automatically.")),
             Map.entry("browse_ytdlp_button",
-                    "Choose the yt-dlp executable used by ODM."),
+                    I18n.tr("Choose the yt-dlp executable used by ODM.")),
             Map.entry("write_thumbnail_check",
-                    "Save the media thumbnail as a separate image file next to the download."),
+                    I18n.tr("Save the media thumbnail as a separate image file next to the download.")),
             Map.entry("embed_thumbnail_check",
-                    "Embed the media thumbnail as cover art when the selected output supports it. This may require FFmpeg."),
+                    I18n.tr("Embed the media thumbnail as cover art when the selected output supports it. This may require FFmpeg.")),
             Map.entry("embed_metadata_check",
-                    "Embed available title, artist, chapter, and other metadata in the media file."),
+                    I18n.tr("Embed available title, artist, chapter, and other metadata in the media file.")),
             Map.entry("use_aria2_external_check",
-                    "Let yt-dlp use aria2 for supported media fragments and direct media URLs."),
+                    I18n.tr("Let yt-dlp use aria2 for supported media fragments and direct media URLs.")),
             Map.entry("honor_external_ytdlp_config_check",
-                    "Allow ODM's yt-dlp commands to load system and user yt-dlp configuration files, including options that disable certificate verification. Disabled keeps ODM settings authoritative."),
+                    I18n.tr("Allow ODM's yt-dlp commands to load system and user yt-dlp configuration files, including options that disable certificate verification. Disabled keeps ODM settings authoritative.")),
             Map.entry("skip_downloaded_media_check",
-                    "Remember successfully downloaded videos across playlists and restarts, even after removing records. Applies when a media download starts or resumes; disable this preference to download a video again."),
+                    I18n.tr("Remember successfully downloaded videos across playlists and restarts, even after removing records. Applies when a media download starts or resumes; disable this preference to download a video again.")),
 
             // HTTrack
             Map.entry("httrack_path_entry",
-                    "Path to the HTTrack executable; leave empty to discover it automatically. Changes take effect after restarting ODM."),
+                    I18n.tr("Path to the HTTrack executable; leave empty to discover it automatically. Changes take effect after restarting ODM.")),
             Map.entry("browse_httrack_button",
-                    "Choose the HTTrack executable used by ODM after it restarts."),
+                    I18n.tr("Choose the HTTrack executable used by ODM after it restarts.")),
             Map.entry("httrack_max_total_size_spin",
-                    "Stop after this many MiB have been mirrored; 0 means unlimited. The first-run default is 1024 MiB."),
+                    I18n.tr("Stop after this many MiB have been mirrored; 0 means unlimited. The first-run default is 1024 MiB.")),
             Map.entry("httrack_max_non_html_size_spin",
-                    "Skip individual non-HTML files larger than this many MiB; 0 means unlimited."),
+                    I18n.tr("Skip individual non-HTML files larger than this many MiB; 0 means unlimited.")),
             Map.entry("httrack_max_html_size_spin",
-                    "Skip individual HTML files larger than this many MiB; 0 means unlimited."),
+                    I18n.tr("Skip individual HTML files larger than this many MiB; 0 means unlimited.")),
             Map.entry("httrack_max_duration_spin",
-                    "Stop the crawl after this many minutes; 0 means unlimited."),
+                    I18n.tr("Stop the crawl after this many minutes; 0 means unlimited.")),
             Map.entry("httrack_max_links_spin",
-                    "Stop after discovering this many links; 0 disables HTTrack's link-count limit."),
+                    I18n.tr("Stop after discovering this many links; 0 disables HTTrack's link-count limit.")),
             Map.entry("httrack_connections_per_second_spin",
-                    "Maximum new connections HTTrack opens per second. Lower values are gentler on remote servers; 0 disables this throttle."),
+                    I18n.tr("Maximum new connections HTTrack opens per second. Lower values are gentler on remote servers; 0 disables this throttle.")),
             Map.entry("httrack_delay_between_files_spin",
-                    "Minimum pause in seconds between file requests; 0 adds no ODM delay."),
+                    I18n.tr("Minimum pause in seconds between file requests; 0 adds no ODM delay.")),
 
             // Advanced
             Map.entry("override_output_path_check",
-                    "Delete the existing output file or folder before starting a new download. Existing downloads keep the engine's resume policy."),
+                    I18n.tr("Delete the existing output file or folder before starting a new download. Existing downloads keep the engine's resume policy.")),
             Map.entry("uniquify_output_name_check",
-                    "Keep existing files and give colliding downloads names such as name_1, name_2, and so on. Takes precedence over Override output path."),
+                    I18n.tr("Keep existing files and give colliding downloads names such as name_1, name_2, and so on. Takes precedence over Override output path.")),
             Map.entry("enable_scheduling_check",
-                    "Apply the weekly grid globally: inactive hours pause active downloads and prevent queued downloads from starting."),
+                    I18n.tr("Apply the weekly grid globally: inactive hours pause active downloads and prevent queued downloads from starting.")),
             Map.entry("retain_completed_canceled_history_check",
-                    "When enabled, keep completed and canceled records across restarts. When disabled, omit only those records from persisted history. Downloaded files are never deleted; automatic cleanup is controlled separately."),
+                    I18n.tr("When enabled, keep completed and canceled records across restarts. When disabled, omit only those records from persisted history. Downloaded files are never deleted; automatic cleanup is controlled separately.")),
             Map.entry("automatic_cleanup_check",
-                    "Periodically remove old records from ODM history according to the limits below. Downloaded files are never removed."),
+                    I18n.tr("Periodically remove old records from ODM history according to the limits below. Downloaded files are never removed.")),
             Map.entry("cleanup_interval_spin",
-                    "How often ODM evaluates the enabled history cleanup rules."),
+                    I18n.tr("How often ODM evaluates the enabled history cleanup rules.")),
             Map.entry("max_history_records_spin",
-                    "Maximum total history records kept when automatic cleanup runs; 0 means unlimited. Active downloads are never removed."),
+                    I18n.tr("Maximum total history records kept when automatic cleanup runs; 0 means unlimited. Active downloads are never removed.")),
             Map.entry("max_completed_records_spin",
-                    "Maximum completed records kept when automatic cleanup runs; 0 means unlimited."),
+                    I18n.tr("Maximum completed records kept when automatic cleanup runs; 0 means unlimited.")),
             Map.entry("completed_retention_spin",
-                    "Remove completed records older than this many days when automatic cleanup runs; 0 disables age-based removal."),
+                    I18n.tr("Remove completed records older than this many days when automatic cleanup runs; 0 disables age-based removal.")),
             Map.entry("error_retention_spin",
-                    "Remove error records older than this many days when automatic cleanup runs; 0 disables age-based removal."),
+                    I18n.tr("Remove error records older than this many days when automatic cleanup runs; 0 disables age-based removal.")),
             Map.entry("max_import_urls_spin",
-                    "Maximum URLs accepted by one URL-list, generated-sequence, or HTML import."),
+                    I18n.tr("Maximum URLs accepted by one URL-list, generated-sequence, or HTML import.")),
             Map.entry("max_import_source_size_spin",
-                    "Maximum size of a local URL list or local/remote HTML source parsed in memory."),
+                    I18n.tr("Maximum size of a local URL list or local/remote HTML source parsed in memory.")),
             Map.entry("proxychains_path_entry",
-                    "Path to the proxychains executable used for SOCKS and Tor-routed downloads; changes take effect after restarting ODM."),
+                    I18n.tr("Path to the proxychains executable used for SOCKS and Tor-routed downloads; changes take effect after restarting ODM.")),
             Map.entry("browse_proxychains_button",
-                    "Choose the proxychains executable used by ODM after it restarts."),
+                    I18n.tr("Choose the proxychains executable used by ODM after it restarts.")),
             Map.entry("tor_path_entry",
-                    "Path to the Tor executable managed by ODM; changes take effect after restarting ODM."),
+                    I18n.tr("Path to the Tor executable managed by ODM; changes take effect after restarting ODM.")),
             Map.entry("browse_tor_button",
-                    "Choose the Tor executable managed by ODM after it restarts."),
+                    I18n.tr("Choose the Tor executable managed by ODM after it restarts.")),
             Map.entry("tor_check_interval_spin",
-                    "Minutes between automatic checks while Tor and the circuit monitor are running."),
+                    I18n.tr("Minutes between automatic checks while Tor and the circuit monitor are running.")),
             Map.entry("tor_circuit_monitor_switch",
-                    "Monitor the Tor circuit while Tor is running. A failed automatic check enables Offline Mode and sends a desktop notification."),
+                    I18n.tr("Monitor the Tor circuit while Tor is running. A failed automatic check enables Offline Mode and sends a desktop notification.")),
             Map.entry("curl_path_entry",
-                    "Path to the curl executable used by fallback downloads; changes take effect after restarting ODM."),
+                    I18n.tr("Path to the curl executable used by fallback downloads; changes take effect after restarting ODM.")),
             Map.entry("browse_curl_button",
-                    "Choose the curl executable used by fallback downloads after ODM restarts."),
+                    I18n.tr("Choose the curl executable used by fallback downloads after ODM restarts.")),
             Map.entry("subliminal_path_entry",
-                    "Path to the Subliminal executable used by the Download Subtitles completion action; leave empty to discover it automatically."),
+                    I18n.tr("Path to the Subliminal executable used by the Download Subtitles completion action; leave empty to discover it automatically.")),
             Map.entry("browse_subliminal_button",
-                    "Choose the Subliminal executable used by completion actions."),
+                    I18n.tr("Choose the Subliminal executable used by completion actions.")),
             Map.entry("antivirus_type_combo",
-                    "Scanner used by Antivirus Scan completion actions; Automatic chooses the first validated installed scanner."),
+                    I18n.tr("Scanner used by Antivirus Scan completion actions; Automatic chooses the first validated installed scanner.")),
             Map.entry("antivirus_command_entry",
-                    "Custom file scanner command; include {file} as an argument. Quotes group arguments. Exit 0 means the command completed; inspect its output for the verdict."),
+                    I18n.tr("Custom file scanner command; include {file} as an argument. Quotes group arguments. Exit 0 means the command completed; inspect its output for the verdict.")),
             Map.entry("antivirus_timeout_spin",
-                    "Maximum antivirus scan duration in seconds; 0 waits without a timeout."));
+                    I18n.tr("Maximum antivirus scan duration in seconds; 0 waits without a timeout.")));
 
     record AntivirusChoice(String key, String label) {
     }
 
-    private static final String[] DAY_LABELS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+    private static final String[] DAY_LABELS = {I18n.tr("Mon"), I18n.tr("Tue"), I18n.tr("Wed"), I18n.tr("Thu"), I18n.tr("Fri"), I18n.tr("Sat"), I18n.tr("Sun")};
     private static final String SCHEDULER_CSS = """
             .scheduler-hour {
               min-width: 20px;
@@ -351,78 +351,78 @@ public class SettingsDialog {
         this.dialog = Widgets.require(builder, "settings_dialog", Window.class);
         this.settingsNotebook = Widgets.require(builder, "settings_notebook", Notebook.class);
         this.jackett = new JackettSettingsPane(dialog, downloadManager.getGlobalSettings(), jackettService);
-        settingsNotebook.insertPage(jackett.widget(), new Label("Search Engine"), 5);
+        settingsNotebook.insertPage(jackett.widget(), new Label(I18n.tr("Search Engine")), 5);
         this.statusLabel = Widgets.require(builder, "settings_status_label", Label.class);
         this.availableSpaceLabel = Widgets.require(builder, "available_space_label", Label.class);
         this.antivirusDetectionLabel = Widgets.require(
                 builder, "antivirus_detection_label", Label.class);
 
         AccessibilitySupport.label(spin("max_concurrent_downloads_spin"),
-                "Maximum concurrent downloads");
+                I18n.tr("Maximum concurrent downloads"));
         AccessibilitySupport.label(check("automatic_cleanup_check"),
-                "Automatically remove old download records");
+                I18n.tr("Automatically remove old download records"));
         AccessibilitySupport.label(check("retain_completed_canceled_history_check"),
-                "Save download history");
+                I18n.tr("Save download history"));
         AccessibilitySupport.label(spin("cleanup_interval_spin"),
-                "History cleanup interval in hours");
+                I18n.tr("History cleanup interval in hours"));
         AccessibilitySupport.label(spin("tor_check_interval_spin"),
-                "Tor check interval in minutes");
+                I18n.tr("Tor check interval in minutes"));
         AccessibilitySupport.label(Widgets.require(builder, "tor_circuit_monitor_switch", Switch.class),
-                "Enable Tor circuit monitor");
+                I18n.tr("Enable Tor circuit monitor"));
         AccessibilitySupport.label(spin("max_history_records_spin"),
-                "Maximum download history records, zero for unlimited");
+                I18n.tr("Maximum download history records, zero for unlimited"));
         AccessibilitySupport.label(spin("max_completed_records_spin"),
-                "Maximum completed history records, zero for unlimited");
+                I18n.tr("Maximum completed history records, zero for unlimited"));
         AccessibilitySupport.label(spin("completed_retention_spin"),
-                "Completed record retention in days, zero to never remove by age");
+                I18n.tr("Completed record retention in days, zero to never remove by age"));
         AccessibilitySupport.label(spin("error_retention_spin"),
-                "Error record retention in days, zero to never remove by age");
+                I18n.tr("Error record retention in days, zero to never remove by age"));
         AccessibilitySupport.label(spin("max_import_urls_spin"),
-                "Maximum URLs accepted by one import");
+                I18n.tr("Maximum URLs accepted by one import"));
         AccessibilitySupport.label(spin("max_import_source_size_spin"),
-                "Maximum import source size in MiB");
-        AccessibilitySupport.label(entry("proxy_host_entry"), "Global proxy host");
-        AccessibilitySupport.label(spin("proxy_port_spin"), "Global proxy port");
-        AccessibilitySupport.label(entry("proxy_username_entry"), "Global proxy username");
-        AccessibilitySupport.label(entry("proxy_password_entry"), "Global proxy password");
+                I18n.tr("Maximum import source size in MiB"));
+        AccessibilitySupport.label(entry("proxy_host_entry"), I18n.tr("Global proxy host"));
+        AccessibilitySupport.label(spin("proxy_port_spin"), I18n.tr("Global proxy port"));
+        AccessibilitySupport.label(entry("proxy_username_entry"), I18n.tr("Global proxy username"));
+        AccessibilitySupport.label(entry("proxy_password_entry"), I18n.tr("Global proxy password"));
         AccessibilitySupport.label(spin("aria2_rpc_port_spin"),
-                "aria2 RPC port");
+                I18n.tr("aria2 RPC port"));
         AccessibilitySupport.label(Widgets.require(builder,
-                "seeding_policy_combo", DropDown.class), "Torrent seeding policy");
+                "seeding_policy_combo", DropDown.class), I18n.tr("Torrent seeding policy"));
         AccessibilitySupport.label(spin("seed_ratio_spin"),
-                "Torrent seed ratio limit");
+                I18n.tr("Torrent seed ratio limit"));
         AccessibilitySupport.label(spin("seed_time_spin"),
-                "Torrent seed time limit in minutes");
+                I18n.tr("Torrent seed time limit in minutes"));
         AccessibilitySupport.label(entry("torrent_listen_ports_entry"),
-                "Torrent peer and DHT listen ports");
+                I18n.tr("Torrent peer and DHT listen ports"));
         AccessibilitySupport.label(Widgets.require(builder,
-                "ipv6_dht_combo", DropDown.class), "IPv6 DHT policy");
+                "ipv6_dht_combo", DropDown.class), I18n.tr("IPv6 DHT policy"));
         AccessibilitySupport.label(Widgets.require(builder,
-                "peer_exchange_combo", DropDown.class), "Peer exchange policy");
+                "peer_exchange_combo", DropDown.class), I18n.tr("Peer exchange policy"));
         AccessibilitySupport.label(Widgets.require(builder,
                 "local_peer_discovery_combo", DropDown.class),
-                "Local peer discovery policy");
+                I18n.tr("Local peer discovery policy"));
         AccessibilitySupport.label(Widgets.require(builder,
                 "torrent_encryption_combo", DropDown.class),
-                "BitTorrent encryption policy");
+                I18n.tr("BitTorrent encryption policy"));
         AccessibilitySupport.label(entry("antivirus_command_entry"),
-                "Custom antivirus command including file placeholder");
+                I18n.tr("Custom antivirus command including file placeholder"));
         AccessibilitySupport.label(spin("antivirus_timeout_spin"),
-                "Antivirus scan timeout in seconds, zero for no timeout");
+                I18n.tr("Antivirus scan timeout in seconds, zero for no timeout"));
         AccessibilitySupport.label(spin("httrack_max_total_size_spin"),
-                "Maximum mirror size in MiB, zero for unlimited");
+                I18n.tr("Maximum mirror size in MiB, zero for unlimited"));
         AccessibilitySupport.label(spin("httrack_max_non_html_size_spin"),
-                "Maximum non-HTML file size in MiB, zero for unlimited");
+                I18n.tr("Maximum non-HTML file size in MiB, zero for unlimited"));
         AccessibilitySupport.label(spin("httrack_max_html_size_spin"),
-                "Maximum HTML file size in MiB, zero for unlimited");
+                I18n.tr("Maximum HTML file size in MiB, zero for unlimited"));
         AccessibilitySupport.label(spin("httrack_max_duration_spin"),
-                "Maximum mirror duration in minutes, zero for unlimited");
+                I18n.tr("Maximum mirror duration in minutes, zero for unlimited"));
         AccessibilitySupport.label(spin("httrack_max_links_spin"),
-                "Maximum mirror link count, zero for unlimited");
+                I18n.tr("Maximum mirror link count, zero for unlimited"));
         AccessibilitySupport.label(spin("httrack_connections_per_second_spin"),
-                "Maximum HTTrack connections per second");
+                I18n.tr("Maximum HTTrack connections per second"));
         AccessibilitySupport.label(spin("httrack_delay_between_files_spin"),
-                "Delay between HTTrack files in seconds");
+                I18n.tr("Delay between HTTrack files in seconds"));
 
         DialogSupport.configureIndependent(dialog, parent);
 
@@ -433,10 +433,10 @@ public class SettingsDialog {
         initDropdown("peer_exchange_combo", NATIVE_TOGGLE_OVERRIDES);
         initDropdown("local_peer_discovery_combo", NATIVE_TOGGLE_OVERRIDES);
         initDropdown("torrent_encryption_combo", TORRENT_ENCRYPTION_POLICIES);
-        initDropdown("antivirus_type_combo", new String[]{"Detecting installed scanners…"});
+        initDropdown("antivirus_type_combo", new String[]{I18n.tr("Detecting installed scanners…")});
         Widgets.require(builder, "antivirus_type_combo", DropDown.class).setSensitive(false);
         AccessibilitySupport.label(Widgets.require(builder, "antivirus_type_combo", DropDown.class),
-                "Antivirus scanner used by completion actions");
+                I18n.tr("Antivirus scanner used by completion actions"));
 
         buildSchedulerGrid();
 
@@ -446,21 +446,21 @@ public class SettingsDialog {
                 "default_download_folder_chooser", MenuButton.class);
         MenuButton monitoredDirectoryButton = Widgets.require(builder,
                 "monitored_folder_chooser", MenuButton.class);
-        AccessibilitySupport.label(defaultDirectoryButton, "Default download folder");
-        AccessibilitySupport.label(monitoredDirectoryButton, "Monitored folder");
+        AccessibilitySupport.label(defaultDirectoryButton, I18n.tr("Default download folder"));
+        AccessibilitySupport.label(monitoredDirectoryButton, I18n.tr("Monitored folder"));
         this.defaultDirectoryChooser = PathChooserButton.forFolder(defaultDirectoryButton,
-                dialog, "Select download folder", null,
+                dialog, I18n.tr("Select download folder"), null,
                 path -> setDefaultDir(path.toString()));
         this.monitoredDirectoryChooser = PathChooserButton.forFolder(monitoredDirectoryButton,
-                dialog, "Select monitored folder", null,
+                dialog, I18n.tr("Select monitored folder"), null,
                 path -> setMonitoredDir(path.toString()));
-        onPickFile("browse_aria2_button", "Select aria2c binary", e -> setText("aria2_path_entry", e));
-        onPickFile("browse_ytdlp_button", "Select yt-dlp binary", e -> setText("ytdlp_path_entry", e));
-        onPickFile("browse_httrack_button", "Select httrack binary", e -> setText("httrack_path_entry", e));
-        onPickFile("browse_proxychains_button", "Select proxychains binary", e -> setText("proxychains_path_entry", e));
-        onPickFile("browse_tor_button", "Select tor binary", e -> setText("tor_path_entry", e));
-        onPickFile("browse_curl_button", "Select curl binary", e -> setText("curl_path_entry", e));
-        onPickFile("browse_subliminal_button", "Select Subliminal binary",
+        onPickFile("browse_aria2_button", I18n.tr("Select aria2c binary"), e -> setText("aria2_path_entry", e));
+        onPickFile("browse_ytdlp_button", I18n.tr("Select yt-dlp binary"), e -> setText("ytdlp_path_entry", e));
+        onPickFile("browse_httrack_button", I18n.tr("Select httrack binary"), e -> setText("httrack_path_entry", e));
+        onPickFile("browse_proxychains_button", I18n.tr("Select proxychains binary"), e -> setText("proxychains_path_entry", e));
+        onPickFile("browse_tor_button", I18n.tr("Select tor binary"), e -> setText("tor_path_entry", e));
+        onPickFile("browse_curl_button", I18n.tr("Select curl binary"), e -> setText("curl_path_entry", e));
+        onPickFile("browse_subliminal_button", I18n.tr("Select Subliminal binary"),
                 e -> setText("subliminal_path_entry", e));
 
         configureSettingTooltips();
@@ -473,7 +473,7 @@ public class SettingsDialog {
             torControl.setSensitive(available);
             refreshTorMonitorControls();
             torControl.setTooltipText(available ? SETTING_TOOLTIPS.get("tor_switch")
-                    : "Start Tor from Edit → Tor to change this option.");
+                    : I18n.tr("Start Tor from Edit → Tor to change this option."));
         });
         discoverAvailableAntiviruses();
         bindFolderMonitoringChildren();
@@ -570,7 +570,7 @@ public class SettingsDialog {
     private void showSchedulerSelection(int day, int hour, boolean active) {
         schedulerSelectionLabel.setLabel(String.format("%s %02d:00–%02d:59 — %s",
                 DAY_LABELS[day], hour, hour,
-                active ? "downloads allowed" : "downloads paused"));
+                active ? I18n.tr("downloads allowed") : I18n.tr("downloads paused")));
     }
 
     public void present() {
@@ -824,7 +824,7 @@ public class SettingsDialog {
         }
         String tooltip = currentValue == null || currentValue.isBlank()
                 ? help
-                : help + "\nCurrent: " + currentValue;
+                : help + "\n" + I18n.format("Current: %s", currentValue);
         Widgets.require(builder, id, Widget.class).setTooltipText(tooltip);
     }
 
@@ -880,12 +880,12 @@ public class SettingsDialog {
         java.util.List<AntivirusChoice> choices = new java.util.ArrayList<>();
         boolean available = validated != null && !validated.isEmpty();
         choices.add(new AntivirusChoice(ANTIVIRUS_AUTO,
-                available ? "Automatic (first available)"
-                        : "Automatic (no scanner available)"));
+                available ? I18n.tr("Automatic (first available)")
+                        : I18n.tr("Automatic (no scanner available)")));
         if (available) {
             choices.addAll(validated);
         }
-        choices.add(new AntivirusChoice("custom", "Custom command"));
+        choices.add(new AntivirusChoice("custom", I18n.tr("Custom command")));
         return java.util.List.copyOf(choices);
     }
 
@@ -937,13 +937,12 @@ public class SettingsDialog {
                 .filter(choice -> !"custom".equals(choice.key())
                         && !ANTIVIRUS_AUTO.equals(choice.key())).count();
         String message = discoveryFailed
-                ? "Scanner discovery failed; custom command remains available."
+                ? I18n.tr("Scanner discovery failed; custom command remains available.")
                 : validatedCount == 0
-                        ? "No supported antivirus scanner was found and validated."
-                        : "Validated " + validatedCount + " installed antivirus scanner"
-                                + (validatedCount == 1 ? "." : "s.");
+                        ? I18n.tr("No supported antivirus scanner was found and validated.")
+                        : I18n.plural("Validated %d installed antivirus scanner.", "Validated %d installed antivirus scanners.", validatedCount);
         if (requestedIndex < 0 && !"custom".equals(requestedAntivirusKey)) {
-            message += " The configured scanner is unavailable.";
+            message += " " + I18n.tr("The configured scanner is unavailable.");
         }
         antivirusDetectionLabel.setLabel(message);
     }
@@ -1030,7 +1029,7 @@ public class SettingsDialog {
                 "default_download_folder_chooser", directory.toString());
         try {
             long free = directory.toFile().getUsableSpace();
-            availableSpaceLabel.setLabel(DownloadFormats.size(free) + " free");
+            availableSpaceLabel.setLabel(I18n.format("%s free", DownloadFormats.size(free)));
         } catch (RuntimeException invalidDirectory) {
             availableSpaceLabel.setLabel("");
         }
@@ -1067,11 +1066,11 @@ public class SettingsDialog {
         String tabName = switch (page) {
             case 0 -> {
                 loadGeneral(defaults, false);
-                yield "General";
+                yield I18n.tr("General");
             }
             case 1 -> {
                 loadNetwork(defaults);
-                yield "Network";
+                yield I18n.tr("Network");
             }
             case 2 -> {
                 loadAria2(defaults);
@@ -1087,16 +1086,16 @@ public class SettingsDialog {
             }
             case 5 -> {
                 jackett.reset();
-                yield "Search Engine";
+                yield I18n.tr("Search Engine");
             }
             case 6 -> {
                 loadAdvanced(defaults);
-                yield "Advanced";
+                yield I18n.tr("Advanced");
             }
             default -> throw new IllegalArgumentException("Unknown settings tab: " + page);
         };
         AccessibilitySupport.status(statusLabel,
-                tabName + " defaults loaded. Press Apply or OK to save them.");
+                I18n.format("%s defaults loaded. Press Apply or OK to save them.", tabName));
     }
 
     private void load(GlobalSettings s, boolean useRuntimeMonitoringState) {
@@ -1287,7 +1286,7 @@ public class SettingsDialog {
             return;
         }
         setSaveButtonsSensitive(false);
-        AccessibilitySupport.status(statusLabel, "Saving settings…");
+        AccessibilitySupport.status(statusLabel, I18n.tr("Saving settings…"));
         java.util.concurrent.CompletableFuture
                 .supplyAsync(() -> persistSettings(application),
                         org.manager.util.ExecutorServiceManager.getInstance().getIoExecutor())
@@ -1330,7 +1329,7 @@ public class SettingsDialog {
         // General
         Path defaultDirectory = defaultDirectoryChooser.getPath();
         if (defaultDirectory == null) {
-            throw new IllegalArgumentException("Select a default download folder");
+            throw new IllegalArgumentException(I18n.tr("Select a default download folder"));
         }
         s.setDefaultDownloadDirectory(defaultDirectory);
         s.setMaxConcurrentDownloads((int) spin("max_concurrent_downloads_spin").getValue());
@@ -1479,11 +1478,11 @@ public class SettingsDialog {
             if ("custom".equals(scanner)) {
                 if (customCommand.isBlank()) {
                     throw new IllegalArgumentException(
-                            "Enter a command for the Custom antivirus scanner");
+                            I18n.tr("Enter a command for the Custom antivirus scanner"));
                 }
                 if (!customCommand.contains("{file}")) {
                     throw new IllegalArgumentException(
-                            "The Custom antivirus command must include {file}");
+                            I18n.tr("The Custom antivirus command must include {file}"));
                 }
             }
             s.setProperty("antivirus.scanner", scanner);
@@ -1558,11 +1557,11 @@ public class SettingsDialog {
 
     private void reportSaveOutcome(boolean saved) {
         if (saved) {
-            AccessibilitySupport.status(statusLabel, "Settings saved.");
+            AccessibilitySupport.status(statusLabel, I18n.tr("Settings saved."));
             LOGGER.info("Settings saved to " + GlobalSettings.getConfigFilePath());
         } else {
             AccessibilitySupport.status(statusLabel,
-                    "Failed to save settings — check configuration permissions",
+                    I18n.tr("Failed to save settings — check configuration permissions"),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
             LOGGER.error("Failed to save settings to " + GlobalSettings.getConfigFilePath());
         }

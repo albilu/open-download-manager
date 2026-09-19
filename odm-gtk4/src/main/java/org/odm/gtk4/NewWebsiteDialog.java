@@ -28,8 +28,8 @@ public final class NewWebsiteDialog {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(NewWebsiteDialog.class);
     private static final String[] SCOPE_LABELS = {
-        "Same directory", "Same host", "Same domain",
-        "Include nearby external assets", "Custom external depth"
+        I18n.tr("Same directory"), I18n.tr("Same host"), I18n.tr("Same domain"),
+        I18n.tr("Include nearby external assets"), I18n.tr("Custom external depth")
     };
 
     private final Window dialog;
@@ -98,7 +98,7 @@ public final class NewWebsiteDialog {
         Button clearCookieFileButton = Widgets.require(builder,
                 "website_clear_cookie_button", Button.class);
         this.cookieFileChooser = PathChooserButton.forFile(cookieFileButton, dialog,
-                "Select Netscape cookie file", null,
+                I18n.tr("Select Netscape cookie file"), null,
                 ignored -> clearCookieFileButton.setSensitive(true));
         clearCookieFileButton.onClicked(() -> {
             cookieFileChooser.clear();
@@ -111,18 +111,18 @@ public final class NewWebsiteDialog {
         Widgets.require(builder, "website_network_options_host", Box.class)
                 .append(networkOptions.widget());
 
-        AccessibilitySupport.label(urlEntry, "Website URL to mirror");
-        AccessibilitySupport.label(depthSpin, "Website crawl depth");
-        AccessibilitySupport.label(scopeDrop, "Website crawl scope");
-        AccessibilitySupport.label(externalDepthSpin, "External website crawl depth");
-        AccessibilitySupport.label(includeEntry, "Included website URL patterns");
-        AccessibilitySupport.label(excludeEntry, "Excluded website URL patterns");
+        AccessibilitySupport.label(urlEntry, I18n.tr("Website URL to mirror"));
+        AccessibilitySupport.label(depthSpin, I18n.tr("Website crawl depth"));
+        AccessibilitySupport.label(scopeDrop, I18n.tr("Website crawl scope"));
+        AccessibilitySupport.label(externalDepthSpin, I18n.tr("External website crawl depth"));
+        AccessibilitySupport.label(includeEntry, I18n.tr("Included website URL patterns"));
+        AccessibilitySupport.label(excludeEntry, I18n.tr("Excluded website URL patterns"));
         AccessibilitySupport.label(includeArchivesCheck,
-                "Include archive files in this website mirror");
+                I18n.tr("Include archive files in this website mirror"));
         AccessibilitySupport.label(additionalHeadersEntry,
-                "Additional HTTP headers for this website mirror");
+                I18n.tr("Additional HTTP headers for this website mirror"));
         AccessibilitySupport.label(cookieFileButton,
-                "Netscape cookie file for this website mirror");
+                I18n.tr("Netscape cookie file for this website mirror"));
 
         Runnable updateExternalDepth = () -> externalDepthSpin.setSensitive(
                 scopeDrop.getSelected()
@@ -151,7 +151,7 @@ public final class NewWebsiteDialog {
         if (closed.get() || submissionInFlight) { return; }
         String url = urlEntry.getText().trim();
         if (url.isEmpty()) {
-            AccessibilitySupport.status(statusLabel, "Enter a URL");
+            AccessibilitySupport.status(statusLabel, I18n.tr("Enter a URL"));
             return;
         }
         try {
@@ -160,7 +160,7 @@ public final class NewWebsiteDialog {
                     defaultDestination(), Download.Type.WEBSITE_SCRAPING);
             if (!(download.getSettings() instanceof HttrackSettings settings)) {
                 throw new IllegalStateException(
-                        "Website download does not have HTTrack settings");
+                        I18n.tr("Website download does not have HTTrack settings"));
             }
             applyWebsiteScrapeOptions(settings, (int) depthSpin.getValue(),
                     selectedScope(), (int) externalDepthSpin.getValue(),
@@ -172,7 +172,7 @@ public final class NewWebsiteDialog {
             Download submitted = download;
             submissionInFlight = true;
             startButton.setSensitive(false);
-            AccessibilitySupport.status(statusLabel, "Adding website scrape to queue…");
+            AccessibilitySupport.status(statusLabel, I18n.tr("Adding website scrape to queue…"));
             activity.track(DownloadSubmission.submit(downloadManager, submitted,
                     DialogOptions.ensureTorAvailable(networkOptions.isTorSelected(), torService), closed, null))
                     .whenComplete((ignored, error) -> UiThread.marshal(() -> {
@@ -188,9 +188,8 @@ public final class NewWebsiteDialog {
                             submissionInFlight = downloadManager.getDownload(submitted.getId()) != null;
                             startButton.setSensitive(!submissionInFlight);
                             AccessibilitySupport.status(statusLabel,
-                                    "Could not add to queue: " + UiErrors.message(error)
-                                            + (submissionInFlight ? ". This download remains in Downloads; manage it there."
-                                                    : ". Press Start Scrape to retry."),
+                                    submissionInFlight ? I18n.format("Could not add to queue: %s. This download remains in Downloads; manage it there.", UiErrors.message(error))
+                                            : I18n.format("Could not add to queue: %s. Press Start Scrape to retry.", UiErrors.message(error)),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             LOGGER.warn("Queue rejected website scrape", error);
                         }
@@ -199,7 +198,7 @@ public final class NewWebsiteDialog {
             submissionInFlight = false;
             startButton.setSensitive(true);
             AccessibilitySupport.status(statusLabel,
-                    "Invalid request: " + UiErrors.message(e),
+                    I18n.format("Invalid request: %s", UiErrors.message(e)),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }

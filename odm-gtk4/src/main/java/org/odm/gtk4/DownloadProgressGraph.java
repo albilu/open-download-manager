@@ -23,7 +23,7 @@ final class DownloadProgressGraph {
     private DownloadSpeedHistory.Snapshot history = DownloadSpeedHistory.Snapshot.EMPTY;
     private double fraction;
     private long totalBytes;
-    private String emptyMessage = "Select a download";
+    private String emptyMessage = I18n.tr("Select a download");
 
     DownloadProgressGraph(GtkBuilder builder) {
         CairoSupport.ensureInitialized();
@@ -51,7 +51,7 @@ final class DownloadProgressGraph {
         fraction = complete ? 1 : download == null ? 0
                 : ProgressPresentation.fraction(download.getProgress());
         String progress = download == null ? "—" : totalBytes > 0 || complete
-                ? ProgressPresentation.percentage(fraction * 100) : "Size unknown";
+                ? ProgressPresentation.percentage(fraction * 100) : I18n.tr("Size unknown");
         double currentSpeed = download != null && download.getStatus() == Download.Status.DOWNLOADING
                 && Float.isFinite(download.getSpeed()) ? Math.max(0, download.getSpeed()) : 0;
         String average = history.samples().isEmpty() ? "—"
@@ -60,20 +60,19 @@ final class DownloadProgressGraph {
                 ? history.samples().isEmpty() ? "—" : DownloadFormats.rate((long) history.maxBytesPerSecond())
                 : download == null ? "—" : DownloadFormats.rate((long) currentSpeed);
         progressLabel.setLabel(progress);
-        speedLabel.setLabel((complete ? "Max speed: " : "Speed: ") + speed);
-        averageLabel.setLabel("Average: " + average);
+        speedLabel.setLabel(complete ? I18n.format("Max speed: %s", speed) : I18n.format("Speed: %s", speed));
+        averageLabel.setLabel(I18n.format("Average: %s", average));
         boolean timeAxis = download != null && totalBytes <= 0;
-        axisLabel.setLabel(timeAxis ? "Active transfer time" : "Download progress");
+        axisLabel.setLabel(timeAxis ? I18n.tr("Active transfer time") : I18n.tr("Download progress"));
         axisStart.setLabel(timeAxis ? "0s" : "0%");
         long elapsed = history.samples().size() < 2 ? 0
                 : history.samples().getLast().elapsedMillis() - history.samples().getFirst().elapsedMillis();
         axisEnd.setLabel(timeAxis ? elapsed / 1000 + "s" : "100%");
-        emptyMessage = download == null ? "Select a download"
-                : complete ? "No speed history available" : "Waiting for speed data";
-        String description = download == null ? "Select a download to view its speed history"
-                : "Download progress: " + progress + ". " + speedLabel.getLabel()
-                        + ". Average speed: " + average
-                        + ". Solid line: download speed. Dashed line: average speed.";
+        emptyMessage = download == null ? I18n.tr("Select a download")
+                : complete ? I18n.tr("No speed history available") : I18n.tr("Waiting for speed data");
+        String description = download == null ? I18n.tr("Select a download to view its speed history")
+                : I18n.format("Download progress: %s. %s. Average speed: %s. Solid line: download speed. Dashed line: average speed.",
+                        progress, speedLabel.getLabel(), average);
         area.setTooltipText(description);
         AccessibilitySupport.label(area, description);
         area.queueDraw();

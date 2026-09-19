@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y \
     maven \
     # Build tools
     git \
+    gettext \
+    locales \
     curl \
     wget \
     # GTK libraries for java-gi (GTK4)
@@ -37,6 +39,13 @@ RUN apt-get update && apt-get install -y \
     vim \
     tree \
     && rm -rf /var/lib/apt/lists/*
+
+# Exercise gettext with installed desktop locales, including French regional fallback.
+RUN localedef -i en_US -f UTF-8 en_US.UTF-8 && \
+    localedef -i fr_FR -f UTF-8 fr_FR.UTF-8 && \
+    localedef -i fr_BE -f UTF-8 fr_BE.UTF-8 && \
+    localedef -i fr_CA -f UTF-8 fr_CA.UTF-8 && \
+    localedef -i de_DE -f UTF-8 de_DE.UTF-8
 
 # Install the matching Chromium build for headless media discovery. Keep the
 # browser available to the non-root development user; probes never download it.

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<interface>
+<interface domain="odm">
   <requires lib="gtk" version="4.0"/>
 
   <object class="GtkWindow" id="property_dialog">
-    <property name="title">Download Properties</property>
+    <property name="title" translatable="yes">Download Properties</property>
     <property name="default-width">900</property>
     <property name="default-height">520</property>
     <child>
@@ -27,7 +27,7 @@
               </object>
             </child>
             <child type="tab">
-              <object class="GtkLabel"><property name="label">Options</property></object>
+              <object class="GtkLabel"><property name="label" translatable="yes">Options</property></object>
             </child>
           </object>
         </child>
@@ -51,9 +51,9 @@
             <property name="margin-end">12</property>
             <property name="margin-top">8</property>
             <property name="margin-bottom">12</property>
-            <child><object class="GtkButton" id="cancel_button"><property name="label">Cancel</property></object></child>
-            <child><object class="GtkButton" id="apply_button"><property name="label">Apply</property></object></child>
-            <child><object class="GtkButton" id="ok_button"><property name="label">OK</property><property name="css-classes">['suggested-action']</property></object></child>
+            <child><object class="GtkButton" id="cancel_button"><property name="label" translatable="yes">Cancel</property></object></child>
+            <child><object class="GtkButton" id="apply_button"><property name="label" translatable="yes">Apply</property></object></child>
+            <child><object class="GtkButton" id="ok_button"><property name="label" translatable="yes">OK</property><property name="css-classes">['suggested-action']</property></object></child>
           </object>
         </child>
       </object>

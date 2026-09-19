@@ -11,7 +11,7 @@ class SizeUnitsTest {
 
     @Test
     void englishTableHasFiveUnitsEndingInTerabytes() {
-        assertEquals(List.of("B", "KB", "MB", "GB", "TB"), SizeUnits.current());
+        assertEquals(List.of("B", "KB", "MB", "GB", "TB"), SizeUnits.forLocale(Locale.US));
     }
 
     @Test
@@ -20,9 +20,12 @@ class SizeUnitsTest {
     }
 
     @Test
-    void localeHookReturnsEnglishForEveryLocaleUntilLocalisationLands() {
-        assertEquals(SizeUnits.current(), SizeUnits.forLocale(Locale.US));
-        assertEquals(SizeUnits.current(), SizeUnits.forLocale(Locale.FRANCE));
+    void frenchRegionalLocalesUseOctetsAndOtherLanguagesFallBackToEnglish() {
+        for (String tag : List.of("fr", "fr-FR", "fr-BE", "fr-CA")) {
+            assertEquals(SizeUnits.french(), SizeUnits.forLocale(Locale.forLanguageTag(tag)));
+        }
+        assertEquals(SizeUnits.forLocale(Locale.US), SizeUnits.forLocale(Locale.GERMANY));
+        assertEquals(SizeUnits.forLocale(Locale.US), SizeUnits.forLocale(null));
     }
 
     @Test

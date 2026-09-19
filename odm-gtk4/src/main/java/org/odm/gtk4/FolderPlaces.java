@@ -43,23 +43,23 @@ final class FolderPlaces {
         Path home = homeDirectory();
         if (home != null) {
             Path filename = home.getFileName();
-            candidates.add(new Place(filename == null ? "Home" : filename.toString(),
+            candidates.add(new Place(filename == null ? I18n.tr("Home") : filename.toString(),
                     "user-home-symbolic", home));
         }
 
-        addSpecial(candidates, "Desktop", "user-desktop-symbolic",
+        addSpecial(candidates, I18n.tr("Desktop"), "user-desktop-symbolic",
                 UserDirectory.DIRECTORY_DESKTOP);
-        candidates.add(new Place("File System", "drive-harddisk-symbolic", Path.of("/")));
+        candidates.add(new Place(I18n.tr("File System"), "drive-harddisk-symbolic", Path.of("/")));
         addMountedVolumes(candidates);
-        addSpecial(candidates, "Documents", "folder-documents-symbolic",
+        addSpecial(candidates, I18n.tr("Documents"), "folder-documents-symbolic",
                 UserDirectory.DIRECTORY_DOCUMENTS);
-        addSpecial(candidates, "Music", "folder-music-symbolic",
+        addSpecial(candidates, I18n.tr("Music"), "folder-music-symbolic",
                 UserDirectory.DIRECTORY_MUSIC);
-        addSpecial(candidates, "Pictures", "folder-pictures-symbolic",
+        addSpecial(candidates, I18n.tr("Pictures"), "folder-pictures-symbolic",
                 UserDirectory.DIRECTORY_PICTURES);
-        addSpecial(candidates, "Videos", "folder-videos-symbolic",
+        addSpecial(candidates, I18n.tr("Videos"), "folder-videos-symbolic",
                 UserDirectory.DIRECTORY_VIDEOS);
-        addSpecial(candidates, "Downloads", "folder-download-symbolic",
+        addSpecial(candidates, I18n.tr("Downloads"), "folder-download-symbolic",
                 UserDirectory.DIRECTORY_DOWNLOAD);
 
         return filterAndDeduplicate(candidates, Files::isDirectory);
@@ -109,7 +109,7 @@ final class FolderPlaces {
                 org.gnome.gio.File root = mount.getRoot();
                 if (root != null && root.getPath() != null) {
                     String name = mount.getName();
-                    places.add(new Place(name == null || name.isBlank() ? "Mounted Volume" : name,
+                    places.add(new Place(name == null || name.isBlank() ? I18n.tr("Mounted Volume") : name,
                             "drive-removable-media-symbolic",
                             Path.of(root.getPath().toString())));
                 }

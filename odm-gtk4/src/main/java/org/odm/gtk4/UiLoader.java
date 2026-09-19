@@ -31,6 +31,7 @@ public final class UiLoader {
             throw new IllegalStateException("Failed to read UI resource: " + classpathResource, e);
         }
         try {
+            I18n.initialize();
             GtkBuilder builder = GtkBuilder.fromString(xml, -1);
             for (var object : builder.getObjects()) {
                 if (object instanceof org.gnome.gtk.Window window) {

@@ -57,11 +57,11 @@ public class PropertyDialog {
         Download first = this.downloads.getFirst();
         DialogSupport.configureIndependent(dialog, parent);
         dialog.setTitle(this.downloads.size() == 1
-                ? "Properties — " + first.getName()
-                : "Properties — " + this.downloads.size() + " downloads");
+                ? I18n.format("Properties — %s", first.getName())
+                : I18n.plural("Properties — %d download", "Properties — %d downloads", this.downloads.size()));
         if (networkOptions.hasMixedValues()) {
             AccessibilitySupport.status(statusLabel,
-                    "Mixed values are preserved unless you change their control.");
+                    I18n.tr("Mixed values are preserved unless you change their control."));
         }
 
         Widgets.require(builder, "cancel_button", Button.class).onClicked(dialog::close);
@@ -82,7 +82,7 @@ public class PropertyDialog {
             if (closeAfterSuccess) {
                 dialog.close();
             } else {
-                AccessibilitySupport.status(statusLabel, "No settings changed");
+                AccessibilitySupport.status(statusLabel, I18n.tr("No settings changed"));
             }
             return;
         }
@@ -99,7 +99,7 @@ public class PropertyDialog {
         applying = true;
         applyButton.setSensitive(false);
         okButton.setSensitive(false);
-        AccessibilitySupport.status(statusLabel, "Applying settings…");
+        AccessibilitySupport.status(statusLabel, I18n.tr("Applying settings…"));
         DialogOptions.ensureTorAvailable(
                         networkOptions.isProxyChanged() && network.torActive(), torService)
                 .thenCompose(ignored -> PropertySettingsBatch.apply(
@@ -111,8 +111,7 @@ public class PropertyDialog {
                     if (error != null) {
                         LOGGER.warn("Failed to apply settings to selected downloads", error);
                         AccessibilitySupport.status(statusLabel,
-                                "Could not apply settings: " + UiErrors.message(error)
-                                        + ". Previous values were restored.",
+                                I18n.format("Could not apply settings: %s. Previous values were restored.", UiErrors.message(error)),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         return;
                     }
@@ -121,7 +120,7 @@ public class PropertyDialog {
                     if (closeAfterSuccess) {
                         dialog.close();
                     } else {
-                        AccessibilitySupport.status(statusLabel, "Settings applied");
+                        AccessibilitySupport.status(statusLabel, I18n.tr("Settings applied"));
                     }
                 }));
     }

@@ -31,9 +31,9 @@ import org.manager.download.Download;
 final class DownloadListPresenter {
 
     static final String[] STATUS_FILTERS = {
-        "All Status", "Active", "Seeding", "Queued", "Paused", "Finished", "Error", "Canceled"
+        I18n.mark("All Status"), I18n.mark("Active"), I18n.mark("Seeding"), I18n.mark("Queued"), I18n.mark("Paused"), I18n.mark("Finished"), I18n.mark("Error"), I18n.mark("Canceled")
     };
-    static final String[] CATEGORIES = {"All", "Videos", "Audios", "Photos", "Programs", "Others"};
+    static final String[] CATEGORIES = {I18n.mark("All"), I18n.mark("Videos"), I18n.mark("Audios"), I18n.mark("Photos"), I18n.mark("Programs"), I18n.mark("Others")};
 
     // Visible download_store columns. Number and Retry are gint; other 1-10 are strings,
     // 11 is the after-completion outcome GIcon, progress is gint, and 13-14 are strings.
@@ -282,7 +282,7 @@ final class DownloadListPresenter {
                 if (downloadsStore.getIter(iter, path)) {
                     ListStoreCells.setInt(downloadsStore, iter, COL_PROGRESS, 100);
                     ListStoreCells.setString(downloadsStore, iter, COL_PROGRESS_TEXT,
-                            "100% · Finalizing…");
+                            I18n.tr("100% · Finalizing…"));
                     ListStoreCells.setInt(downloadsStore, iter, COL_PROGRESS_PULSE,
                             completionPulsePosition);
                     anyVisible = true;
@@ -618,7 +618,7 @@ final class DownloadListPresenter {
         ListStoreCells.setInt(store, iter, COL_PROGRESS, finalizing
                 ? 100 : ProgressPresentation.wholePercentage(download.getProgress()));
         ListStoreCells.setString(store, iter, COL_PROGRESS_TEXT, finalizing
-                ? "100% · Finalizing…" : ProgressPresentation.percentage(download.getProgress()));
+                ? I18n.tr("100% · Finalizing…") : ProgressPresentation.percentage(download.getProgress()));
         ListStoreCells.setInt(store, iter, COL_PROGRESS_PULSE,
                 finalizing ? completionPulsePosition : -1);
         ListStoreCells.setString(store, iter, COL_STATUS_ICON,
@@ -699,7 +699,7 @@ final class DownloadListPresenter {
             store.append(iter);
             ListStoreCells.setString(store, iter, SC_ICON, iconForFilterRow(labels[i]));
             ListStoreCells.setInt(store, iter, SC_COUNT, count);
-            ListStoreCells.setString(store, iter, SC_LABEL, labels[i]);
+            ListStoreCells.setString(store, iter, SC_LABEL, I18n.tr(labels[i]));
             if (labels[i].equals(selected)) {
                 if (store == statusStore) {
                     suppressStatusSelection = true;

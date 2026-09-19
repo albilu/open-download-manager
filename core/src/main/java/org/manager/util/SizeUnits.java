@@ -6,9 +6,7 @@ import java.util.Locale;
 /**
  * Single source of truth for user-visible byte-size unit labels.
  *
- * <p>English labels are the only active table. The French octet-based labels
- * are defined and tested but not displayed yet; flip {@link #forLocale} when
- * the French localisation lands.
+ * <p>Display labels follow the desktop language; byte quantities remain unchanged.
  */
 public final class SizeUnits {
 
@@ -21,25 +19,23 @@ public final class SizeUnits {
     private SizeUnits() {
     }
 
-    /** Active unit labels. English until the French localisation lands. */
+    /** Active unit labels, selected from the system message locale. */
     public static List<String> current() {
-        return ENGLISH;
+        return forLocale(SystemLocale.display());
     }
 
-    /** Prepared French labels (o/Ko/Mo/Go/To); not displayed yet. */
+    /** French labels (o/Ko/Mo/Go/To). */
     public static List<String> french() {
         return FRENCH;
     }
 
     /**
-     * Localisation hook: resolves labels for a locale. Currently returns
-     * English for every locale; return the French table for French locales
-     * when localisation lands.
+     * Resolves French regional locales to octet labels, with English fallback.
      *
-     * @param locale the caller's locale, currently ignored
-     * @return the English label table
+     * @param locale the caller's locale
+     * @return the locale's unit label table
      */
     public static List<String> forLocale(Locale locale) {
-        return ENGLISH;
+        return locale != null && "fr".equals(locale.getLanguage()) ? FRENCH : ENGLISH;
     }
 }

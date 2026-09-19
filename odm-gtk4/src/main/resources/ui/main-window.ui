@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<interface>
+<interface domain="odm">
   <requires lib="gtk" version="4.0"/>
 
   <!-- Stores (1:1 with original) -->
@@ -89,7 +89,7 @@
                 <property name="margin-bottom">6</property>
                 <child>
                   <object class="GtkLabel" id="status_label">
-                    <property name="label">&lt;b&gt;Status&lt;/b&gt;</property>
+                    <property name="label" translatable="yes">&lt;b&gt;Status&lt;/b&gt;</property>
                     <property name="use-markup">true</property>
                     <property name="xalign">0</property>
                   </object>
@@ -124,7 +124,7 @@
                 </child>
                 <child>
                   <object class="GtkLabel" id="category_label">
-                    <property name="label">&lt;b&gt;Categories&lt;/b&gt;</property>
+                    <property name="label" translatable="yes">&lt;b&gt;Categories&lt;/b&gt;</property>
                     <property name="use-markup">true</property>
                     <property name="xalign">0</property>
                   </object>
@@ -171,22 +171,22 @@
                     <property name="spacing">6</property>
                     <property name="vexpand">false</property>
                     <style><class name="toolbar"/></style>
-                    <child><object class="GtkButton" id="new_download_button"><property name="icon-name">list-add</property><property name="tooltip-text">New download</property></object></child>
-                    <child><object class="GtkButton" id="pause_button"><property name="icon-name">media-playback-pause</property><property name="tooltip-text">Pause</property></object></child>
-                    <child><object class="GtkButton" id="resume_button"><property name="icon-name">media-playback-start</property><property name="tooltip-text">Start / Resume</property></object></child>
-                    <child><object class="GtkButton" id="delete_button"><property name="icon-name">edit-delete</property><property name="tooltip-text">Delete</property></object></child>
+                    <child><object class="GtkButton" id="new_download_button"><property name="icon-name">list-add</property><property name="tooltip-text" translatable="yes">New download</property></object></child>
+                    <child><object class="GtkButton" id="pause_button"><property name="icon-name">media-playback-pause</property><property name="tooltip-text" translatable="yes">Pause</property></object></child>
+                    <child><object class="GtkButton" id="resume_button"><property name="icon-name">media-playback-start</property><property name="tooltip-text" translatable="yes">Start / Resume</property></object></child>
+                    <child><object class="GtkButton" id="delete_button"><property name="icon-name">edit-delete</property><property name="tooltip-text" translatable="yes">Delete</property></object></child>
                     <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
-                    <child><object class="GtkButton" id="move_up_button"><property name="icon-name">go-up</property><property name="tooltip-text">Move up</property></object></child>
-                    <child><object class="GtkButton" id="move_top_button"><property name="icon-name">go-top</property><property name="tooltip-text">Move to top</property></object></child>
-                    <child><object class="GtkButton" id="move_down_button"><property name="icon-name">go-down</property><property name="tooltip-text">Move down</property></object></child>
-                    <child><object class="GtkButton" id="move_bottom_button"><property name="icon-name">go-bottom</property><property name="tooltip-text">Move to bottom</property></object></child>
+                    <child><object class="GtkButton" id="move_up_button"><property name="icon-name">go-up</property><property name="tooltip-text" translatable="yes">Move up</property></object></child>
+                    <child><object class="GtkButton" id="move_top_button"><property name="icon-name">go-top</property><property name="tooltip-text" translatable="yes">Move to top</property></object></child>
+                    <child><object class="GtkButton" id="move_down_button"><property name="icon-name">go-down</property><property name="tooltip-text" translatable="yes">Move down</property></object></child>
+                    <child><object class="GtkButton" id="move_bottom_button"><property name="icon-name">go-bottom</property><property name="tooltip-text" translatable="yes">Move to bottom</property></object></child>
                     <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
-                    <child><object class="GtkButton" id="settings_button"><property name="icon-name">preferences-system-symbolic</property><property name="tooltip-text">Settings</property></object></child>
+                    <child><object class="GtkButton" id="settings_button"><property name="icon-name">preferences-system-symbolic</property><property name="tooltip-text" translatable="yes">Settings</property></object></child>
                     <child><object class="GtkSeparator"><property name="orientation">vertical</property></object></child>
                     <child><object class="GtkBox" id="toolbar_spacer"><property name="hexpand">true</property></object></child>
                     <child>
                       <object class="GtkBox" id="search_tool_item">
-                        <child><object class="GtkSearchEntry" id="search_entry"><property name="placeholder-text">Search downloads…</property><property name="width-request">280</property><property name="halign">end</property></object></child>
+                        <child><object class="GtkSearchEntry" id="search_entry"><property name="placeholder-text" translatable="yes">Search downloads…</property><property name="width-request">280</property><property name="halign">end</property></object></child>
                       </object>
                     </child>
                   </object>
@@ -222,7 +222,7 @@
                                 </child>
                                 <child>
                                   <object class="GtkTreeViewColumn" id="name_column">
-                                    <property name="title">Name</property>
+                                    <property name="title" translatable="yes">Name</property>
                                     <property name="expand">false</property>
                                     <property name="resizable">true</property>
                                     <property name="fixed-width">420</property>
@@ -232,11 +232,11 @@
                                     <child><object class="GtkCellRendererText" id="name_renderer"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child>
                                   </object>
                                 </child>
-                                <child><object class="GtkTreeViewColumn" id="complete_column"><property name="title">Complete</property><property name="sort-column-id">17</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="size_column"><property name="title">Size</property><property name="sort-column-id">18</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="complete_column"><property name="title" translatable="yes">Complete</property><property name="sort-column-id">17</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="size_column"><property name="title" translatable="yes">Size</property><property name="sort-column-id">18</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
                                 <child>
                                   <object class="GtkTreeViewColumn" id="percent_progress_column">
-                                    <property name="title">Progress</property>
+                                    <property name="title" translatable="yes">Progress</property>
                                     <property name="sizing">fixed</property>
                                     <property name="fixed-width">120</property>
                                     <property name="min-width">110</property>
@@ -246,14 +246,14 @@
                                     <child><object class="GtkCellRendererProgress" id="download_progress_renderer"/><attributes><attribute name="value">12</attribute><attribute name="text">14</attribute><attribute name="pulse">27</attribute></attributes></child>
                                   </object>
                                 </child>
-                                <child><object class="GtkTreeViewColumn" id="elapsed_column"><property name="title">Elapsed</property><property name="sort-column-id">20</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="left_column"><property name="title">Left</property><property name="sort-column-id">21</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">5</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="speed_column"><property name="title">Down speed</property><property name="sort-column-id">22</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">6</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="up_speed_column"><property name="title">Up speed</property><property name="sort-column-id">23</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">7</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title">Retry</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title">Start date</property><property name="expand">true</property><property name="sort-column-id">24</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title">End date</property><property name="expand">true</property><property name="sort-column-id">25</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>
-                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title">Res.</property><property name="sizing">fixed</property><property name="fixed-width">40</property><property name="min-width">40</property><property name="max-width">40</property><property name="expand">false</property><property name="resizable">false</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf" id="engine_icon_renderer"/><attributes><attribute name="gicon">11</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="elapsed_column"><property name="title" translatable="yes">Elapsed</property><property name="sort-column-id">20</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="left_column"><property name="title" translatable="yes">Left</property><property name="sort-column-id">21</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">5</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="speed_column"><property name="title" translatable="yes">Down speed</property><property name="sort-column-id">22</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">6</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="up_speed_column"><property name="title" translatable="yes">Up speed</property><property name="sort-column-id">23</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">7</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title" translatable="yes">Retry</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title" translatable="yes">Start date</property><property name="expand">true</property><property name="sort-column-id">24</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title" translatable="yes">End date</property><property name="expand">true</property><property name="sort-column-id">25</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="tor_icon_column"><property name="title" translatable="yes">Res.</property><property name="sizing">fixed</property><property name="fixed-width">40</property><property name="min-width">40</property><property name="max-width">40</property><property name="expand">false</property><property name="resizable">false</property><property name="sort-column-id">26</property><child><object class="GtkCellRendererPixbuf" id="engine_icon_renderer"/><attributes><attribute name="gicon">11</attribute></attributes></child></object></child>
                               </object>
                             </child>
                           </object>
@@ -294,7 +294,7 @@
                                             <property name="hexpand">true</property>
                                             <child type="label">
                                               <object class="GtkLabel">
-                                                <property name="label">&lt;b&gt;Information&lt;/b&gt;</property>
+                                                <property name="label" translatable="yes">&lt;b&gt;Information&lt;/b&gt;</property>
                                                 <property name="use-markup">true</property>
                                                 <property name="xalign">0</property>
                                               </object>
@@ -307,17 +307,17 @@
                                                 <property name="margin-end">8</property>
                                                 <property name="margin-top">8</property>
                                                 <property name="margin-bottom">8</property>
-                                                <child><object class="GtkLabel"><property name="label">Added on:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Added on:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                                                 <child><object class="GtkLabel" id="added_on_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">0</property><property name="column">1</property></layout></object></child>
-                                                <child><object class="GtkLabel"><property name="label">Info hash:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Info hash:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
                                                 <child><object class="GtkLabel" id="info_hash_v1_value"><property name="xalign">0</property><property name="selectable">true</property><property name="ellipsize">end</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
-                                                <child><object class="GtkLabel"><property name="label">Error:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Error:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
                                                 <child>
                                                   <object class="GtkButton" id="info_error_button">
                                                     <property name="sensitive">false</property>
                                                     <property name="has-frame">false</property>
                                                     <property name="hexpand">true</property>
-                                                    <property name="tooltip-text">Click to view the full error details</property>
+                                                    <property name="tooltip-text" translatable="yes">Click to view the full error details</property>
                                                     <layout><property name="row">2</property><property name="column">1</property></layout>
                                                     <child>
                                                       <object class="GtkBox" id="info_error_content">
@@ -334,14 +334,14 @@
                                                     </child>
                                                   </object>
                                                 </child>
-                                                <child><object class="GtkLabel"><property name="label">Save folder:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Save folder:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
                                                 <child>
                                                   <object class="GtkLinkButton" id="folder_open_button">
                                                     <property name="sensitive">false</property>
                                                     <property name="hexpand">true</property>
                                                     <property name="halign">fill</property>
                                                     <property name="uri">file:///</property>
-                                                    <property name="tooltip-text">Open the download folder</property>
+                                                    <property name="tooltip-text" translatable="yes">Open the download folder</property>
                                                     <layout><property name="row">3</property><property name="column">1</property></layout>
                                                     <child>
                                                       <object class="GtkBox" id="folder_open_content">
@@ -362,7 +362,7 @@
                                             <property name="hexpand">true</property>
                                             <child type="label">
                                               <object class="GtkLabel">
-                                                <property name="label">&lt;b&gt;Transfer&lt;/b&gt;</property>
+                                                <property name="label" translatable="yes">&lt;b&gt;Transfer&lt;/b&gt;</property>
                                                 <property name="use-markup">true</property>
                                                 <property name="xalign">0</property>
                                               </object>
@@ -375,7 +375,7 @@
                                                 <property name="margin-end">8</property>
                                                 <property name="margin-top">8</property>
                                                 <property name="margin-bottom">8</property>
-                                                <child><object class="GtkLabel"><property name="label">Engine:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Engine:</property><property name="xalign">0</property><layout><property name="row">0</property><property name="column">0</property></layout></object></child>
                                                 <child>
                                                   <object class="GtkBox" id="engine_value_box">
                                                     <property name="orientation">horizontal</property>
@@ -386,13 +386,13 @@
                                                     <child><object class="GtkLabel" id="engine_value"><property name="label">—</property><property name="xalign">0</property><property name="selectable">true</property></object></child>
                                                   </object>
                                                 </child>
-                                                <child><object class="GtkLabel"><property name="label">ETA:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">ETA:</property><property name="xalign">0</property><layout><property name="row">1</property><property name="column">0</property></layout></object></child>
                                                 <child><object class="GtkLabel" id="eta_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">1</property><property name="column">1</property></layout></object></child>
-                                                <child><object class="GtkLabel"><property name="label">Downloaded:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Downloaded:</property><property name="xalign">0</property><layout><property name="row">2</property><property name="column">0</property></layout></object></child>
                                                 <child><object class="GtkLabel" id="downloaded_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">2</property><property name="column">1</property></layout></object></child>
-                                                <child><object class="GtkLabel"><property name="label">Connections:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Connections:</property><property name="xalign">0</property><layout><property name="row">3</property><property name="column">0</property></layout></object></child>
                                                 <child><object class="GtkLabel" id="connections_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">3</property><property name="column">1</property></layout></object></child>
-                                                <child><object class="GtkLabel"><property name="label">Seeds/peers:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
+                                                <child><object class="GtkLabel"><property name="label" translatable="yes">Seeds/peers:</property><property name="xalign">0</property><layout><property name="row">4</property><property name="column">0</property></layout></object></child>
                                                 <child><object class="GtkLabel" id="seeds_peers_value"><property name="xalign">0</property><property name="selectable">true</property><layout><property name="row">4</property><property name="column">1</property></layout></object></child>
                                               </object>
                                             </child>
@@ -404,7 +404,7 @@
                                       <object class="GtkFrame" id="progress_frame">
                                         <property name="hexpand">true</property>
                                         <property name="vexpand">true</property>
-                                        <child type="label"><object class="GtkLabel"><property name="label">&lt;b&gt;Progress&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property></object></child>
+                                        <child type="label"><object class="GtkLabel"><property name="label" translatable="yes">&lt;b&gt;Progress&lt;/b&gt;</property><property name="use-markup">true</property><property name="xalign">0</property></object></child>
                                         <child>
                                           <object class="GtkBox" id="progress_container">
                                             <property name="orientation">vertical</property>
@@ -417,8 +417,8 @@
                                               <object class="GtkBox" id="progress_summary">
                                                 <property name="spacing">16</property>
                                                 <child><object class="GtkLabel" id="info_progress_value"><property name="label">—</property><property name="xalign">0</property><property name="hexpand">true</property><property name="selectable">true</property><attributes><attribute name="weight" value="bold"/></attributes></object></child>
-                                                <child><object class="GtkLabel" id="info_speed_value"><property name="label">Speed: —</property><property name="selectable">true</property></object></child>
-                                                <child><object class="GtkLabel" id="info_average_speed_value"><property name="label">Average: —</property><property name="selectable">true</property><property name="tooltip-text">Time-weighted average of recorded download speeds, excluding paused time. Shown by the dashed line.</property></object></child>
+                                                <child><object class="GtkLabel" id="info_speed_value"><property name="label" translatable="yes">Speed: —</property><property name="selectable">true</property></object></child>
+                                                <child><object class="GtkLabel" id="info_average_speed_value"><property name="label" translatable="yes">Average: —</property><property name="selectable">true</property><property name="tooltip-text" translatable="yes">Time-weighted average of recorded download speeds, excluding paused time. Shown by the dashed line.</property></object></child>
                                               </object>
                                             </child>
                                             <child>
@@ -431,7 +431,7 @@
                                             <child>
                                               <object class="GtkBox" id="progress_axis">
                                                 <child><object class="GtkLabel" id="progress_axis_start"><property name="label">0%</property><style><class name="dim-label"/></style></object></child>
-                                                <child><object class="GtkLabel" id="progress_axis_label"><property name="label">Download progress</property><property name="hexpand">true</property><style><class name="dim-label"/></style></object></child>
+                                                <child><object class="GtkLabel" id="progress_axis_label"><property name="label" translatable="yes">Download progress</property><property name="hexpand">true</property><style><class name="dim-label"/></style></object></child>
                                                 <child><object class="GtkLabel" id="progress_axis_end"><property name="label">100%</property><style><class name="dim-label"/></style></object></child>
                                               </object>
                                             </child>
@@ -443,23 +443,23 @@
                                 </child>
                               </object>
                             </child>
-                            <child type="tab"><object class="GtkLabel"><property name="label">General</property></object></child>
+                            <child type="tab"><object class="GtkLabel"><property name="label" translatable="yes">General</property></object></child>
 
                             <child>
                               <object class="GtkScrolledWindow" id="completion_details_scrolled">
                                 <child>
                                   <object class="GtkTreeView" id="completion_details_view">
                                     <property name="model">completion_details_store</property>
-                                    <child><object class="GtkTreeViewColumn" id="completion_action_column"><property name="title">Action</property><property name="resizable">true</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="completion_status_column"><property name="title">Status</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="completion_result_column"><property name="title">Result</property><property name="expand">true</property><property name="resizable">true</property><child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">2</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="completion_started_column"><property name="title">Started</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="completion_finished_column"><property name="title">Finished</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="completion_action_column"><property name="title" translatable="yes">Action</property><property name="resizable">true</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="completion_status_column"><property name="title" translatable="yes">Status</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="completion_result_column"><property name="title" translatable="yes">Result</property><property name="expand">true</property><property name="resizable">true</property><child><object class="GtkCellRendererText"><property name="ellipsize">end</property></object><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="completion_started_column"><property name="title" translatable="yes">Started</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="completion_finished_column"><property name="title" translatable="yes">Finished</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
                                   </object>
                                 </child>
                               </object>
                             </child>
-                            <child type="tab"><object class="GtkLabel" id="actions_tab_label"><property name="label">Actions</property></object></child>
+                            <child type="tab"><object class="GtkLabel" id="actions_tab_label"><property name="label" translatable="yes">Actions</property></object></child>
 
                             <child>
                               <object class="GtkScrolledWindow" id="trackers_scrolled">
@@ -467,32 +467,32 @@
                                   <object class="GtkTreeView" id="trackers_view">
                                     <property name="model">trackers_store</property>
                                     <child><object class="GtkTreeViewColumn" id="url_column"><property name="title">URL</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="status_column1"><property name="title">Status</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="seeders_column"><property name="title">Seeders</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="leechers_column"><property name="title">Leechers</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="times_downlo_column"><property name="title">Downloads</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="next_update_column"><property name="title">Next update</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">5</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="status_column1"><property name="title" translatable="yes">Status</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="seeders_column"><property name="title" translatable="yes">Seeders</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="leechers_column"><property name="title" translatable="yes">Leechers</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="times_downlo_column"><property name="title" translatable="yes">Downloads</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="next_update_column"><property name="title" translatable="yes">Next update</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">5</attribute></attributes></child></object></child>
                                   </object>
                                 </child>
                               </object>
                             </child>
-                            <child type="tab"><object class="GtkLabel"><property name="label">Trackers</property></object></child>
+                            <child type="tab"><object class="GtkLabel"><property name="label" translatable="yes">Trackers</property></object></child>
 
                             <child>
                               <object class="GtkScrolledWindow" id="peers_scrolled">
                                 <child>
                                   <object class="GtkTreeView" id="peers_view">
                                     <property name="model">peers_store</property>
-                                    <child><object class="GtkTreeViewColumn" id="country_column"><property name="title">Address</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="drapeaux_column"><property name="title">Peer ID</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="adresse_column"><property name="title">Down speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="client_column"><property name="title">Up speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="peer_state_column"><property name="title">State</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="country_column"><property name="title" translatable="yes">Address</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">0</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="drapeaux_column"><property name="title" translatable="yes">Peer ID</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">1</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="adresse_column"><property name="title" translatable="yes">Down speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="client_column"><property name="title" translatable="yes">Up speed</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">3</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="peer_state_column"><property name="title" translatable="yes">State</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">4</attribute></attributes></child></object></child>
                                   </object>
                                 </child>
                               </object>
                             </child>
-                            <child type="tab"><object class="GtkLabel"><property name="label">Peers</property></object></child>
+                            <child type="tab"><object class="GtkLabel"><property name="label" translatable="yes">Peers</property></object></child>
 
                             <child>
                               <object class="GtkScrolledWindow" id="files_scrolled">
@@ -500,16 +500,16 @@
                                   <object class="GtkTreeView" id="files_view">
                                     <property name="model">files_store</property>
                                     <property name="enable-tree-lines">true</property>
-                                    <child><object class="GtkTreeViewColumn" id="files_selected_column"><property name="title">Sel.</property><property name="sort-column-id">0</property><child><object class="GtkCellRendererToggle" id="files_selected_renderer"><property name="activatable">true</property></object><attributes><attribute name="active">0</attribute><attribute name="inconsistent">11</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="files_name_column"><property name="title">Name</property><property name="expand">true</property><property name="resizable">true</property><property name="min-width">160</property><property name="max-width">420</property><property name="sort-column-id">1</property><child><object class="GtkCellRendererPixbuf" id="files_icon_renderer"/><attributes><attribute name="icon-name">13</attribute></attributes></child><child><object class="GtkCellRendererText" id="files_name_renderer"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="files_size_column"><property name="title">Size</property><property name="sort-column-id">7</property><child><object class="GtkCellRendererText" id="files_size_renderer"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="files_progress_column"><property name="title">Progress</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererProgress" id="files_progress_renderer"/><attributes><attribute name="value">3</attribute><attribute name="text">6</attribute></attributes></child></object></child>
-                                    <child><object class="GtkTreeViewColumn" id="files_priority_column"><property name="title">Priority</property><property name="sort-column-id">12</property><child><object class="GtkCellRendererCombo" id="files_priority_renderer"><property name="model">files_priority_store</property><property name="text-column">0</property><property name="has-entry">false</property><property name="editable">true</property></object><attributes><attribute name="text">4</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="files_selected_column"><property name="title" translatable="yes">Sel.</property><property name="sort-column-id">0</property><child><object class="GtkCellRendererToggle" id="files_selected_renderer"><property name="activatable">true</property></object><attributes><attribute name="active">0</attribute><attribute name="inconsistent">11</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="files_name_column"><property name="title" translatable="yes">Name</property><property name="expand">true</property><property name="resizable">true</property><property name="min-width">160</property><property name="max-width">420</property><property name="sort-column-id">1</property><child><object class="GtkCellRendererPixbuf" id="files_icon_renderer"/><attributes><attribute name="icon-name">13</attribute></attributes></child><child><object class="GtkCellRendererText" id="files_name_renderer"><property name="ellipsize">end</property></object><attributes><attribute name="text">1</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="files_size_column"><property name="title" translatable="yes">Size</property><property name="sort-column-id">7</property><child><object class="GtkCellRendererText" id="files_size_renderer"/><attributes><attribute name="text">2</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="files_progress_column"><property name="title" translatable="yes">Progress</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererProgress" id="files_progress_renderer"/><attributes><attribute name="value">3</attribute><attribute name="text">6</attribute></attributes></child></object></child>
+                                    <child><object class="GtkTreeViewColumn" id="files_priority_column"><property name="title" translatable="yes">Priority</property><property name="sort-column-id">12</property><child><object class="GtkCellRendererCombo" id="files_priority_renderer"><property name="model">files_priority_store</property><property name="text-column">0</property><property name="has-entry">false</property><property name="editable">true</property></object><attributes><attribute name="text">4</attribute></attributes></child></object></child>
                                   </object>
                                 </child>
                               </object>
                             </child>
-                            <child type="tab"><object class="GtkLabel"><property name="label">Files</property></object></child>
+                            <child type="tab"><object class="GtkLabel"><property name="label" translatable="yes">Files</property></object></child>
                           </object>
                         </child>
                       </object>
@@ -541,7 +541,7 @@
                     <child>
                       <object class="GtkLabel" id="info_label">
                         <property name="accessible-role">status</property>
-                        <property name="label">Ready</property>
+                        <property name="label" translatable="yes">Ready</property>
                         <property name="xalign">0</property>
                         <property name="hexpand">true</property>
                         <property name="ellipsize">end</property>
@@ -560,7 +560,7 @@
                             <property name="visible">false</property>
                             <property name="has-frame">false</property>
                             <property name="valign">center</property>
-                            <property name="tooltip-text">Verify Tor connection</property>
+                            <property name="tooltip-text" translatable="yes">Verify Tor connection</property>
                             <style><class name="odm-status-button"/></style>
                             <child>
                               <object class="GtkBox" id="tor_status_box">
@@ -581,7 +581,7 @@
                         <child><object class="GtkSeparator" id="dht_inner_separator"/></child>
                         <child>
                           <object class="GtkBox" id="dht_progress_box">
-                            <child><object class="GtkLabel" id="dht_status_label"><property name="label">DHT: —</property></object></child>
+                            <child><object class="GtkLabel" id="dht_status_label"><property name="label" translatable="yes">DHT: —</property></object></child>
                           </object>
                         </child>
                         <child><object class="GtkSeparator" id="dht_separator"/></child>

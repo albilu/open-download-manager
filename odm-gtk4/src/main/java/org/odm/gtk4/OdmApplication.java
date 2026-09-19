@@ -32,6 +32,7 @@ public final class OdmApplication {
     }
 
     public static void main(String[] args) {
+        I18n.initialize();
         wireJulBridge();
         LOGGER.info("Open Download Manager starting ({} / Java {})",
                 System.getProperty("os.name") + "/" + System.getProperty("os.arch"),
@@ -103,7 +104,7 @@ public final class OdmApplication {
                     // failed; the exit strategy below still applies so the
                     // app cannot hang silently
                     if (progress != null) {
-                        progress.setMessage("Startup failed: " + UiErrors.message(error));
+                        progress.setMessage(I18n.format("Startup failed: %s", UiErrors.message(error)));
                     }
                     // Give the user a moment to read the message, then exit;
                     // until then a later activation may retry (see
@@ -208,7 +209,7 @@ public final class OdmApplication {
     private static CompletableFuture<StartupGate.CoreRefs> initializeCoreInBackground(
             StartShutdownDialog progress) {
         return CompletableFuture.supplyAsync(() -> {
-            progress.setMessage("Loading settings and discovering tools…");
+            progress.setMessage(I18n.tr("Loading settings and discovering tools…"));
             // Toolkit-native clipboard BEFORE the manager is built: it
             // constructs the clipboard service in its constructor, and the
             // default AWT monitor would poll-materialize the whole clipboard
@@ -248,7 +249,7 @@ public final class OdmApplication {
                     new org.manager.schedule.ScheduleManager(manager);
             boolean schedulingEnabled = configureSchedulerGate(manager, scheduleManager);
 
-            progress.setMessage("Initializing download engines…");
+            progress.setMessage(I18n.tr("Initializing download engines…"));
             manager.initialize().join();
             manager.setTorServiceAvailable(
                     torStarted, torService.getSocksPort()).join();
@@ -262,18 +263,18 @@ public final class OdmApplication {
                 awaitHandlersReady();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new IllegalStateException("Core initialization interrupted", e);
+                throw new IllegalStateException(I18n.tr("Core initialization interrupted"), e);
             }
 
-            progress.setMessage("Starting privacy and scheduling services…");
+            progress.setMessage(I18n.tr("Starting privacy and scheduling services…"));
 
             org.jackett.JackettService jackett = new org.jackett.JackettService(manager::getGlobalSettings);
             if (manager.getGlobalSettings().getBooleanProperty(org.jackett.JackettSettings.START_WITH_ODM, false)) {
-                progress.setMessage("Starting Jackett…");
+                progress.setMessage(I18n.tr("Starting Jackett…"));
                 try { jackett.start(); }
                 catch (Exception error) { LOGGER.warn("Jackett startup failed: {}", error.getMessage()); }
             }
-            progress.setMessage("Ready");
+            progress.setMessage(I18n.tr("Ready"));
             return new StartupGate.CoreRefs(manager, torService, scheduleManager, jackett);
         });
     }
@@ -488,7 +489,7 @@ public final class OdmApplication {
             // was destroyed when the main window appeared); registered with
             // the app so the loop stays alive while the main window is hidden
             StartShutdownDialog progress = new StartShutdownDialog(app);
-            progress.show("Shutting down Open Download Manager…");
+            progress.show(I18n.tr("Shutting down Open Download Manager…"));
 
             // Core teardown is the exit-critical operation. The tray is an
             // optional native D-Bus integration; it
@@ -526,7 +527,7 @@ public final class OdmApplication {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
         while (!ApplicationContext.isComponentInitialized(StartupCoordinator.DOWNLOAD_HANDLER_FACTORY)) {
             if (System.nanoTime() > deadline) {
-                throw new IllegalStateException("Download handlers did not initialize within 60s");
+                throw new IllegalStateException(I18n.tr("Download handlers did not initialize within 60s"));
             }
             Thread.sleep(100);
         }

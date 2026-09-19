@@ -48,8 +48,8 @@ public class MainWindow {
     /** Internal fetch batch; every record remains reachable through scrolling. */
     static final int HISTORY_PAGE_SIZE = 500;
     private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
-            "#", "Status", "Name", "Completed", "Size", "Progress", "Elapsed",
-            "Left", "Down Speed", "Up Speed", "Retry", "Start Date", "End Date", "Result");
+            "#", I18n.tr("Status"), I18n.tr("Name"), I18n.tr("Completed"), I18n.tr("Size"), I18n.tr("Progress"), I18n.tr("Elapsed"),
+            I18n.tr("Left"), I18n.tr("Down Speed"), I18n.tr("Up Speed"), I18n.tr("Retry"), I18n.tr("Start Date"), I18n.tr("End Date"), I18n.tr("Result"));
     private static final List<String> COMPLETION_ACTION_KEYS = List.of(
             "notify", "desktop-notify", "antivirus", "subtitles", "suspend", "shutdown", "custom");
     /** Long enough for GTK to paint and animate an immediately acknowledged NEWNYM. */
@@ -292,7 +292,7 @@ public class MainWindow {
         sourcesScrolled.setPropagateNaturalHeight(false);
         sourcesScrolled.setMinContentHeight(32);
         Widgets.require(builder, "info_notebook", org.gnome.gtk.Notebook.class)
-                .appendPage(sourcesScrolled, new Label("Sources"));
+                .appendPage(sourcesScrolled, new Label(I18n.tr("Sources")));
         this.backgroundExecutor = java.util.concurrent.Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "odm-window-fetch");
             t.setDaemon(true);
@@ -348,7 +348,7 @@ public class MainWindow {
                 FileTreeSupport.PRIORITY_NORMAL, FileTreeSupport.PRIORITY_LOW}) {
             TreeIter iter = new TreeIter();
             filePriorityStore.append(iter);
-            ListStoreCells.setString(filePriorityStore, iter, 0, priority);
+            ListStoreCells.setString(filePriorityStore, iter, 0, FileTreeSupport.displayPriority(priority));
         }
         org.gnome.gtk.CellRendererCombo filePriorityRenderer = Widgets.require(builder,
                 "files_priority_renderer", org.gnome.gtk.CellRendererCombo.class);
@@ -454,14 +454,14 @@ public class MainWindow {
         if (app != null) {
             app.setAccelsForAction("win.select-all", new String[]{"<Primary>a"});
         }
-        AccessibilitySupport.label(statusTreeview, "Download status filters");
-        AccessibilitySupport.label(categoryTreeview, "Download category filters");
-        AccessibilitySupport.label(downloadsTreeview, "Downloads");
+        AccessibilitySupport.label(statusTreeview, I18n.tr("Download status filters"));
+        AccessibilitySupport.label(categoryTreeview, I18n.tr("Download category filters"));
+        AccessibilitySupport.label(downloadsTreeview, I18n.tr("Downloads"));
         installDownloadTooltips(builder);
-        AccessibilitySupport.label(searchEntry, "Search downloads");
-        AccessibilitySupport.label(torCheckButton, "Verify Tor connection");
-        AccessibilitySupport.label(menuBar, "Application menu");
-        AccessibilitySupport.label(folderOpenButton, "Open displayed save folder");
+        AccessibilitySupport.label(searchEntry, I18n.tr("Search downloads"));
+        AccessibilitySupport.label(torCheckButton, I18n.tr("Verify Tor connection"));
+        AccessibilitySupport.label(menuBar, I18n.tr("Application menu"));
+        AccessibilitySupport.label(folderOpenButton, I18n.tr("Open displayed save folder"));
         Widgets.require(builder, "status_label", Label.class).setMnemonicWidget(statusTreeview);
         Widgets.require(builder, "category_label", Label.class).setMnemonicWidget(categoryTreeview);
 
@@ -506,14 +506,13 @@ public class MainWindow {
                     UiThread.marshal(() -> {
                         if (av.isThreatDetected()) {
                             AccessibilitySupport.status(infoLabel,
-                                    "THREAT DETECTED in " + d.getName()
-                                            + " — scan result: " + av.getScanResult(),
+                                    I18n.format("THREAT DETECTED in %s — scan result: %s", d.getName(), av.getScanResult()),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             LOGGER.warn("Antivirus threat detected in " + d.getName()
                                     + ": " + av.getScanResult());
                         } else {
                             AccessibilitySupport.status(infoLabel,
-                                    "Antivirus scan completed for " + d.getName());
+                                    I18n.format("Antivirus scan completed for %s", d.getName()));
                         }
                         refreshDetailHistoryPresentation(d);
                     });
@@ -611,14 +610,14 @@ public class MainWindow {
 
         org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
         DialogSupport.configureIndependent(confirmation, window);
-        confirmation.setTitle("Confirm Exit");
-        confirmation.setMarkup("<b>Exit Open Download Manager?</b>");
+        confirmation.setTitle(I18n.tr("Confirm Exit"));
+        confirmation.setMarkup(I18n.tr("<b>Exit Open Download Manager?</b>"));
         confirmation.formatSecondaryText(
-                "The application will stop its download services and close.");
+                I18n.tr("The application will stop its download services and close."));
         int cancelResponse = org.gnome.gtk.ResponseType.CANCEL.getValue();
         int exitResponse = org.gnome.gtk.ResponseType.ACCEPT.getValue();
-        confirmation.addButton("Cancel", cancelResponse);
-        org.gnome.gtk.Widget exitButton = confirmation.addButton("Exit", exitResponse);
+        confirmation.addButton(I18n.tr("Cancel"), cancelResponse);
+        org.gnome.gtk.Widget exitButton = confirmation.addButton(I18n.tr("Exit"), exitResponse);
         exitButton.addCssClass("destructive-action");
         confirmation.setDefaultResponse(cancelResponse);
         confirmation.onResponse(response -> {
@@ -821,7 +820,7 @@ public class MainWindow {
         for (String url : urls) {
             var source = DownloadUrlPolicy.parse(url);
             if (source.isEmpty()) {
-                AccessibilitySupport.status(infoLabel, "Cannot open an invalid or unsupported download link.");
+                AccessibilitySupport.status(infoLabel, I18n.tr("Cannot open an invalid or unsupported download link."));
                 continue;
             }
             try {
@@ -832,7 +831,7 @@ public class MainWindow {
                 }
             } catch (Exception error) {
                 LOGGER.warn("Failed to handle download link", error);
-                AccessibilitySupport.status(infoLabel, "Could not add download: " + UiErrors.message(error));
+                AccessibilitySupport.status(infoLabel, I18n.format("Could not add download: %s", UiErrors.message(error)));
             }
         }
     }
@@ -847,7 +846,7 @@ public class MainWindow {
                     UiThread.marshal(() -> {
                         if (finalExitStarted) { return; }
                         if (error != null) {
-                            AccessibilitySupport.status(infoLabel, "Could not add download: " + UiErrors.message(error));
+                            AccessibilitySupport.status(infoLabel, I18n.format("Could not add download: %s", UiErrors.message(error)));
                         } else {
                             refresh();
                         }
@@ -919,7 +918,7 @@ public class MainWindow {
     }
 
     private void onPauseClicked() {
-        runSelectedDownloads(MainWindow::canPause, downloadManager::pauseDownload, "pause");
+        runSelectedDownloads(MainWindow::canPause, downloadManager::pauseDownload, I18n.mark("Could not pause all selected downloads: %s"));
     }
 
     private void onResumeClicked() {
@@ -937,8 +936,7 @@ public class MainWindow {
                 .toList())).whenComplete((ignored, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
-                                "Could not start or resume all selected downloads: "
-                                        + UiErrors.message(error),
+                                I18n.format("Could not start or resume all selected downloads: %s", UiErrors.message(error)),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                     }
                     refresh();
@@ -947,11 +945,11 @@ public class MainWindow {
 
     private void onDeleteClicked() {
         runSelectedDownloads(download -> true,
-                download -> downloadManager.cancelDownload(download, false), "delete");
+                download -> downloadManager.cancelDownload(download, false), I18n.mark("Could not delete all selected downloads: %s"));
     }
 
     private void startSelectedDownloads() {
-        runSelectedDownloads(MainWindow::canStart, downloadManager::startDownload, "start");
+        runSelectedDownloads(MainWindow::canStart, downloadManager::startDownload, I18n.mark("Could not start all selected downloads: %s"));
     }
 
     /** Reorders the selected waiting downloads while preserving their relative order. */
@@ -1061,7 +1059,7 @@ public class MainWindow {
 
     private void runSelectedDownloads(java.util.function.Predicate<Download> applicable,
             java.util.function.Function<Download, CompletableFuture<Void>> operation,
-            String operationName) {
+            String failureMessage) {
         onDownloadSelectionChanged();
         List<Download> targets = selectedDownloads.stream().filter(applicable).toList();
         if (targets.isEmpty()) {
@@ -1071,8 +1069,7 @@ public class MainWindow {
                 UiThread.marshal(() -> {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
-                                "Could not " + operationName + " all selected downloads: "
-                                        + UiErrors.message(error),
+                                I18n.format(failureMessage, UiErrors.message(error)),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                     }
                     refresh();
@@ -1100,18 +1097,18 @@ public class MainWindow {
         org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
         DialogSupport.configureIndependent(confirmation, window);
         confirmation.setMarkup(multiple
-                ? "<b>Delete these downloads and their files?</b>"
-                : "<b>Delete this download and its files?</b>");
+                ? I18n.tr("<b>Delete these downloads and their files?</b>")
+                : I18n.tr("<b>Delete this download and its files?</b>"));
         confirmation.formatSecondaryText(multiple
-                ? "This permanently removes files for %d selected downloads."
+                ? I18n.tr("This permanently removes files for %d selected downloads.")
                         .formatted(capturedTargets.size())
-                : "This permanently removes files for \"%s\"."
+                : I18n.tr("This permanently removes files for \"%s\".")
                         .formatted(capturedTargets.getFirst().getName()));
         int cancelResponse = org.gnome.gtk.ResponseType.CANCEL.getValue();
         int acceptResponse = org.gnome.gtk.ResponseType.ACCEPT.getValue();
-        confirmation.addButton("Cancel", cancelResponse);
+        confirmation.addButton(I18n.tr("Cancel"), cancelResponse);
         org.gnome.gtk.Widget deleteButton =
-                confirmation.addButton("Delete Files", acceptResponse);
+                confirmation.addButton(I18n.tr("Delete Files"), acceptResponse);
         deleteButton.addCssClass("destructive-action");
         confirmation.setDefaultResponse(cancelResponse);
         confirmation.onResponse(response -> {
@@ -1125,8 +1122,7 @@ public class MainWindow {
                     UiThread.marshal(() -> {
                         if (error != null) {
                             AccessibilitySupport.status(infoLabel,
-                                    "Could not delete all selected download files: "
-                                            + UiErrors.message(error),
+                                    I18n.format("Could not delete all selected download files: %s", UiErrors.message(error)),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         }
                         refresh();
@@ -1316,30 +1312,30 @@ public class MainWindow {
         DownloadSelectionCapabilities capabilities = selectionCapabilities(selectedDownloads);
         DownloadLinkCopy linkCopy = DownloadLinkCopy.from(selectedDownloads);
         contextMenu = new PopupMenu()
-                .add("Open", capabilities.openFile(), () -> openSelected("file"))
-                .add("Open Folder", capabilities.openFolder(), () -> openSelected("folder"))
+                .add(I18n.tr("Open"), capabilities.openFile(), () -> openSelected("file"))
+                .add(I18n.tr("Open Folder"), capabilities.openFolder(), () -> openSelected("folder"))
                 .separator()
-                .add("Pause", capabilities.pause(), this::onPauseClicked)
-                .add("Resume", capabilities.resume(), this::onResumeClicked)
-                .add("Start", capabilities.start(), this::startSelectedDownloads)
+                .add(I18n.tr("Pause"), capabilities.pause(), this::onPauseClicked)
+                .add(I18n.tr("Resume"), capabilities.resume(), this::onResumeClicked)
+                .add(I18n.tr("Start"), capabilities.start(), this::startSelectedDownloads)
                 .separator()
                 .add(linkCopy.label(), capabilities.copyLinks(), this::copyDownloadLinks)
-                .add("Change Destination…", capabilities.changeDestination(), this::changeDestination)
-                .add("Recheck Data", capabilities.recheckData(), this::recheckData)
-                .add("Download Subtitles", capabilities.downloadSubtitles(),
+                .add(I18n.tr("Change Destination…"), capabilities.changeDestination(), this::changeDestination)
+                .add(I18n.tr("Recheck Data"), capabilities.recheckData(), this::recheckData)
+                .add(I18n.tr("Download Subtitles"), capabilities.downloadSubtitles(),
                         this::downloadSubtitles)
-                .add("Update Website Mirror…", capabilities.updateMirror(),
+                .add(I18n.tr("Update Website Mirror…"), capabilities.updateMirror(),
                         this::updateWebsiteMirror)
-                .add("Open HTTrack Log", capabilities.openHttrackLog(), () ->
+                .add(I18n.tr("Open HTTrack Log"), capabilities.openHttrackLog(), () ->
                         openHttrackDiagnostic(
                                 org.manager.download.HttrackMirrorSupport.DiagnosticLog.ACTIVITY))
-                .add("Open HTTrack Error Log", capabilities.openHttrackErrorLog(), () ->
+                .add(I18n.tr("Open HTTrack Error Log"), capabilities.openHttrackErrorLog(), () ->
                         openHttrackDiagnostic(
                                 org.manager.download.HttrackMirrorSupport.DiagnosticLog.ERRORS))
-                .add("Properties", capabilities.properties(), this::onPropertiesClicked)
+                .add(I18n.tr("Properties"), capabilities.properties(), this::onPropertiesClicked)
                 .separator()
-                .add("Delete", capabilities.delete(), this::onDeleteClicked)
-                .add("Delete with Files", capabilities.deleteWithFiles(), () ->
+                .add(I18n.tr("Delete"), capabilities.delete(), this::onDeleteClicked)
+                .add(I18n.tr("Delete with Files"), capabilities.deleteWithFiles(), () ->
                         confirmDeleteWithFiles(selectedDownloads));
         contextMenu.popupAt(menuBar, downloadsTreeview, x, y);
     }
@@ -1368,12 +1364,12 @@ public class MainWindow {
         Download targetDownload = selectedDownload;
         if (!canChangeDestination(targetDownload)) {
             AccessibilitySupport.status(infoLabel,
-                    "Destination cannot be changed for this download");
+                    I18n.tr("Destination cannot be changed for this download"));
             return;
         }
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
         DialogSupport.configureIndependent(dialog);
-        dialog.setTitle("Select new destination");
+        dialog.setTitle(I18n.tr("Select new destination"));
         dialog.selectFolder(window, null, result -> {
             try {
                 org.gnome.gio.File folder = dialog.selectFolderFinish(result);
@@ -1382,15 +1378,15 @@ public class MainWindow {
                     java.nio.file.Path destination = java.nio.file.Path.of(
                             folder.getPath().toString());
                     AccessibilitySupport.status(infoLabel,
-                            "Moving “" + targetDownload.getName() + "”…");
+                            I18n.format("Moving “%s”…", targetDownload.getName()));
                     trackActivity(downloadManager.relocateDownload(targetDownload, destination))
                             .whenComplete((ignored, error) -> UiThread.marshal(() -> {
                                 if (error == null) {
                                     AccessibilitySupport.status(infoLabel,
-                                            "Moved “" + targetDownload.getName() + "”");
+                                            I18n.format("Moved “%s”", targetDownload.getName()));
                                 } else {
                                     AccessibilitySupport.status(infoLabel,
-                                            "Could not move download: " + UiErrors.message(error),
+                                            I18n.format("Could not move download: %s", UiErrors.message(error)),
                                             org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                                 }
                                 refresh();
@@ -1507,13 +1503,13 @@ public class MainWindow {
                 .toList();
         AccessibilitySupport.status(infoLabel,
                 targets.size() == 1
-                        ? "Downloading subtitles for “" + targets.getFirst().getName() + "”…"
-                        : "Downloading subtitles for " + targets.size() + " downloads…");
+                        ? I18n.format("Downloading subtitles for “%s”…", targets.getFirst().getName())
+                        : I18n.plural("Downloading subtitles for %d download…", "Downloading subtitles for %d downloads…", targets.size()));
         trackActivity(allOf(actions))
                 .whenComplete((ignored, error) -> UiThread.marshal(() -> {
                     if (error != null) {
                         AccessibilitySupport.status(infoLabel,
-                                "Could not run all subtitle downloads: " + UiErrors.message(error),
+                                I18n.format("Could not run all subtitle downloads: %s", UiErrors.message(error)),
                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                     } else {
                         long succeeded = actions.stream()
@@ -1523,20 +1519,16 @@ public class MainWindow {
                         if (failed > 0) {
                             AccessibilitySupport.status(infoLabel,
                                     targets.size() == 1
-                                            ? "Subtitle download failed for “"
-                                                    + targets.getFirst().getName()
-                                                    + "” — see Actions output"
-                                            : "Subtitle download failed for " + failed + " of "
-                                                    + targets.size()
-                                                    + " downloads — see Actions output",
+                                            ? I18n.format("Subtitle download failed for “%s” — see Actions output", targets.getFirst().getName())
+                                            : I18n.plural("Subtitle download failed for %2$d of %1$d download — see Actions output",
+                                                    "Subtitle download failed for %2$d of %1$d downloads — see Actions output", targets.size(), failed),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                         } else {
                             AccessibilitySupport.status(infoLabel,
                                     targets.size() == 1
-                                            ? "Subtitle action completed for “"
-                                                    + targets.getFirst().getName() + "”"
-                                            : "Subtitle actions completed for "
-                                                    + targets.size() + " downloads");
+                                            ? I18n.format("Subtitle action completed for “%s”", targets.getFirst().getName())
+                                            : I18n.plural("Subtitle action completed for %d download",
+                                                    "Subtitle actions completed for %d downloads", targets.size()));
                         }
                     }
                     refresh();
@@ -1554,19 +1546,19 @@ public class MainWindow {
 
         org.gnome.gtk.MessageDialog confirmation = new org.gnome.gtk.MessageDialog();
         DialogSupport.configureIndependent(confirmation, window);
-        confirmation.setMarkup("<b>Update this website mirror?</b>");
+        confirmation.setMarkup(I18n.tr("<b>Update this website mirror?</b>"));
         confirmation.formatSecondaryText(
-                "HTTrack will revisit the remote site using the existing mirror cache. "
-                + "Keeping old files is safer and recommended.");
+                I18n.tr("HTTrack will revisit the remote site using the existing mirror cache. "
+                + "Keeping old files is safer and recommended."));
         int cancelResponse = org.gnome.gtk.ResponseType.CANCEL.getValue();
         int keepResponse = org.gnome.gtk.ResponseType.ACCEPT.getValue();
         int purgeResponse = org.gnome.gtk.ResponseType.APPLY.getValue();
-        confirmation.addButton("Cancel", cancelResponse);
+        confirmation.addButton(I18n.tr("Cancel"), cancelResponse);
         org.gnome.gtk.Widget keepButton = confirmation.addButton(
-                "Update and Keep Old Files", keepResponse);
+                I18n.tr("Update and Keep Old Files"), keepResponse);
         keepButton.addCssClass("suggested-action");
         org.gnome.gtk.Widget purgeButton = confirmation.addButton(
-                "Update and Remove Missing Files", purgeResponse);
+                I18n.tr("Update and Remove Missing Files"), purgeResponse);
         purgeButton.addCssClass("destructive-action");
         confirmation.setDefaultResponse(keepResponse);
         confirmation.onResponse(response -> {
@@ -1575,14 +1567,13 @@ public class MainWindow {
                 return;
             }
             AccessibilitySupport.status(infoLabel,
-                    "Starting update for “" + target.getName() + "”…");
+                    I18n.format("Starting update for “%s”…", target.getName()));
             trackActivity(downloadManager.updateWebsiteMirror(
                     target, response == purgeResponse)).whenComplete((ignored, error) ->
                             UiThread.marshal(() -> {
                                 if (error != null) {
                                     AccessibilitySupport.status(infoLabel,
-                                            "Could not update website mirror: "
-                                                    + UiErrors.message(error),
+                                            I18n.format("Could not update website mirror: %s", UiErrors.message(error)),
                                             org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                                 }
                                 refresh();
@@ -1599,7 +1590,7 @@ public class MainWindow {
         Path path = org.manager.download.HttrackMirrorSupport.diagnosticPath(target, log);
         if (!FileManagerSupport.open(path)) {
             AccessibilitySupport.status(infoLabel,
-                    "Could not open " + (log == null ? "HTTrack log" : log.fileName()),
+                    I18n.format("Could not open %s", log == null ? I18n.tr("HTTrack log") : log.fileName()),
                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
         }
     }
@@ -1615,85 +1606,85 @@ public class MainWindow {
 
         // File
         org.gnome.gio.Menu file = new org.gnome.gio.Menu();
-        file.append("New Download", "win.new-download");
-        file.append("New Media Download", "win.new-media");
-        file.append("New Website Scrape", "win.scrape");
-        file.append("Search Torrents", "win.search-torrents");
+        file.append(I18n.tr("New Download"), "win.new-download");
+        file.append(I18n.tr("New Media Download"), "win.new-media");
+        file.append(I18n.tr("New Website Scrape"), "win.scrape");
+        file.append(I18n.tr("Search Torrents"), "win.search-torrents");
         org.gnome.gio.Menu batch = new org.gnome.gio.Menu();
-        batch.append("Import URL Sequence", "win.import-sequence");
-        batch.append("Import from Text File", "win.import-file");
-        batch.append("Import from HTML File", "win.import-html");
-        batch.append("Import Links from Remote", "win.import-remote-html");
-        batch.append("Export Download List", "win.export-file");
-        file.appendSubmenu("Batch Process", batch);
-        file.append("Offline Mode", "win.offline");
-        file.append("Exit", "win.quit");
-        menu.appendSubmenu("_File", file);
+        batch.append(I18n.tr("Import URL Sequence"), "win.import-sequence");
+        batch.append(I18n.tr("Import from Text File"), "win.import-file");
+        batch.append(I18n.tr("Import from HTML File"), "win.import-html");
+        batch.append(I18n.tr("Import Links from Remote"), "win.import-remote-html");
+        batch.append(I18n.tr("Export Download List"), "win.export-file");
+        file.appendSubmenu(I18n.tr("Batch Process"), batch);
+        file.append(I18n.tr("Offline Mode"), "win.offline");
+        file.append(I18n.tr("Exit"), "win.quit");
+        menu.appendSubmenu(I18n.tr("_File"), file);
 
         // Edit
         org.gnome.gio.Menu edit = new org.gnome.gio.Menu();
-        edit.append("Clipboard Monitoring", "win.clipboard-monitoring");
-        edit.append("Silent Mode", "win.clipboard-silent");
+        edit.append(I18n.tr("Clipboard Monitoring"), "win.clipboard-monitoring");
+        edit.append(I18n.tr("Silent Mode"), "win.clipboard-silent");
         org.gnome.gio.Menu completion = new org.gnome.gio.Menu();
-        completion.append("Notify (sound)", "win.completion-notify");
-        completion.append("Desktop notification", "win.completion-desktop-notify");
-        completion.append("Antivirus Scan", "win.completion-antivirus");
-        completion.append("Download Subtitles", "win.completion-subtitles");
-        completion.append("Suspend", "win.completion-suspend");
-        completion.append("Shutdown", "win.completion-shutdown");
-        completion.append("Custom…", "win.completion-custom");
-        edit.appendSubmenu("Completion Actions", completion);
+        completion.append(I18n.tr("Notify (sound)"), "win.completion-notify");
+        completion.append(I18n.tr("Desktop notification"), "win.completion-desktop-notify");
+        completion.append(I18n.tr("Antivirus Scan"), "win.completion-antivirus");
+        completion.append(I18n.tr("Download Subtitles"), "win.completion-subtitles");
+        completion.append(I18n.tr("Suspend"), "win.completion-suspend");
+        completion.append(I18n.tr("Shutdown"), "win.completion-shutdown");
+        completion.append(I18n.tr("Custom…"), "win.completion-custom");
+        edit.appendSubmenu(I18n.tr("Completion Actions"), completion);
         org.gnome.gio.Menu schedule = new org.gnome.gio.Menu();
-        schedule.append("None (custom grid)", "win.schedule::none");
-        schedule.append("Always", "win.schedule::always");
-        schedule.append("Business Hours", "win.schedule::business");
-        schedule.append("Night Hours", "win.schedule::night");
-        schedule.append("Weekends", "win.schedule::weekend");
-        schedule.append("Weekdays", "win.schedule::weekday");
-        schedule.append("Never (paused)", "win.schedule::never");
-        edit.appendSubmenu("Schedule", schedule);
+        schedule.append(I18n.tr("None (custom grid)"), "win.schedule::none");
+        schedule.append(I18n.tr("Always"), "win.schedule::always");
+        schedule.append(I18n.tr("Business Hours"), "win.schedule::business");
+        schedule.append(I18n.tr("Night Hours"), "win.schedule::night");
+        schedule.append(I18n.tr("Weekends"), "win.schedule::weekend");
+        schedule.append(I18n.tr("Weekdays"), "win.schedule::weekday");
+        schedule.append(I18n.tr("Never (paused)"), "win.schedule::never");
+        edit.appendSubmenu(I18n.tr("Schedule"), schedule);
         org.gnome.gio.Menu tor = new org.gnome.gio.Menu();
-        tor.append("Enable/Disable Tor", "win.tor-enabled");
-        tor.append("New Tor Identity", "win.tor-new-identity");
-        edit.appendSubmenu("Tor", tor);
-        edit.append("Select All", "win.select-all");
-        edit.append("Preferences", "win.preferences");
-        menu.appendSubmenu("_Edit", edit);
+        tor.append(I18n.tr("Enable/Disable Tor"), "win.tor-enabled");
+        tor.append(I18n.tr("New Tor Identity"), "win.tor-new-identity");
+        edit.appendSubmenu(I18n.tr("Tor"), tor);
+        edit.append(I18n.tr("Select All"), "win.select-all");
+        edit.append(I18n.tr("Preferences"), "win.preferences");
+        menu.appendSubmenu(I18n.tr("_Edit"), edit);
 
         // View
         org.gnome.gio.Menu view = new org.gnome.gio.Menu();
-        view.append("Left Panel", "win.left-panel");
-        view.append("Info Panel", "win.info-panel");
+        view.append(I18n.tr("Left Panel"), "win.left-panel");
+        view.append(I18n.tr("Info Panel"), "win.info-panel");
         org.gnome.gio.Menu columns = new org.gnome.gio.Menu();
         for (int i = 0; i < DOWNLOAD_COLUMN_LABELS.size(); i++) {
             columns.append(DOWNLOAD_COLUMN_LABELS.get(i), "win.col-" + i);
         }
-        view.appendSubmenu("Columns", columns);
-        menu.appendSubmenu("_View", view);
+        view.appendSubmenu(I18n.tr("Columns"), columns);
+        menu.appendSubmenu(I18n.tr("_View"), view);
 
         // Download
         org.gnome.gio.Menu download = new org.gnome.gio.Menu();
-        download.append("Open", "win.open-file");
-        download.append("Open Folder", "win.open-folder");
-        download.append("Download Subtitles", "win.download-subtitles");
-        download.append("Update Website Mirror…", "win.update-website-mirror");
-        download.append("Open HTTrack Log", "win.open-httrack-log");
-        download.append("Open HTTrack Error Log", "win.open-httrack-error-log");
-        download.append("Force Download", "win.force-download");
-        download.append("Pause All", "win.pause-all");
-        download.append("Resume All", "win.resume-all");
-        download.append("Delete", "win.delete");
-        download.append("Delete with Files", "win.delete-with-files");
-        download.append("Remove All Finished", "win.remove-finished");
-        download.append("Properties", "win.properties");
-        menu.appendSubmenu("_Download", download);
+        download.append(I18n.tr("Open"), "win.open-file");
+        download.append(I18n.tr("Open Folder"), "win.open-folder");
+        download.append(I18n.tr("Download Subtitles"), "win.download-subtitles");
+        download.append(I18n.tr("Update Website Mirror…"), "win.update-website-mirror");
+        download.append(I18n.tr("Open HTTrack Log"), "win.open-httrack-log");
+        download.append(I18n.tr("Open HTTrack Error Log"), "win.open-httrack-error-log");
+        download.append(I18n.tr("Force Download"), "win.force-download");
+        download.append(I18n.tr("Pause All"), "win.pause-all");
+        download.append(I18n.tr("Resume All"), "win.resume-all");
+        download.append(I18n.tr("Delete"), "win.delete");
+        download.append(I18n.tr("Delete with Files"), "win.delete-with-files");
+        download.append(I18n.tr("Remove All Finished"), "win.remove-finished");
+        download.append(I18n.tr("Properties"), "win.properties");
+        menu.appendSubmenu(I18n.tr("_Download"), download);
 
         // Help
         org.gnome.gio.Menu help = new org.gnome.gio.Menu();
-        help.append("Statistics", "win.statistics");
-        help.append("Donation", "win.donation");
-        help.append("About", "win.about");
-        menu.appendSubmenu("_Help", help);
+        help.append(I18n.tr("Statistics"), "win.statistics");
+        help.append(I18n.tr("Donation"), "win.donation");
+        help.append(I18n.tr("About"), "win.about");
+        menu.appendSubmenu(I18n.tr("_Help"), help);
 
         return menu;
     }
@@ -1768,8 +1759,8 @@ public class MainWindow {
         addAction("open-httrack-error-log", () -> openHttrackDiagnostic(
                 org.manager.download.HttrackMirrorSupport.DiagnosticLog.ERRORS));
         addAction("force-download", this::startSelectedDownloads);
-        addAction("pause-all", () -> runGlobalDownloadAction(downloadManager.pauseAllDownloads(), "pause downloads"));
-        addAction("resume-all", () -> runGlobalDownloadAction(downloadManager.resumeAllDownloads(), "resume downloads"));
+        addAction("pause-all", () -> runGlobalDownloadAction(downloadManager.pauseAllDownloads(), I18n.mark("Could not pause downloads: %s")));
+        addAction("resume-all", () -> runGlobalDownloadAction(downloadManager.resumeAllDownloads(), I18n.mark("Could not resume downloads: %s")));
         setMenuActionEnabled("pause-all", false);
         setMenuActionEnabled("resume-all", false);
         addAction("delete", this::onDeleteClicked);
@@ -1797,8 +1788,8 @@ public class MainWindow {
         trackActivity(operation).whenComplete((ignored, failure) -> UiThread.marshal(() -> {
             refresh();
             if (failure != null) {
-                LOGGER.warn("Could not {}", description, failure);
-                AccessibilitySupport.status(infoLabel, "Could not " + description + ": " + UiErrors.message(failure));
+                LOGGER.warn("Global download action failed: {}", description, failure);
+                AccessibilitySupport.status(infoLabel, I18n.format(description, UiErrors.message(failure)));
             }
         }));
     }
@@ -1990,7 +1981,7 @@ public class MainWindow {
                     "completion_command_cancel_button", org.gnome.gtk.Button.class);
             org.gnome.gtk.Button ok = Widgets.require(builder,
                     "completion_command_save_button", org.gnome.gtk.Button.class);
-            AccessibilitySupport.label(entry, "Custom completion command");
+            AccessibilitySupport.label(entry, I18n.tr("Custom completion command"));
             java.util.concurrent.atomic.AtomicBoolean committed =
                     new java.util.concurrent.atomic.AtomicBoolean(false);
             Runnable apply = () -> {
@@ -2028,10 +2019,10 @@ public class MainWindow {
         Path destination = selectedDownload.getDestination();
         if ("folder".equals(what)) {
             performFileManagerAction(() -> FileManagerSupport.reveal(target, destination),
-                    "Could not open containing folder");
+                    I18n.tr("Could not open containing folder"));
         } else if (target != null) {
             performFileManagerAction(() -> FileManagerSupport.open(target),
-                    "Could not open downloaded file");
+                    I18n.tr("Could not open downloaded file"));
         }
     }
 
@@ -2041,7 +2032,7 @@ public class MainWindow {
         Path destination = displayedSaveFolder(selectedDownload);
         if (destination != null) {
             performFileManagerAction(() -> FileManagerSupport.open(destination),
-                    "Could not open save folder");
+                    I18n.tr("Could not open save folder"));
         }
     }
 
@@ -2062,10 +2053,10 @@ public class MainWindow {
         Path target = download.getPrimaryOutputPath();
         if (activationFor(download) == DownloadActivation.OPEN_FILE && target != null) {
             performFileManagerAction(() -> FileManagerSupport.open(target),
-                    "Could not open downloaded file");
+                    I18n.tr("Could not open downloaded file"));
         } else {
             performFileManagerAction(() -> FileManagerSupport.reveal(target,
-                    download.getDestination()), "Could not open containing folder");
+                    download.getDestination()), I18n.tr("Could not open containing folder"));
         }
     }
 
@@ -2112,7 +2103,7 @@ public class MainWindow {
                         DetailTabsPresenter.FILE_PATH_COLUMN));
         if (file != null) {
             performFileManagerAction(() -> FileManagerSupport.reveal(file,
-                    file.getParent()), "Could not reveal downloaded file");
+                    file.getParent()), I18n.tr("Could not reveal downloaded file"));
         }
     }
 
@@ -2139,7 +2130,7 @@ public class MainWindow {
     private void onImportHtml() {
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
         DialogSupport.configureIndependent(dialog);
-        dialog.setTitle("Select HTML file");
+        dialog.setTitle(I18n.tr("Select HTML file"));
         dialog.open(window, null, result -> {
             try {
                 org.gnome.gio.File file = dialog.openFinish(result);
@@ -2157,8 +2148,7 @@ public class MainWindow {
                                 UiThread.marshal(() -> {
                                     if (error != null) {
                                         AccessibilitySupport.status(infoLabel,
-                                                "Could not read links from this HTML file: "
-                                                        + UiErrors.message(error),
+                                                I18n.format("Could not read links from this HTML file: %s", UiErrors.message(error)),
                                                 org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                                         return;
                                     }
@@ -2182,13 +2172,11 @@ public class MainWindow {
         ImportLimits displayedLimits = ImportLimits.from(downloadManager.getGlobalSettings());
         org.gnome.gtk.Label help = Widgets.require(builder,
                 "remote_import_help_label", org.gnome.gtk.Label.class);
-        help.setLabel("Enter an HTTP(S) page. Up to " + displayedLimits.maxUrls()
-                + " links are imported from a page up to "
-                + displayedLimits.maxSourceSizeMiB() + " MiB; "
-                + "relative links use the page's final address after redirects.");
+        help.setLabel(I18n.format("Enter an HTTP(S) page. Up to %d links are imported from a page up to %d MiB; relative links use the page's final address after redirects.",
+                displayedLimits.maxUrls(), displayedLimits.maxSourceSizeMiB()));
         org.gnome.gtk.Entry sourceEntry = Widgets.require(builder,
                 "remote_import_url_entry", org.gnome.gtk.Entry.class);
-        AccessibilitySupport.label(sourceEntry, "Remote HTML page URL");
+        AccessibilitySupport.label(sourceEntry, I18n.tr("Remote HTML page URL"));
         org.gnome.gtk.Label status = Widgets.require(builder,
                 "remote_import_status_label", org.gnome.gtk.Label.class);
         org.gnome.gtk.Button cancel = Widgets.require(builder,
@@ -2199,7 +2187,7 @@ public class MainWindow {
             org.manager.GlobalSettings settings = downloadManager.getGlobalSettings();
             if (settings.getBooleanProperty("ui.offline", false)) {
                 AccessibilitySupport.status(status,
-                        "Remote import is unavailable while Offline Mode is enabled",
+                        I18n.tr("Remote import is unavailable while Offline Mode is enabled"),
                         org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                 return;
             }
@@ -2208,7 +2196,7 @@ public class MainWindow {
                 source = DownloadUrlPolicy.require(
                         sourceEntry.getText().strip()).requireWeb().uri();
             } catch (Exception invalid) {
-                AccessibilitySupport.status(status, "Enter a valid HTTP(S) page URL",
+                AccessibilitySupport.status(status, I18n.tr("Enter a valid HTTP(S) page URL"),
                         org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                 return;
             }
@@ -2218,7 +2206,7 @@ public class MainWindow {
             boolean verifyHttpsCertificates = settings.isVerifyHttpsCertificates();
             importButton.setSensitive(false);
             sourceEntry.setSensitive(false);
-            AccessibilitySupport.status(status, "Fetching page and importing links…");
+            AccessibilitySupport.status(status, I18n.tr("Fetching page and importing links…"));
             trackActivity(CompletableFuture.supplyAsync(() -> HtmlImportExport
                     .fetchRemoteHtmlLinks(source, proxy, importLimits, verifyHttpsCertificates), backgroundExecutor))
                     .whenComplete((links, error) -> UiThread.marshal(() -> {
@@ -2228,8 +2216,7 @@ public class MainWindow {
                             importButton.setSensitive(true);
                             sourceEntry.setSensitive(true);
                             AccessibilitySupport.status(status,
-                                    "Could not import this remote HTML page: "
-                                            + UiErrors.message(error),
+                                    I18n.format("Could not import this remote HTML page: %s", UiErrors.message(error)),
                                     org.gnome.gtk.AccessibleAnnouncementPriority.HIGH);
                             return;
                         }
@@ -2253,7 +2240,7 @@ public class MainWindow {
     private void onExportList() {
         org.gnome.gtk.FileDialog dialog = new org.gnome.gtk.FileDialog();
         DialogSupport.configureIndependent(dialog);
-        dialog.setTitle("Export download list");
+        dialog.setTitle(I18n.tr("Export download list"));
         dialog.setInitialName("odm-downloads.txt");
         dialog.save(window, null, result -> {
             try {
@@ -2269,7 +2256,7 @@ public class MainWindow {
                     try {
                         HtmlImportExport.writeText(path, contents);
                         UiThread.marshal(() -> AccessibilitySupport.status(
-                                infoLabel, "Exported download list"));
+                                infoLabel, I18n.tr("Exported download list")));
                     } catch (Exception e) {
                         LOGGER.debug("Export failed", e);
                     }
@@ -2285,11 +2272,10 @@ public class MainWindow {
         StatisticsPresenter.Stats st = StatisticsPresenter.aggregate(downloadManager.getAllDownloads());
         org.gnome.gtk.MessageDialog stats = new org.gnome.gtk.MessageDialog();
         DialogSupport.configureIndependent(stats, window);
-        stats.setMarkup("<b>Download Statistics</b>");
-        stats.formatSecondaryText("Total: " + st.total() + "\nActive: " + st.active()
-                + "\nQueued/paused: " + st.queued() + "\nFinished: " + st.finished()
-                + "\nErrors: " + st.errors() + "\n\nDownloaded: " + DownloadFormats.size(st.doneSize())
-                + " / " + DownloadFormats.size(st.totalSize()));
+        stats.setMarkup(I18n.tr("<b>Download Statistics</b>"));
+        stats.formatSecondaryText(I18n.format("Total: %d\nActive: %d\nQueued/paused: %d\nFinished: %d\nErrors: %d\n\nDownloaded: %s / %s",
+                st.total(), st.active(), st.queued(), st.finished(), st.errors(),
+                DownloadFormats.size(st.doneSize()), DownloadFormats.size(st.totalSize())));
         stats.present();
     }
 
@@ -2313,7 +2299,7 @@ public class MainWindow {
             if (error != null) {
                 LOGGER.warn("Failed to start scheduler for preset " + preset, error);
                 UiThread.marshal(() -> AccessibilitySupport.status(
-                        infoLabel, "Could not start download scheduler"));
+                        infoLabel, I18n.tr("Could not start download scheduler")));
             } else {
                 LOGGER.info("Schedule preset applied: " + preset);
             }
@@ -2348,7 +2334,7 @@ public class MainWindow {
         syncTorPresentation();
         setTorTransitionStatus(active
                 ? torBootstrapStatus(torService.getBootstrapProgress())
-                : "Stopping Tor service…");
+                : I18n.tr("Stopping Tor service…"));
         trackActivity(torServiceController.setEnabled(active)).whenComplete((running, error) -> {
             if (epoch != torToggleEpoch.get()) {
                 return;
@@ -2359,7 +2345,7 @@ public class MainWindow {
                     if (epoch == torToggleEpoch.get()) {
                         torDesiredRunning.set(true);
                         syncTorPresentation();
-                        finishTorTransition("Tor service started");
+                        finishTorTransition(I18n.tr("Tor service started"));
                         torCircuitMonitor.checkNow();
                     }
                 });
@@ -2369,7 +2355,7 @@ public class MainWindow {
                 UiThread.marshal(() -> {
                     if (epoch == torToggleEpoch.get()) {
                         syncTorPresentation();
-                        finishTorTransition("Tor service failed to start");
+                        finishTorTransition(I18n.tr("Tor service failed to start"));
                     }
                 });
             } else if (error != null) {
@@ -2378,7 +2364,7 @@ public class MainWindow {
                 UiThread.marshal(() -> {
                     if (epoch == torToggleEpoch.get()) {
                         syncTorPresentation();
-                        finishTorTransition("Tor service could not be stopped");
+                        finishTorTransition(I18n.tr("Tor service could not be stopped"));
                     }
                 });
             } else {
@@ -2386,7 +2372,7 @@ public class MainWindow {
                 UiThread.marshal(() -> {
                     if (epoch == torToggleEpoch.get()) {
                         syncTorPresentation();
-                        finishTorTransition("Tor service stopped");
+                        finishTorTransition(I18n.tr("Tor service stopped"));
                     }
                 });
             }
@@ -2408,9 +2394,9 @@ public class MainWindow {
                     torDesiredRunning.get()
                             && (torService.isStarting() || torService.isRunning())
                             ? torBootstrapStatus(torService.getBootstrapProgress()) : null;
-            case STARTED -> "Tor service started";
-            case STOPPED -> "Tor service stopped";
-            case ERROR -> "Tor service reported an error";
+            case STARTED -> I18n.tr("Tor service started");
+            case STOPPED -> I18n.tr("Tor service stopped");
+            case ERROR -> I18n.tr("Tor service reported an error");
         };
         if (message != null) {
             if (event == org.tor.TorService.TorServiceEvent.BOOTSTRAP_PROGRESS
@@ -2465,7 +2451,7 @@ public class MainWindow {
     }
 
     static String torBootstrapStatus(int bootstrapProgress) {
-        return "Tor bootstrap: " + normalizedTorProgress(bootstrapProgress) + "%";
+        return I18n.format("Tor bootstrap: %d%%", normalizedTorProgress(bootstrapProgress));
     }
 
     private static int normalizedTorProgress(int progress) {
@@ -2479,7 +2465,7 @@ public class MainWindow {
                 return;
             }
             torStatusCheck = check;
-            AccessibilitySupport.status(infoLabel, "Verifying Tor connection…");
+            AccessibilitySupport.status(infoLabel, I18n.tr("Verifying Tor connection…"));
             trackActivity(check).whenComplete((result, failure) -> UiThread.marshal(() -> {
                 if (finalExitStarted || torStatusCheck != check) {
                     return;
@@ -2513,15 +2499,16 @@ public class MainWindow {
         torStatusCheck = null;
         torIpLabel.setLabel("");
         torIpLabel.setVisible(false);
-        torCheckButton.setTooltipText("Verify Tor connection");
+        torCheckButton.setTooltipText(I18n.tr("Verify Tor connection"));
     }
 
     static String torCheckStatus(org.tor.TorCircuitMonitor.Result result) {
         if (!result.secure()) {
-            return (result.offlineEnabled() ? "Tor check failed — Offline Mode enabled. "
-                    : "Tor check failed — ") + UiErrors.message(result.message());
+            return result.offlineEnabled()
+                    ? I18n.format("Tor check failed — Offline Mode enabled. %s", UiErrors.message(result.message()))
+                    : I18n.format("Tor check failed — %s", UiErrors.message(result.message()));
         }
-        return "Tor verified — " + torExitAddress(result);
+        return I18n.format("Tor verified — %s", torExitAddress(result));
     }
 
     private static String torExitAddress(org.tor.TorCircuitMonitor.Result result) {
@@ -2554,7 +2541,7 @@ public class MainWindow {
      */
     private void onTorNewIdentity() {
         if (!torService.isRunning()) {
-            AccessibilitySupport.status(infoLabel, "Tor is not running");
+            AccessibilitySupport.status(infoLabel, I18n.tr("Tor is not running"));
             return;
         }
         if (!torIdentityRequestInFlight.compareAndSet(false, true)) {
@@ -2567,7 +2554,7 @@ public class MainWindow {
             torIdentityRequestInFlight.set(false);
             LOGGER.warn("Could not configure the Tor control client", e);
             AccessibilitySupport.status(infoLabel,
-                    "New Tor identity unavailable (invalid control configuration)");
+                    I18n.tr("New Tor identity unavailable (invalid control configuration)"));
             return;
         }
         long activityStarted = System.nanoTime();
@@ -2575,7 +2562,7 @@ public class MainWindow {
         clearTorVerificationDisplay();
         torCircuitMonitor.suspend();
         syncTorPresentation();
-        setTorTransitionStatus("Requesting new Tor identity…");
+        setTorTransitionStatus(I18n.tr("Requesting new Tor identity…"));
         CompletableFuture<Boolean> identityChange = controller.connect()
                 .thenCompose(connected -> connected
                         ? controller.changeIp()
@@ -2587,11 +2574,11 @@ public class MainWindow {
             String message;
             if (error != null) {
                 LOGGER.warn("New Tor identity request failed", error);
-                message = "New Tor identity failed: " + UiErrors.message(error);
+                message = I18n.format("New Tor identity failed: %s", UiErrors.message(error));
             } else if (Boolean.TRUE.equals(changed)) {
-                message = "New Tor identity requested; new connections use clean circuits";
+                message = I18n.tr("New Tor identity requested; new connections use clean circuits");
             } else {
-                message = "New Tor identity unavailable (Tor control request failed)";
+                message = I18n.tr("New Tor identity unavailable (Tor control request failed)");
             }
             LOGGER.info(message);
             try {
@@ -2718,19 +2705,17 @@ public class MainWindow {
     private void updateDownloadListStatus() {
         infoLabel.setLabel(torTransitionStatus != null
                 ? torTransitionStatus
-                : torStatusCheck != null ? "Verifying Tor connection…" : downloadListStatusText(
+                : torStatusCheck != null ? I18n.tr("Verifying Tor connection…") : downloadListStatusText(
                         selectedDownloads.size(), loadedHistoryCount, knownDownloadCount));
     }
 
     static String downloadListStatusText(int selectedCount, int loadedCount, int totalCount) {
         if (selectedCount > 0) {
-            return selectedCount == 1
-                    ? "1 download selected"
-                    : selectedCount + " downloads selected";
+            return I18n.plural("%d download selected", "%d downloads selected", selectedCount);
         }
         return loadedCount < totalCount
-                ? loadedCount + " of " + totalCount + " download(s) loaded"
-                : totalCount + " download(s)";
+                ? I18n.plural("%2$d of %1$d download loaded", "%2$d of %1$d downloads loaded", totalCount, loadedCount)
+                : I18n.plural("%d download", "%d downloads", totalCount);
     }
 
     SelectionMode downloadSelectionMode() {
@@ -2966,7 +2951,7 @@ public class MainWindow {
         downSpeedLabel.setLabel(DownloadFormats.rate(summary.downBytesPerSec()));
         upSpeedLabel.setLabel(DownloadFormats.rate(summary.upBytesPerSec()));
         dhtStatusLabel.setLabel(summary.totalSeeders() > 0
-                ? "DHT: " + summary.totalSeeders() + " seed(s)" : "DHT: —");
+                ? I18n.plural("DHT: %d seed", "DHT: %d seeds", summary.totalSeeders()) : "DHT: —");
         updateInfoPanel();
         // Re-evaluate after GTK has laid out appended rows. This also keeps
         // loading while a restrictive filter leaves the viewport under-filled.
@@ -3105,7 +3090,7 @@ public class MainWindow {
         downloadedValue.setLabel(DownloadFormats.downloadedSize(selectedDownload));
         connectionsValue.setLabel(String.valueOf(selectedDownload.getConnectionCount()));
         seedsPeersValue.setLabel(selectedDownload.getSeeders() > 0
-                ? selectedDownload.getSeeders() + " seed(s)"
+                ? I18n.plural("%d seed", "%d seeds", selectedDownload.getSeeders())
                 : "—");
         detailTabsPresenter.load();
     }
