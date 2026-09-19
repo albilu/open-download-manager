@@ -178,6 +178,7 @@ class SqliteDownloadStateStoreTest {
         original.setStatus(Download.Status.PAUSED);
         original.setSize(123_456);
         original.setDownloaded(1_234);
+        original.setUploaded(5_000_000_000L);
         original.setQueuePosition(7);
         original.setManualStartRequired(true);
         original.setPauseReason(Download.PauseReason.SCHEDULE);
@@ -235,6 +236,7 @@ class SqliteDownloadStateStoreTest {
             assertEquals(original.getStatus(), restored.getStatus());
             assertEquals(original.getSize(), restored.getSize());
             assertEquals(original.getDownloaded(), restored.getDownloaded());
+            assertEquals(original.getUploaded(), restored.getUploaded());
             assertEquals(original.getGid(), restored.getGid());
             assertEquals(original.getQueuePosition(), restored.getQueuePosition());
             assertTrue(restored.isManualStartRequired());
@@ -529,6 +531,7 @@ class SqliteDownloadStateStoreTest {
         try (SqliteDownloadStateStore store = new SqliteDownloadStateStore(dbPath, legacyPath, mapper)) {
             Download restored = store.load().downloads().get(0);
             assertEquals("minimal", restored.getId());
+            assertEquals(-1, restored.getUploaded(), "legacy records have no upload telemetry");
             assertNull(restored.getGid());
             assertNull(restored.getStartedAt());
             assertNull(restored.getErrorMessage());
@@ -544,6 +547,7 @@ class SqliteDownloadStateStoreTest {
             // and reopening proves the migration is usable, not just readable.
             restored.setRequestedFileName("migrated.bin");
             restored.setActiveElapsedMillis(321_000);
+            restored.setUploaded(4_000_000_000L);
             restored.recordOutputPath(tempDir.resolve("actual-migrated.bin"));
             store.save(List.of(restored), Set.of());
         }
@@ -552,6 +556,7 @@ class SqliteDownloadStateStoreTest {
             Download restored = reopened.load().downloads().get(0);
             assertEquals("migrated.bin", restored.getRequestedFileName());
             assertEquals(321_000, restored.getActiveElapsedMillis());
+            assertEquals(4_000_000_000L, restored.getUploaded());
             assertEquals(List.of(tempDir.resolve("actual-migrated.bin").toAbsolutePath().normalize()),
                     restored.getOutputPaths());
         }

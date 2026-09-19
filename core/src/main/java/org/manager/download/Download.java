@@ -167,6 +167,7 @@ public class Download {
     private volatile Status status;
     private volatile long size; // total size in bytes
     private volatile long downloaded; // downloaded bytes
+    private volatile long uploaded = -1; // cumulative uploaded bytes; -1 until reported by the engine
     private volatile float speed; // current speed in bytes/second
     private final DownloadSpeedHistory speedHistory = new DownloadSpeedHistory();
     private volatile float progress; // 0-100
@@ -914,13 +915,13 @@ public class Download {
         speedHistory.restore(state);
     }
 
-    record ProgressState(long size, long downloaded, float speed, long activeElapsedMillis,
+    record ProgressState(long size, long downloaded, long uploaded, float speed, long activeElapsedMillis,
             DownloadSpeedHistory.State speedHistory) { }
 
     /** Keep persisted counters at least as recent as the samples saved with them. */
     ProgressState snapshotProgress() {
         synchronized (lock) {
-            return new ProgressState(size, downloaded, speed, getActiveElapsedMillis(), speedHistory.state());
+            return new ProgressState(size, downloaded, uploaded, speed, getActiveElapsedMillis(), speedHistory.state());
         }
     }
 
@@ -940,6 +941,17 @@ public class Download {
 
     public float getUploadSpeed() {
         return uploadSpeed;
+    }
+
+    /** Cumulative bytes uploaded by the engine, or -1 when not yet known. */
+    public long getUploaded() {
+        return uploaded;
+    }
+
+    public void setUploaded(long uploaded) {
+        synchronized (lock) {
+            this.uploaded = Math.max(-1, uploaded);
+        }
     }
 
     public void setUploadSpeed(float uploadSpeed) {

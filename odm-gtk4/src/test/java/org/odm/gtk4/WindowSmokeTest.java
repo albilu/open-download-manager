@@ -224,8 +224,8 @@ class WindowSmokeTest {
         String[] downloadColumnIds = {"number_column", "status_icon_column", "name_column",
                 "complete_column", "size_column",
                 "percent_progress_column", "elapsed_column", "left_column", "speed_column", "up_speed_column",
-                "retry_column", "start_date_column", "end_date_column", "tor_icon_column"};
-        int[] sortColumnIds = {0, 16, 1, 17, 18, 19, 20, 21, 22, 23, 8, 24, 25, 26};
+                "ratio_column", "retry_column", "start_date_column", "end_date_column", "tor_icon_column"};
+        int[] sortColumnIds = {0, 16, 1, 17, 18, 19, 20, 21, 22, 23, 29, 8, 24, 25, 26};
         for (int index = 0; index < downloadColumnIds.length; index++) {
             String id = downloadColumnIds[index];
             Widgets.require(builder, id, org.gnome.gtk.TreeViewColumn.class);
@@ -233,7 +233,7 @@ class WindowSmokeTest {
                     id, TreeViewColumn.class).getSortColumnId(),
                     id + " must expose a typed sort key");
         }
-        assertEquals(28, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
+        assertEquals(30, Widgets.require(builder, "download_store", ListStore.class).getNColumns());
         for (org.manager.download.Download.Type type
                 : org.manager.download.Download.Type.values()) {
             org.gnome.gio.Icon icon = DownloadEnginePresentation.icon(type);
@@ -1460,7 +1460,7 @@ class WindowSmokeTest {
         assertEquals(PropagationPhase.CAPTURE, window.downloadContextClickPhase(),
                 "right-click handling must run before TreeView child gestures consume it");
         assertEquals(List.of("#", "Status", "Name", "Completed", "Size", "Progress",
-                "Elapsed", "Left", "Down Speed", "Up Speed", "Retry", "Start Date",
+                "Elapsed", "Left", "Down Speed", "Up Speed", "Ratio", "Retry", "Start Date",
                 "End Date", "Result"), MainWindow.downloadColumnLabels());
         assertEquals(5, window.mainMenuTopLevelCount());
         assertTrue(window.mainMenuSubmenuContainsAction(
@@ -1870,7 +1870,7 @@ class WindowSmokeTest {
                     "GTK did not redistribute space after hiding the date columns");
             assertEquals(420, name.getWidth(),
                     "Name must keep its cap even without an expandable date column");
-            assertEquals("Result", MainWindow.downloadColumnLabels().get(13),
+            assertEquals("Result", MainWindow.downloadColumnLabels().get(14),
                     "the visibility selector must keep the full label");
         } finally {
             window.destroy();
@@ -1953,6 +1953,125 @@ class WindowSmokeTest {
         assertSame(small, presenter.rowAt(0), "Retries must sort numerically, independently of errors");
         ((TreeSortable) downloadStore).setSortColumnId(8, SortType.DESCENDING);
         assertSame(large, presenter.rowAt(0));
+    }
+
+    @Test
+    void tableHeadersProvideDragAndDropWithoutReorderingRows() {
+        for (String resource : List.of("main-window", "new-download", "new-media",
+                "search-torrents", "import-list", "import-sequence", "jackett-settings", "sources")) {
+            GtkBuilder builder = UiLoader.load("/ui/" + resource + ".ui");
+            try {
+                for (var object : builder.getObjects()) {
+                    if (!(object instanceof TreeView tree)) {
+                        continue;
+                    }
+                    var columns = tree.getColumns();
+                    for (var column : columns) {
+                        var controllers = column.getButton().observeControllers();
+                        boolean source = false;
+                        boolean target = false;
+                        for (int i = 0; i < controllers.getNItems(); i++) {
+                            source |= controllers.getItem(i) instanceof org.gnome.gtk.DragSource;
+                            target |= controllers.getItem(i) instanceof org.gnome.gtk.DropTarget;
+                        }
+                        assertEquals(tree.getHeadersVisible(), source, resource);
+                        assertEquals(tree.getHeadersVisible(), target, resource);
+                    }
+                    if (tree.getHeadersVisible() && columns.size() > 1) {
+                        var model = tree.getModel();
+                        var last = columns.getLast();
+                        tree.moveColumnAfter(last, null);
+                        assertSame(last, tree.getColumns().getFirst(), resource);
+                        assertSame(model, tree.getModel(), "moving columns must preserve the row model");
+                    }
+                }
+            } finally {
+                for (var object : builder.getObjects()) {
+                    if (object instanceof Window window) {
+                        window.destroy();
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void ratioVisibilityActionFollowsTheColumnAfterMovingIt() throws Exception {
+        var manager = emptyManager();
+        MainWindow window = new MainWindow(null, manager, new org.tor.TorService("tor"),
+                new org.manager.schedule.ScheduleManager(manager));
+        try {
+            var field = MainWindow.class.getDeclaredField("uiBuilder");
+            field.setAccessible(true);
+            GtkBuilder builder = (GtkBuilder) field.get(window);
+            ApplicationWindow nativeWindow = Widgets.require(builder, "main_window", ApplicationWindow.class);
+            TreeView tree = Widgets.require(builder, "download_treeview", TreeView.class);
+            TreeViewColumn ratio = Widgets.require(builder, "ratio_column", TreeViewColumn.class);
+            TreeViewColumn name = Widgets.require(builder, "name_column", TreeViewColumn.class);
+            int ratioIndex = MainWindow.downloadColumnLabels().indexOf("Ratio");
+            var action = nativeWindow.lookupAction("col-" + ratioIndex);
+            assertTrue(window.mainMenuSubmenuContainsAction("_View", "win.col-" + ratioIndex));
+            assertFalse(ratio.getVisible());
+            assertFalse(action.getState().getBoolean());
+            assertTrue(nativeWindow.activateActionVariant("win.col-" + ratioIndex, null));
+            assertTrue(ratio.getVisible());
+            tree.moveColumnAfter(ratio, null);
+            assertSame(ratio, tree.getColumns().getFirst());
+            assertTrue(nativeWindow.activateActionVariant("win.col-" + ratioIndex, null));
+            assertFalse(ratio.getVisible());
+            assertFalse(action.getState().getBoolean());
+            assertTrue(name.getVisible());
+            assertTrue(nativeWindow.activateActionVariant("win.col-" + ratioIndex, null));
+            assertTrue(ratio.getVisible());
+            assertTrue(action.getState().getBoolean());
+            assertSame(ratio, tree.getColumns().getFirst());
+        } finally {
+            window.dispose();
+        }
+    }
+
+    @Test
+    void ratiosSortNumericallyAndUpdateWhileSeeding() {
+        GtkBuilder builder = UiLoader.load("/ui/main-window.ui");
+        try {
+            ListStore store = Widgets.require(builder, "download_store", ListStore.class);
+            var presenter = new DownloadListPresenter(
+                    Widgets.require(builder, "status_store", ListStore.class),
+                    Widgets.require(builder, "category_store", ListStore.class), store,
+                    Widgets.require(builder, "global_progress_store", ListStore.class),
+                    Widgets.require(builder, "status_treeview", TreeView.class),
+                    Widgets.require(builder, "category_treeview", TreeView.class), () -> { });
+            var small = new org.manager.download.Download(URI.create("https://example.test/small.torrent"));
+            var large = new org.manager.download.Download(URI.create("https://example.test/large.torrent"));
+            var direct = new org.manager.download.Download(URI.create("https://example.test/normal.bin"));
+            small.setDownloaded(1_000);
+            small.setUploaded(2_000);
+            small.setStatus(org.manager.download.Download.Status.SEEDING);
+            large.setDownloaded(1_000);
+            large.setUploaded(10_000);
+            presenter.refresh(List.of(small, large, direct));
+            TreeViewColumn ratio = Widgets.require(builder, "ratio_column", TreeViewColumn.class);
+            ((TreeSortable) store).setSortColumnId(ratio.getSortColumnId(), SortType.DESCENDING);
+            assertSame(large, presenter.rowAt(0));
+            TreeIter row = new TreeIter();
+            assertTrue(store.getIterFirst(row));
+            ratio.cellSetCellData(store, row, false, false);
+            CellRendererText renderer = assertInstanceOf(CellRendererText.class, ratio.getCells().getFirst());
+            assertEquals("10.00", renderer.getProperty("text"));
+            small.setUploaded(12_500);
+            presenter.refresh(List.of(small, large, direct));
+            assertSame(small, presenter.rowAt(0));
+            assertTrue(store.getIterFirst(row));
+            ratio.cellSetCellData(store, row, false, false);
+            assertEquals("12.50", renderer.getProperty("text"));
+            ((TreeSortable) store).setSortColumnId(ratio.getSortColumnId(), SortType.ASCENDING);
+            assertSame(direct, presenter.rowAt(0));
+            assertTrue(store.getIterFirst(row));
+            ratio.cellSetCellData(store, row, false, false);
+            assertEquals("—", renderer.getProperty("text"));
+        } finally {
+            Widgets.require(builder, "main_window", Window.class).destroy();
+        }
     }
 
     @Test

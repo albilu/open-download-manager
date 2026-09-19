@@ -49,7 +49,7 @@ public class MainWindow {
     static final int HISTORY_PAGE_SIZE = 500;
     private static final List<String> DOWNLOAD_COLUMN_LABELS = List.of(
             "#", I18n.tr("Status"), I18n.tr("Name"), I18n.tr("Completed"), I18n.tr("Size"), I18n.tr("Progress"), I18n.tr("Elapsed"),
-            I18n.tr("Left"), I18n.tr("Down Speed"), I18n.tr("Up Speed"), I18n.tr("Retry"), I18n.tr("Start Date"), I18n.tr("End Date"), I18n.tr("Result"));
+            I18n.tr("Left"), I18n.tr("Down Speed"), I18n.tr("Up Speed"), I18n.tr("Ratio"), I18n.tr("Retry"), I18n.tr("Start Date"), I18n.tr("End Date"), I18n.tr("Result"));
     private static final List<String> COMPLETION_ACTION_KEYS = List.of(
             "notify", "desktop-notify", "antivirus", "subtitles", "suspend", "shutdown", "custom");
     /** Long enough for GTK to paint and animate an immediately acknowledged NEWNYM. */
@@ -1749,8 +1749,9 @@ public class MainWindow {
         addStatefulAction("info-panel", true, infoPanelWidget::setVisible);
         var columns = downloadsTreeview.getColumns();
         for (int i = 0; i < DOWNLOAD_COLUMN_LABELS.size(); i++) {
-            final int index = i;
-            addStatefulAction("col-" + i, true, active -> columns.get(index).setVisible(active));
+            // Bind the action to the column itself, independently of its dragged position.
+            var column = columns.get(i);
+            addStatefulAction("col-" + i, column.getVisible(), column::setVisible);
         }
 
         // Download

@@ -67,6 +67,8 @@ final class DownloadListPresenter {
     private static final int COL_END_SORT = 25;
     private static final int COL_COMPLETION_ACTION_SORT = 26;
     private static final int COL_PROGRESS_PULSE = 27;
+    private static final int COL_RATIO = 28;
+    private static final int COL_RATIO_SORT = 29;
 
     // status_store / category_store columns
     private static final int SC_ICON = 0;
@@ -630,6 +632,9 @@ final class DownloadListPresenter {
                 DownloadFormats.rate((long) download.getSpeed()));
         ListStoreCells.setString(store, iter, COL_UP_SPEED,
                 DownloadFormats.rate((long) download.getUploadSpeed()));
+        double ratio = DownloadFormats.shareRatioValue(download);
+        ListStoreCells.setString(store, iter, COL_RATIO, DownloadFormats.shareRatio(ratio));
+        ListStoreCells.setDouble(store, iter, COL_RATIO_SORT, ratio);
         ListStoreCells.setInt(store, iter, COL_RETRY, download.getRetryCount());
         ListStoreCells.setString(store, iter, COL_START,
                 download.getStartedAt() != null

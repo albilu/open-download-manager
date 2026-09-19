@@ -2964,6 +2964,11 @@ msgstr[1] ""
 msgid "RPC port:"
 msgstr ""
 
+#: src/main/java/org/odm/gtk4/MainWindow.java:52
+#: src/main/resources/ui/main-window.ui:254
+msgid "Ratio"
+msgstr ""
+
 #: src/main/java/org/odm/gtk4/SettingsDialog.java:49
 msgid "Ratio limit"
 msgstr ""

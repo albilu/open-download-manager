@@ -101,6 +101,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         "totalLength", // Total file size in bytes
         "downloadSpeed", // Current download speed in bytes/second
         "uploadSpeed", // Current upload speed in bytes/second (BitTorrent)
+        "uploadLength", // Cumulative uploaded bytes, including resumed transfers
         "connections", // Current connection count
         "numSeeders", // Connected seeder count (BitTorrent)
         "seeder", // True when the local BitTorrent task is only seeding
@@ -143,7 +144,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
     private final AtomicBoolean isShuttingDown;
     private final ObjectMapper objectMapper;
 
-    private record GidTransferStats(long completed, long total,
+    private record GidTransferStats(long completed, long total, long uploaded,
             long downloadSpeed, long uploadSpeed, int connections, int seeders) {
     }
 
@@ -1289,11 +1290,16 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // overwrote upload speed (often with zero from magnet metadata).
             Map<String, GidTransferStats> perGid = downloadProgress.get(downloadId);
             if (perGid != null) {
-                perGid.put(gid, new GidTransferStats(completedLength, totalLength,
+                GidTransferStats previous = perGid.get(gid);
+                long uploaded = status.containsKey("uploadLength")
+                        ? statusLong(status.get("uploadLength"))
+                        : previous == null ? -1 : previous.uploaded();
+                perGid.put(gid, new GidTransferStats(completedLength, totalLength, uploaded,
                         downloadSpeed, uploadSpeed, connections, numSeeders));
             }
             long aggregatedCompleted = 0;
             long aggregatedTotal = 0;
+            long aggregatedUploaded = -1;
             long aggregatedDownloadSpeed = 0;
             long aggregatedUploadSpeed = 0;
             int aggregatedConnections = 0;
@@ -1302,6 +1308,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
                     ? perGid.values() : List.<GidTransferStats>of()) {
                 aggregatedCompleted += progress.completed();
                 aggregatedTotal += progress.total();
+                if (progress.uploaded() >= 0) {
+                    aggregatedUploaded = Math.max(0, aggregatedUploaded) + progress.uploaded();
+                }
                 aggregatedDownloadSpeed += progress.downloadSpeed();
                 aggregatedUploadSpeed += progress.uploadSpeed();
                 aggregatedConnections += progress.connections();
@@ -1311,6 +1320,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // Update download object
             download.setDownloaded(aggregatedCompleted);
             download.setSize(aggregatedTotal);
+            // aria2 reports a cumulative total, not a per-poll delta. Preserve
+            // saved counters while a resumed magnet is still resolving metadata.
+            download.setUploaded(Math.max(download.getUploaded(), aggregatedUploaded));
             download.setSpeed((float) aggregatedDownloadSpeed);
             download.setUploadSpeed((float) aggregatedUploadSpeed);
             download.setConnectionCount(aggregatedConnections);
@@ -1600,7 +1612,7 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
             // dropping the whole snapshot makes multi-GID downloads shrink
             // as each file completes.
             progress.computeIfPresent(gid, (ignored, retired) ->
-                    new GidTransferStats(retired.completed(), retired.total(),
+                    new GidTransferStats(retired.completed(), retired.total(), retired.uploaded(),
                             0, 0, 0, 0));
         }
         if (tracked.isEmpty()) {

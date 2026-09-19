@@ -61,6 +61,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 status TEXT NOT NULL,
                 size INTEGER NOT NULL DEFAULT 0,
                 downloaded INTEGER NOT NULL DEFAULT 0,
+                uploaded INTEGER NOT NULL DEFAULT -1,
                 speed REAL NOT NULL DEFAULT 0,
                 upload_speed REAL NOT NULL DEFAULT 0,
                 connections INTEGER NOT NULL DEFAULT 0,
@@ -97,8 +98,9 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
                 completed_at, error_message, settings, schedule_settings,
                 checksum_algorithm, expected_checksum, manual_start_required,
                 active_elapsed_millis, completion_action_results, operation_results,
-                active_before_exit, pause_reason, speed_history, retry_count, source_overrides, archive_only_completion
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                active_before_exit, pause_reason, speed_history, retry_count, source_overrides, archive_only_completion,
+                uploaded
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """;
 
     /** Number of rows batched per statement execution during a full save. */
@@ -289,6 +291,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
             ensureColumn("retry_count", "INTEGER NOT NULL DEFAULT 0");
             ensureColumn("source_overrides", "TEXT");
             ensureColumn("archive_only_completion", "INTEGER NOT NULL DEFAULT 0");
+            ensureColumn("uploaded", "INTEGER NOT NULL DEFAULT -1");
             migrateLegacyJsonIfNeeded();
             initialized = true;
         } catch (SQLException | IOException e) {
@@ -438,6 +441,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         download.setStatus(Download.Status.valueOf(rs.getString("status")));
         download.setSize(rs.getLong("size"));
         download.setDownloaded(rs.getLong("downloaded"));
+        download.setUploaded(rs.getLong("uploaded"));
         download.setSpeed((float) rs.getDouble("speed"));
         download.setUploadSpeed((float) rs.getDouble("upload_speed"));
         download.setConnectionCount(rs.getInt("connections"));
@@ -572,6 +576,7 @@ public final class SqliteDownloadStateStore implements AutoCloseable {
         insert.setInt(36, download.getRetryCount());
         insert.setString(37, mapper.writeValueAsString(download.getSourceOverrides()));
         insert.setInt(38, download.isArchiveOnlyCompletion() ? 1 : 0);
+        insert.setLong(39, progress.uploaded());
     }
 
     private <T> T readJson(ResultSet rs, String column, TypeReference<T> type) throws SQLException {

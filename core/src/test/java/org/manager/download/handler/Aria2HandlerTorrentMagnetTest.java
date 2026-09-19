@@ -149,6 +149,10 @@ class Aria2HandlerTorrentMagnetTest {
         List<List<String>> trackers = handler.getDownloadTrackers(torrent);
         assertNotNull(trackers, "tracker introspection must answer for a live torrent");
 
+        await().atMost(Duration.ofSeconds(10)).until(() -> torrent.getUploaded() >= 0);
+        assertEquals(0, torrent.getUploaded(),
+                "real aria2 polling must populate uploadLength even before peers connect");
+
         handler.cancelDownload(torrent, false).get(30, TimeUnit.SECONDS);
         assertEquals(Download.Status.CANCELED, torrent.getStatus());
     }

@@ -21,6 +21,7 @@
       <column type="gdouble"/><column type="gdouble"/>
       <column type="gint64"/><column type="gint64"/><column type="gint"/>
       <column type="gint"/>
+      <column type="gchararray"/><column type="gdouble"/>
     </columns>
   </object>
   <object class="GtkTreeStore" id="files_store">
@@ -250,6 +251,7 @@
                                 <child><object class="GtkTreeViewColumn" id="left_column"><property name="title" translatable="yes">Left</property><property name="sort-column-id">21</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">5</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="speed_column"><property name="title" translatable="yes">Down speed</property><property name="sort-column-id">22</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">6</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="up_speed_column"><property name="title" translatable="yes">Up speed</property><property name="sort-column-id">23</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">7</attribute></attributes></child></object></child>
+                                <child><object class="GtkTreeViewColumn" id="ratio_column"><property name="title" translatable="yes">Ratio</property><property name="visible">false</property><property name="sort-column-id">29</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">28</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="retry_column"><property name="title" translatable="yes">Retry</property><property name="sort-column-id">8</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">8</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="start_date_column"><property name="title" translatable="yes">Start date</property><property name="expand">true</property><property name="sort-column-id">24</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">9</attribute></attributes></child></object></child>
                                 <child><object class="GtkTreeViewColumn" id="end_date_column"><property name="title" translatable="yes">End date</property><property name="expand">true</property><property name="sort-column-id">25</property><child><object class="GtkCellRendererText"/><attributes><attribute name="text">10</attribute></attributes></child></object></child>

@@ -30,6 +30,7 @@ class DownloadStateSerializationTest {
         original.setStatus(Download.Status.PAUSED);
         original.setSize(123_456);
         original.setDownloaded(1_234);
+        original.setUploaded(5_000_000_000L);
         original.setErrorMessage(null);
         original.setQueuePosition(3);
         original.setManualStartRequired(true);
@@ -52,6 +53,7 @@ class DownloadStateSerializationTest {
         assertEquals(original.getStatus(), restored.getStatus());
         assertEquals(original.getSize(), restored.getSize());
         assertEquals(original.getDownloaded(), restored.getDownloaded());
+        assertEquals(original.getUploaded(), restored.getUploaded());
         assertEquals(original.getGid(), restored.getGid());
         assertEquals(original.isManualStartRequired(), restored.isManualStartRequired());
 

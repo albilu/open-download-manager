@@ -36,6 +36,8 @@ public final class UiLoader {
             for (var object : builder.getObjects()) {
                 if (object instanceof org.gnome.gtk.Window window) {
                     ApplicationIcons.configure(window);
+                } else if (object instanceof org.gnome.gtk.TreeView tree && tree.getHeadersVisible()) {
+                    TreeViewColumnReordering.install(tree);
                 }
             }
             return builder;

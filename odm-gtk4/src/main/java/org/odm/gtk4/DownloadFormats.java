@@ -81,6 +81,23 @@ final class DownloadFormats {
         return size(Math.max(0, bytesPerSecond)) + "/s";
     }
 
+    /** Uploaded / completed bytes for torrents; -1 means unavailable. */
+    static double shareRatioValue(Download download) {
+        boolean torrent = download.getProtocol() != null && download.getProtocol().supportsPeerDetails()
+                || download.getInfoHash() != null && !download.getInfoHash().isBlank();
+        long uploaded = download.getUploaded();
+        if (!torrent || uploaded < 0) {
+            return -1;
+        }
+        long downloaded = download.getDownloaded();
+        return downloaded > 0 ? (double) uploaded / downloaded
+                : uploaded > 0 ? Double.POSITIVE_INFINITY : 0;
+    }
+
+    static String shareRatio(double ratio) {
+        return ratio < 0 ? "—" : Double.isInfinite(ratio) ? "∞" : String.format("%.2f", ratio);
+    }
+
     /** ETA of a downloading transfer, or an em-dash when not computable. */
     static String eta(Download download) {
         float speed = download.getSpeed();

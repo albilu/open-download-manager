@@ -303,6 +303,7 @@ class Aria2LiveGidRoutingTest {
         Map<String, Object> payload = status("active", 500, 1_000);
         payload.put("downloadSpeed", "8192");
         payload.put("uploadSpeed", "4096");
+        payload.put("uploadLength", "5000000000");
         payload.put("connections", "4");
         payload.put("numSeeders", "2");
         handler.processProgressUpdate(download.getId(), "payload-gid", payload);
@@ -310,6 +311,7 @@ class Aria2LiveGidRoutingTest {
         Map<String, Object> metadata = status("active", 10, 10);
         metadata.put("downloadSpeed", "128");
         metadata.put("uploadSpeed", "0");
+        metadata.put("uploadLength", "0");
         metadata.put("connections", "1");
         handler.processProgressUpdate(download.getId(), "metadata-gid", metadata);
 
@@ -318,6 +320,38 @@ class Aria2LiveGidRoutingTest {
                 "a later zero-rate metadata update must not erase payload upload speed");
         assertEquals(5, download.getConnectionCount());
         assertEquals(2, download.getSeeders());
+        assertEquals(5_000_000_000L, download.getUploaded());
+
+        handler.processProgressUpdate(download.getId(), "payload-gid", payload);
+        assertEquals(5_000_000_000L, download.getUploaded(),
+                "the cumulative counter must not be added again on every poll");
+
+        payload.put("status", "complete");
+        payload.put("uploadLength", "5000000100");
+        handler.processProgressUpdate(download.getId(), "payload-gid", payload);
+        metadata.put("uploadLength", "20");
+        handler.processProgressUpdate(download.getId(), "metadata-gid", metadata);
+        assertEquals(5_000_000_120L, download.getUploaded(),
+                "completed GIDs still contribute their uploaded bytes");
+        metadata.remove("uploadLength");
+        handler.processProgressUpdate(download.getId(), "metadata-gid", metadata);
+        assertEquals(5_000_000_120L, download.getUploaded());
+    }
+
+    @Test
+    void resumedTorrentUsesCumulativeEngineTotalWithoutAddingSavedUploadsAgain() {
+        Download download = new Download(URI.create(
+                "magnet:?xt=urn:btih:abababababababababababababababababababab"));
+        download.setUploaded(5_000);
+        handler.registerTrackedDownload(download, List.of("metadata", "payload"));
+        Map<String, Object> metadata = status("complete", 10, 10);
+        metadata.put("uploadLength", "0");
+        handler.processProgressUpdate(download.getId(), "metadata", metadata);
+        assertEquals(5_000, download.getUploaded());
+        Map<String, Object> payload = status("active", 1_000, 1_000);
+        payload.put("uploadLength", "6000");
+        handler.processProgressUpdate(download.getId(), "payload", payload);
+        assertEquals(6_000, download.getUploaded());
     }
 
     @Test

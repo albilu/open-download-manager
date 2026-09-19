@@ -93,8 +93,8 @@ msgstr[1] "%d éléments nécessitent votre attention dans Téléchargements."
 #, java-printf-format
 msgid "%d seed"
 msgid_plural "%d seeds"
-msgstr[0] "%d source complète"
-msgstr[1] "%d sources complètes"
+msgstr[0] "%d source"
+msgstr[1] "%d sources"
 
 #: src/main/java/org/odm/gtk4/SearchTorrentsDialog.java:291
 #, java-printf-format
@@ -1087,8 +1087,8 @@ msgstr "Personnaliser…"
 #, java-printf-format
 msgid "DHT: %d seed"
 msgid_plural "DHT: %d seeds"
-msgstr[0] "DHT : %d source complète"
-msgstr[1] "DHT : %d sources complètes"
+msgstr[0] "DHT : %d source"
+msgstr[1] "DHT : %d sources"
 
 #: src/main/resources/ui/main-window.ui:584
 msgid "DHT: —"
@@ -2808,6 +2808,11 @@ msgstr[1] "%d torrents ajoutés à la file d’attente."
 msgid "RPC port:"
 msgstr "Port RPC :"
 
+#: src/main/java/org/odm/gtk4/MainWindow.java:52
+#: src/main/resources/ui/main-window.ui:254
+msgid "Ratio"
+msgstr "Ratio"
+
 #: src/main/java/org/odm/gtk4/SettingsDialog.java:49
 msgid "Ratio limit"
 msgstr "Limite de ratio"
@@ -3135,7 +3140,7 @@ msgstr "Source complète"
 #: src/main/resources/ui/main-window.ui:471
 #: src/main/resources/ui/search-torrents.ui:61
 msgid "Seeders"
-msgstr "Sources complètes"
+msgstr "Sources"
 
 #: src/main/java/org/odm/gtk4/DownloadListPresenter.java:34
 msgid "Seeding"
@@ -3147,7 +3152,7 @@ msgstr "Politique de partage :"
 
 #: src/main/resources/ui/main-window.ui:395
 msgid "Seeds/peers:"
-msgstr "Sources complètes / pairs :"
+msgstr "Sources / pairs :"
 
 #: src/main/resources/ui/new-media.ui:115
 msgid "Segment categories:"

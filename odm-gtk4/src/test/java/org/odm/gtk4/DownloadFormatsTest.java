@@ -14,6 +14,34 @@ import org.manager.download.Download;
 class DownloadFormatsTest {
 
     @Test
+    void shareRatioUsesUploadedBytesAndLocalizedDecimals() {
+        Download torrent = new Download(URI.create("https://example.test/file.torrent"));
+        assertEquals("—", DownloadFormats.shareRatio(DownloadFormats.shareRatioValue(torrent)));
+        torrent.setUploaded(0);
+        assertEquals(0, DownloadFormats.shareRatioValue(torrent));
+        torrent.setDownloaded(1_000);
+        torrent.setUploaded(1_250);
+        assertEquals(1.25, DownloadFormats.shareRatioValue(torrent));
+        Locale original = Locale.getDefault(Locale.Category.FORMAT);
+        try {
+            Locale.setDefault(Locale.Category.FORMAT, Locale.US);
+            assertEquals("1.25", DownloadFormats.shareRatio(DownloadFormats.shareRatioValue(torrent)));
+            Locale.setDefault(Locale.Category.FORMAT, Locale.FRANCE);
+            assertEquals("1,25", DownloadFormats.shareRatio(DownloadFormats.shareRatioValue(torrent)));
+        } finally {
+            Locale.setDefault(Locale.Category.FORMAT, original);
+        }
+        torrent.setDownloaded(0);
+        assertEquals("∞", DownloadFormats.shareRatio(DownloadFormats.shareRatioValue(torrent)));
+        Download direct = new Download(URI.create("https://example.test/file.bin"));
+        direct.setUploaded(0);
+        direct.setDownloaded(1_000);
+        assertEquals(-1, DownloadFormats.shareRatioValue(direct));
+        direct.setInfoHash("abababababababababababababababababababab");
+        assertEquals(0, DownloadFormats.shareRatioValue(direct), "discovered torrents also have a ratio");
+    }
+
+    @Test
     void sizesRenderHumanReadableUnits() {
         assertEquals("512 B", DownloadFormats.size(512));
         assertEquals("2 KB", DownloadFormats.size(2048));
