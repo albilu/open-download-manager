@@ -35,6 +35,12 @@ RUN apt-get update && apt-get install -y \
     file \
     zstd \
     libarchive-tools \
+    # AppImage/Flatpak building and desktop metadata validation
+    flatpak \
+    flatpak-builder \
+    libfuse2 \
+    appstream \
+    desktop-file-utils \
     # Utilities
     vim \
     tree \
@@ -71,7 +77,8 @@ RUN if [ "$ODM_UID" != 0 ]; then \
         if ! getent group "$ODM_GID" >/dev/null; then groupadd -g "$ODM_GID" developer; fi; \
         useradd -m -d /home/developer -s /bin/bash -u "$ODM_UID" -g "$ODM_GID" developer; \
     else mkdir -p /home/developer; fi && \
-    mkdir -p /app /home/developer/.m2 && \
+    mkdir -p /app /home/developer/.m2 /home/developer/.cache \
+        /home/developer/.local/share && \
     chown -R "$ODM_UID:$ODM_GID" /app /home/developer
 
 WORKDIR /app

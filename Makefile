@@ -1,6 +1,6 @@
 # Simple Makefile for Open Download Manager Docker Development
 
-.PHONY: help build dev test test-integration test-perf compile run debug package clean
+.PHONY: help build dev test test-integration test-perf compile run debug package verify clean
 
 .DEFAULT_GOAL := help
 
@@ -16,7 +16,8 @@ help: ## Show this help message
 	@echo "  compile   Build application"
 	@echo "  run       Run application in Docker with Xvfb"
 	@echo "  debug     Run application in debug mode (port 5005)"
-	@echo "  package   Create distribution packages"
+	@echo "  package   Create distribution packages (.deb/.rpm/.pkg.tar.zst/.AppImage/.flatpak)"
+	@echo "  verify    Verify the built distribution packages"
 	@echo "  clean     Clean up Docker resources"
 	@echo ""
 	@echo "Examples:"
@@ -26,7 +27,8 @@ help: ## Show this help message
 	@echo "  make test-perf # Run performance benchmarks"
 	@echo "  make run      # Run application with GUI support"
 	@echo "  make debug    # Run application in debug mode"
-	@echo "  make package  # Create .deb, .rpm packages"
+	@echo "  make package  # Create .deb, .rpm, .pkg.tar.zst, .AppImage and .flatpak packages"
+	@echo "  make verify   # Verify all distribution packages"
 
 build: ## Build Docker image
 	./docker-build.sh build
@@ -54,6 +56,9 @@ debug: ## Run application in debug mode (port 5005)
 
 package: ## Create distribution packages
 	./docker-build.sh package
+
+verify: ## Verify the built distribution packages
+	./docker-build.sh verify
 
 clean: ## Clean up Docker resources
 	./docker-build.sh clean
