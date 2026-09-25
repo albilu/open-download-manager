@@ -62,7 +62,7 @@ jobs:
             - name: Install test (Flatpak bundle on clean Ubuntu)
               env:
                   VERSION: ${{ steps.version.outputs.version }}
-              run: docker run --rm --privileged -e VERSION -v "$(pwd)/packaging/dist:/pkgs:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq flatpak >/dev/null && flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak --user install -y --noninteractive "/pkgs/open-download-manager-${VERSION}-x86_64.flatpak" && flatpak run --command=aria2c io.github.albilu.odm --version | grep -q "aria2 version"'
+              run: docker run --rm --privileged -e VERSION -v "$(pwd)/packaging/dist:/pkgs:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq flatpak >/dev/null && flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak --user install -y --noninteractive "/pkgs/open-download-manager-${VERSION}-x86_64.flatpak" && flatpak run --command=aria2c io.github.odm_linux.open-download-manager --version | grep -q "aria2 version"'
 
             - name: Create release and attach packages
               uses: softprops/action-gh-release@v2

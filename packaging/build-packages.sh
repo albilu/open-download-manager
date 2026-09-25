@@ -350,10 +350,10 @@ build_flatpak() {
     rm -rf "$work"
     flatpak-builder --user --disable-rofiles-fuse --force-clean \
         --state-dir="$work/state" --repo="$work/repo" \
-        "$work/build" "$ROOT/packaging/flatpak/io.github.albilu.odm.yml"
+        "$work/build" "$ROOT/packaging/flatpak/io.github.odm_linux.open-download-manager.yml"
     flatpak build-bundle "$work/repo" \
         "$DIST/open-download-manager-${VERSION}-x86_64.flatpak" \
-        io.github.albilu.odm --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+        io.github.odm_linux.open-download-manager --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
     rm -rf "$work"
     log "Built dist/open-download-manager-${VERSION}-x86_64.flatpak"
 }

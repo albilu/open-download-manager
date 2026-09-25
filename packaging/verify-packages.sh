@@ -277,7 +277,7 @@ if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
 fi
 flatpak --user remote-add --if-not-exists flathub \
     https://flathub.org/repo/flathub.flatpakrepo
-FLATPAK_ID=io.github.albilu.odm
+FLATPAK_ID=io.github.odm_linux.open-download-manager
 flatpak --user uninstall -y --noninteractive "$FLATPAK_ID" 2>/dev/null || true
 flatpak --user install -y --noninteractive "$FLATPAK"
 flatpak info "$FLATPAK_ID" | grep -q "ID: ${FLATPAK_ID}$"

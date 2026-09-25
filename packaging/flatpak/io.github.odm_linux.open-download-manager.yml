@@ -4,7 +4,7 @@
 # aria2 is bundled because ODM requires it at startup and the sandbox has no
 # host tools; yt-dlp and HTTrack are bundled so media/mirror downloads work
 # out of the box. proxychains/Tor are host-dependent and degrade gracefully.
-app-id: io.github.albilu.odm
+app-id: io.github.odm_linux.open-download-manager
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
@@ -87,19 +87,19 @@ modules:
       - |
         mkdir -p /app/share/applications
         sed -e 's|^Exec=.*|Exec=open-download-manager %U|' \
-            -e 's|^Icon=.*|Icon=io.github.albilu.odm|' \
+            -e 's|^Icon=.*|Icon=io.github.odm_linux.open-download-manager|' \
             usr/share/applications/org.odm.desktop \
-            > /app/share/applications/io.github.albilu.odm.desktop
-        chmod 644 /app/share/applications/io.github.albilu.odm.desktop
+            > /app/share/applications/io.github.odm_linux.open-download-manager.desktop
+        chmod 644 /app/share/applications/io.github.odm_linux.open-download-manager.desktop
       # Metainfo renamed to the app-id (stock icon included)
       - |
         mkdir -p /app/share/metainfo
-        sed -e 's|<id>org.odm</id>|<id>io.github.albilu.odm</id>|' \
-            -e 's|<launchable type="desktop-id">org.odm.desktop</launchable>|<launchable type="desktop-id">io.github.albilu.odm.desktop</launchable>|' \
-            -e 's|<icon type="stock">open-download-manager</icon>|<icon type="stock">io.github.albilu.odm</icon>|' \
+        sed -e 's|<id>org.odm</id>|<id>io.github.odm_linux.open-download-manager</id>|' \
+            -e 's|<launchable type="desktop-id">org.odm.desktop</launchable>|<launchable type="desktop-id">io.github.odm_linux.open-download-manager.desktop</launchable>|' \
+            -e 's|<icon type="stock">open-download-manager</icon>|<icon type="stock">io.github.odm_linux.open-download-manager</icon>|' \
             usr/share/metainfo/org.odm.metainfo.xml \
-            > /app/share/metainfo/io.github.albilu.odm.metainfo.xml
-        chmod 644 /app/share/metainfo/io.github.albilu.odm.metainfo.xml
+            > /app/share/metainfo/io.github.odm_linux.open-download-manager.metainfo.xml
+        chmod 644 /app/share/metainfo/io.github.odm_linux.open-download-manager.metainfo.xml
       # Hicolor icons renamed to the app-id (svg and png, every size)
       - |
         for d in usr/share/icons/hicolor/*/apps; do
@@ -108,7 +108,7 @@ modules:
           mkdir -p "$dest"
           for f in "$d"/open-download-manager.*; do
             [ -f "$f" ] || continue
-            install -m644 "$f" "$dest/io.github.albilu.odm.${f##*.}"
+            install -m644 "$f" "$dest/io.github.odm_linux.open-download-manager.${f##*.}"
           done
         done
       - |
@@ -118,4 +118,4 @@ modules:
         fi
       # License
       - install -Dm644 usr/share/licenses/open-download-manager/LICENSE
-        /app/share/licenses/io.github.albilu.odm/LICENSE
+        /app/share/licenses/io.github.odm_linux.open-download-manager/LICENSE

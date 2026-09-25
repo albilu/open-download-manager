@@ -48,6 +48,24 @@
     <control>keyboard</control>
   </supports>
   <content_rating type="oars-1.1"/>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/odm-linux/open-download-manager/v0.3.0/docs/wiki/images/screenshot.png</image>
+      <caption>Main window with download queue and details</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/odm-linux/open-download-manager/v0.3.0/docs/wiki/images/new-download.png</image>
+      <caption>Adding a new download</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/odm-linux/open-download-manager/v0.3.0/docs/wiki/images/new-media.png</image>
+      <caption>Downloading media with format selection</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/odm-linux/open-download-manager/v0.3.0/docs/wiki/images/settings.png</image>
+      <caption>Application preferences</caption>
+    </screenshot>
+  </screenshots>
   <releases>
     <release version="__VERSION__" date="__DATE__"/>
   </releases>
