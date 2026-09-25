@@ -11,7 +11,8 @@
 
 Open Download Manager (ODM) combines proven engines — aria2, yt-dlp, and HTTrack — with persistent history, queue controls, and recovery after restarts.
 
-[Features](#features) · [How ODM compares](#how-odm-compares) · [Installation](#installation) · [Building from source](#building-from-source)
+[Features](#features) · [User Guide](docs/wiki/Home.md) · [How ODM compares](#how-odm-compares) · [Installation](#installation) · [Building from source](#building-from-source)
+
 
 ![ODM main window](docs/wiki/images/screenshot.png)
 
