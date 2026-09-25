@@ -2,15 +2,16 @@
 # Validate the artifacts that will be attached to a release. Run in odm-dev.
 set -euo pipefail
 PACKAGE_ROOT="$(cd "$(dirname "$0")" && pwd)"
+DIST="$PACKAGE_ROOT/dist"
 VERSION="${1:?Pass the package version}"
 [[ "$VERSION" =~ ^[0-9]+([.][0-9]+){1,3}$ ]] || exit 2
 CHECK_ROOT="$(mktemp -d)"
 trap 'rm -rf "$CHECK_ROOT"' EXIT
-DEB="$PACKAGE_ROOT/open-download-manager_${VERSION}_amd64.deb"
-RPM="$PACKAGE_ROOT/open-download-manager-${VERSION}-1.x86_64.rpm"
-ARCH="$PACKAGE_ROOT/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
-APPIMAGE="$PACKAGE_ROOT/Open_Download_Manager-${VERSION}-x86_64.AppImage"
-FLATPAK="$PACKAGE_ROOT/open-download-manager-${VERSION}-x86_64.flatpak"
+DEB="$DIST/open-download-manager_${VERSION}_amd64.deb"
+RPM="$DIST/open-download-manager-${VERSION}-1.x86_64.rpm"
+ARCH="$DIST/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
+APPIMAGE="$DIST/Open_Download_Manager-${VERSION}-x86_64.AppImage"
+FLATPAK="$DIST/open-download-manager-${VERSION}-x86_64.flatpak"
 for artifact in "$DEB" "$RPM" "$ARCH" "$APPIMAGE" "$FLATPAK"; do test -s "$artifact"; done
 [[ "$(dpkg-deb -f "$DEB" Version)" == "$VERSION" ]]
 [[ "$(dpkg-deb -f "$DEB" Architecture)" == amd64 ]]

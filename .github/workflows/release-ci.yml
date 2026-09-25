@@ -52,17 +52,17 @@ jobs:
             - name: Install test (.deb on clean Ubuntu)
               env:
                   VERSION: ${{ steps.version.outputs.version }}
-              run: docker run --rm -e VERSION -v "$(pwd)/packaging:/pkgs:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq "/pkgs/open-download-manager_${VERSION}_amd64.deb" && test -x /usr/bin/open-download-manager'
+              run: docker run --rm -e VERSION -v "$(pwd)/packaging/dist:/pkgs:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq "/pkgs/open-download-manager_${VERSION}_amd64.deb" && test -x /usr/bin/open-download-manager'
 
             - name: Install test (AppImage on clean Ubuntu)
               env:
                   VERSION: ${{ steps.version.outputs.version }}
-              run: docker run --rm -e VERSION -v "$(pwd)/packaging:/pkgs:ro" ubuntu:24.04 bash -c 'chmod +x "/pkgs/Open_Download_Manager-${VERSION}-x86_64.AppImage" && "/pkgs/Open_Download_Manager-${VERSION}-x86_64.AppImage" --appimage-extract-and-run --version'
+              run: docker run --rm -e VERSION -v "$(pwd)/packaging/dist:/pkgs:ro" ubuntu:24.04 bash -c 'chmod +x "/pkgs/Open_Download_Manager-${VERSION}-x86_64.AppImage" && "/pkgs/Open_Download_Manager-${VERSION}-x86_64.AppImage" --appimage-extract-and-run --version'
 
             - name: Install test (Flatpak bundle on clean Ubuntu)
               env:
                   VERSION: ${{ steps.version.outputs.version }}
-              run: docker run --rm --privileged -e VERSION -v "$(pwd)/packaging:/pkgs:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq flatpak >/dev/null && flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak --user install -y --noninteractive "/pkgs/open-download-manager-${VERSION}-x86_64.flatpak" && flatpak run --command=aria2c io.github.albilu.odm --version | grep -q "aria2 version"'
+              run: docker run --rm --privileged -e VERSION -v "$(pwd)/packaging/dist:/pkgs:ro" ubuntu:24.04 bash -c 'apt-get update -qq && apt-get install -y -qq flatpak >/dev/null && flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak --user install -y --noninteractive "/pkgs/open-download-manager-${VERSION}-x86_64.flatpak" && flatpak run --command=aria2c io.github.albilu.odm --version | grep -q "aria2 version"'
 
             - name: Create release and attach packages
               uses: softprops/action-gh-release@v2
@@ -78,8 +78,8 @@ jobs:
                       - `Open_Download_Manager-${{ steps.version.outputs.version }}-x86_64.AppImage` — portable, bundled GTK4 + aria2 (host yt-dlp/HTTrack used when present)
                       - `open-download-manager-${{ steps.version.outputs.version }}-x86_64.flatpak` — Flatpak bundle (GNOME 50 runtime, bundled aria2/yt-dlp/HTTrack)
                   files: |
-                      packaging/open-download-manager_${{ steps.version.outputs.version }}_amd64.deb
-                      packaging/open-download-manager-${{ steps.version.outputs.version }}-1.x86_64.rpm
-                      packaging/open-download-manager-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst
-                      packaging/Open_Download_Manager-${{ steps.version.outputs.version }}-x86_64.AppImage
-                      packaging/open-download-manager-${{ steps.version.outputs.version }}-x86_64.flatpak
+                      packaging/dist/open-download-manager_${{ steps.version.outputs.version }}_amd64.deb
+                      packaging/dist/open-download-manager-${{ steps.version.outputs.version }}-1.x86_64.rpm
+                      packaging/dist/open-download-manager-${{ steps.version.outputs.version }}-1-x86_64.pkg.tar.zst
+                      packaging/dist/Open_Download_Manager-${{ steps.version.outputs.version }}-x86_64.AppImage
+                      packaging/dist/open-download-manager-${{ steps.version.outputs.version }}-x86_64.flatpak

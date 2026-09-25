@@ -24,6 +24,7 @@ if [[ "$VERSION" != "$PROJECT_VERSION" ]]; then
     exit 2
 fi
 STAGE="$ROOT/packaging/stage"
+DIST="$ROOT/packaging/dist"
 RUNTIME="$STAGE/opt/open-download-manager/runtime"
 APP="$STAGE/opt/open-download-manager"
 JAR="$ROOT/odm-gtk4/target/odm-gtk4-${PROJECT_VERSION}-jar-with-dependencies.jar"
@@ -44,7 +45,7 @@ mvn -q -pl odm-gtk4 -am package -DskipTests -Djacoco.skip=true
 
 log "Assembling application tree under $STAGE..."
 rm -rf "$STAGE"
-mkdir -p "$APP" "$RUNTIME" "$STAGE/usr/bin" \
+mkdir -p "$DIST" "$APP" "$RUNTIME" "$STAGE/usr/bin" \
     "$STAGE/usr/share/applications" \
     "$STAGE/usr/share/metainfo" \
     "$STAGE/usr/share/doc/open-download-manager" \
@@ -106,8 +107,8 @@ build_deb() {
     [ -f "$debroot/DEBIAN/prerm" ] && chmod 755 "$debroot/DEBIAN/prerm"
     sed -i "s/__VERSION__/${VERSION}/g" "$debroot/DEBIAN/control"
     dpkg-deb --root-owner-group --build -Zxz "$debroot" \
-        "$ROOT/packaging/open-download-manager_${VERSION}_amd64.deb"
-    log "Built open-download-manager_${VERSION}_amd64.deb"
+        "$DIST/open-download-manager_${VERSION}_amd64.deb"
+    log "Built dist/open-download-manager_${VERSION}_amd64.deb"
 }
 
 # ---- .rpm ----
@@ -121,7 +122,7 @@ build_rpm() {
         > "$rpmtop/SPECS/open-download-manager.spec"
     (cd "$rpmtop" && rpmbuild --define "_topdir $rpmtop" --define "stage $STAGE" \
         --nodeps --nocheck -bb "$rpmtop/SPECS/open-download-manager.spec")
-    find "$rpmtop/RPMS" "$ROOT/rpmbuild/RPMS" -name "*.rpm" -exec mv {} "$ROOT/packaging/" \; 2>/dev/null || true
+    find "$rpmtop/RPMS" "$ROOT/rpmbuild/RPMS" -name "*.rpm" -exec mv {} "$DIST/" \; 2>/dev/null || true
     rm -rf "$rpmtop" "$ROOT/rpmbuild"
 }
 
@@ -197,10 +198,10 @@ EOF
     (cd "$archroot/pkg" && tar -C "$archroot/pkg" \
         --owner=0 --group=0 --numeric-owner \
         --use-compress-program="zstd -19 -T0" \
-        -cf "$ROOT/packaging/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst" \
+        -cf "$DIST/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst" \
         .PKGINFO .BUILDINFO .MTREE opt usr)
     rm -rf "$archroot"
-    log "Built open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
+    log "Built dist/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
 }
 
 # ---- AppImage ----
@@ -307,7 +308,7 @@ build_appimage() {
         "$appdir/open-download-manager.png"
     ln -sf open-download-manager.png "$appdir/.DirIcon"
 
-    local out="$ROOT/packaging/Open_Download_Manager-${VERSION}-x86_64.AppImage"
+    local out="$DIST/Open_Download_Manager-${VERSION}-x86_64.AppImage"
     rm -f "$out"
     local extract=()
     if [[ ! -c /dev/fuse ]] || [[ ! -w /dev/fuse ]]; then
@@ -316,7 +317,7 @@ build_appimage() {
     (cd "$ROOT/packaging/appimage-build" && ARCH=x86_64 "$tool" \
         "${extract[@]}" -n "$appdir" "$out")
     rm -rf "$ROOT/packaging/appimage-build"
-    log "Built Open_Download_Manager-${VERSION}-x86_64.AppImage"
+    log "Built dist/Open_Download_Manager-${VERSION}-x86_64.AppImage"
 }
 
 # ---- Flatpak bundle ----
@@ -351,10 +352,10 @@ build_flatpak() {
         --state-dir="$work/state" --repo="$work/repo" \
         "$work/build" "$ROOT/packaging/flatpak/io.github.albilu.odm.yml"
     flatpak build-bundle "$work/repo" \
-        "$ROOT/packaging/open-download-manager-${VERSION}-x86_64.flatpak" \
+        "$DIST/open-download-manager-${VERSION}-x86_64.flatpak" \
         io.github.albilu.odm --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
     rm -rf "$work"
-    log "Built open-download-manager-${VERSION}-x86_64.flatpak"
+    log "Built dist/open-download-manager-${VERSION}-x86_64.flatpak"
 }
 
 build_deb
@@ -364,6 +365,6 @@ build_appimage
 build_flatpak
 
 log "Artifacts:"
-ls -la "$ROOT/packaging/"*.deb "$ROOT/packaging/"*.rpm "$ROOT/packaging/"*.pkg.tar.zst \
-    "$ROOT/packaging/"*.AppImage "$ROOT/packaging/"*.flatpak 2>/dev/null || true
+ls -la "$DIST/"*.deb "$DIST/"*.rpm "$DIST/"*.pkg.tar.zst \
+    "$DIST/"*.AppImage "$DIST/"*.flatpak 2>/dev/null || true
 log "Done."

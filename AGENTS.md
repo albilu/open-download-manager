@@ -12,7 +12,7 @@
 - Use `make test` for the full suite; it starts Xvfb in Docker and runs `mvn test`. The image provides aria2, yt-dlp, httrack, proxychains4, tor, GTK4, and Xvfb.
 - Run one core test with `mvn -pl core -Dtest=ClassName#methodName test` inside the prepared Java/native-tool environment.
 - Use `make run` to launch the GTK application with X11 forwarding; use `make debug` for the suspended JDWP server on port 5005.
-- Use `make package` to create `.deb`, `.rpm`, and `.pkg.tar.zst` artifacts under `packaging/`; packaging also builds a shaded GTK jar and bundled jlink runtime.
+- Use `make package` to create `.deb`, `.rpm`, and `.pkg.tar.zst` artifacts under `packaging/dist/`; packaging also builds a shaded GTK jar and bundled jlink runtime.
 
 ## Testing Constraints
 - Surefire forks each test class with `reuseForks=false` because static `ApplicationContext`/download-manager lifecycle state can poison later tests.
