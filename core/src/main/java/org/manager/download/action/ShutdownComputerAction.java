@@ -64,11 +64,6 @@ public class ShutdownComputerAction implements AfterCompletionAction {
             // Execute the shutdown command
             ProcessBuilder processBuilder = new ProcessBuilder(command);
             shutdownProcess = processBuilder.start();
-            shutdownInitiated = true;
-
-            // Log that shutdown has been initiated
-            LOGGER.info("Shutdown initiated. System will shut down"
-                    + (delayInSeconds > 0 ? " in " + delayInSeconds + " seconds" : " immediately"));
 
             // Wait for the process to complete (with timeout)
             boolean completed = shutdownProcess.waitFor(5, TimeUnit.SECONDS);
@@ -78,12 +73,18 @@ public class ShutdownComputerAction implements AfterCompletionAction {
                 return false;
             }
 
-            // Check exit value
+            // Check exit value; a failed command must not count as initiated
             int exitValue = shutdownProcess.exitValue();
             if (exitValue != 0) {
                 LOGGER.warn("Shutdown command returned non-zero exit value: " + exitValue);
                 return false;
             }
+
+            shutdownInitiated = true;
+
+            // Log that shutdown has been initiated
+            LOGGER.info("Shutdown initiated. System will shut down"
+                    + (delayInSeconds > 0 ? " in " + delayInSeconds + " seconds" : " immediately"));
 
             return true;
         } catch (IOException e) {

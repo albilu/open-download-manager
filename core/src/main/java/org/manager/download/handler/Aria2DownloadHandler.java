@@ -8,6 +8,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -1741,7 +1743,9 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
      * existing target is not writable, resume mode consequently fails with
      * error 15 instead of applying the requested auto-renaming policy. Resume
      * is impossible in that situation anyway, so disable it for this one RPC
-     * request and let aria2 choose its normal {@code name.1.ext} path.
+     * request and let aria2 choose its normal {@code name.1.ext} path. A
+     * target stripped of every write permission bit counts as not writable
+     * even for root, whose access(2) check always succeeds.
      */
     void allowRenameWhenExistingOutputCannotBeResumed(Download download,
             Map<String, Object> options) {
@@ -1759,10 +1763,25 @@ public class Aria2DownloadHandler extends AbstractDownloadHandler {
         }
         org.manager.util.PathSafety.requireSafeFileName(outputName);
         Path output = destination.resolve(outputName);
-        if (Files.exists(output) && !Files.isWritable(output)) {
+        if (Files.exists(output) && !isResumable(output)) {
             options.put("continue", "false");
             LOGGER.info("Existing output is not writable; allowing aria2 to auto-rename: "
                     + output);
+        }
+    }
+
+    private static boolean isResumable(Path output) {
+        if (!Files.isWritable(output)) {
+            return false;
+        }
+        try {
+            Set<PosixFilePermission> permissions = Files.getPosixFilePermissions(output);
+            return permissions.contains(PosixFilePermission.OWNER_WRITE)
+                    || permissions.contains(PosixFilePermission.GROUP_WRITE)
+                    || permissions.contains(PosixFilePermission.OTHERS_WRITE);
+        } catch (UnsupportedOperationException | IOException e) {
+            // Non-POSIX store or unreadable metadata: defer to access(2).
+            return true;
         }
     }
 
