@@ -141,15 +141,6 @@ compile() {
 
 
 
-# --privileged: flatpak-builder uses bubblewrap (user namespaces + mounts).
-# The flatpak user installation and download cache persist in the host cache
-# dir (same pattern as the ~/.m2 mount) so GNOME runtimes download once.
-flatpak_cache_args() {
-    local cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/odm"
-    mkdir -p "$cache_root/flatpak" "$cache_root/flatpak-cache"
-    echo "-v $cache_root/flatpak:/home/developer/.local/share/flatpak -v $cache_root/flatpak-cache:/home/developer/.cache/flatpak"
-}
-
 # Create packages
 package() {
     prepare_m2
@@ -159,10 +150,9 @@ package() {
         return 2
     fi
     log "Creating packages (version ${version})..."
-    docker run --init --rm --privileged \
+    docker run --init --rm \
         -v "$(pwd):/app" \
         -v "$HOME/.m2:/home/developer/.m2" \
-        $(flatpak_cache_args) \
         $IMAGE_NAME \
         /app/packaging/build-packages.sh "$version"
 }
@@ -175,9 +165,8 @@ verify() {
         return 2
     fi
     log "Verifying packages (version ${version})..."
-    docker run --init --rm --privileged \
+    docker run --init --rm \
         -v "$(pwd):/app" \
-        $(flatpak_cache_args) \
         $IMAGE_NAME \
         /app/packaging/verify-packages.sh "$version"
 }
@@ -202,7 +191,7 @@ help() {
     echo "  compile   Build application"
     echo "  run       Run application with GUI support"
     echo "  debug     Run application in debug mode (port 5005)"
-    echo "  package   Create distribution packages (.deb/.rpm/.pkg.tar.zst/.AppImage/.flatpak)"
+    echo "  package   Create distribution packages (.deb/.rpm/.pkg.tar.zst/.AppImage)"
     echo "  verify    Verify the built distribution packages"
     echo "  clean     Clean up Docker resources"
     echo "  help      Show this help"

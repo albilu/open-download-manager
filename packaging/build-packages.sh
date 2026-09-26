@@ -320,51 +320,12 @@ build_appimage() {
     log "Built dist/Open_Download_Manager-${VERSION}-x86_64.AppImage"
 }
 
-# ---- Flatpak bundle ----
-# Builds packaging/flatpak/org.odm.yml against the GNOME 50 runtime and exports
-# a distributable .flatpak bundle. Requires flatpak-builder and a user
-# installation of the runtime/sdk (cached under the mounted flatpak dirs).
-build_flatpak() {
-    if ! command -v flatpak-builder >/dev/null; then
-        log "flatpak-builder not found, skipping flatpak bundle"
-        return 0
-    fi
-    log "Building Flatpak bundle..."
-    # flatpak in bare containers has no system bus; alias it to a session bus.
-    if [[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] && [[ ! -S /run/dbus/system_bus_socket ]]; then
-        eval "$(dbus-launch --sh-syntax)"
-        export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
-    fi
-    # Containers have no XDG_RUNTIME_DIR; flatpak allocates instance ids there.
-    if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
-        export XDG_RUNTIME_DIR="/tmp/xdg-runtime-$(id -u)"
-        mkdir -p "$XDG_RUNTIME_DIR"
-        chmod 700 "$XDG_RUNTIME_DIR"
-    fi
-    flatpak --user remote-add --if-not-exists flathub \
-        https://flathub.org/repo/flathub.flatpakrepo
-    flatpak --user install -y --noninteractive flathub \
-        org.gnome.Platform//50 org.gnome.Sdk//50
-    # /app is reserved as the install prefix; build/state live outside it.
-    local work=/tmp/odm-flatpak
-    rm -rf "$work"
-    flatpak-builder --user --disable-rofiles-fuse --force-clean \
-        --state-dir="$work/state" --repo="$work/repo" \
-        "$work/build" "$ROOT/packaging/flatpak/io.github.odm_linux.open-download-manager.yml"
-    flatpak build-bundle "$work/repo" \
-        "$DIST/open-download-manager-${VERSION}-x86_64.flatpak" \
-        io.github.odm_linux.open-download-manager --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
-    rm -rf "$work"
-    log "Built dist/open-download-manager-${VERSION}-x86_64.flatpak"
-}
-
 build_deb
 build_rpm
 build_arch
 build_appimage
-build_flatpak
 
 log "Artifacts:"
 ls -la "$DIST/"*.deb "$DIST/"*.rpm "$DIST/"*.pkg.tar.zst \
-    "$DIST/"*.AppImage "$DIST/"*.flatpak 2>/dev/null || true
+    "$DIST/"*.AppImage 2>/dev/null || true
 log "Done."

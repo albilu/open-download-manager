@@ -35,9 +35,7 @@ RUN apt-get update && apt-get install -y \
     file \
     zstd \
     libarchive-tools \
-    # AppImage/Flatpak building and desktop metadata validation
-    flatpak \
-    flatpak-builder \
+    # AppImage building and desktop metadata validation
     libfuse2 \
     appstream \
     desktop-file-utils \

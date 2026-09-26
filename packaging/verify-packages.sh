@@ -11,8 +11,7 @@ DEB="$DIST/open-download-manager_${VERSION}_amd64.deb"
 RPM="$DIST/open-download-manager-${VERSION}-1.x86_64.rpm"
 ARCH="$DIST/open-download-manager-${VERSION}-1-x86_64.pkg.tar.zst"
 APPIMAGE="$DIST/Open_Download_Manager-${VERSION}-x86_64.AppImage"
-FLATPAK="$DIST/open-download-manager-${VERSION}-x86_64.flatpak"
-for artifact in "$DEB" "$RPM" "$ARCH" "$APPIMAGE" "$FLATPAK"; do test -s "$artifact"; done
+for artifact in "$DEB" "$RPM" "$ARCH" "$APPIMAGE"; do test -s "$artifact"; done
 [[ "$(dpkg-deb -f "$DEB" Version)" == "$VERSION" ]]
 [[ "$(dpkg-deb -f "$DEB" Architecture)" == amd64 ]]
 [[ "$(rpm --dbpath "$CHECK_ROOT/rpmdb" -qp --qf '%{VERSION}-%{RELEASE}' "$RPM")" == "$VERSION-1" ]]
@@ -263,54 +262,4 @@ if grep -Eq 'Startup failed|NoClassDefFoundError|NoSuchMethodError|cannot open s
 fi
 echo 'AppImage payload, bundled GTK stack and AppRun launcher passed'
 
-# ---- Flatpak bundle ----
-# flatpak in bare containers has no system bus; alias it to a session bus.
-if [[ -z "${DBUS_SYSTEM_BUS_ADDRESS:-}" ]] && [[ ! -S /run/dbus/system_bus_socket ]]; then
-    eval "$(dbus-launch --sh-syntax)"
-    export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
-fi
-# Containers have no XDG_RUNTIME_DIR; flatpak allocates instance ids there.
-if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
-    export XDG_RUNTIME_DIR="/tmp/xdg-runtime-$(id -u)"
-    mkdir -p "$XDG_RUNTIME_DIR"
-    chmod 700 "$XDG_RUNTIME_DIR"
-fi
-flatpak --user remote-add --if-not-exists flathub \
-    https://flathub.org/repo/flathub.flatpakrepo
-FLATPAK_ID=io.github.odm_linux.open-download-manager
-flatpak --user uninstall -y --noninteractive "$FLATPAK_ID" 2>/dev/null || true
-flatpak --user install -y --noninteractive "$FLATPAK"
-flatpak info "$FLATPAK_ID" | grep -q "ID: ${FLATPAK_ID}$"
-flatpak info "$FLATPAK_ID" | grep -q 'Arch: x86_64$'
-# Bundled tools work inside the sandbox.
-flatpak run --command=aria2c "$FLATPAK_ID" --version | grep -q 'aria2 version 1\.37\.'
-flatpak run --command=yt-dlp "$FLATPAK_ID" --version | grep -q '^2026\.'
-flatpak run --command=httrack "$FLATPAK_ID" --version | grep -q 'HTTrack'
-# Exported desktop/metainfo/icons are renamed to the app-id.
-flatpak run --command=cat "$FLATPAK_ID" "/app/share/applications/${FLATPAK_ID}.desktop" > "$CHECK_ROOT/flatpak.desktop"
-grep -qx 'Exec=open-download-manager %U' "$CHECK_ROOT/flatpak.desktop"
-grep -qx "Icon=${FLATPAK_ID}" "$CHECK_ROOT/flatpak.desktop"
-flatpak run --command=cat "$FLATPAK_ID" "/app/share/metainfo/${FLATPAK_ID}.metainfo.xml" > "$CHECK_ROOT/flatpak.metainfo.xml"
-grep -q "<id>${FLATPAK_ID}</id>" "$CHECK_ROOT/flatpak.metainfo.xml"
-grep -q "<icon type=\"stock\">${FLATPAK_ID}</icon>" "$CHECK_ROOT/flatpak.metainfo.xml"
-# The flatpak payload jar must be byte-identical to the system packages.
-flatpak run --command=cat "$FLATPAK_ID" /app/opt/open-download-manager/odm.jar > "$CHECK_ROOT/flatpak-odm.jar"
-cmp "$CHECK_ROOT/flatpak-odm.jar" "$APP_ROOT/odm.jar"
-# Bounded sandbox launch of the real application. Do not set XDG_*_HOME here:
-# flatpak resolves its user installation from XDG_DATA_HOME, and the sandbox
-# already redirects app state to ~/.var/app/<id>.
-set +e
-dbus-run-session -- xvfb-run -a timeout -k 10s 25s \
-    flatpak run "$FLATPAK_ID" > "$CHECK_ROOT/flatpak.log" 2>&1
-flatpak_status=$?
-set -e
-cat "$CHECK_ROOT/flatpak.log"
-[[ "$flatpak_status" == 124 ]]
-grep -q 'MainWindow constructed' "$CHECK_ROOT/flatpak.log"
-if grep -Eq 'Startup failed|NoClassDefFoundError|NoSuchMethodError|cannot open shared object file' "$CHECK_ROOT/flatpak.log"; then
-    exit 1
-fi
-flatpak --user uninstall -y --noninteractive "$FLATPAK_ID"
-echo 'Flatpak bundle, sandbox tools and sandbox launch passed'
-
-echo 'All five package formats and the bundled launcher passed'
+echo 'All four package formats and the bundled launcher passed'
