@@ -78,7 +78,9 @@ jobs:
             - name: Install test (AppImage on clean Ubuntu)
               env:
                   VERSION: ${{ steps.version.outputs.version }}
-              run: docker run --rm -e VERSION -v "$(pwd)/packaging/dist:/pkgs:ro" ubuntu:24.04 bash -c 'chmod +x "/pkgs/Open_Download_Manager-${VERSION}-x86_64.AppImage" && "/pkgs/Open_Download_Manager-${VERSION}-x86_64.AppImage" --appimage-extract-and-run --version'
+              # /pkgs is a read-only mount; copy into the container before
+              # chmod, as a user would after downloading the artifact.
+              run: docker run --rm -e VERSION -v "$(pwd)/packaging/dist:/pkgs:ro" ubuntu:24.04 bash -c 'cp "/pkgs/Open_Download_Manager-${VERSION}-x86_64.AppImage" /tmp/odm.AppImage && chmod +x /tmp/odm.AppImage && /tmp/odm.AppImage --appimage-extract-and-run --version'
 
             - name: Create release and attach packages
               uses: softprops/action-gh-release@v2
