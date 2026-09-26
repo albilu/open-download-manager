@@ -204,11 +204,13 @@ verify() {
         /app/packaging/verify-packages.sh "$version"
 }
 
-# Clean up
+# Clean up. Only touches ODM resources: the dev container (if left over)
+# and the dev image. Never a global prune, which would delete unrelated
+# containers, networks and dangling images from other projects.
 clean() {
     log "Cleaning up..."
+    docker rm -f odm-dev 2>/dev/null || true
     docker rmi $IMAGE_NAME 2>/dev/null || true
-    docker system prune -f
 }
 
 # Show help
