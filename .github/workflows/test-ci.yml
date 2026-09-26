@@ -9,14 +9,35 @@ on:
 
 permissions:
     contents: read
+    # Cache save (actions/cache and the buildkit type=gha backend) needs it;
+    # the top-level restriction above zeroes it otherwise.
+    actions: write
 
 jobs:
     test:
         runs-on: ubuntu-latest
+        env:
+            # Persisted Docker layer cache (see docker-build.sh build()).
+            # Same scope as release-ci.yml so both share one cache.
+            ODM_CACHE_FROM: type=gha,scope=odm-dev-image
+            ODM_CACHE_TO: type=gha,mode=max,scope=odm-dev-image
         steps:
             - uses: actions/checkout@v4
               with:
                   ref: ${{ github.sha }}
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+
+            # The host Maven repository is mounted into the dev image
+            # (see docker-build.sh); without a cache every run redownloads it.
+            - name: Cache Maven repository
+              uses: actions/cache@v4
+              with:
+                  path: ~/.m2/repository
+                  key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+                  restore-keys: |
+                      ${{ runner.os }}-m2-
 
             - name: Build Docker image
               run: ./docker-build.sh build

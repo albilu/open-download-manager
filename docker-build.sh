@@ -69,10 +69,22 @@ debug() {
         bash -c 'mvn -q -pl odm-gtk4 -am package -DskipTests=true && mvn -q -pl odm-gtk4 dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt && java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=0.0.0.0:5005 -Djava.util.logging.level=FINE -Djava.util.logging.ConsoleHandler.level=FINE -cp "odm-gtk4/target/classes:core/target/classes:$(cat /tmp/cp.txt)" org.odm.gtk4.OdmApplication'
 }
 
-# Build the Docker image
+# Build the Docker image. CI workflows export ODM_CACHE_FROM/ODM_CACHE_TO
+# (e.g. type=gha) to persist the layer cache across ephemeral runners; the
+# image is still loaded into the local daemon for the run/test/package steps.
+# Locally (no cache env) this is a plain `docker build` as before.
 build() {
-    log "Building Docker image..."
-    docker build --build-arg "ODM_UID=$(id -u)" --build-arg "ODM_GID=$(id -g)" -t "$IMAGE_NAME" .
+    local args=(--build-arg "ODM_UID=$(id -u)" --build-arg "ODM_GID=$(id -g)" -t "$IMAGE_NAME" .)
+    if [[ -n "${ODM_CACHE_FROM:-}${ODM_CACHE_TO:-}" ]]; then
+        local cache_args=()
+        [[ -n "${ODM_CACHE_FROM:-}" ]] && cache_args+=(--cache-from "$ODM_CACHE_FROM")
+        [[ -n "${ODM_CACHE_TO:-}" ]] && cache_args+=(--cache-to "$ODM_CACHE_TO")
+        log "Building Docker image (external cache)..."
+        docker buildx build --load "${cache_args[@]}" "${args[@]}"
+    else
+        log "Building Docker image..."
+        docker build "${args[@]}"
+    fi
 }
 
 # Start development container
