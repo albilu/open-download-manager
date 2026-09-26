@@ -207,7 +207,7 @@ EOF
 # ---- AppImage ----
 # Core runtime libraries stay on the host; everything else travels inside the
 # image. Bundling libc/libstdc++ would clash with host binaries the app spawns.
-APPIMAGE_LIB_EXCLUDE='^(linux-vdso.*|ld-linux.*|libc\.so|libm\.so|libmvec.*|libdl\.so|librt\.so|libpthread\.so|libresolv\.so|libnsl\.so|libnss_.*|libutil\.so|libatomic.*|libstdc\+\+.*|libgcc_s.*|libselinux.*|libmount.*|libblkid.*)$'
+APPIMAGE_LIB_EXCLUDE='^(linux-vdso.*|ld-linux.*|libc\.so.*|libm\.so.*|libmvec.*|libdl\.so.*|librt\.so.*|libpthread\.so.*|libresolv\.so.*|libnsl\.so.*|libnss_.*|libutil\.so.*|libatomic.*|libstdc\+\+.*|libgcc_s.*|libselinux.*|libmount.*|libblkid.*)$'
 
 # BFS over ldd output: copy the seed sonames ($1, resolved via ldconfig) and
 # the library closure of binary $2 into $3, skipping core host libraries.

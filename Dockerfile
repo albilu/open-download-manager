@@ -1,4 +1,9 @@
-FROM eclipse-temurin:25-jdk
+# Pin to the Ubuntu 24.04 (noble) base: the floating 25-jdk tag moved to a
+# newer Ubuntu whose glibc the AppImage cannot run on (bundled GTK libs then
+# require GLIBC_2.4x symbols, breaking every older host, and the mixed-loader
+# crash killed even host tools under LD_LIBRARY_PATH). noble's glibc 2.39 is
+# the floor the release CI install tests target.
+FROM eclipse-temurin:25-jdk-noble
 
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
