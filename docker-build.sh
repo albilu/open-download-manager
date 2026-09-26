@@ -73,18 +73,39 @@ debug() {
 # (e.g. type=gha) to persist the layer cache across ephemeral runners; the
 # image is still loaded into the local daemon for the run/test/package steps.
 # Locally (no cache env) this is a plain `docker build` as before.
+# The gha cache backend needs the real GitHub cache service. Local act runs
+# emulate it with an artifact server that buildx cannot reach (dial tcp
+# connection refused on import and export), and transient cache outages must
+# not fail the whole job when the image itself builds, so skip unavailable
+# caches up front and retry without the cache when a cached build fails.
 build() {
     local args=(--build-arg "ODM_UID=$(id -u)" --build-arg "ODM_GID=$(id -g)" -t "$IMAGE_NAME" .)
-    if [[ -n "${ODM_CACHE_FROM:-}${ODM_CACHE_TO:-}" ]]; then
-        local cache_args=()
-        [[ -n "${ODM_CACHE_FROM:-}" ]] && cache_args+=(--cache-from "$ODM_CACHE_FROM")
-        [[ -n "${ODM_CACHE_TO:-}" ]] && cache_args+=(--cache-to "$ODM_CACHE_TO")
-        log "Building Docker image (external cache)..."
-        docker buildx build --load "${cache_args[@]}" "${args[@]}"
-    else
+    if [[ -z "${ODM_CACHE_FROM:-}${ODM_CACHE_TO:-}" ]]; then
         log "Building Docker image..."
         docker build "${args[@]}"
+        return
     fi
+    if [[ "${ODM_CACHE_FROM:-}${ODM_CACHE_TO:-}" == *"type=gha"* ]]; then
+        if [[ "${ACT:-}" == "true" ]]; then
+            log "GHA layer cache requested but running under act; building without layer cache..."
+            docker build "${args[@]}"
+            return
+        fi
+        if [[ -z "${ACTIONS_CACHE_URL:-}" ]]; then
+            log "GHA layer cache requested but ACTIONS_CACHE_URL is unset; building without layer cache..."
+            docker build "${args[@]}"
+            return
+        fi
+    fi
+    local cache_args=()
+    [[ -n "${ODM_CACHE_FROM:-}" ]] && cache_args+=(--cache-from "$ODM_CACHE_FROM")
+    [[ -n "${ODM_CACHE_TO:-}" ]] && cache_args+=(--cache-to "$ODM_CACHE_TO")
+    log "Building Docker image (external cache)..."
+    if docker buildx build --load "${cache_args[@]}" "${args[@]}"; then
+        return
+    fi
+    log "External cache build failed; retrying without layer cache..."
+    docker build "${args[@]}"
 }
 
 # Start development container
