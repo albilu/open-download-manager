@@ -172,7 +172,7 @@ modules:
       - install -Dm644 LICENSE /app/share/licenses/io.github.odm_linux.open-download-manager/LICENSE
     sources:
       - type: git
-        url: https://github.com/odm-linux/open-download-manager.git
+        url: https://github.com/albilu/open-download-manager.git
         tag: v0.3.0
         commit: 3b513aec4467d61b283c24a2d0fadd8e8d49c9dd
       # Vendored Maven repository (see SUBMISSION.md); commit alongside this manifest.

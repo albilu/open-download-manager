@@ -1,8 +1,8 @@
 # Open Download Manager
 
-[![Test CI](https://github.com/odm-linux/open-download-manager/actions/workflows/test-ci.yml/badge.svg)](https://github.com/odm-linux/open-download-manager/actions/workflows/test-ci.yml)
-[![Release CI](https://github.com/odm-linux/open-download-manager/actions/workflows/release-ci.yml/badge.svg)](https://github.com/odm-linux/open-download-manager/actions/workflows/release-ci.yml)
-[![GitHub release](https://img.shields.io/github/v/release/odm-linux/open-download-manager)](https://github.com/odm-linux/open-download-manager/releases)
+[![Test CI](https://github.com/albilu/open-download-manager/actions/workflows/test-ci.yml/badge.svg)](https://github.com/albilu/open-download-manager/actions/workflows/test-ci.yml)
+[![Release CI](https://github.com/albilu/open-download-manager/actions/workflows/release-ci.yml/badge.svg)](https://github.com/albilu/open-download-manager/actions/workflows/release-ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/albilu/open-download-manager)](https://github.com/albilu/open-download-manager/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Java 25](https://img.shields.io/badge/Java-25-orange.svg)](https://openjdk.org/projects/jdk/25/)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-lightgrey.svg)](packaging/)
